@@ -13,11 +13,9 @@ iced = { version = "0.13.1", features = ["tokio", "image", "debug", "canvas", "a
 iced_aw = { version = "0.12.2", features = ["context_menu"] }
 
 
-reqwest.version = "0.12"
-reqwest.features = ["json", "blocking"]
-
-serde.version = "1.0"
-serde.features = ["derive"]
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+urlencoding = "2.1"
 
 blurhash = "0.2.3"
 

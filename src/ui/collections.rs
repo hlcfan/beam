@@ -1,0 +1,300 @@
+use crate::types::{RequestCollection, SavedRequest, Message, HttpMethod};
+use iced::widget::{button, column, container, row, text, scrollable, Space};
+use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
+use iced::widget::container::Style;
+use iced::widget::button::Status;
+use iced_aw::ContextMenu;
+
+pub fn collections_panel<'a>(
+    collections: &'a [RequestCollection],
+) -> Element<'a, Message> {
+    let mut content = column![];
+
+    for (collection_index, collection) in collections.iter().enumerate() {
+        let collection_header = button(
+            row![
+                text(if collection.expanded { "▼" } else { "▶" }).size(12),
+                Space::with_width(5),
+                text(&collection.name).size(14)
+            ]
+            .align_y(iced::Alignment::Center)
+        )
+        .on_press(Message::CollectionToggled(collection_index))
+        .style(move |theme, status| {
+            let base = button::Style::default();
+            match status {
+                Status::Hovered => button::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    ..base
+                },
+                _ => base,
+            }
+        })
+        .width(Length::Fill);
+
+        // Wrap the collection header with ContextMenu
+        let collection_with_context_menu = ContextMenu::new(
+            collection_header,
+            move || {
+                container(
+                    column![
+                        button(text("Add Request"))
+                            .on_press(Message::AddHttpRequest(collection_index))
+                            .width(Length::Fill)
+                            .style(|theme, status| {
+                                let base = button::Style::default();
+                                match status {
+                                    Status::Hovered => button::Style {
+                                        background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                        ..base
+                                    },
+                                    _ => button::Style {
+                                        background: Some(Background::Color(Color::TRANSPARENT)),
+                                        ..base
+                                    },
+                                }
+                            }),
+                        button(text("Add Folder"))
+                            .on_press(Message::AddFolder(collection_index))
+                            .width(Length::Fill)
+                            .style(|theme, status| {
+                                let base = button::Style::default();
+                                match status {
+                                    Status::Hovered => button::Style {
+                                        background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                        ..base
+                                    },
+                                    _ => button::Style {
+                                        background: Some(Background::Color(Color::TRANSPARENT)),
+                                        ..base
+                                    },
+                                }
+                            }),
+                        button(text("Rename"))
+                            .on_press(Message::RenameFolder(collection_index))
+                            .width(Length::Fill)
+                            .style(|theme, status| {
+                                let base = button::Style::default();
+                                match status {
+                                    Status::Hovered => button::Style {
+                                        background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                        ..base
+                                    },
+                                    _ => button::Style {
+                                        background: Some(Background::Color(Color::TRANSPARENT)),
+                                        ..base
+                                    },
+                                }
+                            }),
+                        button(text("Delete"))
+                            .on_press(Message::DeleteFolder(collection_index))
+                            .width(Length::Fill)
+                            .style(|theme, status| {
+                                let base = button::Style::default();
+                                match status {
+                                    Status::Hovered => button::Style {
+                                        background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                        ..base
+                                    },
+                                    _ => button::Style {
+                                        background: Some(Background::Color(Color::TRANSPARENT)),
+                                        ..base
+                                    },
+                                }
+                            }),
+                    ]
+                    .spacing(2)
+                )
+                .width(Length::Fixed(150.0))
+                .style(|theme| Style {
+                    background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    border: Border {
+                        color: Color::from_rgb(0.8, 0.8, 0.8),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    shadow: Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                        offset: Vector::new(2.0, 2.0),
+                        blur_radius: 4.0,
+                    },
+                    ..Style::default()
+                })
+                .padding(4)
+                .into()
+            }
+        );
+
+        content = content.push(collection_with_context_menu);
+
+        if collection.expanded {
+            for (request_index, request) in collection.requests.iter().enumerate() {
+                let request_button = button(
+                    row![
+                        Space::with_width(20),
+                        method_badge(&request.method),
+                        Space::with_width(8),
+                        text(&request.name).size(12)
+                    ]
+                    .align_y(iced::Alignment::Center)
+                )
+                .on_press(Message::RequestSelected(collection_index, request_index))
+                .style(move |theme, status| {
+                    let base = button::Style::default();
+                    match status {
+                        Status::Hovered => button::Style {
+                            background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                            ..base
+                        },
+                        _ => base,
+                    }
+                })
+                .width(Length::Fill);
+
+                // Wrap the request button with ContextMenu
+                let request_with_context_menu = ContextMenu::new(
+                    request_button,
+                    move || {
+                        container(
+                            column![
+                                button(text("Send Request"))
+                                    .on_press(Message::SendRequestFromMenu(collection_index, request_index))
+                                    .width(Length::Fill)
+                                    .style(|theme, status| {
+                                        let base = button::Style::default();
+                                        match status {
+                                            Status::Hovered => button::Style {
+                                                background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                                ..base
+                                            },
+                                            _ => button::Style {
+                                                background: Some(Background::Color(Color::TRANSPARENT)),
+                                                ..base
+                                            },
+                                        }
+                                    }),
+                                button(text("Copy as cURL"))
+                                    .on_press(Message::CopyRequestAsCurl(collection_index, request_index))
+                                    .width(Length::Fill)
+                                    .style(|theme, status| {
+                                        let base = button::Style::default();
+                                        match status {
+                                            Status::Hovered => button::Style {
+                                                background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                                ..base
+                                            },
+                                            _ => button::Style {
+                                                background: Some(Background::Color(Color::TRANSPARENT)),
+                                                ..base
+                                            },
+                                        }
+                                    }),
+                                button(text("Rename"))
+                                    .on_press(Message::RenameRequest(collection_index, request_index))
+                                    .width(Length::Fill)
+                                    .style(|theme, status| {
+                                        let base = button::Style::default();
+                                        match status {
+                                            Status::Hovered => button::Style {
+                                                background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                                ..base
+                                            },
+                                            _ => button::Style {
+                                                background: Some(Background::Color(Color::TRANSPARENT)),
+                                                ..base
+                                            },
+                                        }
+                                    }),
+                                button(text("Duplicate"))
+                                    .on_press(Message::DuplicateRequest(collection_index, request_index))
+                                    .width(Length::Fill)
+                                    .style(|theme, status| {
+                                        let base = button::Style::default();
+                                        match status {
+                                            Status::Hovered => button::Style {
+                                                background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                                ..base
+                                            },
+                                            _ => button::Style {
+                                                background: Some(Background::Color(Color::TRANSPARENT)),
+                                                ..base
+                                            },
+                                        }
+                                    }),
+                                button(text("Delete"))
+                                    .on_press(Message::DeleteRequest(collection_index, request_index))
+                                    .width(Length::Fill)
+                                    .style(|theme, status| {
+                                        let base = button::Style::default();
+                                        match status {
+                                            Status::Hovered => button::Style {
+                                                background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                                                ..base
+                                            },
+                                            _ => button::Style {
+                                                background: Some(Background::Color(Color::TRANSPARENT)),
+                                                ..base
+                                            },
+                                        }
+                                    }),
+                            ]
+                            .spacing(2)
+                        )
+                        .width(Length::Fixed(150.0))
+                        .style(|theme| Style {
+                            background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                            border: Border {
+                                color: Color::from_rgb(0.8, 0.8, 0.8),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            shadow: Shadow {
+                                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                                offset: Vector::new(2.0, 2.0),
+                                blur_radius: 4.0,
+                            },
+                            ..Style::default()
+                        })
+                        .padding(4)
+                        .into()
+                    }
+                );
+
+                content = content.push(request_with_context_menu);
+            }
+        }
+    }
+
+    scrollable(content.spacing(2).padding(10))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn method_badge<'a>(method: &'a HttpMethod) -> Element<'a, Message> {
+    let (color, text_color) = match method {
+        HttpMethod::GET => (Color::from_rgb(0.0, 0.8, 0.0), Color::WHITE),
+        HttpMethod::POST => (Color::from_rgb(1.0, 0.6, 0.0), Color::WHITE),
+        HttpMethod::PUT => (Color::from_rgb(0.0, 0.4, 0.8), Color::WHITE),
+        HttpMethod::DELETE => (Color::from_rgb(0.8, 0.0, 0.0), Color::WHITE),
+        HttpMethod::PATCH => (Color::from_rgb(0.6, 0.0, 0.8), Color::WHITE),
+        HttpMethod::HEAD => (Color::from_rgb(0.5, 0.5, 0.5), Color::WHITE),
+        HttpMethod::OPTIONS => (Color::from_rgb(0.3, 0.3, 0.3), Color::WHITE),
+    };
+
+    container(
+        text(method.to_string())
+            .size(10)
+            .color(text_color)
+    )
+    .style(move |theme| Style {
+        background: Some(Background::Color(color)),
+        border: Border {
+            radius: 3.0.into(),
+            ..Border::default()
+        },
+        ..Style::default()
+    })
+    .padding([2, 6])
+    .into()
+}

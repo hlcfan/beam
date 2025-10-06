@@ -1,50 +1,18 @@
+mod types;
+mod http;
+mod ui;
+
+use types::*;
+use http::*;
+use ui::*;
+
 use iced::widget::pane_grid::{self, PaneGrid, Axis};
 use iced::widget::{
     button, column, container, row, text, text_input, text_editor, pick_list, scrollable,
     mouse_area, stack
 };
 use iced::{Element, Fill, Length, Size, Theme, Color, Task};
-use iced::advanced::text::Highlighter;
 use iced_aw::ContextMenu;
-use std::time::Instant;
-
-
-
-#[derive(Debug, Clone)]
-struct ResponseHighlighter {
-    content_type: String,
-}
-
-impl ResponseHighlighter {
-    fn new(content_type: String) -> Self {
-        Self { content_type }
-    }
-}
-
-impl Highlighter for ResponseHighlighter {
-    type Settings = ();
-    type Highlight = Color;
-    type Iterator<'a> = std::iter::Empty<(std::ops::Range<usize>, Self::Highlight)>;
-
-    fn new(_settings: &Self::Settings) -> Self {
-        Self {
-            content_type: String::new(),
-        }
-    }
-
-    fn update(&mut self, _new_settings: &Self::Settings) {}
-
-    fn current_line(&self) -> usize {
-        0
-    }
-
-    fn change_line(&mut self, _line: usize) {}
-
-    fn highlight_line(&mut self, _text: &str) -> Self::Iterator<'_> {
-        // Simple highlighting - could be expanded for JSON, XML, etc.
-        std::iter::empty()
-    }
-}
 
 pub fn main() -> iced::Result {
     iced::application(
@@ -56,335 +24,62 @@ pub fn main() -> iced::Result {
         .run()
 }
 
-#[derive(Debug)]
-struct PostmanApp {
-    panes: pane_grid::State<PaneContent>,
-    collections: Vec<RequestCollection>,
-    current_request: RequestConfig,
-    response: Option<ResponseData>,
-    response_body_content: text_editor::Content,
-    selected_response_tab: ResponseTab,
-    context_menu_visible: bool,
-    context_menu_position: (f32, f32),
-    context_menu_collection: Option<usize>,
-    is_loading: bool,
-}
-
-#[derive(Debug, Clone)]
-struct RequestCollection {
-    name: String,
-    requests: Vec<SavedRequest>,
-    expanded: bool,
-}
-
-#[derive(Debug, Clone)]
-struct SavedRequest {
-    name: String,
-    method: HttpMethod,
-    url: String,
-}
-
-#[derive(Debug)]
-struct RequestConfig {
-    method: HttpMethod,
-    url: String,
-    headers: Vec<(String, String)>,
-    params: Vec<(String, String)>,
-    body: text_editor::Content,
-    content_type: String,
-    auth_type: AuthType,
-    selected_tab: RequestTab,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum RequestTab {
-    Body,
-    Params,
-    Headers,
-    Auth,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum ResponseTab {
-    Body,
-    Headers,
-}
-
-#[derive(Debug, Clone)]
-struct ResponseData {
-    status: u16,
-    status_text: String,
-    headers: Vec<(String, String)>,
-    body: String,
-    size: usize,
-    time: u64, // milliseconds
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum HttpMethod {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    PATCH,
-    HEAD,
-    OPTIONS,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum AuthType {
-    None,
-    Bearer,
-    Basic,
-    ApiKey,
-}
-
-#[derive(Debug, Clone)]
-enum PaneContent {
-    Collections,
-    RequestConfig,
-    Response,
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    PaneResized(pane_grid::ResizeEvent),
-    UrlChanged(String),
-    MethodChanged(HttpMethod),
-    SendRequest,
-    CancelRequest,
-    RequestCompleted(Result<ResponseData, String>),
-    CollectionToggled(usize),
-    RequestSelected(usize, usize),
-    TabSelected(RequestTab),
-    ResponseTabSelected(ResponseTab),
-    HeaderKeyChanged(usize, String),
-    HeaderValueChanged(usize, String),
-    AddHeader,
-    RemoveHeader(usize),
-    ParamKeyChanged(usize, String),
-    ParamValueChanged(usize, String),
-    AddParam,
-    RemoveParam(usize),
-    BodyChanged(text_editor::Action),
-    ResponseBodyAction(text_editor::Action),
-    AuthTypeChanged(AuthType),
-    ShowContextMenu(usize, f32, f32),
-    HideContextMenu,
-    AddHttpRequest(usize),
-    DeleteFolder(usize),
-    AddFolder(usize),
-    // Request context menu actions
-    SendRequestFromMenu(usize, usize),
-    CopyRequestAsCurl(usize, usize),
-    RenameRequest(usize, usize),
-    DuplicateRequest(usize, usize),
-    DeleteRequest(usize, usize),
-}
-
 impl Default for PostmanApp {
     fn default() -> Self {
         let (mut panes, collections_pane) = pane_grid::State::new(PaneContent::Collections);
 
-        // Split the collections pane to create the request config pane
-        let (request_pane, split_1) = panes.split(
+        // Split vertically to create request config pane (middle panel)
+        let (request_pane, first_split) = panes.split(
             Axis::Vertical,
             collections_pane,
             PaneContent::RequestConfig,
-        ).expect("Failed to split pane");
+        ).unwrap();
 
-        // Split the request config pane to create the response pane
-        let (_, split_2) = panes.split(
+        // Split vertically again to create response pane (right panel)
+        let (_, second_split) = panes.split(
             Axis::Vertical,
             request_pane,
             PaneContent::Response,
-        ).expect("Failed to split pane");
+        ).unwrap();
 
-        // Resize the first split to make the left panel smaller (15% instead of default 50%)
-        panes.resize(split_1, 0.20);
-        // Resize the second split to give more space to request config (60% of remaining space)
-        panes.resize(split_2, 0.55);
+        // Set three-panel horizontal layout ratios
+        // Collections: 25%, Request Config: 40%, Response: 35%
+        panes.resize(first_split, 0.25);
+        panes.resize(second_split, 0.533); // 40/(40+35) = 0.533
+
+        let collections = vec![
+            RequestCollection {
+                name: "My Collection".to_string(),
+                requests: vec![
+                    SavedRequest {
+                        name: "Get Users".to_string(),
+                        method: HttpMethod::GET,
+                        url: "https://jsonplaceholder.typicode.com/users".to_string(),
+                    },
+                    SavedRequest {
+                        name: "Create User".to_string(),
+                        method: HttpMethod::POST,
+                        url: "https://jsonplaceholder.typicode.com/users".to_string(),
+                    },
+                ],
+                expanded: true,
+            },
+            RequestCollection {
+                name: "API Tests".to_string(),
+                requests: vec![
+                    SavedRequest {
+                        name: "Health Check".to_string(),
+                        method: HttpMethod::GET,
+                        url: "https://httpbin.org/status/200".to_string(),
+                    },
+                ],
+                expanded: false,
+            },
+        ];
 
         Self {
             panes,
-            collections: vec![
-                RequestCollection {
-                    name: "JSONPlaceholder API".to_string(),
-                    requests: vec![
-                        SavedRequest {
-                            name: "Get Users".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://jsonplaceholder.typicode.com/users".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Create User".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://jsonplaceholder.typicode.com/users".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Get Posts".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://jsonplaceholder.typicode.com/posts".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Update Post".to_string(),
-                            method: HttpMethod::PUT,
-                            url: "https://jsonplaceholder.typicode.com/posts/1".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Delete Post".to_string(),
-                            method: HttpMethod::DELETE,
-                            url: "https://jsonplaceholder.typicode.com/posts/1".to_string(),
-                        },
-                    ],
-                    expanded: true,
-                },
-                RequestCollection {
-                    name: "GitHub API".to_string(),
-                    requests: vec![
-                        SavedRequest {
-                            name: "Get User Profile".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://api.github.com/user".to_string(),
-                        },
-                        SavedRequest {
-                            name: "List Repositories".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://api.github.com/user/repos".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Create Repository".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://api.github.com/user/repos".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Get Repository".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://api.github.com/repos/owner/repo".to_string(),
-                        },
-                    ],
-                    expanded: false,
-                },
-                RequestCollection {
-                    name: "Weather API".to_string(),
-                    requests: vec![
-                        SavedRequest {
-                            name: "Current Weather".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://api.openweathermap.org/data/2.5/weather".to_string(),
-                        },
-                        SavedRequest {
-                            name: "5-Day Forecast".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://api.openweathermap.org/data/2.5/forecast".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Weather History".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://api.openweathermap.org/data/2.5/onecall/timemachine".to_string(),
-                        },
-                    ],
-                    expanded: false,
-                },
-                RequestCollection {
-                    name: "E-commerce API".to_string(),
-                    requests: vec![
-                        SavedRequest {
-                            name: "Get Products".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://fakestoreapi.com/products".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Get Product".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://fakestoreapi.com/products/1".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Add Product".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://fakestoreapi.com/products".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Update Product".to_string(),
-                            method: HttpMethod::PUT,
-                            url: "https://fakestoreapi.com/products/1".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Delete Product".to_string(),
-                            method: HttpMethod::DELETE,
-                            url: "https://fakestoreapi.com/products/1".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Get Categories".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://fakestoreapi.com/products/categories".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Get Cart".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://fakestoreapi.com/carts/1".to_string(),
-                        },
-                    ],
-                    expanded: false,
-                },
-                RequestCollection {
-                    name: "Authentication".to_string(),
-                    requests: vec![
-                        SavedRequest {
-                            name: "Login".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://api.example.com/auth/login".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Refresh Token".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://api.example.com/auth/refresh".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Logout".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://api.example.com/auth/logout".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Reset Password".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://api.example.com/auth/reset-password".to_string(),
-                        },
-                    ],
-                    expanded: false,
-                },
-                RequestCollection {
-                    name: "Testing & Utilities".to_string(),
-                    requests: vec![
-                        SavedRequest {
-                            name: "HTTP Status Codes".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://httpstat.us/200".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Echo Request".to_string(),
-                            method: HttpMethod::POST,
-                            url: "https://httpbin.org/post".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Get IP Address".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://httpbin.org/ip".to_string(),
-                        },
-                        SavedRequest {
-                            name: "User Agent".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://httpbin.org/user-agent".to_string(),
-                        },
-                        SavedRequest {
-                            name: "Delay Test".to_string(),
-                            method: HttpMethod::GET,
-                            url: "https://httpbin.org/delay/2".to_string(),
-                        },
-                    ],
-                    expanded: false,
-                },
-            ],
+            collections,
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
@@ -398,9 +93,7 @@ impl Default for PostmanApp {
             response: None,
             response_body_content: text_editor::Content::new(),
             selected_response_tab: ResponseTab::Body,
-            context_menu_visible: false,
-            context_menu_position: (0.0, 0.0),
-            context_menu_collection: None,
+
             is_loading: false,
         }
     }
@@ -411,92 +104,10 @@ impl PostmanApp {
         text_editor::Content::with_text(body)
     }
 
-    async fn make_http_request(
-        url: String,
-        method: HttpMethod,
-        headers: Vec<(String, String)>,
-        body_text: String,
-    ) -> Result<ResponseData, String> {
-        if url.is_empty() {
-            return Err("Please enter a URL".to_string());
-        }
-
-        let start_time = Instant::now();
-
-        // Create reqwest client
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-        // Build request
-        let mut request_builder = match method {
-            HttpMethod::GET => client.get(&url),
-            HttpMethod::POST => client.post(&url),
-            HttpMethod::PUT => client.put(&url),
-            HttpMethod::DELETE => client.delete(&url),
-            HttpMethod::PATCH => client.patch(&url),
-            HttpMethod::HEAD => client.head(&url),
-            HttpMethod::OPTIONS => client.request(reqwest::Method::OPTIONS, &url),
-        };
-
-        // Add headers
-        for (key, value) in headers {
-            if !key.is_empty() && !value.is_empty() {
-                request_builder = request_builder.header(&key, &value);
-            }
-        }
-
-        // Add body for methods that support it
-        if matches!(method, HttpMethod::POST | HttpMethod::PUT | HttpMethod::PATCH) && !body_text.is_empty() {
-            request_builder = request_builder.body(body_text);
-        }
-
-        // Send request
-        let response = request_builder.send().await
-            .map_err(|e| format!("Request failed: {}", e))?;
-
-        let status = response.status().as_u16();
-        let status_text = response.status().canonical_reason().unwrap_or("Unknown").to_string();
-        
-        // Extract headers
-        let response_headers: Vec<(String, String)> = response
-            .headers()
-            .iter()
-            .map(|(name, value)| {
-                (name.to_string(), value.to_str().unwrap_or("").to_string())
-            })
-            .collect();
-
-        // Get response body
-        let body = response.text().await
-            .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-        let elapsed = start_time.elapsed();
-        let size = body.len();
-
-        Ok(ResponseData {
-            status,
-            status_text,
-            headers: response_headers,
-            body,
-            size,
-            time: elapsed.as_millis() as u64,
-        })
-    }
-
-    fn get_content_type(headers: &[(String, String)]) -> String {
-        headers
-            .iter()
-            .find(|(key, _)| key.to_lowercase() == "content-type")
-            .map(|(_, value)| value.clone())
-            .unwrap_or_else(|| "text/plain".to_string())
-    }
-
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::PaneResized(resize_event) => {
-                self.panes.resize(resize_event.split, resize_event.ratio);
+            Message::PaneResized(event) => {
+                self.panes.resize(event.split, event.ratio);
                 Task::none()
             }
             Message::UrlChanged(url) => {
@@ -508,23 +119,33 @@ impl PostmanApp {
                 Task::none()
             }
             Message::SendRequest => {
-                // Set loading state
                 self.is_loading = true;
-                
-                // Perform HTTP request asynchronously
-                let url = self.current_request.url.clone();
-                let method = self.current_request.method.clone();
-                let headers = self.current_request.headers.clone();
-                let body_text = self.current_request.body.text();
-
-                return Task::perform(
-                    Self::make_http_request(url, method, headers, body_text),
-                    Message::RequestCompleted,
-                );
+                let config = self.current_request.clone();
+                Task::perform(send_request(config), Message::RequestCompleted)
             }
             Message::CancelRequest => {
-                // Clear loading state when request is cancelled
                 self.is_loading = false;
+                Task::none()
+            }
+            Message::RequestCompleted(result) => {
+                self.is_loading = false;
+                match result {
+                    Ok(response) => {
+                        self.response_body_content = Self::create_response_content(&response.body);
+                        self.response = Some(response);
+                    }
+                    Err(error) => {
+                        self.response_body_content = Self::create_response_content(&error);
+                        self.response = Some(ResponseData {
+                            status: 0,
+                            status_text: "Error".to_string(),
+                            headers: vec![],
+                            body: error,
+                            size: 0,
+                            time: 0,
+                        });
+                    }
+                }
                 Task::none()
             }
             Message::CollectionToggled(index) => {
@@ -540,6 +161,14 @@ impl PostmanApp {
                         self.current_request.url = request.url.clone();
                     }
                 }
+                Task::none()
+            }
+            Message::TabSelected(tab) => {
+                self.current_request.selected_tab = tab;
+                Task::none()
+            }
+            Message::ResponseTabSelected(tab) => {
+                self.selected_response_tab = tab;
                 Task::none()
             }
             Message::HeaderKeyChanged(index, key) => {
@@ -564,25 +193,6 @@ impl PostmanApp {
                 }
                 Task::none()
             }
-            Message::BodyChanged(action) => {
-                self.current_request.body.perform(action);
-                Task::none()
-            }
-            Message::ResponseBodyAction(action) => {
-                // Allow all actions for text selection and navigation
-                // The content remains read-only because it's recreated from response.body
-                self.response_body_content.perform(action);
-                Task::none()
-            }
-
-            Message::TabSelected(tab) => {
-                self.current_request.selected_tab = tab;
-                Task::none()
-            }
-            Message::ResponseTabSelected(tab) => {
-                self.selected_response_tab = tab;
-                Task::none()
-            }
             Message::ParamKeyChanged(index, key) => {
                 if let Some(param) = self.current_request.params.get_mut(index) {
                     param.0 = key;
@@ -605,120 +215,92 @@ impl PostmanApp {
                 }
                 Task::none()
             }
+            Message::BodyChanged(action) => {
+                self.current_request.body.perform(action);
+                Task::none()
+            }
+            Message::ResponseBodyAction(action) => {
+                self.response_body_content.perform(action);
+                Task::none()
+            }
             Message::AuthTypeChanged(auth_type) => {
                 self.current_request.auth_type = auth_type;
                 Task::none()
             }
-            Message::ShowContextMenu(collection_index, x, y) => {
-                self.context_menu_visible = true;
-                self.context_menu_position = (x, y);
-                self.context_menu_collection = Some(collection_index);
-                Task::none()
-            }
-            Message::HideContextMenu => {
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
-                Task::none()
-            }
+
             Message::AddHttpRequest(collection_index) => {
                 if let Some(collection) = self.collections.get_mut(collection_index) {
                     collection.requests.push(SavedRequest {
-                        name: "New Request".to_string(),
+                        name: format!("New Request {}", collection.requests.len() + 1),
                         method: HttpMethod::GET,
                         url: String::new(),
                     });
                 }
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
+
                 Task::none()
             }
             Message::DeleteFolder(collection_index) => {
                 if collection_index < self.collections.len() {
                     self.collections.remove(collection_index);
                 }
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
+
                 Task::none()
             }
-            Message::AddFolder(_) => {
+            Message::AddFolder(_collection_index) => {
                 self.collections.push(RequestCollection {
-                    name: "New Collection".to_string(),
+                    name: format!("New Collection {}", self.collections.len() + 1),
                     requests: vec![],
                     expanded: true,
                 });
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
+
+                Task::none()
+            }
+            Message::RenameFolder(collection_index) => {
+                // For now, just add a number to the name as a placeholder
+                // In a real app, this would open a dialog or text input
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    collection.name = format!("{} (Renamed)", collection.name);
+                }
+
                 Task::none()
             }
             Message::SendRequestFromMenu(collection_index, request_index) => {
                 if let Some(collection) = self.collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
-                        // Load the request into current_request
                         self.current_request.method = request.method.clone();
                         self.current_request.url = request.url.clone();
-                        
-                        // Set loading state
                         self.is_loading = true;
-                        
-                        // Validate URL
-                        let url = self.current_request.url.clone();
-                        if url.is_empty() {
-                            self.is_loading = false;
-                            let error_body = "Please enter a URL".to_string();
-                            self.response_body_content = Self::create_response_content(&error_body);
-                            self.response = Some(ResponseData {
-                                status: 0,
-                                status_text: "Error".to_string(),
-                                headers: vec![],
-                                body: error_body.clone(),
-                                size: 0,
-                                time: 0,
-                            });
-                            return Task::none();
-                        }
+                        let config = self.current_request.clone();
 
-                        // Use async request handling
-                        let method = self.current_request.method.clone();
-                        let headers = self.current_request.headers.clone();
-                        let body_text = self.current_request.body.text();
-
-                        return Task::perform(
-                            Self::make_http_request(url, method, headers, body_text),
-                            Message::RequestCompleted,
-                        );
+                        return Task::perform(send_request(config), Message::RequestCompleted);
                     }
                 }
+
                 Task::none()
             }
             Message::CopyRequestAsCurl(collection_index, request_index) => {
                 if let Some(collection) = self.collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
-                        // Generate curl command and copy to clipboard
-                        let curl_command = format!("curl -X {} '{}'", request.method, request.url);
-                        // In a real app, you'd copy this to the clipboard
+                        let mut temp_config = self.current_request.clone();
+                        temp_config.method = request.method.clone();
+                        temp_config.url = request.url.clone();
+                        let curl_command = generate_curl_command(&temp_config);
+                        // In a real app, you'd copy to clipboard here
                         println!("Curl command: {}", curl_command);
                     }
                 }
                 Task::none()
             }
-            Message::RenameRequest(collection_index, request_index) => {
-                // In a real app, you'd open a rename dialog
-                if let Some(collection) = self.collections.get_mut(collection_index) {
-                    if let Some(request) = collection.requests.get_mut(request_index) {
-                        request.name = format!("{} (renamed)", request.name);
-                    }
-                }
+            Message::RenameRequest(_collection_index, _request_index) => {
+                // TODO: Implement rename functionality
                 Task::none()
             }
             Message::DuplicateRequest(collection_index, request_index) => {
                 if let Some(collection) = self.collections.get_mut(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index) {
-                        let duplicated_request = SavedRequest {
-                            name: format!("{} Copy", request.name),
-                            method: request.method.clone(),
-                            url: request.url.clone(),
-                        };
-                        collection.requests.insert(request_index + 1, duplicated_request);
+                    if let Some(request) = collection.requests.get(request_index).cloned() {
+                        let mut new_request = request;
+                        new_request.name = format!("{} (Copy)", new_request.name);
+                        collection.requests.push(new_request);
                     }
                 }
                 Task::none()
@@ -727,215 +309,6 @@ impl PostmanApp {
                 if let Some(collection) = self.collections.get_mut(collection_index) {
                     if request_index < collection.requests.len() {
                         collection.requests.remove(request_index);
-                    }
-                }
-                Task::none()
-            }
-            Message::RequestCompleted(result) => {
-                // Clear loading state
-                self.is_loading = false;
-                
-                match result {
-                    Ok(response_data) => {
-                        self.response_body_content = Self::create_response_content(&response_data.body);
-                        self.response = Some(response_data);
-                    }
-                    Err(error) => {
-                        let error_body = format!("Request failed: {}", error);
-                        self.response_body_content = Self::create_response_content(&error_body);
-                        self.response = Some(ResponseData {
-                            status: 0,
-                            status_text: "Error".to_string(),
-                            headers: vec![],
-                            body: error_body.clone(),
-                            size: 0,
-                            time: 0,
-                        });
-                    }
-                }
-                Task::none()
-            }
-            Message::CollectionToggled(index) => {
-                if let Some(collection) = self.collections.get_mut(index) {
-                    collection.expanded = !collection.expanded;
-                }
-                Task::none()
-            }
-            Message::RequestSelected(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index) {
-                        self.current_request.method = request.method.clone();
-                        self.current_request.url = request.url.clone();
-                    }
-                }
-                Task::none()
-            }
-            Message::HeaderKeyChanged(index, key) => {
-                if let Some(header) = self.current_request.headers.get_mut(index) {
-                    header.0 = key;
-                }
-                Task::none()
-            }
-            Message::HeaderValueChanged(index, value) => {
-                if let Some(header) = self.current_request.headers.get_mut(index) {
-                    header.1 = value;
-                }
-                Task::none()
-            }
-            Message::AddHeader => {
-                self.current_request.headers.push((String::new(), String::new()));
-                Task::none()
-            }
-            Message::RemoveHeader(index) => {
-                if index < self.current_request.headers.len() {
-                    self.current_request.headers.remove(index);
-                }
-                Task::none()
-            }
-            Message::BodyChanged(action) => {
-                self.current_request.body.perform(action);
-                Task::none()
-            }
-            Message::ResponseBodyAction(action) => {
-                // Allow all actions for text selection and navigation
-                // The content remains read-only because it's recreated from response.body
-                self.response_body_content.perform(action);
-                Task::none()
-            }
-
-            Message::TabSelected(tab) => {
-                self.current_request.selected_tab = tab;
-                Task::none()
-            }
-            Message::ResponseTabSelected(tab) => {
-                self.selected_response_tab = tab;
-                Task::none()
-            }
-            Message::ParamKeyChanged(index, key) => {
-                if let Some(param) = self.current_request.params.get_mut(index) {
-                    param.0 = key;
-                }
-                Task::none()
-            }
-            Message::ParamValueChanged(index, value) => {
-                if let Some(param) = self.current_request.params.get_mut(index) {
-                    param.1 = value;
-                }
-                Task::none()
-            }
-            Message::AddParam => {
-                self.current_request.params.push((String::new(), String::new()));
-                Task::none()
-            }
-            Message::RemoveParam(index) => {
-                if index < self.current_request.params.len() {
-                    self.current_request.params.remove(index);
-                }
-                Task::none()
-            }
-            Message::AuthTypeChanged(auth_type) => {
-                self.current_request.auth_type = auth_type;
-                Task::none()
-            }
-            Message::ShowContextMenu(collection_index, x, y) => {
-                self.context_menu_visible = true;
-                self.context_menu_position = (x, y);
-                self.context_menu_collection = Some(collection_index);
-                Task::none()
-            }
-            Message::HideContextMenu => {
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
-                Task::none()
-            }
-            Message::AddHttpRequest(collection_index) => {
-                if let Some(collection) = self.collections.get_mut(collection_index) {
-                    collection.requests.push(SavedRequest {
-                        name: "New Request".to_string(),
-                        method: HttpMethod::GET,
-                        url: String::new(),
-                    });
-                }
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
-                Task::none()
-            }
-            Message::DeleteFolder(collection_index) => {
-                if collection_index < self.collections.len() {
-                    self.collections.remove(collection_index);
-                }
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
-                Task::none()
-            }
-            Message::AddFolder(_) => {
-                self.collections.push(RequestCollection {
-                    name: "New Collection".to_string(),
-                    requests: vec![],
-                    expanded: true,
-                });
-                self.context_menu_visible = false;
-                self.context_menu_collection = None;
-                Task::none()
-            }
-            Message::CopyRequestAsCurl(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index) {
-                        // Generate curl command and copy to clipboard
-                        let curl_command = format!("curl -X {} '{}'", request.method, request.url);
-                        // In a real app, you'd copy this to the clipboard
-                        println!("Curl command: {}", curl_command);
-                    }
-                }
-                Task::none()
-            }
-            Message::RenameRequest(collection_index, request_index) => {
-                // In a real app, you'd open a rename dialog
-                if let Some(collection) = self.collections.get_mut(collection_index) {
-                    if let Some(request) = collection.requests.get_mut(request_index) {
-                        request.name = format!("{} (renamed)", request.name);
-                    }
-                }
-                Task::none()
-            }
-            Message::DuplicateRequest(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get_mut(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index) {
-                        let duplicated_request = SavedRequest {
-                            name: format!("{} Copy", request.name),
-                            method: request.method.clone(),
-                            url: request.url.clone(),
-                        };
-                        collection.requests.insert(request_index + 1, duplicated_request);
-                    }
-                }
-                Task::none()
-            }
-            Message::DeleteRequest(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get_mut(collection_index) {
-                    if request_index < collection.requests.len() {
-                        collection.requests.remove(request_index);
-                    }
-                }
-                Task::none()
-            }
-            Message::RequestCompleted(result) => {
-                match result {
-                    Ok(response_data) => {
-                        self.response_body_content = Self::create_response_content(&response_data.body);
-                        self.response = Some(response_data);
-                    }
-                    Err(error_message) => {
-                        let error_body = format!("Request failed: {}", error_message);
-                        self.response_body_content = Self::create_response_content(&error_body);
-                        self.response = Some(ResponseData {
-                            status: 0,
-                            status_text: "Error".to_string(),
-                            headers: vec![],
-                            body: error_body.clone(),
-                            size: 0,
-                            time: 0,
-                        });
                     }
                 }
                 Task::none()
@@ -943,51 +316,19 @@ impl PostmanApp {
         }
     }
 
-    fn view(&self) -> Element<Message> {
-        let pane_grid = PaneGrid::new(&self.panes, |_pane, content, _is_maximized| {
-            let body = match content {
+    fn view(&self) -> Element<'_, Message> {
+        let pane_grid = PaneGrid::new(&self.panes, |_id, pane, _is_maximized| {
+            let content = match pane {
                 PaneContent::Collections => self.collections_view(),
                 PaneContent::RequestConfig => self.request_config_view(),
                 PaneContent::Response => self.response_view(),
             };
 
-            let bordered_body = match content {
-                 PaneContent::Collections => {
-                     // Left panel: no border
-                     container(body)
-                 },
-                 PaneContent::RequestConfig => {
-                     // Middle panel: left and right borders only using vertical rules
-                     container(
-                         row![
-                             container("")
-                                 .width(Length::Fixed(1.0))
-                                 .height(Fill)
-                                 .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.7, 0.7, 0.7))), // Gray
-                                     ..Default::default()
-                                 }),
-                             container(body).width(Fill).padding(0),
-                             container("")
-                                 .width(Length::Fixed(1.0))
-                                 .height(Fill)
-                                 .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.7, 0.7, 0.7))), // Gray
-                                     ..Default::default()
-                                 })
-                         ]
-                     )
-                     .width(Fill)
-                     .height(Fill)
-                     .padding(0)
-                 },
-                 PaneContent::Response => {
-                     // Right panel: no border
-                     container(body)
-                 },
-             };
-
-            pane_grid::Content::new(bordered_body)
+            container(content)
+                .width(Fill)
+                .height(Fill)
+                .padding(0)
+                .into()
         })
         .on_resize(10, Message::PaneResized)
         .spacing(1)
@@ -1006,950 +347,23 @@ impl PostmanApp {
             },
         });
 
-        let base_view = container(pane_grid)
-            .width(Fill)
-            .height(Fill);
-
-        if self.context_menu_visible {
-            stack![
-                base_view,
-                // Semi-transparent overlay to capture clicks
-                mouse_area(
-                    container("")
-                        .width(Fill)
-                        .height(Fill)
-                        .style(|_theme| container::Style {
-                            background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                            ..Default::default()
-                        })
-                )
-                .on_press(Message::HideContextMenu),
-                // Context menu
-                container(
-                    column![
-                        button(text("Add HTTP Request"))
-                             .on_press(Message::AddHttpRequest(self.context_menu_collection.unwrap_or(0)))
-                             .width(Length::Fixed(150.0))
-                             .style(|theme: &Theme, _status| button::Style {
-                                 background: Some(iced::Background::Color(theme.palette().background)),
-                                 text_color: theme.palette().text,
-                                 border: iced::Border::default(),
-                                 ..Default::default()
-                             }),
-                         button(text("Delete Folder"))
-                             .on_press(Message::DeleteFolder(self.context_menu_collection.unwrap_or(0)))
-                             .width(Length::Fixed(150.0))
-                             .style(|theme: &Theme, _status| button::Style {
-                                 background: Some(iced::Background::Color(theme.palette().background)),
-                                 text_color: theme.palette().text,
-                                 border: iced::Border::default(),
-                                 ..Default::default()
-                             }),
-                         button(text("Add Folder"))
-                             .on_press(Message::AddFolder(self.context_menu_collection.unwrap_or(0)))
-                             .width(Length::Fixed(150.0))
-                             .style(|theme: &Theme, _status| button::Style {
-                                 background: Some(iced::Background::Color(theme.palette().background)),
-                                 text_color: theme.palette().text,
-                                 border: iced::Border::default(),
-                                 ..Default::default()
-                             }),
-                    ]
-                    .spacing(2)
-                )
-                .style(|theme| container::Style {
-                    background: Some(iced::Background::Color(theme.palette().background)),
-                    border: iced::Border {
-                        color: theme.palette().text,
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: iced::Color::BLACK,
-                        offset: iced::Vector::new(2.0, 2.0),
-                        blur_radius: 4.0,
-                    },
-                    text_color: None,
-                })
-                .padding(4)
-                .width(Length::Shrink)
-                .height(Length::Shrink)
-            ]
-            .into()
-        } else {
-            base_view.into()
-        }
+        pane_grid.into()
     }
 
-    fn collections_view(&self) -> Element<Message> {
-        let title = container(
-            text("Collections")
-                .size(16)
-                .color(iced::Color::from_rgb(0.2, 0.2, 0.2))
+    fn collections_view(&self) -> Element<'_, Message> {
+        collections_panel(&self.collections)
+    }
+
+    fn request_config_view(&self) -> Element<'_, Message> {
+        request_panel(&self.current_request, self.is_loading)
+    }
+
+    fn response_view(&self) -> Element<'_, Message> {
+        response_panel(
+            &self.response,
+            &self.response_body_content,
+            self.selected_response_tab.clone(),
+            self.is_loading,
         )
-        .padding([10.0, 15.0])
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95))),
-            border: iced::Border {
-                color: iced::Color::from_rgb(0.85, 0.85, 0.85),
-                width: 0.0,
-                radius: iced::border::Radius::from(0.0),
-            },
-            ..Default::default()
-        });
-
-        let mut collections_content = column![title].spacing(2);
-
-        for (collection_index, collection) in self.collections.iter().enumerate() {
-            // Tree node for collection/folder
-            let tree_symbol = text(if collection.expanded { "▼" } else { "▶" })
-                .size(10)
-                .color(iced::Color::from_rgb(0.4, 0.4, 0.4));
-            
-            let collection_header = button(
-                row![
-                    tree_symbol,
-                    text(&collection.name)
-                        .size(13)
-                        .color(iced::Color::from_rgb(0.1, 0.1, 0.1))
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center)
-            )
-            .on_press(Message::CollectionToggled(collection_index))
-            .style(|theme, status| {
-                let base_style = button::text(theme, status);
-                button::Style {
-                    background: match status {
-                        button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95))),
-                        _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                    },
-                    ..base_style
-                }
-            })
-            .width(Fill)
-            .padding([4.0, 8.0]);
-
-            // Wrap collection header with context menu
-            let collection_with_menu = ContextMenu::new(
-                collection_header,
-                move || {
-                    container(
-                        column![
-                            button(text("Add Request"))
-                                .on_press(Message::AddHttpRequest(collection_index))
-                                .style(|theme, status| {
-                                    let base_style = button::text(theme, status);
-                                    button::Style {
-                                        background: match status {
-                                            button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
-                                            _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                        },
-                                        text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
-                                        ..base_style
-                                    }
-                                })
-                                .width(Length::Fixed(120.0))
-                                .padding([6, 12]),
-                            button(text("Add Folder"))
-                                .on_press(Message::AddFolder(collection_index))
-                                .style(|theme, status| {
-                                    let base_style = button::text(theme, status);
-                                    button::Style {
-                                        background: match status {
-                                            button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
-                                            _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                        },
-                                        text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
-                                        ..base_style
-                                    }
-                                })
-                                .width(Length::Fixed(120.0))
-                                .padding([6, 12]),
-                            button(text("Delete Folder"))
-                                .on_press(Message::DeleteFolder(collection_index))
-                                .style(|theme, status| {
-                                    let base_style = button::text(theme, status);
-                                    button::Style {
-                                        background: match status {
-                                            button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(1.0, 0.9, 0.9))),
-                                            _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                        },
-                                        text_color: iced::Color::from_rgb(0.8, 0.2, 0.2),
-                                        ..base_style
-                                    }
-                                })
-                                .width(Length::Fixed(120.0))
-                                .padding([6, 12])
-                        ]
-                        .spacing(1)
-                    )
-                    .style(|_theme| container::Style {
-                        background: Some(iced::Background::Color(iced::Color::WHITE)),
-                        border: iced::Border {
-                            color: iced::Color::from_rgb(0.8, 0.8, 0.8),
-                            width: 1.0,
-                            radius: iced::border::Radius::from(6.0),
-                        },
-                        shadow: iced::Shadow {
-                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.2),
-                            offset: iced::Vector::new(2.0, 2.0),
-                            blur_radius: 8.0,
-                        },
-                        ..Default::default()
-                    })
-                    .padding(4)
-                    .into()
-                }
-            );
-
-            collections_content = collections_content.push(collection_with_menu);
-
-            // Tree branches for requests when expanded
-            if collection.expanded {
-                for (request_index, request) in collection.requests.iter().enumerate() {
-                    let is_last = request_index == collection.requests.len() - 1;
-                    
-                    let method_color = match request.method {
-                        HttpMethod::GET => iced::Color::from_rgb(0.0, 0.7, 0.0),
-                        HttpMethod::POST => iced::Color::from_rgb(1.0, 0.5, 0.0),
-                        HttpMethod::PUT => iced::Color::from_rgb(0.0, 0.5, 1.0),
-                        HttpMethod::DELETE => iced::Color::from_rgb(1.0, 0.2, 0.2),
-                        _ => iced::Color::from_rgb(0.5, 0.5, 0.5),
-                    };
-
-                    let method_badge = container(
-                        text(format!("{:?}", request.method))
-                            .size(9)
-                            .color(iced::Color::WHITE)
-                    )
-                    .padding([2.0, 6.0])
-                    .style(move |_theme| container::Style {
-                        background: Some(iced::Background::Color(method_color)),
-                        border: iced::Border {
-                            color: method_color,
-                            width: 1.0,
-                            radius: iced::border::Radius::from(3.0),
-                        },
-                        ..Default::default()
-                    });
-
-                    let request_item = button(
-                        row![
-                            method_badge,
-                            text(&request.name)
-                                .size(12)
-                                .color(iced::Color::from_rgb(0.2, 0.2, 0.2))
-                        ]
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center)
-                    )
-                    .on_press(Message::RequestSelected(collection_index, request_index))
-                    .style(|theme, status| {
-                        let base_style = button::text(theme, status);
-                        button::Style {
-                            background: match status {
-                                button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.92, 0.95, 1.0))),
-                                _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                            },
-                            border: iced::Border {
-                                color: match status {
-                                    button::Status::Hovered => iced::Color::from_rgb(0.8, 0.9, 1.0),
-                                    _ => iced::Color::TRANSPARENT,
-                                },
-                                width: 1.0,
-                                radius: iced::border::Radius::from(3.0),
-                            },
-                            ..base_style
-                        }
-                    })
-                    .width(Fill)
-                    .padding([4.0, 8.0]);
-
-                    // Wrap request item with context menu
-                    let request_with_menu = ContextMenu::new(
-                        request_item,
-                        move || {
-                            container(
-                                column![
-                                    button(text("Send"))
-                                        .on_press(Message::SendRequestFromMenu(collection_index, request_index))
-                                        .style(|theme, status| {
-                                            let base_style = button::text(theme, status);
-                                            button::Style {
-                                                background: match status {
-                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
-                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                                },
-                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
-                                                ..base_style
-                                            }
-                                        })
-                                        .width(Length::Fixed(140.0))
-                                        .padding([6, 12]),
-                                    button(text("Copy as Curl"))
-                                        .on_press(Message::CopyRequestAsCurl(collection_index, request_index))
-                                        .style(|theme, status| {
-                                            let base_style = button::text(theme, status);
-                                            button::Style {
-                                                background: match status {
-                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
-                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                                },
-                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
-                                                ..base_style
-                                            }
-                                        })
-                                        .width(Length::Fixed(140.0))
-                                        .padding([6, 12]),
-                                    // Divider
-                                    container(
-                                        container(text(""))
-                                            .style(|_theme| container::Style {
-                                                background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.8, 0.8))),
-                                                ..Default::default()
-                                            })
-                                            .height(1)
-                                    )
-                                    .padding([4, 0]),
-                                    button(text("Rename"))
-                                        .on_press(Message::RenameRequest(collection_index, request_index))
-                                        .style(|theme, status| {
-                                            let base_style = button::text(theme, status);
-                                            button::Style {
-                                                background: match status {
-                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
-                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                                },
-                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
-                                                ..base_style
-                                            }
-                                        })
-                                        .width(Length::Fixed(140.0))
-                                        .padding([6, 12]),
-                                    button(text("Duplicate"))
-                                        .on_press(Message::DuplicateRequest(collection_index, request_index))
-                                        .style(|theme, status| {
-                                            let base_style = button::text(theme, status);
-                                            button::Style {
-                                                background: match status {
-                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
-                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                                },
-                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
-                                                ..base_style
-                                            }
-                                        })
-                                        .width(Length::Fixed(140.0))
-                                        .padding([6, 12]),
-                                    button(text("Delete"))
-                                        .on_press(Message::DeleteRequest(collection_index, request_index))
-                                        .style(|theme, status| {
-                                            let base_style = button::text(theme, status);
-                                            button::Style {
-                                                background: match status {
-                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(1.0, 0.9, 0.9))),
-                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                                                },
-                                                text_color: iced::Color::from_rgb(0.8, 0.2, 0.2),
-                                                ..base_style
-                                            }
-                                        })
-                                        .width(Length::Fixed(140.0))
-                                        .padding([6, 12])
-                                ]
-                                .spacing(1)
-                            )
-                            .style(|_theme| container::Style {
-                                background: Some(iced::Background::Color(iced::Color::WHITE)),
-                                border: iced::Border {
-                                    color: iced::Color::from_rgb(0.8, 0.8, 0.8),
-                                    width: 1.0,
-                                    radius: iced::border::Radius::from(6.0),
-                                },
-                                shadow: iced::Shadow {
-                                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.2),
-                                    offset: iced::Vector::new(2.0, 2.0),
-                                    blur_radius: 8.0,
-                                },
-                                ..Default::default()
-                            })
-                            .padding(4)
-                            .into()
-                        }
-                    );
-
-                    collections_content = collections_content.push(
-                        container(request_with_menu)
-                             .padding([0.0, 16.0]) // Left indentation for tree structure
-                    );
-                }
-            }
-        }
-
-        container(
-            scrollable(collections_content)
-        )
-        .width(Fill)
-        .height(Fill)
-        .padding(0)
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(iced::Color::WHITE)),
-            ..Default::default()
-        })
-        .into()
-    }
-
-    fn request_config_view(&self) -> Element<Message> {
-        let title = container(
-            text("Request Configuration")
-                .size(16)
-        )
-        .padding(10);
-
-        // URL and Method section
-        let method_options = vec![
-            HttpMethod::GET,
-            HttpMethod::POST,
-            HttpMethod::PUT,
-            HttpMethod::DELETE,
-            HttpMethod::PATCH,
-            HttpMethod::HEAD,
-            HttpMethod::OPTIONS,
-        ];
-
-        let url_section = row![
-            pick_list(
-                method_options,
-                Some(self.current_request.method.clone()),
-                Message::MethodChanged
-            )
-            .width(Length::Fixed(100.0)),
-            text_input("Enter URL...", &self.current_request.url)
-                .on_input(Message::UrlChanged)
-                .width(Fill),
-            button(if self.is_loading { "Cancel" } else { "Send" })
-                .on_press(if self.is_loading { Message::CancelRequest } else { Message::SendRequest })
-                .style(button::primary)
-        ]
-        .spacing(10);
-
-        // Tab buttons
-        let tab_buttons = row![
-            button("Body")
-                .on_press(Message::TabSelected(RequestTab::Body))
-                .style(if self.current_request.selected_tab == RequestTab::Body {
-                    button::primary
-                } else {
-                    button::secondary
-                }),
-            button("Params")
-                .on_press(Message::TabSelected(RequestTab::Params))
-                .style(if self.current_request.selected_tab == RequestTab::Params {
-                    button::primary
-                } else {
-                    button::secondary
-                }),
-            button("Headers")
-                .on_press(Message::TabSelected(RequestTab::Headers))
-                .style(if self.current_request.selected_tab == RequestTab::Headers {
-                    button::primary
-                } else {
-                    button::secondary
-                }),
-            button("Auth")
-                .on_press(Message::TabSelected(RequestTab::Auth))
-                .style(if self.current_request.selected_tab == RequestTab::Auth {
-                    button::primary
-                } else {
-                    button::secondary
-                })
-        ]
-        .spacing(5);
-
-        // Tab content based on selected tab
-        let tab_content = match self.current_request.selected_tab {
-            RequestTab::Body => self.body_tab_content(),
-            RequestTab::Params => self.params_tab_content(),
-            RequestTab::Headers => self.headers_tab_content(),
-            RequestTab::Auth => self.auth_tab_content(),
-        };
-
-        let content = column![
-            title,
-            url_section,
-            tab_buttons,
-            tab_content
-        ]
-        .spacing(10);
-
-        container(content)
-        .width(Fill)
-        .height(Fill)
-        .padding(10)
-        .into()
-    }
-
-    fn params_tab_content(&self) -> Element<Message> {
-        let mut params_content = column![].spacing(5);
-
-        for (index, (key, value)) in self.current_request.params.iter().enumerate() {
-            let param_row = row![
-                text_input("Key", key)
-                    .on_input(move |k| Message::ParamKeyChanged(index, k))
-                    .width(Fill),
-                text_input("Value", value)
-                    .on_input(move |v| Message::ParamValueChanged(index, v))
-                    .width(Fill),
-                button("×")
-                    .on_press(Message::RemoveParam(index))
-                    .style(button::danger)
-                    .width(Length::Fixed(30.0))
-            ]
-            .spacing(5);
-
-            params_content = params_content.push(param_row);
-        }
-
-        let add_param_button = button("+ Add Parameter")
-            .on_press(Message::AddParam)
-            .style(button::secondary);
-
-        params_content = params_content.push(add_param_button);
-
-        container(
-            scrollable(params_content)
-        )
-        .width(Fill)
-        .height(Fill)
-        .into()
-    }
-
-    fn headers_tab_content(&self) -> Element<Message> {
-        let mut headers_content = column![].spacing(5);
-
-        for (index, (key, value)) in self.current_request.headers.iter().enumerate() {
-            let header_row = row![
-                text_input("Key", key)
-                    .on_input(move |k| Message::HeaderKeyChanged(index, k))
-                    .width(Fill),
-                text_input("Value", value)
-                    .on_input(move |v| Message::HeaderValueChanged(index, v))
-                    .width(Fill),
-                button("×")
-                    .on_press(Message::RemoveHeader(index))
-                    .style(button::danger)
-                    .width(Length::Fixed(30.0))
-            ]
-            .spacing(5);
-
-            headers_content = headers_content.push(header_row);
-        }
-
-        let add_header_button = button("+ Add Header")
-            .on_press(Message::AddHeader)
-            .style(button::secondary);
-
-        headers_content = headers_content.push(add_header_button);
-
-        container(
-            scrollable(headers_content)
-        )
-        .width(Fill)
-        .height(Fill)
-        .into()
-    }
-
-
-
-    fn body_tab_content(&self) -> Element<Message> {
-        // JSON syntax highlighter
-        #[derive(Debug, Clone, PartialEq)]
-        struct JsonHighlighterSettings;
-
-        #[derive(Debug, Clone, Copy)]
-        enum JsonHighlight {
-            String,
-            Number,
-            Boolean,
-            Null,
-            Key,
-            Punctuation,
-        }
-
-        struct JsonHighlighter {
-            current_line: usize,
-        }
-
-        impl Highlighter for JsonHighlighter {
-            type Settings = JsonHighlighterSettings;
-            type Highlight = JsonHighlight;
-            type Iterator<'a> = std::vec::IntoIter<(std::ops::Range<usize>, Self::Highlight)>;
-
-            fn new(_settings: &Self::Settings) -> Self {
-                Self { current_line: 0 }
-            }
-
-            fn update(&mut self, _new_settings: &Self::Settings) {
-                // Settings don't change for our simple highlighter
-            }
-
-            fn change_line(&mut self, line: usize) {
-                self.current_line = line;
-            }
-
-            fn highlight_line(&mut self, line: &str) -> Self::Iterator<'_> {
-                let mut highlights = Vec::new();
-                let mut chars = line.char_indices().peekable();
-
-                while let Some((start, ch)) = chars.next() {
-                    match ch {
-                        '"' => {
-                            // String highlighting
-                            let mut end = start + 1;
-                            let mut escaped = false;
-
-                            while let Some((i, c)) = chars.next() {
-                                end = i + c.len_utf8();
-                                if !escaped && c == '"' {
-                                    break;
-                                }
-                                escaped = !escaped && c == '\\';
-                            }
-
-                            // Check if this is a key (followed by colon)
-                            let remaining: String = line.chars().skip(end).collect();
-                            let is_key = remaining.trim_start().starts_with(':');
-
-                            highlights.push((
-                                start..end,
-                                if is_key { JsonHighlight::Key } else { JsonHighlight::String }
-                            ));
-                        }
-                        '0'..='9' | '-' => {
-                            // Number highlighting
-                            let mut end = start + ch.len_utf8();
-                            while let Some((i, c)) = chars.peek() {
-                                if c.is_ascii_digit() || *c == '.' || *c == 'e' || *c == 'E' || *c == '+' || *c == '-' {
-                                    end = *i + c.len_utf8();
-                                    chars.next();
-                                } else {
-                                    break;
-                                }
-                            }
-                            highlights.push((start..end, JsonHighlight::Number));
-                        }
-                        't' | 'f' => {
-                            // Boolean highlighting
-                            if line[start..].starts_with("true") {
-                                highlights.push((start..start + 4, JsonHighlight::Boolean));
-                                // Skip the remaining characters
-                                chars.nth(2);
-                            } else if line[start..].starts_with("false") {
-                                highlights.push((start..start + 5, JsonHighlight::Boolean));
-                                // Skip the remaining characters
-                                chars.nth(3);
-                            }
-                        }
-                        'n' => {
-                            // Null highlighting
-                            if line[start..].starts_with("null") {
-                                highlights.push((start..start + 4, JsonHighlight::Null));
-                                // Skip the remaining characters
-                                chars.nth(2);
-                            }
-                        }
-                        '{' | '}' | '[' | ']' | ',' | ':' => {
-                            // Punctuation highlighting
-                            highlights.push((start..start + ch.len_utf8(), JsonHighlight::Punctuation));
-                        }
-                        _ => {
-                            // Skip other characters
-                        }
-                    }
-                }
-
-                highlights.into_iter()
-            }
-
-            fn current_line(&self) -> usize {
-                self.current_line
-            }
-        }
-
-        // Note: The JsonHighlighter is implemented above but the text_editor widget
-        // in this version of Iced may not support direct highlighting integration.
-        // The highlighter implementation follows the advanced Highlighter trait correctly.
-
-        let body_editor = text_editor(&self.current_request.body)
-            .placeholder("Enter JSON request body here...")
-            .on_action(Message::BodyChanged)
-            .height(Fill);
-
-        container(
-            column![
-                text("Request Body (JSON)").size(14),
-                body_editor
-            ]
-            .spacing(10)
-        )
-        .width(Fill)
-        .height(Fill)
-        .into()
-    }
-
-    fn auth_tab_content(&self) -> Element<Message> {
-        let auth_options = vec![
-            AuthType::None,
-            AuthType::Bearer,
-            AuthType::Basic,
-            AuthType::ApiKey,
-        ];
-
-        let auth_selector = pick_list(
-            auth_options,
-            Some(self.current_request.auth_type.clone()),
-            Message::AuthTypeChanged
-        );
-
-        container(
-            column![
-                text("Authentication").size(14),
-                auth_selector,
-                text("Authentication configuration will be implemented here").size(12)
-            ]
-            .spacing(10)
-        )
-        .width(Fill)
-        .height(Fill)
-        .into()
-    }
-
-    fn response_view(&self) -> Element<Message> {
-        let title = container(
-            text("Response")
-                .size(16)
-        )
-        .padding(10);
-
-        if let Some(response) = &self.response {
-            let status_color = if response.status >= 200 && response.status < 300 {
-                iced::Color::from_rgb(0.0, 0.8, 0.0)
-            } else if response.status >= 400 {
-                iced::Color::from_rgb(1.0, 0.2, 0.2)
-            } else {
-                iced::Color::from_rgb(1.0, 0.6, 0.0)
-            };
-
-            // Status information row at the top
-            let mut status_info_elements = vec![];
-            
-            // Add loading indicator if request is in progress
-            if self.is_loading {
-                status_info_elements.push(
-                    text("🔄 Sending...")
-                        .size(14)
-                        .color(iced::Color::from_rgb(0.0, 0.6, 1.0))
-                        .into()
-                );
-            }
-            
-            // Add status information
-            status_info_elements.push(
-                text(format!("Status: {} {}", response.status, response.status_text))
-                    .color(status_color)
-                    .size(14)
-                    .into()
-            );
-            status_info_elements.push(
-                text(format!("Time: {}ms", response.time))
-                    .size(12)
-                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-                    .into()
-            );
-            status_info_elements.push(
-                text(format!("Size: {} bytes", response.size))
-                    .size(12)
-                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-                    .into()
-            );
-            
-            let status_info_row = row(status_info_elements).spacing(20);
-
-            // Tab buttons for response content
-            let tab_buttons = row![
-                button("Body")
-                    .on_press(Message::ResponseTabSelected(ResponseTab::Body))
-                    .style(if self.selected_response_tab == ResponseTab::Body {
-                        button::primary
-                    } else {
-                        button::secondary
-                    }),
-                button("Headers")
-                    .on_press(Message::ResponseTabSelected(ResponseTab::Headers))
-                    .style(if self.selected_response_tab == ResponseTab::Headers {
-                        button::primary
-                    } else {
-                        button::secondary
-                    })
-            ]
-            .spacing(5);
-
-            // Tab content based on selected tab
-            let tab_content = match self.selected_response_tab {
-                ResponseTab::Body => self.response_body_content(response),
-                ResponseTab::Headers => self.response_headers_content(response),
-            };
-
-            let content = column![
-                title,
-                status_info_row,
-                tab_buttons,
-                tab_content
-            ]
-            .spacing(10);
-
-            container(content)
-                .width(Fill)
-                .height(Fill)
-                .padding(10)
-                .into()
-        } else {
-            // Status information row - show loading or placeholder
-            let mut status_info_elements = vec![];
-            
-            if self.is_loading {
-                status_info_elements.push(
-                    text("🔄 Sending...")
-                        .size(14)
-                        .color(iced::Color::from_rgb(0.0, 0.6, 1.0))
-                        .into()
-                );
-            }
-            
-            status_info_elements.push(
-                text("Status: -")
-                    .size(14)
-                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-                    .into()
-            );
-            status_info_elements.push(
-                text("Time: -")
-                    .size(12)
-                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-                    .into()
-            );
-            status_info_elements.push(
-                text("Size: -")
-                    .size(12)
-                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-                    .into()
-            );
-            
-            let status_info_row = row(status_info_elements).spacing(20);
-
-            // Tab buttons for response content
-            let tab_buttons = row![
-                button("Body")
-                    .on_press(Message::ResponseTabSelected(ResponseTab::Body))
-                    .style(if self.selected_response_tab == ResponseTab::Body {
-                        button::primary
-                    } else {
-                        button::secondary
-                    }),
-                button("Headers")
-                    .on_press(Message::ResponseTabSelected(ResponseTab::Headers))
-                    .style(if self.selected_response_tab == ResponseTab::Headers {
-                        button::primary
-                    } else {
-                        button::secondary
-                    })
-            ]
-            .spacing(5);
-
-            // Tab content - show placeholder content
-            let placeholder_message = if self.is_loading {
-                "Request in progress..."
-            } else {
-                "No response yet. Send a request to see the response here."
-            };
-            
-            let placeholder_color = if self.is_loading {
-                iced::Color::from_rgb(0.0, 0.6, 1.0)
-            } else {
-                iced::Color::from_rgb(0.6, 0.6, 0.6)
-            };
-
-            let tab_content = container(
-                text(placeholder_message)
-                    .size(14)
-                    .color(placeholder_color)
-            )
-            .width(Fill)
-            .height(Fill);
-
-            let content = column![
-                title,
-                status_info_row,
-                tab_buttons,
-                tab_content
-            ]
-            .spacing(10);
-
-            container(content)
-                .width(Fill)
-                .height(Fill)
-                .padding(10)
-                .into()
-        }
-    }
-
-    fn response_body_content(&self, _response: &ResponseData) -> Element<Message> {
-        container(
-            text_editor(&self.response_body_content)
-                .size(12.0)
-                .on_action(Message::ResponseBodyAction)
-        )
-        .width(Fill)
-        .height(Fill)
-        .into()
-    }
-
-    fn response_headers_content<'a>(&self, response: &'a ResponseData) -> Element<'a, Message> {
-        let mut headers_content = column![].spacing(6);
-
-        for (key, value) in &response.headers {
-            let header_row = container(
-                row![
-                    text(key).size(12).width(Length::Fixed(200.0)),
-                    text(value).size(12),
-                    container("").width(Length::Fixed(20.0)) // Spacer for scrollbar
-                ]
-                .spacing(12)
-            )
-            .padding([3, 8]);
-
-            headers_content = headers_content.push(header_row);
-        }
-
-        container(
-            scrollable(headers_content)
-        )
-        .width(Fill)
-        .height(Fill)
-        .padding(6)
-        .into()
-    }
-}
-
-impl std::fmt::Display for HttpMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::fmt::Display for AuthType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
     }
 }
