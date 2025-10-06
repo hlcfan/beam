@@ -3,7 +3,7 @@ use iced::widget::{
     button, column, container, row, text, text_input, text_editor, pick_list, scrollable,
     mouse_area, stack
 };
-use iced::{Element, Fill, Length, Size, Theme, Color};
+use iced::{Element, Fill, Length, Size, Theme, Color, Task};
 use iced::advanced::text::Highlighter;
 use iced_aw::ContextMenu;
 use std::time::Instant;
@@ -62,10 +62,12 @@ struct PostmanApp {
     collections: Vec<RequestCollection>,
     current_request: RequestConfig,
     response: Option<ResponseData>,
+    response_body_content: text_editor::Content,
     selected_response_tab: ResponseTab,
     context_menu_visible: bool,
     context_menu_position: (f32, f32),
     context_menu_collection: Option<usize>,
+    is_loading: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -108,13 +110,12 @@ enum ResponseTab {
     Headers,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ResponseData {
     status: u16,
     status_text: String,
     headers: Vec<(String, String)>,
     body: String,
-    body_content: text_editor::Content,
     size: usize,
     time: u64, // milliseconds
 }
@@ -151,6 +152,8 @@ enum Message {
     UrlChanged(String),
     MethodChanged(HttpMethod),
     SendRequest,
+    CancelRequest,
+    RequestCompleted(Result<ResponseData, String>),
     CollectionToggled(usize),
     RequestSelected(usize, usize),
     TabSelected(RequestTab),
@@ -171,6 +174,12 @@ enum Message {
     AddHttpRequest(usize),
     DeleteFolder(usize),
     AddFolder(usize),
+    // Request context menu actions
+    SendRequestFromMenu(usize, usize),
+    CopyRequestAsCurl(usize, usize),
+    RenameRequest(usize, usize),
+    DuplicateRequest(usize, usize),
+    DeleteRequest(usize, usize),
 }
 
 impl Default for PostmanApp {
@@ -387,10 +396,12 @@ impl Default for PostmanApp {
                 selected_tab: RequestTab::Body,
             },
             response: None,
+            response_body_content: text_editor::Content::new(),
             selected_response_tab: ResponseTab::Body,
             context_menu_visible: false,
             context_menu_position: (0.0, 0.0),
             context_menu_collection: None,
+            is_loading: false,
         }
     }
 }
@@ -398,6 +409,80 @@ impl Default for PostmanApp {
 impl PostmanApp {
     fn create_response_content(body: &str) -> text_editor::Content {
         text_editor::Content::with_text(body)
+    }
+
+    async fn make_http_request(
+        url: String,
+        method: HttpMethod,
+        headers: Vec<(String, String)>,
+        body_text: String,
+    ) -> Result<ResponseData, String> {
+        if url.is_empty() {
+            return Err("Please enter a URL".to_string());
+        }
+
+        let start_time = Instant::now();
+
+        // Create reqwest client
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        // Build request
+        let mut request_builder = match method {
+            HttpMethod::GET => client.get(&url),
+            HttpMethod::POST => client.post(&url),
+            HttpMethod::PUT => client.put(&url),
+            HttpMethod::DELETE => client.delete(&url),
+            HttpMethod::PATCH => client.patch(&url),
+            HttpMethod::HEAD => client.head(&url),
+            HttpMethod::OPTIONS => client.request(reqwest::Method::OPTIONS, &url),
+        };
+
+        // Add headers
+        for (key, value) in headers {
+            if !key.is_empty() && !value.is_empty() {
+                request_builder = request_builder.header(&key, &value);
+            }
+        }
+
+        // Add body for methods that support it
+        if matches!(method, HttpMethod::POST | HttpMethod::PUT | HttpMethod::PATCH) && !body_text.is_empty() {
+            request_builder = request_builder.body(body_text);
+        }
+
+        // Send request
+        let response = request_builder.send().await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        let status = response.status().as_u16();
+        let status_text = response.status().canonical_reason().unwrap_or("Unknown").to_string();
+        
+        // Extract headers
+        let response_headers: Vec<(String, String)> = response
+            .headers()
+            .iter()
+            .map(|(name, value)| {
+                (name.to_string(), value.to_str().unwrap_or("").to_string())
+            })
+            .collect();
+
+        // Get response body
+        let body = response.text().await
+            .map_err(|e| format!("Failed to read response body: {}", e))?;
+
+        let elapsed = start_time.elapsed();
+        let size = body.len();
+
+        Ok(ResponseData {
+            status,
+            status_text,
+            headers: response_headers,
+            body,
+            size,
+            time: elapsed.as_millis() as u64,
+        })
     }
 
     fn get_content_type(headers: &[(String, String)]) -> String {
@@ -408,145 +493,45 @@ impl PostmanApp {
             .unwrap_or_else(|| "text/plain".to_string())
     }
 
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PaneResized(resize_event) => {
                 self.panes.resize(resize_event.split, resize_event.ratio);
+                Task::none()
             }
             Message::UrlChanged(url) => {
                 self.current_request.url = url;
+                Task::none()
             }
             Message::MethodChanged(method) => {
                 self.current_request.method = method;
+                Task::none()
             }
             Message::SendRequest => {
-                // Perform HTTP request synchronously
+                // Set loading state
+                self.is_loading = true;
+                
+                // Perform HTTP request asynchronously
                 let url = self.current_request.url.clone();
                 let method = self.current_request.method.clone();
                 let headers = self.current_request.headers.clone();
                 let body_text = self.current_request.body.text();
 
-                if url.is_empty() {
-                    let error_body = "Please enter a URL".to_string();
-                    self.response = Some(ResponseData {
-                        status: 0,
-                        status_text: "Error".to_string(),
-                        headers: vec![],
-                        body: error_body.clone(),
-                        body_content: Self::create_response_content(&error_body),
-                        size: 0,
-                        time: 0,
-                    });
-                    return;
-                }
-
-                let start_time = Instant::now();
-
-                // Create reqwest client
-                let client = match reqwest::blocking::Client::builder()
-                    .timeout(std::time::Duration::from_secs(30))
-                    .build()
-                {
-                    Ok(client) => client,
-                    Err(e) => {
-                        let error_body = format!("Failed to create HTTP client: {}", e);
-                        self.response = Some(ResponseData {
-                            status: 0,
-                            status_text: "Error".to_string(),
-                            headers: vec![],
-                            body: error_body.clone(),
-                            body_content: Self::create_response_content(&error_body),
-                            size: 0,
-                            time: 0,
-                        });
-                        return;
-                    }
-                };
-
-                // Build request
-                let mut request_builder = match method {
-                    HttpMethod::GET => client.get(&url),
-                    HttpMethod::POST => client.post(&url),
-                    HttpMethod::PUT => client.put(&url),
-                    HttpMethod::DELETE => client.delete(&url),
-                    HttpMethod::PATCH => client.patch(&url),
-                    HttpMethod::HEAD => client.head(&url),
-                    HttpMethod::OPTIONS => client.request(reqwest::Method::OPTIONS, &url),
-                };
-
-                // Add headers
-                for (key, value) in headers {
-                    if !key.is_empty() && !value.is_empty() {
-                        request_builder = request_builder.header(&key, &value);
-                    }
-                }
-
-                // Add body for methods that support it
-                if matches!(method, HttpMethod::POST | HttpMethod::PUT | HttpMethod::PATCH) && !body_text.is_empty() {
-                    request_builder = request_builder.body(body_text);
-                }
-
-                // Send request
-                match request_builder.send() {
-                    Ok(response) => {
-                        let elapsed = start_time.elapsed();
-                        let status = response.status().as_u16();
-                        let status_text = response.status().canonical_reason().unwrap_or("Unknown").to_string();
-
-                        // Extract headers
-                        let mut response_headers = Vec::new();
-                        for (name, value) in response.headers() {
-                            if let Ok(value_str) = value.to_str() {
-                                response_headers.push((name.to_string(), value_str.to_string()));
-                            }
-                        }
-
-                        // Get response body
-                        match response.text() {
-                            Ok(body) => {
-                                self.response = Some(ResponseData {
-                                    status,
-                                    status_text,
-                                    headers: response_headers,
-                                    body: body.clone(),
-                                    body_content: Self::create_response_content(&body),
-                                    size: body.len(),
-                                    time: elapsed.as_millis() as u64,
-                                });
-                            }
-                            Err(e) => {
-                                let error_body = format!("Failed to read response body: {}", e);
-                                self.response = Some(ResponseData {
-                                    status,
-                                    status_text,
-                                    headers: response_headers,
-                                    body: error_body.clone(),
-                                    body_content: Self::create_response_content(&error_body),
-                                    size: 0,
-                                    time: elapsed.as_millis() as u64,
-                                });
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let elapsed = start_time.elapsed();
-                        let error_body = format!("Request failed: {}", e);
-                        self.response = Some(ResponseData {
-                            status: 0,
-                            status_text: "Error".to_string(),
-                            headers: vec![],
-                            body: error_body.clone(),
-                            body_content: Self::create_response_content(&error_body),
-                            size: 0,
-                            time: elapsed.as_millis() as u64,
-                        });
-                    }
-                }
+                return Task::perform(
+                    Self::make_http_request(url, method, headers, body_text),
+                    Message::RequestCompleted,
+                );
+            }
+            Message::CancelRequest => {
+                // Clear loading state when request is cancelled
+                self.is_loading = false;
+                Task::none()
             }
             Message::CollectionToggled(index) => {
                 if let Some(collection) = self.collections.get_mut(index) {
                     collection.expanded = !collection.expanded;
                 }
+                Task::none()
             }
             Message::RequestSelected(collection_index, request_index) => {
                 if let Some(collection) = self.collections.get(collection_index) {
@@ -555,71 +540,85 @@ impl PostmanApp {
                         self.current_request.url = request.url.clone();
                     }
                 }
+                Task::none()
             }
             Message::HeaderKeyChanged(index, key) => {
                 if let Some(header) = self.current_request.headers.get_mut(index) {
                     header.0 = key;
                 }
+                Task::none()
             }
             Message::HeaderValueChanged(index, value) => {
                 if let Some(header) = self.current_request.headers.get_mut(index) {
                     header.1 = value;
                 }
+                Task::none()
             }
             Message::AddHeader => {
                 self.current_request.headers.push((String::new(), String::new()));
+                Task::none()
             }
             Message::RemoveHeader(index) => {
                 if index < self.current_request.headers.len() {
                     self.current_request.headers.remove(index);
                 }
+                Task::none()
             }
             Message::BodyChanged(action) => {
                 self.current_request.body.perform(action);
+                Task::none()
             }
             Message::ResponseBodyAction(action) => {
                 // Allow all actions for text selection and navigation
                 // The content remains read-only because it's recreated from response.body
-                if let Some(response) = &mut self.response {
-                    response.body_content.perform(action);
-                }
+                self.response_body_content.perform(action);
+                Task::none()
             }
 
             Message::TabSelected(tab) => {
                 self.current_request.selected_tab = tab;
+                Task::none()
             }
             Message::ResponseTabSelected(tab) => {
                 self.selected_response_tab = tab;
+                Task::none()
             }
             Message::ParamKeyChanged(index, key) => {
                 if let Some(param) = self.current_request.params.get_mut(index) {
                     param.0 = key;
                 }
+                Task::none()
             }
             Message::ParamValueChanged(index, value) => {
                 if let Some(param) = self.current_request.params.get_mut(index) {
                     param.1 = value;
                 }
+                Task::none()
             }
             Message::AddParam => {
                 self.current_request.params.push((String::new(), String::new()));
+                Task::none()
             }
             Message::RemoveParam(index) => {
                 if index < self.current_request.params.len() {
                     self.current_request.params.remove(index);
                 }
+                Task::none()
             }
             Message::AuthTypeChanged(auth_type) => {
                 self.current_request.auth_type = auth_type;
+                Task::none()
             }
             Message::ShowContextMenu(collection_index, x, y) => {
                 self.context_menu_visible = true;
                 self.context_menu_position = (x, y);
                 self.context_menu_collection = Some(collection_index);
+                Task::none()
             }
             Message::HideContextMenu => {
                 self.context_menu_visible = false;
                 self.context_menu_collection = None;
+                Task::none()
             }
             Message::AddHttpRequest(collection_index) => {
                 if let Some(collection) = self.collections.get_mut(collection_index) {
@@ -631,6 +630,7 @@ impl PostmanApp {
                 }
                 self.context_menu_visible = false;
                 self.context_menu_collection = None;
+                Task::none()
             }
             Message::DeleteFolder(collection_index) => {
                 if collection_index < self.collections.len() {
@@ -638,6 +638,7 @@ impl PostmanApp {
                 }
                 self.context_menu_visible = false;
                 self.context_menu_collection = None;
+                Task::none()
             }
             Message::AddFolder(_) => {
                 self.collections.push(RequestCollection {
@@ -647,6 +648,297 @@ impl PostmanApp {
                 });
                 self.context_menu_visible = false;
                 self.context_menu_collection = None;
+                Task::none()
+            }
+            Message::SendRequestFromMenu(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        // Load the request into current_request
+                        self.current_request.method = request.method.clone();
+                        self.current_request.url = request.url.clone();
+                        
+                        // Set loading state
+                        self.is_loading = true;
+                        
+                        // Validate URL
+                        let url = self.current_request.url.clone();
+                        if url.is_empty() {
+                            self.is_loading = false;
+                            let error_body = "Please enter a URL".to_string();
+                            self.response_body_content = Self::create_response_content(&error_body);
+                            self.response = Some(ResponseData {
+                                status: 0,
+                                status_text: "Error".to_string(),
+                                headers: vec![],
+                                body: error_body.clone(),
+                                size: 0,
+                                time: 0,
+                            });
+                            return Task::none();
+                        }
+
+                        // Use async request handling
+                        let method = self.current_request.method.clone();
+                        let headers = self.current_request.headers.clone();
+                        let body_text = self.current_request.body.text();
+
+                        return Task::perform(
+                            Self::make_http_request(url, method, headers, body_text),
+                            Message::RequestCompleted,
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::CopyRequestAsCurl(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        // Generate curl command and copy to clipboard
+                        let curl_command = format!("curl -X {} '{}'", request.method, request.url);
+                        // In a real app, you'd copy this to the clipboard
+                        println!("Curl command: {}", curl_command);
+                    }
+                }
+                Task::none()
+            }
+            Message::RenameRequest(collection_index, request_index) => {
+                // In a real app, you'd open a rename dialog
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if let Some(request) = collection.requests.get_mut(request_index) {
+                        request.name = format!("{} (renamed)", request.name);
+                    }
+                }
+                Task::none()
+            }
+            Message::DuplicateRequest(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        let duplicated_request = SavedRequest {
+                            name: format!("{} Copy", request.name),
+                            method: request.method.clone(),
+                            url: request.url.clone(),
+                        };
+                        collection.requests.insert(request_index + 1, duplicated_request);
+                    }
+                }
+                Task::none()
+            }
+            Message::DeleteRequest(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if request_index < collection.requests.len() {
+                        collection.requests.remove(request_index);
+                    }
+                }
+                Task::none()
+            }
+            Message::RequestCompleted(result) => {
+                // Clear loading state
+                self.is_loading = false;
+                
+                match result {
+                    Ok(response_data) => {
+                        self.response_body_content = Self::create_response_content(&response_data.body);
+                        self.response = Some(response_data);
+                    }
+                    Err(error) => {
+                        let error_body = format!("Request failed: {}", error);
+                        self.response_body_content = Self::create_response_content(&error_body);
+                        self.response = Some(ResponseData {
+                            status: 0,
+                            status_text: "Error".to_string(),
+                            headers: vec![],
+                            body: error_body.clone(),
+                            size: 0,
+                            time: 0,
+                        });
+                    }
+                }
+                Task::none()
+            }
+            Message::CollectionToggled(index) => {
+                if let Some(collection) = self.collections.get_mut(index) {
+                    collection.expanded = !collection.expanded;
+                }
+                Task::none()
+            }
+            Message::RequestSelected(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        self.current_request.method = request.method.clone();
+                        self.current_request.url = request.url.clone();
+                    }
+                }
+                Task::none()
+            }
+            Message::HeaderKeyChanged(index, key) => {
+                if let Some(header) = self.current_request.headers.get_mut(index) {
+                    header.0 = key;
+                }
+                Task::none()
+            }
+            Message::HeaderValueChanged(index, value) => {
+                if let Some(header) = self.current_request.headers.get_mut(index) {
+                    header.1 = value;
+                }
+                Task::none()
+            }
+            Message::AddHeader => {
+                self.current_request.headers.push((String::new(), String::new()));
+                Task::none()
+            }
+            Message::RemoveHeader(index) => {
+                if index < self.current_request.headers.len() {
+                    self.current_request.headers.remove(index);
+                }
+                Task::none()
+            }
+            Message::BodyChanged(action) => {
+                self.current_request.body.perform(action);
+                Task::none()
+            }
+            Message::ResponseBodyAction(action) => {
+                // Allow all actions for text selection and navigation
+                // The content remains read-only because it's recreated from response.body
+                self.response_body_content.perform(action);
+                Task::none()
+            }
+
+            Message::TabSelected(tab) => {
+                self.current_request.selected_tab = tab;
+                Task::none()
+            }
+            Message::ResponseTabSelected(tab) => {
+                self.selected_response_tab = tab;
+                Task::none()
+            }
+            Message::ParamKeyChanged(index, key) => {
+                if let Some(param) = self.current_request.params.get_mut(index) {
+                    param.0 = key;
+                }
+                Task::none()
+            }
+            Message::ParamValueChanged(index, value) => {
+                if let Some(param) = self.current_request.params.get_mut(index) {
+                    param.1 = value;
+                }
+                Task::none()
+            }
+            Message::AddParam => {
+                self.current_request.params.push((String::new(), String::new()));
+                Task::none()
+            }
+            Message::RemoveParam(index) => {
+                if index < self.current_request.params.len() {
+                    self.current_request.params.remove(index);
+                }
+                Task::none()
+            }
+            Message::AuthTypeChanged(auth_type) => {
+                self.current_request.auth_type = auth_type;
+                Task::none()
+            }
+            Message::ShowContextMenu(collection_index, x, y) => {
+                self.context_menu_visible = true;
+                self.context_menu_position = (x, y);
+                self.context_menu_collection = Some(collection_index);
+                Task::none()
+            }
+            Message::HideContextMenu => {
+                self.context_menu_visible = false;
+                self.context_menu_collection = None;
+                Task::none()
+            }
+            Message::AddHttpRequest(collection_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    collection.requests.push(SavedRequest {
+                        name: "New Request".to_string(),
+                        method: HttpMethod::GET,
+                        url: String::new(),
+                    });
+                }
+                self.context_menu_visible = false;
+                self.context_menu_collection = None;
+                Task::none()
+            }
+            Message::DeleteFolder(collection_index) => {
+                if collection_index < self.collections.len() {
+                    self.collections.remove(collection_index);
+                }
+                self.context_menu_visible = false;
+                self.context_menu_collection = None;
+                Task::none()
+            }
+            Message::AddFolder(_) => {
+                self.collections.push(RequestCollection {
+                    name: "New Collection".to_string(),
+                    requests: vec![],
+                    expanded: true,
+                });
+                self.context_menu_visible = false;
+                self.context_menu_collection = None;
+                Task::none()
+            }
+            Message::CopyRequestAsCurl(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        // Generate curl command and copy to clipboard
+                        let curl_command = format!("curl -X {} '{}'", request.method, request.url);
+                        // In a real app, you'd copy this to the clipboard
+                        println!("Curl command: {}", curl_command);
+                    }
+                }
+                Task::none()
+            }
+            Message::RenameRequest(collection_index, request_index) => {
+                // In a real app, you'd open a rename dialog
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if let Some(request) = collection.requests.get_mut(request_index) {
+                        request.name = format!("{} (renamed)", request.name);
+                    }
+                }
+                Task::none()
+            }
+            Message::DuplicateRequest(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        let duplicated_request = SavedRequest {
+                            name: format!("{} Copy", request.name),
+                            method: request.method.clone(),
+                            url: request.url.clone(),
+                        };
+                        collection.requests.insert(request_index + 1, duplicated_request);
+                    }
+                }
+                Task::none()
+            }
+            Message::DeleteRequest(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if request_index < collection.requests.len() {
+                        collection.requests.remove(request_index);
+                    }
+                }
+                Task::none()
+            }
+            Message::RequestCompleted(result) => {
+                match result {
+                    Ok(response_data) => {
+                        self.response_body_content = Self::create_response_content(&response_data.body);
+                        self.response = Some(response_data);
+                    }
+                    Err(error_message) => {
+                        let error_body = format!("Request failed: {}", error_message);
+                        self.response_body_content = Self::create_response_content(&error_body);
+                        self.response = Some(ResponseData {
+                            status: 0,
+                            status_text: "Error".to_string(),
+                            headers: vec![],
+                            body: error_body.clone(),
+                            size: 0,
+                            time: 0,
+                        });
+                    }
+                }
+                Task::none()
             }
         }
     }
@@ -857,6 +1149,7 @@ impl PostmanApp {
                                         ..base_style
                                     }
                                 })
+                                .width(Length::Fixed(120.0))
                                 .padding([6, 12]),
                             button(text("Add Folder"))
                                 .on_press(Message::AddFolder(collection_index))
@@ -871,6 +1164,7 @@ impl PostmanApp {
                                         ..base_style
                                     }
                                 })
+                                .width(Length::Fixed(120.0))
                                 .padding([6, 12]),
                             button(text("Delete Folder"))
                                 .on_press(Message::DeleteFolder(collection_index))
@@ -885,6 +1179,7 @@ impl PostmanApp {
                                         ..base_style
                                     }
                                 })
+                                .width(Length::Fixed(120.0))
                                 .padding([6, 12])
                         ]
                         .spacing(1)
@@ -971,8 +1266,121 @@ impl PostmanApp {
                     .width(Fill)
                     .padding([4.0, 8.0]);
 
+                    // Wrap request item with context menu
+                    let request_with_menu = ContextMenu::new(
+                        request_item,
+                        move || {
+                            container(
+                                column![
+                                    button(text("Send"))
+                                        .on_press(Message::SendRequestFromMenu(collection_index, request_index))
+                                        .style(|theme, status| {
+                                            let base_style = button::text(theme, status);
+                                            button::Style {
+                                                background: match status {
+                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
+                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                                                },
+                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
+                                                ..base_style
+                                            }
+                                        })
+                                        .width(Length::Fixed(140.0))
+                                        .padding([6, 12]),
+                                    button(text("Copy as Curl"))
+                                        .on_press(Message::CopyRequestAsCurl(collection_index, request_index))
+                                        .style(|theme, status| {
+                                            let base_style = button::text(theme, status);
+                                            button::Style {
+                                                background: match status {
+                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
+                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                                                },
+                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
+                                                ..base_style
+                                            }
+                                        })
+                                        .width(Length::Fixed(140.0))
+                                        .padding([6, 12]),
+                                    // Divider
+                                    container(
+                                        container(text(""))
+                                            .style(|_theme| container::Style {
+                                                background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.8, 0.8))),
+                                                ..Default::default()
+                                            })
+                                            .height(1)
+                                    )
+                                    .padding([4, 0]),
+                                    button(text("Rename"))
+                                        .on_press(Message::RenameRequest(collection_index, request_index))
+                                        .style(|theme, status| {
+                                            let base_style = button::text(theme, status);
+                                            button::Style {
+                                                background: match status {
+                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
+                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                                                },
+                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
+                                                ..base_style
+                                            }
+                                        })
+                                        .width(Length::Fixed(140.0))
+                                        .padding([6, 12]),
+                                    button(text("Duplicate"))
+                                        .on_press(Message::DuplicateRequest(collection_index, request_index))
+                                        .style(|theme, status| {
+                                            let base_style = button::text(theme, status);
+                                            button::Style {
+                                                background: match status {
+                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))),
+                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                                                },
+                                                text_color: iced::Color::from_rgb(0.2, 0.2, 0.2),
+                                                ..base_style
+                                            }
+                                        })
+                                        .width(Length::Fixed(140.0))
+                                        .padding([6, 12]),
+                                    button(text("Delete"))
+                                        .on_press(Message::DeleteRequest(collection_index, request_index))
+                                        .style(|theme, status| {
+                                            let base_style = button::text(theme, status);
+                                            button::Style {
+                                                background: match status {
+                                                    button::Status::Hovered => Some(iced::Background::Color(iced::Color::from_rgb(1.0, 0.9, 0.9))),
+                                                    _ => Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                                                },
+                                                text_color: iced::Color::from_rgb(0.8, 0.2, 0.2),
+                                                ..base_style
+                                            }
+                                        })
+                                        .width(Length::Fixed(140.0))
+                                        .padding([6, 12])
+                                ]
+                                .spacing(1)
+                            )
+                            .style(|_theme| container::Style {
+                                background: Some(iced::Background::Color(iced::Color::WHITE)),
+                                border: iced::Border {
+                                    color: iced::Color::from_rgb(0.8, 0.8, 0.8),
+                                    width: 1.0,
+                                    radius: iced::border::Radius::from(6.0),
+                                },
+                                shadow: iced::Shadow {
+                                    color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.2),
+                                    offset: iced::Vector::new(2.0, 2.0),
+                                    blur_radius: 8.0,
+                                },
+                                ..Default::default()
+                            })
+                            .padding(4)
+                            .into()
+                        }
+                    );
+
                     collections_content = collections_content.push(
-                        container(request_item)
+                        container(request_with_menu)
                              .padding([0.0, 16.0]) // Left indentation for tree structure
                     );
                 }
@@ -1020,8 +1428,8 @@ impl PostmanApp {
             text_input("Enter URL...", &self.current_request.url)
                 .on_input(Message::UrlChanged)
                 .width(Fill),
-            button("Send")
-                .on_press(Message::SendRequest)
+            button(if self.is_loading { "Cancel" } else { "Send" })
+                .on_press(if self.is_loading { Message::CancelRequest } else { Message::SendRequest })
                 .style(button::primary)
         ]
         .spacing(10);
@@ -1334,18 +1742,39 @@ impl PostmanApp {
             };
 
             // Status information row at the top
-            let status_info_row = row![
+            let mut status_info_elements = vec![];
+            
+            // Add loading indicator if request is in progress
+            if self.is_loading {
+                status_info_elements.push(
+                    text("🔄 Sending...")
+                        .size(14)
+                        .color(iced::Color::from_rgb(0.0, 0.6, 1.0))
+                        .into()
+                );
+            }
+            
+            // Add status information
+            status_info_elements.push(
                 text(format!("Status: {} {}", response.status, response.status_text))
                     .color(status_color)
-                    .size(14),
+                    .size(14)
+                    .into()
+            );
+            status_info_elements.push(
                 text(format!("Time: {}ms", response.time))
                     .size(12)
-                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6)),
+                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
+                    .into()
+            );
+            status_info_elements.push(
                 text(format!("Size: {} bytes", response.size))
                     .size(12)
                     .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-            ]
-            .spacing(20);
+                    .into()
+            );
+            
+            let status_info_row = row(status_info_elements).spacing(20);
 
             // Tab buttons for response content
             let tab_buttons = row![
@@ -1386,16 +1815,86 @@ impl PostmanApp {
                 .padding(10)
                 .into()
         } else {
+            // Status information row - show loading or placeholder
+            let mut status_info_elements = vec![];
+            
+            if self.is_loading {
+                status_info_elements.push(
+                    text("🔄 Sending...")
+                        .size(14)
+                        .color(iced::Color::from_rgb(0.0, 0.6, 1.0))
+                        .into()
+                );
+            }
+            
+            status_info_elements.push(
+                text("Status: -")
+                    .size(14)
+                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
+                    .into()
+            );
+            status_info_elements.push(
+                text("Time: -")
+                    .size(12)
+                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
+                    .into()
+            );
+            status_info_elements.push(
+                text("Size: -")
+                    .size(12)
+                    .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
+                    .into()
+            );
+            
+            let status_info_row = row(status_info_elements).spacing(20);
+
+            // Tab buttons for response content
+            let tab_buttons = row![
+                button("Body")
+                    .on_press(Message::ResponseTabSelected(ResponseTab::Body))
+                    .style(if self.selected_response_tab == ResponseTab::Body {
+                        button::primary
+                    } else {
+                        button::secondary
+                    }),
+                button("Headers")
+                    .on_press(Message::ResponseTabSelected(ResponseTab::Headers))
+                    .style(if self.selected_response_tab == ResponseTab::Headers {
+                        button::primary
+                    } else {
+                        button::secondary
+                    })
+            ]
+            .spacing(5);
+
+            // Tab content - show placeholder content
+            let placeholder_message = if self.is_loading {
+                "Request in progress..."
+            } else {
+                "No response yet. Send a request to see the response here."
+            };
+            
+            let placeholder_color = if self.is_loading {
+                iced::Color::from_rgb(0.0, 0.6, 1.0)
+            } else {
+                iced::Color::from_rgb(0.6, 0.6, 0.6)
+            };
+
+            let tab_content = container(
+                text(placeholder_message)
+                    .size(14)
+                    .color(placeholder_color)
+            )
+            .width(Fill)
+            .height(Fill);
+
             let content = column![
                 title,
-                container(
-                    text("No response yet. Send a request to see the response here.")
-                        .size(14)
-                        .color(iced::Color::from_rgb(0.6, 0.6, 0.6))
-                )
-                .width(Fill)
-                .height(Fill)
-            ];
+                status_info_row,
+                tab_buttons,
+                tab_content
+            ]
+            .spacing(10);
 
             container(content)
                 .width(Fill)
@@ -1405,9 +1904,9 @@ impl PostmanApp {
         }
     }
 
-    fn response_body_content<'a>(&self, response: &'a ResponseData) -> Element<'a, Message> {
+    fn response_body_content(&self, _response: &ResponseData) -> Element<Message> {
         container(
-            text_editor(&response.body_content)
+            text_editor(&self.response_body_content)
                 .size(12.0)
                 .on_action(Message::ResponseBodyAction)
         )
@@ -1441,8 +1940,6 @@ impl PostmanApp {
         .padding(6)
         .into()
     }
-
-
 }
 
 impl std::fmt::Display for HttpMethod {
