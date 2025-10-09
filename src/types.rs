@@ -48,6 +48,13 @@ pub struct PostmanApp {
     pub selected_response_tab: ResponseTab,
 
     pub is_loading: bool,
+    pub request_start_time: Option<std::time::Instant>,
+    pub current_elapsed_time: u64, // milliseconds
+    
+    // Environment management
+    pub environments: Vec<Environment>,
+    pub active_environment: Option<usize>,
+    pub show_environment_popup: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +81,13 @@ pub struct RequestConfig {
     pub content_type: String,
     pub auth_type: AuthType,
     pub selected_tab: RequestTab,
+    
+    // Authentication fields
+    pub bearer_token: String,
+    pub basic_username: String,
+    pub basic_password: String,
+    pub api_key: String,
+    pub api_key_header: String,
 }
 
 impl Clone for RequestConfig {
@@ -87,7 +101,49 @@ impl Clone for RequestConfig {
             content_type: self.content_type.clone(),
             auth_type: self.auth_type.clone(),
             selected_tab: self.selected_tab.clone(),
+            bearer_token: self.bearer_token.clone(),
+            basic_username: self.basic_username.clone(),
+            basic_password: self.basic_password.clone(),
+            api_key: self.api_key.clone(),
+            api_key_header: self.api_key_header.clone(),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Environment {
+    pub name: String,
+    pub variables: std::collections::HashMap<String, String>,
+    pub description: Option<String>,
+}
+
+impl Environment {
+    pub fn new(name: String) -> Self {
+        Self {
+            name,
+            variables: std::collections::HashMap::new(),
+            description: None,
+        }
+    }
+
+    pub fn with_description(name: String, description: String) -> Self {
+        Self {
+            name,
+            variables: std::collections::HashMap::new(),
+            description: Some(description),
+        }
+    }
+
+    pub fn add_variable(&mut self, key: String, value: String) {
+        self.variables.insert(key, value);
+    }
+
+    pub fn get_variable(&self, key: &str) -> Option<&String> {
+        self.variables.get(key)
+    }
+
+    pub fn remove_variable(&mut self, key: &str) -> Option<String> {
+        self.variables.remove(key)
     }
 }
 
@@ -97,6 +153,7 @@ pub enum RequestTab {
     Params,
     Headers,
     Auth,
+    Environment,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,6 +168,8 @@ pub struct ResponseData {
     pub status_text: String,
     pub headers: Vec<(String, String)>,
     pub body: String,
+    pub content_type: String,
+    pub is_binary: bool,
     pub size: usize,
     pub time: u64, // milliseconds
 }
@@ -149,6 +208,7 @@ pub enum Message {
     SendRequest,
     CancelRequest,
     RequestCompleted(Result<ResponseData, String>),
+    TimerTick,
     CollectionToggled(usize),
     RequestSelected(usize, usize),
     TabSelected(RequestTab),
@@ -164,6 +224,25 @@ pub enum Message {
     BodyChanged(text_editor::Action),
     ResponseBodyAction(text_editor::Action),
     AuthTypeChanged(AuthType),
+    BearerTokenChanged(String),
+    BasicUsernameChanged(String),
+    BasicPasswordChanged(String),
+    ApiKeyChanged(String),
+    ApiKeyHeaderChanged(String),
+
+    // Environment management
+    OpenEnvironmentPopup,
+    CloseEnvironmentPopup,
+    DoNothing, // Used to prevent event propagation
+    EnvironmentSelected(usize),
+    AddEnvironment,
+    DeleteEnvironment(usize),
+    EnvironmentNameChanged(usize, String),
+    EnvironmentDescriptionChanged(usize, String),
+    VariableKeyChanged(usize, usize, String),
+    VariableValueChanged(usize, usize, String),
+    AddVariable(usize),
+    RemoveVariable(usize, usize),
 
     AddHttpRequest(usize),
     DeleteFolder(usize),

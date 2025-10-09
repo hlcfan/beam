@@ -1,5 +1,34 @@
-use crate::types::{HttpMethod, RequestConfig, ResponseData};
+use crate::types::{HttpMethod, RequestConfig, ResponseData, AuthType};
 use std::time::Instant;
+use base64::{Engine as _, engine::general_purpose};
+
+fn is_binary_content_type(content_type: &str) -> bool {
+    let content_type_lower = content_type.to_lowercase();
+    
+    // Check for text-based content types
+    if content_type_lower.starts_with("text/") ||
+       content_type_lower.starts_with("application/json") ||
+       content_type_lower.starts_with("application/xml") ||
+       content_type_lower.starts_with("application/javascript") ||
+       content_type_lower.starts_with("application/x-www-form-urlencoded") ||
+       content_type_lower.contains("charset") {
+        return false;
+    }
+    
+    // Check for known binary content types
+    if content_type_lower.starts_with("image/") ||
+       content_type_lower.starts_with("video/") ||
+       content_type_lower.starts_with("audio/") ||
+       content_type_lower.starts_with("application/octet-stream") ||
+       content_type_lower.starts_with("application/pdf") ||
+       content_type_lower.starts_with("application/zip") ||
+       content_type_lower.starts_with("application/x-") {
+        return true;
+    }
+    
+    // Default to binary for unknown types
+    true
+}
 
 pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String> {
     let start_time = Instant::now();
@@ -33,6 +62,36 @@ pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String>
     for (key, value) in &config.headers {
         if !key.is_empty() && !value.is_empty() {
             request_builder = request_builder.header(key, value);
+        }
+    }
+
+    // Add authentication
+    match config.auth_type {
+        AuthType::None => {
+            // No authentication needed
+        }
+        AuthType::Bearer => {
+            if !config.bearer_token.is_empty() {
+                let auth_header = format!("Bearer {}", config.bearer_token);
+                request_builder = request_builder.header("Authorization", auth_header);
+            }
+        }
+        AuthType::Basic => {
+            if !config.basic_username.is_empty() {
+                let credentials = if config.basic_password.is_empty() {
+                    config.basic_username.clone()
+                } else {
+                    format!("{}:{}", config.basic_username, config.basic_password)
+                };
+                let encoded = general_purpose::STANDARD.encode(credentials);
+                let auth_header = format!("Basic {}", encoded);
+                request_builder = request_builder.header("Authorization", auth_header);
+            }
+        }
+        AuthType::ApiKey => {
+            if !config.api_key.is_empty() && !config.api_key_header.is_empty() {
+                request_builder = request_builder.header(&config.api_key_header, &config.api_key);
+            }
         }
     }
 
@@ -74,21 +133,58 @@ pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String>
                 }
             }
 
+            // Get content type
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|ct| ct.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+
+            // Determine if response is binary
+            let is_binary = is_binary_content_type(&content_type);
+
             // Get response body
-            let body = match response.text().await {
-                Ok(text) => text,
-                Err(e) => return Err(format!("Failed to read response body: {}", e)),
+            let (body, actual_size) = if is_binary {
+                // For binary content, get the raw bytes and create a summary
+                match response.bytes().await {
+                    Ok(bytes) => {
+                        let size = bytes.len();
+                        let summary = format!(
+                            "[Binary data: {} bytes]\nContent-Type: {}\nFirst 100 bytes (hex): {}",
+                            size,
+                            content_type,
+                            bytes.iter()
+                                .take(100)
+                                .map(|b| format!("{:02x}", b))
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        );
+                        (summary, size)
+                    }
+                    Err(e) => return Err(format!("Failed to read binary response: {}", e)),
+                }
+            } else {
+                // For text content, try to convert to string
+                match response.text().await {
+                    Ok(text) => {
+                        let size = text.len();
+                        (text, size)
+                    }
+                    Err(e) => return Err(format!("Failed to read text response: {}", e)),
+                }
             };
 
             let elapsed = start_time.elapsed();
-            let size = body.len();
 
             Ok(ResponseData {
                 status,
                 status_text,
                 headers,
                 body,
-                size,
+                content_type,
+                is_binary,
+                size: actual_size,
                 time: elapsed.as_millis() as u64,
             })
         }
@@ -110,6 +206,36 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
         if !key.is_empty() && !value.is_empty() {
             curl_parts.push("-H".to_string());
             curl_parts.push(format!("'{}: {}'", key, value));
+        }
+    }
+    
+    // Add authentication
+    match config.auth_type {
+        AuthType::None => {
+            // No authentication needed
+        }
+        AuthType::Bearer => {
+            if !config.bearer_token.is_empty() {
+                curl_parts.push("-H".to_string());
+                curl_parts.push(format!("'Authorization: Bearer {}'", config.bearer_token));
+            }
+        }
+        AuthType::Basic => {
+            if !config.basic_username.is_empty() {
+                if config.basic_password.is_empty() {
+                    curl_parts.push("-u".to_string());
+                    curl_parts.push(format!("'{}'", config.basic_username));
+                } else {
+                    curl_parts.push("-u".to_string());
+                    curl_parts.push(format!("'{}:{}'", config.basic_username, config.basic_password));
+                }
+            }
+        }
+        AuthType::ApiKey => {
+            if !config.api_key.is_empty() && !config.api_key_header.is_empty() {
+                curl_parts.push("-H".to_string());
+                curl_parts.push(format!("'{}: {}'", config.api_key_header, config.api_key));
+            }
         }
     }
     

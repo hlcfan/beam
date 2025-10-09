@@ -1,4 +1,4 @@
-use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message};
+use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
 use iced::widget::{
     button, column, container, row, text, text_input, pick_list, scrollable,
     text_editor, Space
@@ -10,7 +10,47 @@ use iced::widget::button::Status;
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
     is_loading: bool,
+    environments: &'a [Environment],
+    active_environment: Option<usize>,
 ) -> Element<'a, Message> {
+    // Environment manager button for the URL row
+    let env_button = {
+        let env_text = if let Some(active_idx) = active_environment {
+            if let Some(env) = environments.get(active_idx) {
+                format!("🌍 {}", env.name)
+            } else {
+                "🌍 No Environment".to_string()
+            }
+        } else {
+            "🌍 No Environment".to_string()
+        };
+
+        button(text(env_text))
+            .on_press(Message::OpenEnvironmentPopup)
+            .width(150)
+            .style(|theme, status| {
+                let base = button::Style::default();
+                match status {
+                    Status::Hovered => button::Style {
+                        background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                        border: Border {
+                            radius: 4.0.into(),
+                            ..Border::default()
+                        },
+                        ..base
+                    },
+                    _ => button::Style {
+                        background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+                        border: Border {
+                            radius: 4.0.into(),
+                            ..Border::default()
+                        },
+                        ..base
+                    },
+                }
+            })
+    };
+
     let url_row = row![
         pick_list(
             vec![
@@ -26,6 +66,8 @@ pub fn request_panel<'a>(
             Message::MethodChanged
         )
         .width(100),
+        Space::with_width(10),
+        env_button,
         Space::with_width(10),
         text_input("Enter URL", &config.url)
             .on_input(Message::UrlChanged)
@@ -51,7 +93,9 @@ pub fn request_panel<'a>(
                 })
         } else {
             let url_valid = !config.url.trim().is_empty() &&
-                           (config.url.starts_with("http://") || config.url.starts_with("https://"));
+                           (config.url.starts_with("http://") ||
+                            config.url.starts_with("https://") ||
+                            config.url.contains("{{"));
 
             let send_button = button(text("Send"));
 
@@ -101,13 +145,14 @@ pub fn request_panel<'a>(
         RequestTab::Params => params_tab(config),
         RequestTab::Headers => headers_tab(config),
         RequestTab::Auth => auth_tab(config),
+        RequestTab::Environment => body_tab(config), // Fallback to body tab if somehow Environment is selected
     };
 
     let content = column![
         url_row,
-        Space::with_height(20),
-        tabs,
         Space::with_height(10),
+        tabs,
+        Space::with_height(5),
         tab_content
     ]
     .spacing(10)
@@ -182,12 +227,10 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
 
 fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     column![
-        text("Request Body"),
         text_editor(&config.body)
             .on_action(Message::BodyChanged)
             .height(Length::Fill)
     ]
-    .spacing(10)
     .into()
 }
 
@@ -288,14 +331,63 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 }
 
 fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
-    column![
-        text("Authentication"),
+    let auth_type_picker = column![
+        text("Authentication Type"),
         pick_list(
             vec![AuthType::None, AuthType::Bearer, AuthType::Basic, AuthType::ApiKey],
             Some(config.auth_type.clone()),
             Message::AuthTypeChanged
         ),
-        text("Authentication configuration will be implemented here")
+    ]
+    .spacing(5);
+
+    let auth_config = match config.auth_type {
+        AuthType::None => {
+            column![text("No authentication required")]
+        }
+        AuthType::Bearer => {
+            column![
+                text("Bearer Token"),
+                text_input("Enter bearer token", &config.bearer_token)
+                    .on_input(Message::BearerTokenChanged)
+                    .width(Fill),
+            ]
+            .spacing(5)
+        }
+        AuthType::Basic => {
+            column![
+                text("Basic Authentication"),
+                text("Username"),
+                text_input("Enter username", &config.basic_username)
+                    .on_input(Message::BasicUsernameChanged)
+                    .width(Fill),
+                text("Password"),
+                text_input("Enter password", &config.basic_password)
+                    .on_input(Message::BasicPasswordChanged)
+                    .width(Fill),
+            ]
+            .spacing(5)
+        }
+        AuthType::ApiKey => {
+            column![
+                text("API Key Authentication"),
+                text("Header Name"),
+                text_input("Header name (e.g., X-API-Key)", &config.api_key_header)
+                    .on_input(Message::ApiKeyHeaderChanged)
+                    .width(Fill),
+                text("API Key"),
+                text_input("Enter API key", &config.api_key)
+                    .on_input(Message::ApiKeyChanged)
+                    .width(Fill),
+            ]
+            .spacing(5)
+        }
+    };
+
+    column![
+        auth_type_picker,
+        Space::with_height(10),
+        auth_config
     ]
     .spacing(10)
     .into()
