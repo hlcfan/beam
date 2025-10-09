@@ -1,17 +1,18 @@
 use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
 use iced::widget::{
-    button, column, container, row, text, text_input, pick_list, scrollable,
-    text_editor, Space
+    button, column, container, pick_list, row, text, text_input, scrollable,
+    text_editor, Space, stack
 };
-use iced::{Element, Fill, Length, Color, Background, Border, Theme};
-use iced::widget::container::Style;
+use iced::{Element, Fill, Length, Color, Background, Border, Theme, Shadow, Vector};
 use iced::widget::button::Status;
+
 
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
     is_loading: bool,
     environments: &'a [Environment],
     active_environment: Option<usize>,
+    method_menu_open: bool,
 ) -> Element<'a, Message> {
     // Environment manager button for the URL row
     let env_button = {
@@ -54,31 +55,54 @@ pub fn request_panel<'a>(
     // Environment bar
     let env_bar = row![
         text("Environment:").size(14),
-        Space::with_width(10),
+        Space::with_width(5),
         env_button,
         Space::with_width(Fill), // Push everything to the left
     ]
     .align_y(iced::Alignment::Center);
 
+    // Method label with dynamic width
+    let method_label = method_button(&config.method);
+
+    // Connected method label and URL input with overlay dropdown
+    let base_input = container(
+        row![
+            method_label,
+            text_input("Enter URL", &config.url)
+                .on_input(Message::UrlChanged)
+                .width(Length::Fill)
+                .style(|theme: &Theme, _status: text_input::Status| {
+                    text_input::Style {
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 0.0.into(),
+                        },
+                        background: Background::Color(theme.palette().background),
+                        icon: Color::TRANSPARENT,
+                        placeholder: theme.palette().text,
+                        value: theme.palette().text,
+                        selection: theme.palette().primary,
+                    }
+                }),
+        ]
+    )
+    .padding(2)
+    .style(|_theme| container::Style {
+        background: Some(Background::Color(Color::WHITE)),
+        border: Border {
+            color: Color::from_rgb(0.6, 0.6, 0.6),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        text_color: None,
+        shadow: Default::default(),
+    });
+
+    let connected_input = base_input;
+
     let url_row = row![
-        pick_list(
-            vec![
-                HttpMethod::GET,
-                HttpMethod::POST,
-                HttpMethod::PUT,
-                HttpMethod::DELETE,
-                HttpMethod::PATCH,
-                HttpMethod::HEAD,
-                HttpMethod::OPTIONS,
-            ],
-            Some(config.method.clone()),
-            Message::MethodChanged
-        )
-        .width(100),
-        Space::with_width(10),
-        text_input("Enter URL", &config.url)
-            .on_input(Message::UrlChanged)
-            .width(Length::Fill),
+        connected_input,
         Space::with_width(10),
         if is_loading {
             button(text("Cancel"))
@@ -157,15 +181,15 @@ pub fn request_panel<'a>(
 
     let content = column![
         env_bar,
-        Space::with_height(10),
+        Space::with_height(5),
         url_row,
         Space::with_height(10),
         tabs,
         Space::with_height(5),
         tab_content
     ]
-    .spacing(10)
-    .padding(20);
+    .spacing(5)
+    .padding(15);
 
     // Create left border
     let left_border = container("")
@@ -184,15 +208,39 @@ pub fn request_panel<'a>(
                                      background: Some(iced::Background::Color(iced::Color::from_rgb(0.7, 0.7, 0.7))), // Gray
                                      ..Default::default()
                                  });
-    row![
+    let main_content = row![
         left_border,
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(0),
         right_border
-    ]
-    .into()
+    ];
+
+    if method_menu_open {
+        stack![
+            main_content,
+            // Transparent overlay to detect clicks outside the menu
+            button(Space::new(Length::Fill, Length::Fill))
+                .on_press(Message::CloseMethodMenu)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|_theme, _status| button::Style {
+                    background: Some(Background::Color(Color::TRANSPARENT)),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    text_color: Color::TRANSPARENT,
+                }),
+            // The actual dropdown menu
+            container(method_dropdown())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(iced::Padding::new(12.0).top(100.0)) // Left padding 12, top padding 100 to position dropdown
+        ]
+        .into()
+    } else {
+        main_content.into()
+    }
 }
 
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
@@ -399,5 +447,80 @@ fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         auth_config
     ]
     .spacing(10)
+    .into()
+}
+
+fn method_button(method: &HttpMethod) -> Element<'_, Message> {
+    button(text(method.to_string()))
+        .on_press(Message::ToggleMethodMenu)
+        .width(Length::Fixed(match method {
+            HttpMethod::GET => 50.0,
+            HttpMethod::PUT => 50.0,
+            HttpMethod::POST => 60.0,
+            HttpMethod::HEAD => 60.0,
+            HttpMethod::PATCH => 70.0,
+            HttpMethod::DELETE => 80.0,
+            HttpMethod::OPTIONS => 90.0,
+        }))
+        .style(|theme: &Theme, _status: Status| {
+            button::Style {
+                background: Some(Background::Color(theme.palette().background)),
+                text_color: theme.palette().text,
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 0.0.into(),
+                },
+                shadow: Default::default(),
+            }
+        })
+        .into()
+}
+
+fn method_dropdown() -> Element<'static, Message> {
+    let button_style = |_theme: &Theme, status: Status| {
+        match status {
+            Status::Hovered => button::Style {
+                background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))), // Light gray on hover
+                text_color: Color::BLACK,
+                border: Border::default(),
+                shadow: Shadow::default(),
+            },
+            _ => button::Style {
+                background: Some(Background::Color(Color::WHITE)), // White default
+                text_color: Color::BLACK,
+                border: Border::default(),
+                shadow: Shadow::default(),
+            }
+        }
+    };
+
+    container(
+        column![
+            button(text("GET")).on_press(Message::MethodChanged(HttpMethod::GET)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("POST")).on_press(Message::MethodChanged(HttpMethod::POST)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("PUT")).on_press(Message::MethodChanged(HttpMethod::PUT)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("DELETE")).on_press(Message::MethodChanged(HttpMethod::DELETE)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("PATCH")).on_press(Message::MethodChanged(HttpMethod::PATCH)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("HEAD")).on_press(Message::MethodChanged(HttpMethod::HEAD)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("OPTIONS")).on_press(Message::MethodChanged(HttpMethod::OPTIONS)).width(Length::Fixed(90.0)).style(button_style),
+        ]
+        .spacing(1)
+    )
+    .padding(4)
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::WHITE)),
+        border: Border {
+            color: Color::from_rgb(0.9, 0.9, 0.9),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        text_color: None,
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+            offset: Vector::new(0.0, 2.0),
+            blur_radius: 4.0,
+        },
+    })
     .into()
 }

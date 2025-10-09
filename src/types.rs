@@ -55,6 +55,7 @@ pub struct PostmanApp {
     pub environments: Vec<Environment>,
     pub active_environment: Option<usize>,
     pub show_environment_popup: bool,
+    pub method_menu_open: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -205,6 +206,7 @@ pub enum Message {
     PaneResized(pane_grid::ResizeEvent),
     UrlChanged(String),
     MethodChanged(HttpMethod),
+
     SendRequest,
     CancelRequest,
     RequestCompleted(Result<ResponseData, String>),
@@ -233,6 +235,8 @@ pub enum Message {
     // Environment management
     OpenEnvironmentPopup,
     CloseEnvironmentPopup,
+    ToggleMethodMenu,
+    CloseMethodMenu,
     DoNothing, // Used to prevent event propagation
     EnvironmentSelected(usize),
     AddEnvironment,

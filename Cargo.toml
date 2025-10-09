@@ -10,7 +10,7 @@ tokio = "1.47.1"
 image = { version = "0.25", default-features = false }
 iced = { version = "0.13.1", features = ["tokio", "image", "debug", "canvas", "advanced"] }
 
-iced_aw = { version = "0.12.2", features = ["context_menu"] }
+iced_aw = { version = "0.12.2", features = ["context_menu", "menu"] }
 
 
 reqwest = { version = "0.12", features = ["json", "blocking"] }

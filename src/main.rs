@@ -289,6 +289,7 @@ impl Default for PostmanApp {
             ],
             active_environment: Some(0),
             show_environment_popup: false,
+            method_menu_open: false,
         }
     }
 }
@@ -339,6 +340,7 @@ impl PostmanApp {
             }
             Message::MethodChanged(method) => {
                 self.current_request.method = method;
+                self.method_menu_open = false; // Close menu after selection
                 Task::none()
             }
             Message::SendRequest => {
@@ -686,6 +688,14 @@ impl PostmanApp {
                 }
                 Task::none()
             }
+            Message::ToggleMethodMenu => {
+                self.method_menu_open = !self.method_menu_open;
+                Task::none()
+            }
+            Message::CloseMethodMenu => {
+                self.method_menu_open = false;
+                Task::none()
+            }
         }
     }
 
@@ -750,7 +760,7 @@ impl PostmanApp {
     }
 
     fn request_config_view(&self) -> Element<'_, Message> {
-        request_panel(&self.current_request, self.is_loading, &self.environments, self.active_environment)
+        request_panel(&self.current_request, self.is_loading, &self.environments, self.active_environment, self.method_menu_open)
     }
 
     fn response_view(&self) -> Element<'_, Message> {
