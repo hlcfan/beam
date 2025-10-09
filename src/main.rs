@@ -533,6 +533,8 @@ impl PostmanApp {
             Message::AddEnvironment => {
                 let new_env = Environment::new(format!("Environment {}", self.environments.len() + 1));
                 self.environments.push(new_env);
+                // Set the newly created environment as active
+                self.active_environment = Some(self.environments.len() - 1);
                 Task::none()
             }
             Message::DeleteEnvironment(index) => {
@@ -868,16 +870,31 @@ impl PostmanApp {
 
                     // Add variable button
                     content = content.push(
-                        button(text("Add Variable"))
+                        button(text("+ Add Variable").size(14))
                             .on_press(Message::AddVariable(active_idx))
+                            .padding([8, 16])
                             .style(|theme, status| {
-                                let base = button::Style::default();
                                 match status {
                                     button::Status::Hovered => button::Style {
-                                        background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                                        ..base
+                                        background: Some(iced::Background::Color(Color::from_rgb(0.2, 0.5, 0.9))),
+                                        text_color: Color::WHITE,
+                                        border: iced::Border {
+                                            color: Color::from_rgb(0.1, 0.4, 0.8),
+                                            width: 1.0,
+                                            radius: 4.0.into(),
+                                        },
+                                        ..button::Style::default()
                                     },
-                                    _ => base,
+                                    _ => button::Style {
+                                        background: Some(iced::Background::Color(Color::from_rgb(0.3, 0.6, 1.0))),
+                                        text_color: Color::WHITE,
+                                        border: iced::Border {
+                                            color: Color::from_rgb(0.2, 0.5, 0.9),
+                                            width: 1.0,
+                                            radius: 4.0.into(),
+                                        },
+                                        ..button::Style::default()
+                                    },
                                 }
                             })
                     );
