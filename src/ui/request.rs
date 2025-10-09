@@ -3,7 +3,7 @@ use iced::widget::{
     button, column, container, row, text, text_input, pick_list, scrollable,
     text_editor, Space
 };
-use iced::{Element, Fill, Length, Color, Background, Border};
+use iced::{Element, Fill, Length, Color, Background, Border, Theme};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
 
@@ -25,7 +25,7 @@ pub fn request_panel<'a>(
             "🌍 No Environment".to_string()
         };
 
-        button(text(env_text))
+        button(text(env_text).shaping(text::Shaping::Advanced))
             .on_press(Message::OpenEnvironmentPopup)
             .width(150)
             .style(|theme, status| {
@@ -51,6 +51,15 @@ pub fn request_panel<'a>(
             })
     };
 
+    // Environment bar
+    let env_bar = row![
+        text("Environment:").size(14),
+        Space::with_width(10),
+        env_button,
+        Space::with_width(Fill), // Push everything to the left
+    ]
+    .align_y(iced::Alignment::Center);
+
     let url_row = row![
         pick_list(
             vec![
@@ -66,8 +75,6 @@ pub fn request_panel<'a>(
             Message::MethodChanged
         )
         .width(100),
-        Space::with_width(10),
-        env_button,
         Space::with_width(10),
         text_input("Enter URL", &config.url)
             .on_input(Message::UrlChanged)
@@ -149,6 +156,8 @@ pub fn request_panel<'a>(
     };
 
     let content = column![
+        env_bar,
+        Space::with_height(10),
         url_row,
         Space::with_height(10),
         tabs,
