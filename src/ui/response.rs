@@ -305,6 +305,20 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                     text_editor(content)
                         .on_action(Message::ResponseBodyAction)
                         .height(Length::Fill)
+                        .style(|theme: &iced::Theme, status: text_editor::Status| {
+                            text_editor::Style {
+                                background: Background::Color(theme.palette().background),
+                                border: Border {
+                                    color: Color::from_rgb(0.8, 0.8, 0.8),
+                                    width: 1.0,
+                                    radius: 4.0.into(),
+                                },
+                                icon: theme.palette().text,
+                                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                                value: theme.palette().text,
+                                selection: theme.palette().primary,
+                            }
+                        })
                 );
         }
     } else {
@@ -314,6 +328,20 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                 text_editor(content)
                     .on_action(Message::ResponseBodyAction)
                     .height(Length::Fill)
+                    .style(|theme: &iced::Theme, status: text_editor::Status| {
+                        text_editor::Style {
+                            background: Background::Color(theme.palette().background),
+                            border: Border {
+                                color: Color::from_rgb(0.8, 0.8, 0.8),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            icon: theme.palette().text,
+                            placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                            value: theme.palette().text,
+                            selection: theme.palette().primary,
+                        }
+                    })
             );
     }
     

@@ -91,7 +91,7 @@ pub fn request_panel<'a>(
     .style(|_theme| container::Style {
         background: Some(Background::Color(Color::WHITE)),
         border: Border {
-            color: Color::from_rgb(0.6, 0.6, 0.6),
+            color: Color::from_rgb(0.8, 0.8, 0.8),
             width: 1.0,
             radius: 4.0.into(),
         },
@@ -287,6 +287,20 @@ fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         text_editor(&config.body)
             .on_action(Message::BodyChanged)
             .height(Length::Fill)
+            .style(|theme: &Theme, status: text_editor::Status| {
+                text_editor::Style {
+                    background: Background::Color(theme.palette().background),
+                    border: Border {
+                        color: Color::from_rgb(0.8, 0.8, 0.8),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    icon: theme.palette().text,
+                    placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                    value: theme.palette().text,
+                    selection: theme.palette().primary,
+                }
+            })
     ]
     .into()
 }
