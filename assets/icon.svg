@@ -1,0 +1,46 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Light spectrum gradient from violet to red -->
+    <linearGradient id="spectrumGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#8B5CF6;stop-opacity:1" />
+      <stop offset="16.66%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="33.33%" style="stop-color:#06B6D4;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#10B981;stop-opacity:1" />
+      <stop offset="66.66%" style="stop-color:#F59E0B;stop-opacity:1" />
+      <stop offset="83.33%" style="stop-color:#F97316;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#EF4444;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- Bright white light source -->
+    <radialGradient id="lightSource" cx="0%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#FFFFFF;stop-opacity:1" />
+      <stop offset="30%" style="stop-color:#F8FAFC;stop-opacity:0.9" />
+      <stop offset="100%" style="stop-color:#F1F5F9;stop-opacity:0.3" />
+    </radialGradient>
+    
+    <!-- Circular mask for rounded icon -->
+    <clipPath id="circularMask">
+      <circle cx="256" cy="256" r="240"/>
+    </clipPath>
+  </defs>
+  
+  <!-- Apply circular mask to all content -->
+  <g clip-path="url(#circularMask)">
+    <!-- Main light beam spreading from left to right -->
+    <path d="M 0 256 L 512 128 L 512 384 Z" fill="url(#spectrumGradient)" opacity="0.9"/>
+    
+    <!-- Additional beam layers for depth -->
+    <path d="M 0 256 L 512 160 L 512 352 Z" fill="url(#spectrumGradient)" opacity="0.7"/>
+    <path d="M 0 256 L 512 192 L 512 320 Z" fill="url(#spectrumGradient)" opacity="0.5"/>
+    
+    <!-- Bright light source at the left edge -->
+    <ellipse cx="0" cy="256" rx="24" ry="32" fill="url(#lightSource)"/>
+    
+    <!-- Additional bright highlights -->
+    <ellipse cx="0" cy="256" rx="12" ry="16" fill="#FFFFFF" opacity="0.8"/>
+    <ellipse cx="0" cy="256" rx="6" ry="8" fill="#FFFFFF"/>
+  </g>
+  
+  <!-- Optional subtle border for definition -->
+  <circle cx="256" cy="256" r="240" fill="none" stroke="#E5E7EB" stroke-width="2" opacity="0.3"/>
+</svg>

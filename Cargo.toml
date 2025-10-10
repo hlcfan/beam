@@ -26,3 +26,14 @@ regex = "1.10"
 
 blurhash = "0.2.3"
 
+[package.metadata.bundle]
+name = "Beam"
+identifier = "com.beam.app"
+version = "0.1.0"
+copyright = "Copyright (c) 2024 Beam"
+category = "Developer Tool"
+short_description = "A modern HTTP client for developers"
+long_description = "Beam is a powerful and intuitive HTTP client designed for developers to test APIs, manage requests, and streamline their development workflow."
+icon = ["assets/icon.icns"]
+osx_minimum_system_version = "10.15"
+
