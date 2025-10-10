@@ -1,6 +1,9 @@
 use iced::widget::{text_editor, pane_grid};
 use iced::{Color, Element};
 use iced::advanced::text::Highlighter;
+use crate::storage::StorageManager;
+use std::collections::HashMap;
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub struct ResponseHighlighter {
@@ -56,6 +59,31 @@ pub struct PostmanApp {
     pub active_environment: Option<usize>,
     pub show_environment_popup: bool,
     pub method_menu_open: bool,
+    
+    // Last opened request tracking
+    pub last_opened_request: Option<(usize, usize)>, // (collection_index, request_index)
+    
+    // Auto-save debounce management
+    pub debounce_timers: HashMap<(usize, usize), Instant>, // (collection_index, request_index) -> last_change_time
+    pub debounce_delay_ms: u64, // configurable delay in milliseconds
+    
+    // Rename modal state
+    pub show_rename_modal: bool,
+    pub rename_input: String,
+    pub rename_target: Option<(usize, usize)>, // (collection_index, request_index)
+    
+    // Double-click detection state
+    pub last_click_time: Option<std::time::Instant>,
+    pub last_click_target: Option<(usize, usize)>, // (collection_index, request_index)
+    
+    // Tooltip state for environment variables
+    pub show_url_tooltip: bool,
+    pub tooltip_variable_name: Option<String>,
+    pub tooltip_variable_value: Option<String>,
+    pub tooltip_position: Option<(f32, f32)>, // (x, y) position
+    
+    // Storage
+    pub storage_manager: Option<StorageManager>,
 }
 
 #[derive(Debug, Clone)]
@@ -235,6 +263,7 @@ pub enum Message {
     // Environment management
     OpenEnvironmentPopup,
     CloseEnvironmentPopup,
+    KeyPressed(iced::keyboard::Key),
     ToggleMethodMenu,
     CloseMethodMenu,
     DoNothing, // Used to prevent event propagation
@@ -258,6 +287,57 @@ pub enum Message {
     RenameRequest(usize, usize),
     DuplicateRequest(usize, usize),
     DeleteRequest(usize, usize),
+    
+    // Rename modal
+    ShowRenameModal(usize, usize), // (collection_index, request_index)
+    HideRenameModal,
+    RenameInputChanged(String),
+    ConfirmRename,
+    
+    // URL tooltip for environment variables
+    ShowUrlTooltip(String, String, f32, f32), // (variable_name, variable_value, x, y)
+    HideUrlTooltip,
+    
+    // Storage operations
+    SaveCollection(usize),
+    LoadCollections,
+    SaveEnvironments,
+    LoadEnvironments,
+    InitializeStorage,
+    StorageInitialized(Result<(), String>),
+    SetStorageManager,
+    CollectionsSaved(Result<(), String>),
+    CollectionsLoaded(Result<Vec<RequestCollection>, String>),
+    EnvironmentsSaved(Result<(), String>),
+    EnvironmentsLoaded(Result<Vec<Environment>, String>),
+    SaveInitialData,
+    SaveLastOpenedRequest(usize, usize), // (collection_index, request_index)
+    LoadLastOpenedRequest,
+    LastOpenedRequestSaved(Result<(), String>),
+    LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
+    RequestConfigLoaded(Result<Option<RequestConfig>, String>),
+    
+    // Auto-save messages
+    RequestFieldChanged {
+        collection_index: usize,
+        request_index: usize,
+        field: RequestField,
+    },
+    SaveRequestDebounced {
+        collection_index: usize,
+        request_index: usize,
+    },
+    RequestSaved(Result<(), String>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RequestField {
+    Url,
+    Method,
+    Body,
+    Headers,
+    Params,
+    Auth,
 }
 
 impl std::fmt::Display for HttpMethod {

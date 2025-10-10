@@ -1,5 +1,5 @@
 use crate::types::{RequestCollection, SavedRequest, Message, HttpMethod};
-use iced::widget::{button, column, container, row, text, scrollable, Space};
+use iced::widget::{button, column, container, row, text, scrollable, Space, mouse_area};
 use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
@@ -7,6 +7,7 @@ use iced_aw::ContextMenu;
 
 pub fn collections_panel<'a>(
     collections: &'a [RequestCollection],
+    last_opened_request: Option<(usize, usize)>,
 ) -> Element<'a, Message> {
     let mut content = column![];
 
@@ -129,6 +130,8 @@ pub fn collections_panel<'a>(
 
         if collection.expanded {
             for (request_index, request) in collection.requests.iter().enumerate() {
+                let is_selected = last_opened_request == Some((collection_index, request_index));
+                
                 let request_button = button(
                     row![
                         Space::with_width(20),
@@ -141,12 +144,44 @@ pub fn collections_panel<'a>(
                 .on_press(Message::RequestSelected(collection_index, request_index))
                 .style(move |theme, status| {
                     let base = button::Style::default();
+                    
                     match status {
-                        Status::Hovered => button::Style {
-                            background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                            ..base
-                        },
-                        _ => base,
+                        Status::Pressed => {
+                            if is_selected {
+                                button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(0.78, 0.82, 0.996))), // #c7d2fe
+                                    ..base
+                                }
+                            } else {
+                                button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                                    ..base
+                                }
+                            }
+                        }
+                        Status::Hovered => {
+                            if is_selected {
+                                button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(0.78, 0.82, 0.996))), // #c7d2fe
+                                    ..base
+                                }
+                            } else {
+                                button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+                                    ..base
+                                }
+                            }
+                        }
+                        _ => {
+                            if is_selected {
+                                button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(0.78, 0.82, 0.996))), // #c7d2fe
+                                    ..base
+                                }
+                            } else {
+                                base
+                            }
+                        }
                     }
                 })
                 .width(Length::Fill);

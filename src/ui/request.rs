@@ -1,10 +1,11 @@
 use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
 use iced::widget::{
     button, column, container, pick_list, row, text, text_input, scrollable,
-    text_editor, Space, stack
+    text_editor, Space, stack, mouse_area
 };
 use iced::{Element, Fill, Length, Color, Background, Border, Theme, Shadow, Vector};
 use iced::widget::button::Status;
+use regex::Regex;
 
 
 pub fn request_panel<'a>(
@@ -13,6 +14,10 @@ pub fn request_panel<'a>(
     environments: &'a [Environment],
     active_environment: Option<usize>,
     method_menu_open: bool,
+    show_url_tooltip: bool,
+    tooltip_variable_name: &'a str,
+    tooltip_variable_value: &'a str,
+    tooltip_position: (f32, f32),
 ) -> Element<'a, Message> {
     // Environment manager button for the URL row
     let env_button = {
@@ -65,26 +70,70 @@ pub fn request_panel<'a>(
     let method_label = method_button(&config.method);
 
     // Connected method label and URL input with overlay dropdown
+    let url_input_with_hover = mouse_area(
+        text_input("Enter URL", &config.url)
+            .on_input(Message::UrlChanged)
+            .width(Length::Fill)
+            .style(|theme: &Theme, _status: text_input::Status| {
+                text_input::Style {
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 0.0.into(),
+                    },
+                    background: Background::Color(theme.palette().background),
+                    icon: Color::TRANSPARENT,
+                    placeholder: theme.palette().text,
+                    value: theme.palette().text,
+                    selection: theme.palette().primary,
+                }
+            })
+    )
+    .on_move(move |_point| {
+        // Detect all environment variables in the URL
+        use regex::Regex;
+        let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+
+        let mut variables = Vec::new();
+        for captures in re.captures_iter(&config.url) {
+            let variable_name = captures.get(1).unwrap().as_str().to_string();
+            let variable_value = if let Some(active_idx) = active_environment {
+                if let Some(env) = environments.get(active_idx) {
+                    env.get_variable(&variable_name)
+                        .map(|v| v.clone())
+                        .unwrap_or_else(|| "undefined".to_string())
+                } else {
+                    "undefined".to_string()
+                }
+            } else {
+                "undefined".to_string()
+            };
+            variables.push((variable_name, variable_value));
+        }
+
+        if !variables.is_empty() {
+            // Show all variables in the tooltip, one per line
+            let all_vars = variables.iter()
+                .map(|(name, value)| format!("{}: {}", name, value))
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            Message::ShowUrlTooltip(
+                "Variables".to_string(),
+                all_vars,
+                20.0, // Fixed left padding
+                100.0, // Fixed position above URL input (environment bar + some spacing)
+            )
+        } else {
+            Message::HideUrlTooltip
+        }
+    })
+    .on_exit(Message::HideUrlTooltip);
+
     let base_input = container(
         row![
             method_label,
-            text_input("Enter URL", &config.url)
-                .on_input(Message::UrlChanged)
-                .width(Length::Fill)
-                .style(|theme: &Theme, _status: text_input::Status| {
-                    text_input::Style {
-                        border: Border {
-                            color: Color::TRANSPARENT,
-                            width: 0.0,
-                            radius: 0.0.into(),
-                        },
-                        background: Background::Color(theme.palette().background),
-                        icon: Color::TRANSPARENT,
-                        placeholder: theme.palette().text,
-                        value: theme.palette().text,
-                        selection: theme.palette().primary,
-                    }
-                }),
+            url_input_with_hover,
         ]
     )
     .padding(2)
@@ -196,7 +245,7 @@ pub fn request_panel<'a>(
                                  .width(Length::Fixed(1.0))
                                  .height(Fill)
                                  .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.7, 0.7, 0.7))), // Gray
+                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.8, 0.8))), // Gray
                                      ..Default::default()
                                  });
 
@@ -205,7 +254,7 @@ pub fn request_panel<'a>(
                                  .width(Length::Fixed(1.0))
                                  .height(Fill)
                                  .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.7, 0.7, 0.7))), // Gray
+                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.8, 0.8))), // Gray
                                      ..Default::default()
                                  });
     let main_content = row![
@@ -217,7 +266,7 @@ pub fn request_panel<'a>(
         right_border
     ];
 
-    if method_menu_open {
+    let base_layout = if method_menu_open {
         stack![
             main_content,
             // Transparent overlay to detect clicks outside the menu
@@ -240,6 +289,48 @@ pub fn request_panel<'a>(
         .into()
     } else {
         main_content.into()
+    };
+
+    // Add tooltip overlay if needed
+    if show_url_tooltip {
+        stack![
+            base_layout,
+            // Tooltip overlay
+            container(
+                container(
+                    column![
+                        text(tooltip_variable_name)
+                            .size(12)
+                            .color(Color::from_rgb(0.8, 0.8, 1.0)), // Light blue for header
+                        text(tooltip_variable_value)
+                            .size(11)
+                            .color(Color::WHITE),
+                    ]
+                    .spacing(4)
+                )
+                .padding(8)
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 1.0))),
+                    border: Border {
+                        color: Color::from_rgb(0.6, 0.6, 0.6),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    text_color: Some(Color::WHITE),
+                    shadow: Shadow {
+                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                        offset: Vector::new(2.0, 2.0),
+                        blur_radius: 4.0,
+                    },
+                })
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(iced::Padding::new(tooltip_position.0).top(tooltip_position.1))
+        ]
+        .into()
+    } else {
+        base_layout
     }
 }
 
@@ -472,7 +563,7 @@ fn method_button(method: &HttpMethod) -> Element<'_, Message> {
             HttpMethod::PUT => 50.0,
             HttpMethod::POST => 60.0,
             HttpMethod::HEAD => 60.0,
-            HttpMethod::PATCH => 70.0,
+            HttpMethod::PATCH => 75.0,
             HttpMethod::DELETE => 80.0,
             HttpMethod::OPTIONS => 90.0,
         }))
