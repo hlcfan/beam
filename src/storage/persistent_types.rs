@@ -87,7 +87,6 @@ pub struct PersistentEnvironment {
 pub struct EnvironmentMetadata {
     pub created_at: String,
     pub modified_at: String,
-    pub active: bool,
 }
 
 impl Default for EnvironmentMetadata {
@@ -96,7 +95,6 @@ impl Default for EnvironmentMetadata {
         Self {
             created_at: now.clone(),
             modified_at: now,
-            active: false,
         }
     }
 }

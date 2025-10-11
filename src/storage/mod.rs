@@ -43,6 +43,12 @@ pub trait CollectionStorage: Send + Sync {
     /// Save environments to storage
     async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError>;
     
+    /// Save environments with active environment information
+    async fn save_environments_with_active(&self, environments: &[Environment], active_environment: Option<&str>) -> Result<(), StorageError>;
+    
+    /// Load active environment name from storage
+    async fn load_active_environment(&self) -> Result<Option<String>, StorageError>;
+    
     /// Save the last opened request
     async fn save_last_opened_request(&self, collection_index: usize, request_index: usize) -> Result<(), StorageError>;
     

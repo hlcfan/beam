@@ -485,6 +485,10 @@ impl CollectionStorage for TomlFileStorage {
     }
     
     async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
+        self.save_environments_with_active(environments, None).await
+    }
+    
+    async fn save_environments_with_active(&self, environments: &[Environment], active_environment: Option<&str>) -> Result<(), StorageError> {
         // Create base directory only when saving
         fs::create_dir_all(&self.base_path).await?;
         
@@ -500,7 +504,7 @@ impl CollectionStorage for TomlFileStorage {
         
         let persistent_data = PersistentEnvironments {
             environments: persistent_envs,
-            active_environment: None,
+            active_environment: active_environment.map(|s| s.to_string()),
             metadata: EnvironmentsMetadata::default(),
         };
         
@@ -509,6 +513,18 @@ impl CollectionStorage for TomlFileStorage {
         
         fs::write(&self.environments_path, content).await?;
         Ok(())
+    }
+    
+    async fn load_active_environment(&self) -> Result<Option<String>, StorageError> {
+        if !self.environments_path.exists() {
+            return Ok(None);
+        }
+        
+        let content = fs::read_to_string(&self.environments_path).await?;
+        let persistent_envs: PersistentEnvironments = toml::from_str(&content)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+        
+        Ok(persistent_envs.active_environment)
     }
     
     async fn save_last_opened_request(&self, collection_index: usize, request_index: usize) -> Result<(), StorageError> {

@@ -121,6 +121,13 @@ impl FromPersistent<PersistentRequest> for RequestConfig {
             _ => crate::types::AuthType::None,
         };
 
+        // Ensure default User-Agent header is present
+        let mut headers = persistent.headers;
+        let has_user_agent = headers.iter().any(|(key, _)| key.to_lowercase() == "user-agent");
+        if !has_user_agent {
+            headers.push(("User-Agent".to_string(), "BeamApp/1.0".to_string()));
+        }
+
         Self {
             method: match persistent.method.as_str() {
                 "GET" => crate::types::HttpMethod::GET,
@@ -133,7 +140,7 @@ impl FromPersistent<PersistentRequest> for RequestConfig {
                 _ => crate::types::HttpMethod::GET,
             },
             url: persistent.url,
-            headers: persistent.headers,
+            headers,
             params: persistent.params,
             body: iced::widget::text_editor::Content::with_text(&persistent.body),
             content_type: persistent.content_type,

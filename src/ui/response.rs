@@ -5,19 +5,35 @@ use iced::widget::{
 use iced::{Element, Length, Color, Background, Border};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
+use iced::highlighter::{self, Highlighter};
+
+fn response_text_editor_style(theme: &iced::Theme, _status: text_editor::Status) -> text_editor::Style {
+    text_editor::Style {
+        background: Background::Color(theme.palette().background),
+        border: Border {
+            color: Color::from_rgb(0.9, 0.9, 0.9),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        icon: theme.palette().text,
+        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+        value: theme.palette().text,
+        selection: Color::from_rgba(0.0, 0.5, 1.0, 0.2), // Light blue selection with 20% opacity
+    }
+}
 
 fn format_bytes(bytes: usize) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
     const THRESHOLD: f64 = 1024.0;
-    
+
     if bytes == 0 {
         return "0 B".to_string();
     }
-    
+
     let bytes_f = bytes as f64;
     let unit_index = (bytes_f.log(THRESHOLD).floor() as usize).min(UNITS.len() - 1);
     let size = bytes_f / THRESHOLD.powi(unit_index as i32);
-    
+
     if unit_index == 0 {
         format!("{} {}", bytes, UNITS[unit_index])
     } else if size >= 100.0 {
@@ -35,6 +51,7 @@ pub fn response_panel<'a>(
     selected_tab: ResponseTab,
     is_loading: bool,
     current_elapsed_time: u64,
+    spinner: &'a crate::ui::Spinner,
 ) -> Element<'a, Message> {
     match response {
         Some(resp) => {
@@ -51,23 +68,11 @@ pub fn response_panel<'a>(
             // Add loading indicator if loading (on the left)
             if is_loading {
                 status_row.push(
-                    container(
-                        text("Loading...")
-                            .size(14)
-                            .color(Color::from_rgb(0.0, 0.5, 1.0))
-                    )
-                    .style(|theme| Style {
-                        background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Border::default()
-                        },
-                        ..Style::default()
-                    })
-                    .padding([4, 8])
+                    container(spinner.view())
+                    .padding([0, 3])
                     .into(),
                 );
-                status_row.push(Space::with_width(10).into());
+                // status_row.push(Space::with_width(10).into());
             }
 
             // Add response status
@@ -127,13 +132,13 @@ pub fn response_panel<'a>(
 
             column![
                 status_info,
-                Space::with_height(10),
+                Space::with_height(2),
                 tabs,
-                Space::with_height(5),
+                Space::with_height(2),
                 tab_content
             ]
             .spacing(10)
-            .padding(20)
+            .padding(15)
             .into()
         }
         None => {
@@ -141,20 +146,8 @@ pub fn response_panel<'a>(
                 // Show loading status when no response exists yet
                 column![
                     row![
-                        container(
-                            text("Loading...")
-                                .size(14)
-                                .color(Color::from_rgb(0.0, 0.5, 1.0))
-                        )
-                        .style(|theme| Style {
-                            background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
-                            border: Border {
-                                radius: 4.0.into(),
-                                ..Border::default()
-                            },
-                            ..Style::default()
-                        })
-                        .padding([4, 8]),
+                        container(spinner.view())
+                        .padding([0, 3]),
                         Space::with_width(20),
                         text(format!("Time: {}ms", current_elapsed_time))
                             .size(12)
@@ -163,7 +156,7 @@ pub fn response_panel<'a>(
                     .align_y(iced::Alignment::Center),
                 ]
                 .spacing(10)
-                .padding(20)
+                .padding(10)
                 .into()
             } else {
                 container(
@@ -237,7 +230,7 @@ fn response_tab_button<'a>(label: &'a str, is_active: bool, tab: ResponseTab) ->
 
 fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option<ResponseData>) -> Element<'a, Message> {
     let mut body_column = column![];
-    
+
     // Check if this is a binary response
     if let Some(resp) = response {
         if resp.is_binary {
@@ -257,25 +250,25 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                     ..Style::default()
                 })
                 .padding([8, 12]),
-                
+
                 Space::with_height(10),
-                
+
                 text(format!("Content-Type: {}", resp.content_type))
                     .size(14)
                     .color(Color::from_rgb(0.3, 0.3, 0.3)),
-                    
+
                 text(format!("Size: {}", format_bytes(resp.size)))
                     .size(14)
                     .color(Color::from_rgb(0.3, 0.3, 0.3)),
-                    
+
                 Space::with_height(15),
-                
+
                 text("Preview (first 100 bytes as hex):")
                     .size(14)
                     .color(Color::from_rgb(0.3, 0.3, 0.3)),
-                    
+
                 Space::with_height(5),
-                
+
                 scrollable(
                     container(
                         text(&resp.body)
@@ -296,29 +289,17 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                 .height(Length::Fill)
             ]
             .spacing(5);
-            
+
             body_column = body_column.push(binary_info);
         } else {
             // For text responses, use the normal text editor
             body_column = body_column
                 .push(
                     text_editor(content)
+                        .highlight("json", highlighter::Theme::SolarizedDark)
                         .on_action(Message::ResponseBodyAction)
                         .height(Length::Fill)
-                        .style(|theme: &iced::Theme, status: text_editor::Status| {
-                            text_editor::Style {
-                                background: Background::Color(theme.palette().background),
-                                border: Border {
-                                    color: Color::from_rgb(0.8, 0.8, 0.8),
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                icon: theme.palette().text,
-                                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                                value: theme.palette().text,
-                                selection: theme.palette().primary,
-                            }
-                        })
+                        .style(response_text_editor_style)
                 );
         }
     } else {
@@ -332,7 +313,7 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                         text_editor::Style {
                             background: Background::Color(theme.palette().background),
                             border: Border {
-                                color: Color::from_rgb(0.8, 0.8, 0.8),
+                                color: Color::from_rgb(0.9, 0.9, 0.9),
                                 width: 1.0,
                                 radius: 4.0.into(),
                             },
@@ -344,8 +325,8 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                     })
             );
     }
-    
-    body_column.spacing(10).into()
+
+    body_column.spacing(0.0).into()
 }
 
 fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> {

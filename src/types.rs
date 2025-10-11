@@ -42,7 +42,7 @@ impl Highlighter for ResponseHighlighter {
 }
 
 #[derive(Debug)]
-pub struct PostmanApp {
+pub struct BeamApp {
     pub panes: pane_grid::State<PaneContent>,
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
@@ -53,37 +53,40 @@ pub struct PostmanApp {
     pub is_loading: bool,
     pub request_start_time: Option<std::time::Instant>,
     pub current_elapsed_time: u64, // milliseconds
-    
+
     // Environment management
     pub environments: Vec<Environment>,
     pub active_environment: Option<usize>,
     pub show_environment_popup: bool,
     pub method_menu_open: bool,
-    
+
     // Last opened request tracking
     pub last_opened_request: Option<(usize, usize)>, // (collection_index, request_index)
-    
+
     // Auto-save debounce management
     pub debounce_timers: HashMap<(usize, usize), Instant>, // (collection_index, request_index) -> last_change_time
     pub debounce_delay_ms: u64, // configurable delay in milliseconds
-    
+
     // Rename modal state
     pub show_rename_modal: bool,
     pub rename_input: String,
     pub rename_target: Option<(usize, usize)>, // (collection_index, request_index)
-    
+
     // Double-click detection state
     pub last_click_time: Option<std::time::Instant>,
     pub last_click_target: Option<(usize, usize)>, // (collection_index, request_index)
-    
+
     // Tooltip state for environment variables
     pub show_url_tooltip: bool,
     pub tooltip_variable_name: Option<String>,
     pub tooltip_variable_value: Option<String>,
     pub tooltip_position: Option<(f32, f32)>, // (x, y) position
-    
+
     // Storage
     pub storage_manager: Option<StorageManager>,
+
+    // Spinner for loading animation
+    pub spinner: crate::ui::Spinner,
 }
 
 #[derive(Debug, Clone)]
@@ -110,7 +113,7 @@ pub struct RequestConfig {
     pub content_type: String,
     pub auth_type: AuthType,
     pub selected_tab: RequestTab,
-    
+
     // Authentication fields
     pub bearer_token: String,
     pub basic_username: String,
@@ -287,22 +290,24 @@ pub enum Message {
     RenameRequest(usize, usize),
     DuplicateRequest(usize, usize),
     DeleteRequest(usize, usize),
-    
+
     // Rename modal
     ShowRenameModal(usize, usize), // (collection_index, request_index)
     HideRenameModal,
     RenameInputChanged(String),
     ConfirmRename,
-    
+
     // URL tooltip for environment variables
     ShowUrlTooltip(String, String, f32, f32), // (variable_name, variable_value, x, y)
     HideUrlTooltip,
-    
+
     // Storage operations
     SaveCollection(usize),
     LoadCollections,
     SaveEnvironments,
     LoadEnvironments,
+    LoadActiveEnvironment,
+    ActiveEnvironmentLoaded(Result<Option<String>, String>),
     InitializeStorage,
     StorageInitialized(Result<(), String>),
     SetStorageManager,
@@ -316,7 +321,7 @@ pub enum Message {
     LastOpenedRequestSaved(Result<(), String>),
     LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
     RequestConfigLoaded(Result<Option<RequestConfig>, String>),
-    
+
     // Auto-save messages
     RequestFieldChanged {
         collection_index: usize,

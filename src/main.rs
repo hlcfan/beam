@@ -15,19 +15,20 @@ use iced::widget::{
 use iced::{Element, Fill, Length, Size, Theme, Color, Task, Vector};
 use iced_aw::ContextMenu;
 use std::collections::HashMap;
+use serde_json;
 
 pub fn main() -> iced::Result {
     iced::application(
-            |_state: &PostmanApp| String::from("Beam"),
-            PostmanApp::update,
-            PostmanApp::view,
+            |_state: &BeamApp| String::from("Beam"),
+            BeamApp::update,
+            BeamApp::view,
         )
-        .subscription(PostmanApp::subscription)
+        .subscription(BeamApp::subscription)
         .window_size(Size::new(1200.0, 800.0))
-        .run_with(|| (PostmanApp::default(), Task::perform(async { Message::InitializeStorage }, |msg| msg)))
+        .run_with(|| (BeamApp::default(), Task::perform(async { Message::InitializeStorage }, |msg| msg)))
 }
 
-impl Default for PostmanApp {
+impl Default for BeamApp {
     fn default() -> Self {
         let (mut panes, collections_pane) = pane_grid::State::new(PaneContent::Collections);
 
@@ -48,205 +49,9 @@ impl Default for PostmanApp {
         // Set three-panel horizontal layout ratios
         // Collections: 25%, Request Config: 40%, Response: 35%
         panes.resize(first_split, 0.25);
-        panes.resize(second_split, 0.533); // 40/(40+35) = 0.533
+        panes.resize(second_split, 0.466); // 40/(40+35) = 0.533
 
-        let collections = vec![
-            RequestCollection {
-                name: "JSONPlaceholder API".to_string(),
-                requests: vec![
-                    SavedRequest {
-                        name: "Get All Users".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://jsonplaceholder.typicode.com/users".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Get Single User".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://jsonplaceholder.typicode.com/users/1".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Create User".to_string(),
-                        method: HttpMethod::POST,
-                        url: "https://jsonplaceholder.typicode.com/users".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Update User".to_string(),
-                        method: HttpMethod::PUT,
-                        url: "https://jsonplaceholder.typicode.com/users/1".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Patch User".to_string(),
-                        method: HttpMethod::PATCH,
-                        url: "https://jsonplaceholder.typicode.com/users/1".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Delete User".to_string(),
-                        method: HttpMethod::DELETE,
-                        url: "https://jsonplaceholder.typicode.com/users/1".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Get All Posts".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://jsonplaceholder.typicode.com/posts".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Get Comments".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://jsonplaceholder.typicode.com/comments".to_string(),
-                    },
-                ],
-                expanded: true,
-            },
-            RequestCollection {
-                name: "HTTPBin Testing".to_string(),
-                requests: vec![
-                    SavedRequest {
-                        name: "Health Check".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/200".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Get IP Address".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/ip".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Get User Agent".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/user-agent".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Get Headers".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/headers".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Test POST Data".to_string(),
-                        method: HttpMethod::POST,
-                        url: "https://httpbin.org/post".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Test PUT Data".to_string(),
-                        method: HttpMethod::PUT,
-                        url: "https://httpbin.org/put".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Test PATCH Data".to_string(),
-                        method: HttpMethod::PATCH,
-                        url: "https://httpbin.org/patch".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Test DELETE".to_string(),
-                        method: HttpMethod::DELETE,
-                        url: "https://httpbin.org/delete".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Delay 2 Seconds".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/delay/2".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Random UUID".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/uuid".to_string(),
-                    },
-                ],
-                expanded: false,
-            },
-            RequestCollection {
-                name: "Size Testing".to_string(),
-                requests: vec![
-                    SavedRequest {
-                        name: "Small Response (1KB)".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/bytes/1024".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Medium Response (10KB)".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/bytes/10240".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Large Response (100KB)".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/bytes/102400".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Very Large Response (1MB)".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/bytes/1048576".to_string(),
-                    },
-                ],
-                expanded: false,
-            },
-            RequestCollection {
-                name: "Status Code Tests".to_string(),
-                requests: vec![
-                    SavedRequest {
-                        name: "200 OK".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/200".to_string(),
-                    },
-                    SavedRequest {
-                        name: "201 Created".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/201".to_string(),
-                    },
-                    SavedRequest {
-                        name: "400 Bad Request".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/400".to_string(),
-                    },
-                    SavedRequest {
-                        name: "401 Unauthorized".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/401".to_string(),
-                    },
-                    SavedRequest {
-                        name: "404 Not Found".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/404".to_string(),
-                    },
-                    SavedRequest {
-                        name: "500 Server Error".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://httpbin.org/status/500".to_string(),
-                    },
-                ],
-                expanded: false,
-            },
-            RequestCollection {
-                name: "Real APIs".to_string(),
-                requests: vec![
-                    SavedRequest {
-                        name: "GitHub API - User Info".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://api.github.com/users/octocat".to_string(),
-                    },
-                    SavedRequest {
-                        name: "GitHub API - Repos".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://api.github.com/users/octocat/repos".to_string(),
-                    },
-                    SavedRequest {
-                        name: "REST Countries".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://restcountries.com/v3.1/name/canada".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Cat Facts".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://catfact.ninja/fact".to_string(),
-                    },
-                    SavedRequest {
-                        name: "Random Quote".to_string(),
-                        method: HttpMethod::GET,
-                        url: "https://api.quotable.io/random".to_string(),
-                    },
-                ],
-                expanded: false,
-            },
-        ];
+        let collections = vec![];
 
         Self {
             panes,
@@ -254,7 +59,10 @@ impl Default for PostmanApp {
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
-                headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+                headers: vec![
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
+                ],
                 params: vec![],
                 body: text_editor::Content::new(),
                 content_type: "application/json".to_string(),
@@ -274,22 +82,9 @@ impl Default for PostmanApp {
             request_start_time: None,
             current_elapsed_time: 0,
 
-            // Initialize with a default environment
-            environments: vec![
-                {
-                    let mut env = Environment::with_description(
-                        "Development".to_string(),
-                        "Development environment variables".to_string(),
-                    );
-                    // Add some sample variables for testing
-                    env.add_variable("base_url".to_string(), "https://jsonplaceholder.typicode.com".to_string());
-                    env.add_variable("api_version".to_string(), "v1".to_string());
-                    env.add_variable("user_id".to_string(), "1".to_string());
-                    env.add_variable("auth_token".to_string(), "your-auth-token-here".to_string());
-                    env
-                }
-            ],
-            active_environment: Some(0),
+            // Initialize with empty environments
+            environments: vec![],
+            active_environment: None,
             show_environment_popup: false,
             method_menu_open: false,
 
@@ -317,12 +112,28 @@ impl Default for PostmanApp {
 
             // Storage will be initialized asynchronously
             storage_manager: None,
+
+            // Initialize spinner
+            spinner: Spinner::new(),
         }
     }
 }
 
-impl PostmanApp {
+impl BeamApp {
     fn create_response_content(body: &str) -> text_editor::Content {
+        // Try to format JSON if the content is not too large (limit to 100KB)
+        const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
+
+        if body.len() <= MAX_JSON_FORMAT_SIZE {
+            // Try to parse and format as JSON
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
+                    return text_editor::Content::with_text(&formatted_json);
+                }
+            }
+        }
+
+        // If not JSON or too large, return original content
         text_editor::Content::with_text(body)
     }
 
@@ -353,40 +164,6 @@ impl PostmanApp {
 
         // If no active environment or variable not found, return original string
         input.to_string()
-    }
-
-    /// Detects environment variables in text and returns their information for tooltips
-    fn detect_variables_at_position(&self, input: &str, cursor_position: usize) -> Option<(String, String)> {
-        if let Some(active_env_index) = self.active_environment {
-            if let Some(active_env) = self.environments.get(active_env_index) {
-                use regex::Regex;
-                let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
-
-                // Find all variable matches and check if cursor is within any of them
-                for captures in re.find_iter(input) {
-                    let match_start = captures.start();
-                    let match_end = captures.end();
-                    
-                    // Check if cursor position is within this variable
-                    if cursor_position >= match_start && cursor_position <= match_end {
-                        // Extract variable name from the match
-                        if let Some(var_captures) = re.captures(&input[match_start..match_end]) {
-                            if let Some(var_name_match) = var_captures.get(1) {
-                                let var_name = var_name_match.as_str().trim();
-                                
-                                // Get the variable value
-                                if let Some(var_value) = active_env.get_variable(var_name) {
-                                    return Some((var_name.to_string(), var_value.clone()));
-                                } else {
-                                    return Some((var_name.to_string(), "undefined".to_string()));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        None
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -490,6 +267,10 @@ impl PostmanApp {
             Message::TimerTick => {
                 if let Some(start_time) = self.request_start_time {
                     self.current_elapsed_time = start_time.elapsed().as_millis() as u64;
+                }
+                // Update spinner animation
+                if self.is_loading {
+                    self.spinner.update();
                 }
                 Task::none()
             }
@@ -776,8 +557,27 @@ impl PostmanApp {
             Message::EnvironmentSelected(index) => {
                 if index < self.environments.len() {
                     self.active_environment = Some(index);
+
+                    // Save the active environment to storage
+                    let environments = self.environments.clone();
+                    let active_env_name = self.environments[index].name.clone();
+                    Task::perform(
+                        async move {
+                            match storage::StorageManager::with_default_config().await {
+                                Ok(storage_manager) => {
+                                    if let Err(e) = storage_manager.storage().save_environments_with_active(&environments, Some(&active_env_name)).await {
+                                        eprintln!("Failed to save active environment: {}", e);
+                                    }
+                                }
+                                Err(e) => eprintln!("Failed to create storage manager: {}", e),
+                            }
+                            Message::DoNothing
+                        },
+                        |msg| msg,
+                    )
+                } else {
+                    Task::none()
                 }
-                Task::none()
             }
             Message::AddEnvironment => {
                 let new_env = Environment::new(format!("Environment {}", self.environments.len() + 1));
@@ -1426,10 +1226,48 @@ impl PostmanApp {
                     Ok(environments) => {
                         if !environments.is_empty() {
                             self.environments = environments;
+                            // After loading environments, load the active environment
+                            Task::perform(async { Message::LoadActiveEnvironment }, |msg| msg)
+                        } else {
+                            Task::none()
                         }
                     }
                     Err(e) => {
                         eprintln!("Failed to load environments: {}", e);
+                        Task::none()
+                    }
+                }
+            }
+            Message::LoadActiveEnvironment => {
+                Task::perform(
+                    async {
+                        match storage::StorageManager::with_default_config().await {
+                            Ok(storage_manager) => {
+                                match storage_manager.storage().load_active_environment().await {
+                                    Ok(active_env) => Ok(active_env),
+                                    Err(e) => Err(e.to_string()),
+                                }
+                            }
+                            Err(e) => Err(e.to_string()),
+                        }
+                    },
+                    Message::ActiveEnvironmentLoaded,
+                )
+            }
+            Message::ActiveEnvironmentLoaded(result) => {
+                match result {
+                    Ok(Some(active_env_name)) => {
+                        // Find the environment by name and set it as active
+                        if let Some(index) = self.environments.iter().position(|env| env.name == active_env_name) {
+                            self.active_environment = Some(index);
+                        }
+                    }
+                    Ok(None) => {
+                        // No active environment saved
+                        self.active_environment = None;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load active environment: {}", e);
                     }
                 }
                 Task::none()
@@ -1732,12 +1570,12 @@ impl PostmanApp {
                 border: iced::Border::default(),
             },
             hovered_split: pane_grid::Line {
-                color: iced::Color::from_rgb(0.7, 0.7, 0.7), // Gray
-                width: 1.0,
+                color: iced::Color::from_rgb(0.9, 0.9, 0.9), // Gray
+                width: 0.0,
             },
             picked_split: pane_grid::Line {
-                color: iced::Color::from_rgb(0.7, 0.7, 0.7), // Gray
-                width: 1.0,
+                color: iced::Color::from_rgb(0.9, 0.9, 0.9), // Gray
+                width: 0.0,
             },
         });
 
@@ -1791,10 +1629,10 @@ impl PostmanApp {
 
     fn request_config_view(&self) -> Element<'_, Message> {
         request_panel(
-            &self.current_request, 
-            self.is_loading, 
-            &self.environments, 
-            self.active_environment, 
+            &self.current_request,
+            self.is_loading,
+            &self.environments,
+            self.active_environment,
             self.method_menu_open,
             self.show_url_tooltip,
             self.tooltip_variable_name.as_deref().unwrap_or(""),
@@ -1810,6 +1648,7 @@ impl PostmanApp {
             self.selected_response_tab.clone(),
             self.is_loading,
             self.current_elapsed_time,
+            &self.spinner,
         )
     }
 

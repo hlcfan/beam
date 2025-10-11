@@ -19,49 +19,48 @@ pub fn request_panel<'a>(
     tooltip_variable_value: &'a str,
     tooltip_position: (f32, f32),
 ) -> Element<'a, Message> {
-    // Environment manager button for the URL row
-    let env_button = {
-        let env_text = if let Some(active_idx) = active_environment {
+    // Environment pick_list for the URL row
+    let env_pick_list = {
+        // Create list of environment options including all environments plus "Configure"
+        let mut env_options: Vec<String> = environments.iter().map(|env| env.name.clone()).collect();
+        env_options.push("Configure".to_string());
+
+        // Determine the selected value
+        let selected_env = if let Some(active_idx) = active_environment {
             if let Some(env) = environments.get(active_idx) {
-                format!("🌍 {}", env.name)
+                Some(env.name.clone())
             } else {
-                "🌍 No Environment".to_string()
+                None
             }
         } else {
-            "🌍 No Environment".to_string()
+            None
         };
 
-        button(text(env_text).shaping(text::Shaping::Advanced))
-            .on_press(Message::OpenEnvironmentPopup)
-            .width(150)
-            .style(|theme, status| {
-                let base = button::Style::default();
-                match status {
-                    Status::Hovered => button::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Border::default()
-                        },
-                        ..base
-                    },
-                    _ => button::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Border::default()
-                        },
-                        ..base
-                    },
+        pick_list(
+            env_options,
+            selected_env,
+            |selected| {
+                if selected == "Configure" {
+                    Message::OpenEnvironmentPopup
+                } else {
+                    // Find the index of the selected environment
+                    if let Some(index) = environments.iter().position(|env| env.name == selected) {
+                        Message::EnvironmentSelected(index)
+                    } else {
+                        Message::DoNothing
+                    }
                 }
-            })
+            }
+        )
+        .width(150)
+        .placeholder("🌍 No Environment")
     };
 
     // Environment bar
     let env_bar = row![
         text("Environment:").size(14),
         Space::with_width(5),
-        env_button,
+        env_pick_list,
         Space::with_width(Fill), // Push everything to the left
     ]
     .align_y(iced::Alignment::Center);
@@ -245,7 +244,7 @@ pub fn request_panel<'a>(
                                  .width(Length::Fixed(1.0))
                                  .height(Fill)
                                  .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.8, 0.8))), // Gray
+                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))), // Gray
                                      ..Default::default()
                                  });
 
@@ -254,7 +253,7 @@ pub fn request_panel<'a>(
                                  .width(Length::Fixed(1.0))
                                  .height(Fill)
                                  .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.8, 0.8, 0.8))), // Gray
+                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))), // Gray
                                      ..Default::default()
                                  });
     let main_content = row![
@@ -382,7 +381,7 @@ fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
                 text_editor::Style {
                     background: Background::Color(theme.palette().background),
                     border: Border {
-                        color: Color::from_rgb(0.8, 0.8, 0.8),
+                        color: Color::from_rgb(0.9, 0.9, 0.9),
                         width: 1.0,
                         radius: 4.0.into(),
                     },
