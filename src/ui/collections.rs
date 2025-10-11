@@ -1,5 +1,5 @@
 use crate::types::{RequestCollection, SavedRequest, Message, HttpMethod};
-use iced::widget::{button, column, container, row, text, scrollable, Space, mouse_area};
+use iced::widget::{button, column, container, row, text, scrollable, Space, svg};
 use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
@@ -14,7 +14,15 @@ pub fn collections_panel<'a>(
     for (collection_index, collection) in collections.iter().enumerate() {
         let collection_header = button(
             row![
-                text(if collection.expanded { "▼" } else { "▶" }).size(12),
+                svg(
+                    if collection.expanded {
+                        "assets/icons/chevron-down.svg"
+                    } else {
+                        "assets/icons/chevron-right.svg"
+                    }
+                )
+                .width(12)
+                .height(12),
                 Space::with_width(5),
                 text(&collection.name).size(14)
             ]
@@ -131,7 +139,7 @@ pub fn collections_panel<'a>(
         if collection.expanded {
             for (request_index, request) in collection.requests.iter().enumerate() {
                 let is_selected = last_opened_request == Some((collection_index, request_index));
-                
+
                 let request_button = button(
                     row![
                         Space::with_width(20),
@@ -144,7 +152,7 @@ pub fn collections_panel<'a>(
                 .on_press(Message::RequestSelected(collection_index, request_index))
                 .style(move |theme, status| {
                     let base = button::Style::default();
-                    
+
                     match status {
                         Status::Pressed => {
                             if is_selected {
