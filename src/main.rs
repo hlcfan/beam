@@ -19,13 +19,15 @@ use serde_json;
 
 pub fn main() -> iced::Result {
     iced::application(
-            |_state: &BeamApp| String::from("Beam"),
+            || (BeamApp::default(), Task::perform(async { Message::InitializeStorage }, |msg| msg)),
             BeamApp::update,
             BeamApp::view,
         )
+        .title(|_: &BeamApp| "Beam".to_string())
         .subscription(BeamApp::subscription)
         .window_size(Size::new(1200.0, 800.0))
-        .run_with(|| (BeamApp::default(), Task::perform(async { Message::InitializeStorage }, |msg| msg)))
+        .run()
+
 }
 
 impl Default for BeamApp {

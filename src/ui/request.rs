@@ -209,7 +209,7 @@ pub fn request_panel<'a>(
         },
         text_color: None,
         shadow: Default::default(),
-        ..Default::default()
+        snap: true,
     });
 
     let connected_input = base_input;
@@ -275,7 +275,7 @@ pub fn request_panel<'a>(
         stack![
             main_content,
             // Transparent overlay to detect clicks outside the menu
-            button(space().width(Fill).height(Fill))
+            button(Space::new().width(Length::Fill).height(Length::Fill))
                 .on_press(Message::CloseMethodMenu)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -284,7 +284,7 @@ pub fn request_panel<'a>(
                     border: Border::default(),
                     shadow: Shadow::default(),
                     text_color: Color::TRANSPARENT,
-                    ..Default::default()
+                    snap: true
                 }),
             // The actual dropdown menu
             container(method_dropdown())
@@ -328,7 +328,7 @@ pub fn request_panel<'a>(
                         offset: Vector::new(2.0, 2.0),
                         blur_radius: 4.0,
                     },
-                    ..Default::default()
+                    snap: true,
                 })
             )
             .width(Length::Fill)
@@ -393,10 +393,10 @@ fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
                         width: 1.0,
                         radius: 4.0.into(),
                     },
+                    // icon: theme.palette().text,
                     placeholder: Color::from_rgb(0.6, 0.6, 0.6),
                     value: theme.palette().text,
                     selection: theme.palette().primary,
-                    ..Default::default()
                 }
             })
     ]
@@ -584,6 +584,7 @@ fn method_button(method: &HttpMethod) -> Element<'_, Message> {
                     radius: 0.0.into(),
                 },
                 shadow: Default::default(),
+                snap: true,
             }
         })
         .into()
@@ -597,12 +598,14 @@ fn method_dropdown() -> Element<'static, Message> {
                 text_color: Color::BLACK,
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: true,
             },
             _ => button::Style {
                 background: Some(Background::Color(Color::WHITE)), // White default
                 text_color: Color::BLACK,
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: true,
             }
         }
     };
@@ -633,6 +636,7 @@ fn method_dropdown() -> Element<'static, Message> {
             offset: Vector::new(0.0, 2.0),
             blur_radius: 4.0,
         },
+        snap: true,
     })
     .into()
 }

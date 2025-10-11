@@ -15,7 +15,6 @@ fn response_text_editor_style(theme: &iced::Theme, _status: text_editor::Status)
             width: 1.0,
             radius: 4.0.into(),
         },
-        icon: theme.palette().text,
         placeholder: Color::from_rgb(0.6, 0.6, 0.6),
         value: theme.palette().text,
         selection: Color::from_rgba(0.0, 0.5, 1.0, 0.2), // Light blue selection with 20% opacity
@@ -317,7 +316,6 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                                 width: 1.0,
                                 radius: 4.0.into(),
                             },
-                            icon: theme.palette().text,
                             placeholder: Color::from_rgb(0.6, 0.6, 0.6),
                             value: theme.palette().text,
                             selection: theme.palette().primary,

@@ -8,10 +8,12 @@ bytes = "1.6"
 sipper = "0.1"
 tokio = { version = "1.47.1", features = ["fs", "rt-multi-thread", "macros"] }
 image = { version = "0.25", default-features = false }
-iced = { version = "0.13.1", features = ["tokio", "image", "debug", "canvas", "advanced", "highlighter", "svg"] }
+# iced = { version = "0.13.1", features = ["tokio", "image", "debug", "canvas", "advanced", "highlighter", "svg"] }
+iced = { git = "https://github.com/iced-rs/iced", rev = "6279590", features = ["tokio", "image", "debug", "canvas", "advanced", "highlighter", "svg"] }
 
-iced_aw = { version = "0.12.2", features = ["context_menu", "menu"] }
-
+# iced_aw = { version = "0.12.2", features = ["context_menu", "menu"] }
+iced_aw = { git = "https://github.com/iced-rs/iced_aw", rev= "0efedc7187dc5c87a104be33a4f230d28790a865", features = ["context_menu", "menu"] }
+iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
 
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -26,6 +28,11 @@ base64 = "0.22"
 regex = "1.10"
 
 blurhash = "0.2.3"
+
+[patch.crates-io]
+iced = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
+iced_core = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
+iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
 
 [package.metadata.bundle]
 name = "Beam"

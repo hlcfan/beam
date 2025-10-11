@@ -9,7 +9,7 @@ echo "🚀 Building Beam macOS App..."
 
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
-cargo clean
+cargo clean --release
 
 # Build the release binary
 echo "🔨 Building release binary..."
