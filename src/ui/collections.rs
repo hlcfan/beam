@@ -1,5 +1,5 @@
 use crate::types::{RequestCollection, SavedRequest, Message, HttpMethod};
-use iced::widget::{button, column, container, row, text, scrollable, Space, svg};
+use iced::widget::{button, column, container, row, text, scrollable, space, svg};
 use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
@@ -23,7 +23,7 @@ pub fn collections_panel<'a>(
                 )
                 .width(12)
                 .height(12),
-                Space::with_width(5),
+                space().width(5),
                 text(&collection.name).size(14)
             ]
             .align_y(iced::Alignment::Center)
@@ -142,9 +142,9 @@ pub fn collections_panel<'a>(
 
                 let request_button = button(
                     row![
-                        Space::with_width(20),
+                        space().width(20),
                         method_badge(&request.method),
-                        Space::with_width(8),
+                        space().width(8),
                         text(&request.name).size(12)
                     ]
                     .align_y(iced::Alignment::Center)

@@ -1,6 +1,6 @@
 use crate::types::{ResponseData, ResponseTab, ResponseHighlighter, Message};
 use iced::widget::{
-    button, column, container, row, text, scrollable, text_editor, Space
+    button, column, container, row, text, scrollable, text_editor, space
 };
 use iced::{Element, Length, Color, Background, Border};
 use iced::widget::container::Style;
@@ -96,7 +96,7 @@ pub fn response_panel<'a>(
                 .into(),
             );
 
-            status_row.push(Space::with_width(20).into());
+            status_row.push(space().width(20).into());
             let time_text = if is_loading {
                 format!("Time: {}ms", current_elapsed_time)
             } else {
@@ -108,7 +108,7 @@ pub fn response_panel<'a>(
                     .color(Color::from_rgb(0.5, 0.5, 0.5))
                     .into(),
             );
-            status_row.push(Space::with_width(20).into());
+            status_row.push(space().width(20).into());
             status_row.push(
                 text(format!("Size: {}", format_bytes(resp.size)))
                     .size(12)
@@ -132,9 +132,9 @@ pub fn response_panel<'a>(
 
             column![
                 status_info,
-                Space::with_height(2),
+                space().height(2),
                 tabs,
-                Space::with_height(2),
+                space().height(2),
                 tab_content
             ]
             .spacing(10)
@@ -148,7 +148,7 @@ pub fn response_panel<'a>(
                     row![
                         container(spinner.view())
                         .padding([0, 3]),
-                        Space::with_width(20),
+                        space().width(20),
                         text(format!("Time: {}ms", current_elapsed_time))
                             .size(12)
                             .color(Color::from_rgb(0.5, 0.5, 0.5)),
@@ -161,7 +161,7 @@ pub fn response_panel<'a>(
             } else {
                 container(
                     column![
-                        Space::with_height(100),
+                        space().height(100),
                         container(
                             text("No response yet")
                                 .size(16)
@@ -176,7 +176,7 @@ pub fn response_panel<'a>(
                         )
                         .center_x(Length::Fill)
                         .width(Length::Fill),
-                        Space::with_height(100),
+                        space().height(100),
                     ]
                 )
                 .center_x(Length::Fill)
@@ -251,7 +251,7 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                 })
                 .padding([8, 12]),
 
-                Space::with_height(10),
+                space().height(10),
 
                 text(format!("Content-Type: {}", resp.content_type))
                     .size(14)
@@ -261,13 +261,13 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                     .size(14)
                     .color(Color::from_rgb(0.3, 0.3, 0.3)),
 
-                Space::with_height(15),
+                space().height(15),
 
                 text("Preview (first 100 bytes as hex):")
                     .size(14)
                     .color(Color::from_rgb(0.3, 0.3, 0.3)),
 
-                Space::with_height(5),
+                space().height(5),
 
                 scrollable(
                     container(
@@ -332,7 +332,7 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
 fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> {
     let mut content = column![
         text("Response Headers").size(16),
-        Space::with_height(10)
+        space().height(10)
     ];
 
     for (key, value) in &response.headers {

@@ -1,7 +1,7 @@
 use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
 use iced::widget::{
     button, column, container, pick_list, row, text, text_input, scrollable,
-    text_editor, Space, stack, mouse_area, svg
+    text_editor, space, mouse_area, svg, stack, Space
 };
 use iced::{Element, Fill, Length, Color, Background, Border, Theme, Shadow, Vector};
 use iced::widget::button::Status;
@@ -86,9 +86,9 @@ pub fn request_panel<'a>(
     // Environment bar
     let env_bar = row![
         text("Environment:").size(14),
-        Space::with_width(5),
+        space().width(5),
         env_pick_list,
-        Space::with_width(Fill), // Push everything to the left
+        space().width(Fill), // Push everything to the left
     ]
     .align_y(iced::Alignment::Center);
 
@@ -195,7 +195,7 @@ pub fn request_panel<'a>(
         row![
             method_label,
             url_input_with_hover,
-            Space::with_width(5),
+            space().width(5),
             send_button,
         ]
     )
@@ -209,6 +209,7 @@ pub fn request_panel<'a>(
         },
         text_color: None,
         shadow: Default::default(),
+        ..Default::default()
     });
 
     let connected_input = base_input;
@@ -234,11 +235,11 @@ pub fn request_panel<'a>(
 
     let content = column![
         env_bar,
-        Space::with_height(5),
+        space().height(5),
         url_row,
-        Space::with_height(10),
+        space().height(10),
         tabs,
-        Space::with_height(5),
+        space().height(5),
         tab_content
     ]
     .spacing(5)
@@ -274,7 +275,7 @@ pub fn request_panel<'a>(
         stack![
             main_content,
             // Transparent overlay to detect clicks outside the menu
-            button(Space::new(Length::Fill, Length::Fill))
+            button(space().width(Fill).height(Fill))
                 .on_press(Message::CloseMethodMenu)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -283,6 +284,7 @@ pub fn request_panel<'a>(
                     border: Border::default(),
                     shadow: Shadow::default(),
                     text_color: Color::TRANSPARENT,
+                    ..Default::default()
                 }),
             // The actual dropdown menu
             container(method_dropdown())
@@ -326,6 +328,7 @@ pub fn request_panel<'a>(
                         offset: Vector::new(2.0, 2.0),
                         blur_radius: 4.0,
                     },
+                    ..Default::default()
                 })
             )
             .width(Length::Fill)
@@ -390,10 +393,10 @@ fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
                         width: 1.0,
                         radius: 4.0.into(),
                     },
-                    icon: theme.palette().text,
                     placeholder: Color::from_rgb(0.6, 0.6, 0.6),
                     value: theme.palette().text,
                     selection: theme.palette().primary,
+                    ..Default::default()
                 }
             })
     ]
@@ -552,7 +555,7 @@ fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 
     column![
         auth_type_picker,
-        Space::with_height(10),
+        space().height(10),
         auth_config
     ]
     .spacing(10)

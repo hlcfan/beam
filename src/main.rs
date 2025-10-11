@@ -10,7 +10,7 @@ use ui::*;
 use iced::widget::pane_grid::{self, PaneGrid, Axis};
 use iced::widget::{
     button, column, container, row, text, text_input, text_editor, pick_list, scrollable,
-    mouse_area, stack, Space
+    mouse_area, stack, Space, space
 };
 use iced::{Element, Fill, Length, Size, Theme, Color, Task, Vector};
 use iced_aw::ContextMenu;
@@ -1656,7 +1656,7 @@ impl BeamApp {
         // Fixed header with title and close button
         let header = row![
             text("Environment Manager").size(20),
-            Space::with_width(Fill),
+            space().width(Fill),
             button(text("×"))
                 .on_press(Message::CloseEnvironmentPopup)
                 .style(|theme: &Theme, status| {
@@ -1700,7 +1700,7 @@ impl BeamApp {
                         }
                     )
                     .width(Length::FillPortion(2)),
-                    Space::with_width(10),
+                    space().width(10),
                     button(text("Add Environment"))
                         .on_press(Message::AddEnvironment)
                         .style(|theme, status| {
@@ -1720,13 +1720,13 @@ impl BeamApp {
             .spacing(5);
 
             content = content.push(env_selector);
-            content = content.push(Space::with_height(15));
+            content = content.push(space().height(15));
 
             // Show variables for the active environment
             if let Some(active_idx) = self.active_environment {
                 if let Some(active_env) = self.environments.get(active_idx) {
                     content = content.push(text("Environment Variables").size(16));
-                    content = content.push(Space::with_height(10));
+                    content = content.push(space().height(15));
 
                     // Variables header
                     let variables_header = row![
@@ -1789,7 +1789,7 @@ impl BeamApp {
                     );
 
                     // Environment name editing
-                    content = content.push(Space::with_height(15));
+                    content = content.push(space().height(15));
                     content = content.push(text("Environment Name"));
                     content = content.push(
                         text_input("Environment name", &active_env.name)
@@ -1798,7 +1798,7 @@ impl BeamApp {
                     );
 
                     // Environment description
-                    content = content.push(Space::with_height(10));
+                    content = content.push(space().height(10));
                     content = content.push(text("Description"));
                     content = content.push(
                         text_input("Environment description", active_env.description.as_deref().unwrap_or(""))
@@ -1808,7 +1808,7 @@ impl BeamApp {
 
                     // Delete environment button (only if more than one environment exists)
                     if self.environments.len() > 1 {
-                        content = content.push(Space::with_height(15));
+                        content = content.push(space().height(15));
                         content = content.push(
                             button(text("Delete Environment"))
                                 .on_press(Message::DeleteEnvironment(active_idx))
@@ -1842,7 +1842,7 @@ impl BeamApp {
         container(
             column![
                 header,
-                Space::with_height(20),
+                space().height(20),
                 scrollable(content.spacing(10))
                     .height(Length::Fixed(580.0)) // Reduced height to account for header
             ]
@@ -1870,7 +1870,7 @@ impl BeamApp {
     fn rename_modal_view(&self) -> Element<'_, Message> {
         let header = row![
             text("Rename Request").size(18),
-            Space::with_width(Fill),
+            space().width(Fill),
             button(text("×"))
                 .on_press(Message::HideRenameModal)
                 .style(|theme: &Theme, status| {
@@ -1916,7 +1916,7 @@ impl BeamApp {
                         },
                     }
                 }),
-            Space::with_width(10),
+                space().width(10),
             button(text("Rename"))
                 .on_press(Message::ConfirmRename)
                 .padding(10)
@@ -1941,11 +1941,11 @@ impl BeamApp {
         container(
             column![
                 header,
-                Space::with_height(20),
+                space().height(20),
                 text("Enter a new name for the request:").size(14),
-                Space::with_height(10),
+                space().height(10),
                 input_field,
-                Space::with_height(20),
+                space().height(20),
                 buttons
             ]
             .spacing(0)
