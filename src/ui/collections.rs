@@ -325,11 +325,28 @@ fn method_badge<'a>(method: &'a HttpMethod) -> Element<'a, Message> {
         HttpMethod::OPTIONS => (Color::from_rgb(0.3, 0.3, 0.3), Color::WHITE),
     };
 
+    // Truncate method name to maximum 4 characters
+    let method_text = match method {
+        HttpMethod::DELETE => "DELE".to_string(),
+        HttpMethod::OPTIONS => "OPTN".to_string(),
+        HttpMethod::PATCH => "PACH".to_string(),
+        _ => {
+            let method_str = method.to_string();
+            if method_str.len() > 4 {
+                method_str[..4].to_string()
+            } else {
+                method_str
+            }
+        }
+    };
+
     container(
-        text(method.to_string())
+        text(method_text)
             .size(10)
             .color(text_color)
     )
+    .width(Length::Fixed(32.0))
+    .align_x(iced::alignment::Horizontal::Right)
     .style(move |theme| Style {
         background: Some(Background::Color(color)),
         border: Border {
@@ -338,6 +355,6 @@ fn method_badge<'a>(method: &'a HttpMethod) -> Element<'a, Message> {
         },
         ..Style::default()
     })
-    .padding([2, 6])
+    .padding([2, 3])
     .into()
 }
