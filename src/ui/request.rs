@@ -1,11 +1,38 @@
 use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
 use iced::widget::{
     button, column, container, pick_list, row, text, text_input, scrollable,
-    text_editor, Space, stack, mouse_area
+    text_editor, Space, stack, mouse_area, svg
 };
 use iced::{Element, Fill, Length, Color, Background, Border, Theme, Shadow, Vector};
 use iced::widget::button::Status;
 use regex::Regex;
+
+// Helper function for send/cancel button styling
+fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button::Style {
+    move |_theme, status| {
+        let base = button::Style::default();
+        match status {
+            Status::Hovered if is_interactive => button::Style {
+                background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 4.0.into(),
+                },
+                ..base
+            },
+            _ => button::Style {
+                background: Some(Background::Color(Color::TRANSPARENT)),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 4.0.into(),
+                },
+                ..base
+            },
+        }
+    }
+}
 
 
 pub fn request_panel<'a>(
@@ -129,10 +156,47 @@ pub fn request_panel<'a>(
     })
     .on_exit(Message::HideUrlTooltip);
 
+    // Create send/cancel button based on loading state
+    let url_valid = !config.url.trim().is_empty() &&
+                   (config.url.starts_with("http://") ||
+                    config.url.starts_with("https://") ||
+                    config.url.contains("{{"));
+
+    let send_button = if is_loading {
+        // Show cancel icon when loading
+        button(
+            svg("assets/icons/cancel.svg")
+            .width(16)
+            .height(16)
+        )
+        .padding(8)
+        .on_press(Message::CancelRequest)
+        .style(icon_button_style(true))
+    } else {
+        // Show send icon when not loading
+        let send_btn = button(
+            svg("assets/icons/send.svg")
+            .width(16)
+            .height(16)
+        )
+        .padding(8);
+
+        if url_valid {
+            send_btn
+                .on_press(Message::SendRequest)
+                .style(icon_button_style(true))
+        } else {
+            send_btn
+                .style(icon_button_style(false))
+        }
+    };
+
     let base_input = container(
         row![
             method_label,
             url_input_with_hover,
+            Space::with_width(5),
+            send_button,
         ]
     )
     .padding(2)
@@ -149,66 +213,7 @@ pub fn request_panel<'a>(
 
     let connected_input = base_input;
 
-    let url_row = row![
-        connected_input,
-        Space::with_width(10),
-        if is_loading {
-            button(text("Cancel"))
-                .on_press(Message::CancelRequest)
-                .style(move |theme, status| {
-                    let base = button::Style::default();
-                    match status {
-                        Status::Hovered => button::Style {
-                            background: Some(Background::Color(Color::from_rgb(0.9, 0.2, 0.2))),
-                            text_color: Color::WHITE,
-                            ..base
-                        },
-                        _ => button::Style {
-                            background: Some(Background::Color(Color::from_rgb(0.8, 0.0, 0.0))),
-                            text_color: Color::WHITE,
-                            ..base
-                        },
-                    }
-                })
-        } else {
-            let url_valid = !config.url.trim().is_empty() &&
-                           (config.url.starts_with("http://") ||
-                            config.url.starts_with("https://") ||
-                            config.url.contains("{{"));
-
-            let send_button = button(text("Send"));
-
-            if url_valid {
-                send_button
-                    .on_press(Message::SendRequest)
-                    .style(move |theme, status| {
-                        let base = button::Style::default();
-                        match status {
-                            Status::Hovered => button::Style {
-                                background: Some(Background::Color(Color::from_rgb(0.2, 0.7, 0.2))),
-                                text_color: Color::WHITE,
-                                ..base
-                            },
-                            _ => button::Style {
-                                background: Some(Background::Color(Color::from_rgb(0.0, 0.6, 0.0))),
-                                text_color: Color::WHITE,
-                                ..base
-                            },
-                        }
-                    })
-            } else {
-                send_button
-                    .style(move |theme, status| {
-                        let base = button::Style::default();
-                        button::Style {
-                            background: Some(Background::Color(Color::from_rgb(0.6, 0.6, 0.6))),
-                            text_color: Color::from_rgb(0.8, 0.8, 0.8),
-                            ..base
-                        }
-                    })
-            }
-        }
-    ]
+    let url_row = row![connected_input]
     .align_y(iced::Alignment::Center);
 
     let tabs = row![
