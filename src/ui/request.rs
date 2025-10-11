@@ -1,4 +1,5 @@
 use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
+use crate::ui::{icon, IconName};
 use iced::widget::{
     button, column, container, pick_list, row, text, text_input, scrollable,
     text_editor, space, mouse_area, svg, stack, Space
@@ -165,9 +166,8 @@ pub fn request_panel<'a>(
     let send_button = if is_loading {
         // Show cancel icon when loading
         button(
-            svg("assets/icons/cancel.svg")
-            .width(16)
-            .height(16)
+            icon(IconName::Cancel)
+                .size(16)
         )
         .padding(8)
         .on_press(Message::CancelRequest)
@@ -175,9 +175,8 @@ pub fn request_panel<'a>(
     } else {
         // Show send icon when not loading
         let send_btn = button(
-            svg("assets/icons/send.svg")
-            .width(16)
-            .height(16)
+            icon(IconName::Send)
+                .size(16)
         )
         .padding(8);
 
@@ -393,7 +392,6 @@ fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
                         width: 1.0,
                         radius: 4.0.into(),
                     },
-                    // icon: theme.palette().text,
                     placeholder: Color::from_rgb(0.6, 0.6, 0.6),
                     value: theme.palette().text,
                     selection: theme.palette().primary,

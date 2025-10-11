@@ -26,6 +26,7 @@ thiserror = "1.0"
 urlencoding = "2.1"
 base64 = "0.22"
 regex = "1.10"
+rust-embed = "8.5"
 
 blurhash = "0.2.3"
 
@@ -36,12 +37,10 @@ iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
 
 [package.metadata.bundle]
 name = "Beam"
-identifier = "com.beam.app"
+identifier = "com.hlcfan.beam"
 version = "0.1.0"
-copyright = "Copyright (c) 2024 Beam"
+copyright = "Copyright (c) 2025 Beam"
 category = "Developer Tool"
-short_description = "A modern HTTP client for developers"
-long_description = "Beam is a powerful and intuitive HTTP client designed for developers to test APIs, manage requests, and streamline their development workflow."
+short_description = "A HTTP client for developers"
+long_description = "Beam is a HTTP client."
 icon = ["assets/icon.icns"]
-osx_minimum_system_version = "10.15"
-

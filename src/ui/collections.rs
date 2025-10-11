@@ -1,4 +1,5 @@
 use crate::types::{RequestCollection, SavedRequest, Message, HttpMethod};
+use crate::ui::{icon, IconName};
 use iced::widget::{button, column, container, row, text, scrollable, space, svg};
 use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
 use iced::widget::container::Style;
@@ -14,15 +15,14 @@ pub fn collections_panel<'a>(
     for (collection_index, collection) in collections.iter().enumerate() {
         let collection_header = button(
             row![
-                svg(
+                icon(
                     if collection.expanded {
-                        "assets/icons/chevron-down.svg"
+                        IconName::ChevronDown
                     } else {
-                        "assets/icons/chevron-right.svg"
+                        IconName::ChevronRight
                     }
                 )
-                .width(12)
-                .height(12),
+                .size(12),
                 space().width(5),
                 text(&collection.name).size(14)
             ]

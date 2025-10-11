@@ -2,6 +2,7 @@ mod types;
 mod http;
 mod ui;
 mod storage;
+mod icons;
 
 use types::*;
 use http::*;
