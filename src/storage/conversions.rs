@@ -1,6 +1,5 @@
 use super::persistent_types::*;
 use crate::types::{RequestCollection, SavedRequest, Environment, RequestConfig};
-use std::collections::HashMap;
 
 /// Trait for converting UI types to persistent types
 pub trait ToPersistent<T> {

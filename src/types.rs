@@ -1,15 +1,17 @@
 use iced::widget::{text_editor, pane_grid};
-use iced::{Color, Element};
+use iced::{Color};
 use iced::advanced::text::Highlighter;
 use crate::storage::StorageManager;
 use std::collections::HashMap;
 use std::time::Instant;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ResponseHighlighter {
     pub content_type: String,
 }
 
+#[allow(dead_code)]
 impl ResponseHighlighter {
     pub fn new(content_type: String) -> Self {
         Self { content_type }
@@ -83,6 +85,7 @@ pub struct BeamApp {
     pub tooltip_position: Option<(f32, f32)>, // (x, y) position
 
     // Storage
+    #[allow(dead_code)]
     pub storage_manager: Option<StorageManager>,
 
     // Spinner for loading animation
@@ -158,24 +161,12 @@ impl Environment {
         }
     }
 
-    pub fn with_description(name: String, description: String) -> Self {
-        Self {
-            name,
-            variables: std::collections::HashMap::new(),
-            description: Some(description),
-        }
-    }
-
     pub fn add_variable(&mut self, key: String, value: String) {
         self.variables.insert(key, value);
     }
 
     pub fn get_variable(&self, key: &str) -> Option<&String> {
         self.variables.get(key)
-    }
-
-    pub fn remove_variable(&mut self, key: &str) -> Option<String> {
-        self.variables.remove(key)
     }
 }
 
@@ -185,6 +176,7 @@ pub enum RequestTab {
     Params,
     Headers,
     Auth,
+    #[allow(dead_code)]
     Environment,
 }
 
@@ -292,6 +284,7 @@ pub enum Message {
     DeleteRequest(usize, usize),
 
     // Rename modal
+    #[allow(dead_code)]
     ShowRenameModal(usize, usize), // (collection_index, request_index)
     HideRenameModal,
     RenameInputChanged(String),
@@ -302,19 +295,23 @@ pub enum Message {
     HideUrlTooltip,
 
     // Storage operations
+    #[allow(dead_code)]
     SaveCollection(usize),
     LoadCollections,
+    #[allow(dead_code)]
     SaveEnvironments,
     LoadEnvironments,
     LoadActiveEnvironment,
     ActiveEnvironmentLoaded(Result<Option<String>, String>),
     InitializeStorage,
     StorageInitialized(Result<(), String>),
+    #[allow(dead_code)]
     SetStorageManager,
     CollectionsSaved(Result<(), String>),
     CollectionsLoaded(Result<Vec<RequestCollection>, String>),
     EnvironmentsSaved(Result<(), String>),
     EnvironmentsLoaded(Result<Vec<Environment>, String>),
+    #[allow(dead_code)]
     SaveInitialData,
     SaveLastOpenedRequest(usize, usize), // (collection_index, request_index)
     LoadLastOpenedRequest,
@@ -323,6 +320,7 @@ pub enum Message {
     RequestConfigLoaded(Result<Option<RequestConfig>, String>),
 
     // Auto-save messages
+    #[allow(dead_code)]
     RequestFieldChanged {
         collection_index: usize,
         request_index: usize,

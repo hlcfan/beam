@@ -1,6 +1,6 @@
-use crate::types::{RequestCollection, SavedRequest, Message, HttpMethod};
+use crate::types::{RequestCollection, Message, HttpMethod};
 use crate::ui::{icon, IconName};
-use iced::widget::{button, column, container, row, text, scrollable, space, svg};
+use iced::widget::{button, column, container, row, text, scrollable, space};
 use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
@@ -29,7 +29,7 @@ pub fn collections_panel<'a>(
             .align_y(iced::Alignment::Center)
         )
         .on_press(Message::CollectionToggled(collection_index))
-        .style(move |theme, status| {
+        .style(move |_theme, status| {
             let base = button::Style::default();
             match status {
                 Status::Hovered => button::Style {
@@ -50,7 +50,7 @@ pub fn collections_panel<'a>(
                         button(text("Add Request"))
                             .on_press(Message::AddHttpRequest(collection_index))
                             .width(Length::Fill)
-                            .style(|theme, status| {
+                            .style(|_theme, status| {
                                 let base = button::Style::default();
                                 match status {
                                     Status::Hovered => button::Style {
@@ -66,7 +66,7 @@ pub fn collections_panel<'a>(
                         button(text("Add Folder"))
                             .on_press(Message::AddFolder(collection_index))
                             .width(Length::Fill)
-                            .style(|theme, status| {
+                            .style(|_theme, status| {
                                 let base = button::Style::default();
                                 match status {
                                     Status::Hovered => button::Style {
@@ -82,7 +82,7 @@ pub fn collections_panel<'a>(
                         button(text("Rename"))
                             .on_press(Message::RenameFolder(collection_index))
                             .width(Length::Fill)
-                            .style(|theme, status| {
+                            .style(|_theme, status| {
                                 let base = button::Style::default();
                                 match status {
                                     Status::Hovered => button::Style {
@@ -98,7 +98,7 @@ pub fn collections_panel<'a>(
                         button(text("Delete"))
                             .on_press(Message::DeleteFolder(collection_index))
                             .width(Length::Fill)
-                            .style(|theme, status| {
+                            .style(|_theme, status| {
                                 let base = button::Style::default();
                                 match status {
                                     Status::Hovered => button::Style {
@@ -115,7 +115,7 @@ pub fn collections_panel<'a>(
                     .spacing(2)
                 )
                 .width(Length::Fixed(150.0))
-                .style(|theme| Style {
+                .style(|_theme| Style {
                     background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
                     border: Border {
                         color: Color::from_rgb(0.8, 0.8, 0.8),
@@ -150,7 +150,7 @@ pub fn collections_panel<'a>(
                     .align_y(iced::Alignment::Center)
                 )
                 .on_press(Message::RequestSelected(collection_index, request_index))
-                .style(move |theme, status| {
+                .style(move |_theme, status| {
                     let base = button::Style::default();
 
                     match status {
@@ -203,7 +203,7 @@ pub fn collections_panel<'a>(
                                 button(text("Send Request"))
                                     .on_press(Message::SendRequestFromMenu(collection_index, request_index))
                                     .width(Length::Fill)
-                                    .style(|theme, status| {
+                                    .style(|_theme, status| {
                                         let base = button::Style::default();
                                         match status {
                                             Status::Hovered => button::Style {
@@ -219,7 +219,7 @@ pub fn collections_panel<'a>(
                                 button(text("Copy as cURL"))
                                     .on_press(Message::CopyRequestAsCurl(collection_index, request_index))
                                     .width(Length::Fill)
-                                    .style(|theme, status| {
+                                    .style(|_theme, status| {
                                         let base = button::Style::default();
                                         match status {
                                             Status::Hovered => button::Style {
@@ -235,7 +235,7 @@ pub fn collections_panel<'a>(
                                 button(text("Rename"))
                                     .on_press(Message::RenameRequest(collection_index, request_index))
                                     .width(Length::Fill)
-                                    .style(|theme, status| {
+                                    .style(|_theme, status| {
                                         let base = button::Style::default();
                                         match status {
                                             Status::Hovered => button::Style {
@@ -251,7 +251,7 @@ pub fn collections_panel<'a>(
                                 button(text("Duplicate"))
                                     .on_press(Message::DuplicateRequest(collection_index, request_index))
                                     .width(Length::Fill)
-                                    .style(|theme, status| {
+                                    .style(|_theme, status| {
                                         let base = button::Style::default();
                                         match status {
                                             Status::Hovered => button::Style {
@@ -267,7 +267,7 @@ pub fn collections_panel<'a>(
                                 button(text("Delete"))
                                     .on_press(Message::DeleteRequest(collection_index, request_index))
                                     .width(Length::Fill)
-                                    .style(|theme, status| {
+                                    .style(|__theme, status| {
                                         let base = button::Style::default();
                                         match status {
                                             Status::Hovered => button::Style {
@@ -284,7 +284,7 @@ pub fn collections_panel<'a>(
                             .spacing(2)
                         )
                         .width(Length::Fixed(150.0))
-                        .style(|theme| Style {
+                        .style(|_theme| Style {
                             background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
                             border: Border {
                                 color: Color::from_rgb(0.8, 0.8, 0.8),
@@ -347,7 +347,7 @@ fn method_badge<'a>(method: &'a HttpMethod) -> Element<'a, Message> {
     )
     .width(Length::Fixed(32.0))
     .align_x(iced::alignment::Horizontal::Right)
-    .style(move |theme| Style {
+    .style(move |_theme| Style {
         background: Some(Background::Color(color)),
         border: Border {
             radius: 3.0.into(),

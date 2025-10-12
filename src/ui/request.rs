@@ -2,11 +2,10 @@ use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Env
 use crate::ui::{icon, IconName};
 use iced::widget::{
     button, column, container, pick_list, row, text, text_input, scrollable,
-    text_editor, space, mouse_area, svg, stack, Space
+    text_editor, space, mouse_area, stack, Space
 };
 use iced::{Element, Fill, Length, Color, Background, Border, Theme, Shadow, Vector};
 use iced::widget::button::Status;
-use regex::Regex;
 
 // Helper function for send/cancel button styling
 fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button::Style {
@@ -343,7 +342,7 @@ pub fn request_panel<'a>(
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
     button(text(label))
         .on_press(Message::TabSelected(tab))
-        .style(move |theme, status| {
+        .style(move |_theme, status| {
             let base = button::Style::default();
             if is_active {
                 button::Style {
@@ -384,7 +383,7 @@ fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         text_editor(&config.body)
             .on_action(Message::BodyChanged)
             .height(Length::Fill)
-            .style(|theme: &Theme, status: text_editor::Status| {
+            .style(|theme: &Theme, _status: text_editor::Status| {
                 text_editor::Style {
                     background: Background::Color(theme.palette().background),
                     border: Border {
@@ -432,7 +431,7 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     content = content.push(
         button(text("Add Parameter"))
             .on_press(Message::AddParam)
-            .style(move |theme, status| {
+            .style(move |_theme, status| {
                 let base = button::Style::default();
                 match status {
                     Status::Hovered => button::Style {
@@ -480,7 +479,7 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     content = content.push(
         button(text("Add Header"))
             .on_press(Message::AddHeader)
-            .style(move |theme, status| {
+            .style(move |_theme, status| {
                 let base = button::Style::default();
                 match status {
                     Status::Hovered => button::Style {
@@ -621,7 +620,7 @@ fn method_dropdown() -> Element<'static, Message> {
         .spacing(1)
     )
     .padding(4)
-    .style(|theme: &Theme| container::Style {
+    .style(|_theme: &Theme| container::Style {
         background: Some(Background::Color(Color::WHITE)),
         border: Border {
             color: Color::from_rgb(0.9, 0.9, 0.9),

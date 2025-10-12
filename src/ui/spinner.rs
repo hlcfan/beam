@@ -1,6 +1,6 @@
 use iced::widget::canvas::{self, Canvas, Geometry, Path, Stroke, LineCap};
 use iced::widget::container;
-use iced::{Element, Length, Color, Point, Size, Vector, Radians, Gradient, Background};
+use iced::{Element, Length, Color, Point, Background};
 use std::f32::consts::PI;
 
 #[derive(Debug, Clone)]

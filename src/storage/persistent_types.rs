@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
+use chrono::{Utc};
 
 /// Persistent version of a request that can be serialized
 #[derive(Debug, Clone, Serialize, Deserialize)]

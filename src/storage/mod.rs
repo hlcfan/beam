@@ -11,56 +11,57 @@ pub use persistent_types::*;
 pub use file_storage::TomlFileStorage;
 
 /// Main storage trait that abstracts persistence operations
+#[allow(dead_code)]
 #[async_trait::async_trait]
 pub trait CollectionStorage: Send + Sync {
     /// Load all collections from storage
     async fn load_collections(&self) -> Result<Vec<RequestCollection>, StorageError>;
-    
+
     /// Save a collection to storage (metadata only)
     async fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError>;
-    
+
     /// Save a collection with all its requests to storage (for initial creation)
     async fn save_collection_with_requests(&self, collection: &RequestCollection) -> Result<(), StorageError>;
-    
+
     /// Delete a collection from storage
     async fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError>;
-    
+
     /// Rename a collection
     async fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError>;
-    
+
     /// Save a request within a collection
     async fn save_request(&self, collection_name: &str, request: &PersistentRequest) -> Result<(), StorageError>;
-    
+
     /// Delete a request from a collection
     async fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
-    
+
     /// Rename a request within a collection
     async fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError>;
-    
+
     /// Load environments from storage
     async fn load_environments(&self) -> Result<Vec<Environment>, StorageError>;
-    
+
     /// Save environments to storage
     async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError>;
-    
+
     /// Save environments with active environment information
     async fn save_environments_with_active(&self, environments: &[Environment], active_environment: Option<&str>) -> Result<(), StorageError>;
-    
+
     /// Load active environment name from storage
     async fn load_active_environment(&self) -> Result<Option<String>, StorageError>;
-    
+
     /// Save the last opened request
     async fn save_last_opened_request(&self, collection_index: usize, request_index: usize) -> Result<(), StorageError>;
-    
+
     /// Load the last opened request
     async fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError>;
-    
+
     /// Load a specific request by collection and request indices
     async fn load_request_by_indices(&self, collections: &[RequestCollection], collection_index: usize, request_index: usize) -> Result<Option<PersistentRequest>, StorageError>;
-    
+
     /// Initialize storage (create directories, etc.)
     async fn initialize_storage(&self) -> Result<(), StorageError>;
-    
+
     /// Create a backup of the storage
     async fn backup_storage(&self, backup_path: &str) -> Result<(), StorageError>;
 }
@@ -100,26 +101,27 @@ pub enum StorageType {
 }
 
 /// Storage errors
+#[allow(dead_code)]
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
-    
+
     #[error("Serialization error: {0}")]
     SerializationError(String),
-    
+
     #[error("Collection not found: {0}")]
     CollectionNotFound(String),
-    
+
     #[error("Request not found: {0}")]
     RequestNotFound(String),
-    
+
     #[error("Invalid format: {0}")]
     InvalidFormat(String),
-    
+
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
-    
+
     #[error("Storage not initialized")]
     NotInitialized,
 }
@@ -152,23 +154,23 @@ impl StorageManager {
                 return Err(StorageError::InvalidFormat("JSON not implemented yet".to_string()));
             }
         };
-        
+
         // Initialize storage
         storage.initialize_storage().await?;
-        
+
         Ok(Self { storage, config })
     }
-    
+
     /// Create a new storage manager with default configuration
     pub async fn with_default_config() -> Result<Self, StorageError> {
         Self::new(StorageConfig::default()).await
     }
-    
+
     /// Get a reference to the storage implementation
     pub fn storage(&self) -> &dyn CollectionStorage {
         self.storage.as_ref()
     }
-    
+
     /// Get the storage configuration
     pub fn config(&self) -> &StorageConfig {
         &self.config

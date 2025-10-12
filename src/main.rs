@@ -11,10 +11,9 @@ use ui::*;
 use iced::widget::pane_grid::{self, PaneGrid, Axis};
 use iced::widget::{
     button, column, container, row, text, text_input, text_editor, pick_list, scrollable,
-    mouse_area, stack, Space, space
+    stack, space
 };
 use iced::{Element, Fill, Length, Size, Theme, Color, Task, Vector};
-use iced_aw::ContextMenu;
 use std::collections::HashMap;
 use serde_json;
 
@@ -806,7 +805,6 @@ impl BeamApp {
                     let collection_name = collection.name.clone();
                     Task::perform(
                         async move {
-                            use storage::conversions::ToPersistent;
                             let persistent_request = storage::PersistentRequest {
                                 name: new_request.name,
                                 method: new_request.method.to_string(),
@@ -989,7 +987,6 @@ impl BeamApp {
 
                             // Save the collection and rename the file
                             let collection_name = collection.name.clone();
-                            let collection = collection.clone();
 
                             return Task::perform(
                                 async move {
@@ -1493,7 +1490,6 @@ impl BeamApp {
 
                                 Task::perform(
                                     async move {
-                                        use storage::conversions::ToPersistent;
                                         let persistent_request = current_request.to_persistent_with_name(request_name);
 
                                         match storage::StorageManager::with_default_config().await {
@@ -1597,7 +1593,7 @@ impl BeamApp {
                 .center_y(Fill)
                 .width(Fill)
                 .height(Fill)
-                .style(|theme| container::Style {
+                .style(|_theme| container::Style {
                     background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
                     ..Default::default()
                 })
@@ -1616,7 +1612,7 @@ impl BeamApp {
                 .center_y(Fill)
                 .width(Fill)
                 .height(Fill)
-                .style(|theme| container::Style {
+                .style(|_theme| container::Style {
                     background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
                     ..Default::default()
                 })
@@ -1662,7 +1658,7 @@ impl BeamApp {
             space().width(Fill),
             button(text("×"))
                 .on_press(Message::CloseEnvironmentPopup)
-                .style(|theme: &Theme, status| {
+                .style(|_theme: &Theme, status| {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
@@ -1706,7 +1702,7 @@ impl BeamApp {
                     space().width(10),
                     button(text("Add Environment"))
                         .on_press(Message::AddEnvironment)
-                        .style(|theme, status| {
+                        .style(|_theme, status| {
                             let base = button::Style::default();
                             match status {
                                 button::Status::Hovered => button::Style {
@@ -1765,7 +1761,7 @@ impl BeamApp {
                         button(text("+ Add Variable").size(14))
                             .on_press(Message::AddVariable(active_idx))
                             .padding([8, 16])
-                            .style(|theme, status| {
+                            .style(|_theme, status| {
                                 match status {
                                     button::Status::Hovered => button::Style {
                                         background: Some(iced::Background::Color(Color::from_rgb(0.2, 0.5, 0.9))),
@@ -1815,7 +1811,7 @@ impl BeamApp {
                         content = content.push(
                             button(text("Delete Environment"))
                                 .on_press(Message::DeleteEnvironment(active_idx))
-                                .style(|theme, status| {
+                                .style(|_theme, status| {
                                     let base = button::Style::default();
                                     match status {
                                         button::Status::Hovered => button::Style {
@@ -1853,7 +1849,7 @@ impl BeamApp {
         )
         .width(Length::Fixed(800.0))
         .padding(20)
-        .style(|theme: &Theme| container::Style {
+        .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(Color::WHITE)),
             border: iced::Border {
                 color: Color::from_rgb(0.7, 0.7, 0.7),
@@ -1876,7 +1872,7 @@ impl BeamApp {
             space().width(Fill),
             button(text("×"))
                 .on_press(Message::HideRenameModal)
-                .style(|theme: &Theme, status| {
+                .style(|_theme: &Theme, status| {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
@@ -1904,7 +1900,7 @@ impl BeamApp {
             button(text("Cancel").size(16))
                 .on_press(Message::HideRenameModal)
                 .padding(10)
-                .style(|theme: &Theme, status| {
+                .style(|_theme: &Theme, status| {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
@@ -1923,7 +1919,7 @@ impl BeamApp {
             button(text("Rename"))
                 .on_press(Message::ConfirmRename)
                 .padding(10)
-                .style(|theme: &Theme, status| {
+                .style(|_theme: &Theme, status| {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
@@ -1956,7 +1952,7 @@ impl BeamApp {
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(200.0))
         .padding(20)
-        .style(|theme: &Theme| container::Style {
+        .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(Color::WHITE)),
             border: iced::Border {
                 color: Color::from_rgb(0.7, 0.7, 0.7),

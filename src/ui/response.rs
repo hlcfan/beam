@@ -1,11 +1,11 @@
-use crate::types::{ResponseData, ResponseTab, ResponseHighlighter, Message};
+use crate::types::{ResponseData, ResponseTab, Message};
 use iced::widget::{
     button, column, container, row, text, scrollable, text_editor, space
 };
 use iced::{Element, Length, Color, Background, Border};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
-use iced::highlighter::{self, Highlighter};
+use iced::highlighter::{self};
 
 fn response_text_editor_style(theme: &iced::Theme, _status: text_editor::Status) -> text_editor::Style {
     text_editor::Style {
@@ -81,7 +81,7 @@ pub fn response_panel<'a>(
                         .color(status_color)
                         .size(14)
                 )
-                .style(move |theme| Style {
+                .style(move |_theme| Style {
                     background: Some(Background::Color(Color::from_rgba(
                         status_color.r, status_color.g, status_color.b, 0.1
                     ))),
@@ -191,7 +191,7 @@ pub fn response_panel<'a>(
 fn response_tab_button<'a>(label: &'a str, is_active: bool, tab: ResponseTab) -> Element<'a, Message> {
     button(text(label))
         .on_press(Message::ResponseTabSelected(tab))
-        .style(move |theme, status| {
+        .style(move |_theme, status| {
             let base = button::Style::default();
             if is_active {
                 button::Style {
@@ -240,7 +240,7 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                         .size(16)
                         .color(Color::from_rgb(0.0, 0.5, 1.0))
                 )
-                .style(|theme| Style {
+                .style(|_theme| Style {
                     background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
                     border: Border {
                         radius: 4.0.into(),
@@ -274,7 +274,7 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                             .size(12)
                             .color(Color::from_rgb(0.5, 0.5, 0.5))
                     )
-                    .style(|theme| Style {
+                    .style(|_theme| Style {
                         background: Some(Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
                         border: Border {
                             radius: 4.0.into(),
@@ -308,7 +308,7 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
                 text_editor(content)
                     .on_action(Message::ResponseBodyAction)
                     .height(Length::Fill)
-                    .style(|theme: &iced::Theme, status: text_editor::Status| {
+                    .style(|theme: &iced::Theme, _status: text_editor::Status| {
                         text_editor::Style {
                             background: Background::Color(theme.palette().background),
                             border: Border {
