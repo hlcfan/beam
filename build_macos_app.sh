@@ -17,7 +17,7 @@ cargo build --release --no-default-features
 
 # Create the macOS app bundle
 echo "📦 Creating macOS app bundle..."
-cargo bundle --release
+cargo bundle --release --no-default-features
 
 # Verify the app bundle was created
 if [ -d "target/release/bundle/osx/Beam.app" ]; then
