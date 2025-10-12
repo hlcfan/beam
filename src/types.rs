@@ -90,6 +90,10 @@ pub struct BeamApp {
 
     // Spinner for loading animation
     pub spinner: crate::ui::Spinner,
+
+    // Hover states for buttons
+    pub send_button_hovered: bool,
+    pub cancel_button_hovered: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +236,8 @@ pub enum Message {
 
     SendRequest,
     CancelRequest,
+    SendButtonHovered(bool),
+    CancelButtonHovered(bool),
     RequestCompleted(Result<ResponseData, String>),
     TimerTick,
     CollectionToggled(usize),

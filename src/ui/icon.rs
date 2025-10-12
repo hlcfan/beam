@@ -1,6 +1,6 @@
 use crate::icons;
 use iced::widget::svg;
-use iced::{Element, Length};
+use iced::{Element, Length, Color};
 
 /// Available icon names that can be used with the icon component
 #[derive(Debug, Clone, Copy)]
@@ -33,6 +33,7 @@ pub struct Icon<'a, Message> {
     name: IconName,
     width: Length,
     height: Length,
+    color: Option<Color>,
     _phantom: std::marker::PhantomData<&'a Message>,
 }
 
@@ -43,6 +44,7 @@ impl<'a, Message> Icon<'a, Message> {
             name,
             width: Length::Fixed(16.0),
             height: Length::Fixed(16.0),
+            color: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -66,16 +68,29 @@ impl<'a, Message> Icon<'a, Message> {
         self.height = size;
         self
     }
+
+    /// Set the color of the icon
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
+        self
+    }
 }
 
 impl<'a, Message: 'a> From<Icon<'a, Message>> for Element<'a, Message> {
     fn from(icon: Icon<'a, Message>) -> Self {
         let handle = icons::Assets::get_svg_handle(icon.name.filename())
             .expect("Failed to load SVG icon");
-        
-        svg(handle)
+
+        let mut svg_widget = svg(handle)
             .width(icon.width)
-            .height(icon.height)
-            .into()
+            .height(icon.height);
+
+        if let Some(color) = icon.color {
+            svg_widget = svg_widget.style(move |_theme, _status| svg::Style {
+                color: Some(color),
+            });
+        }
+
+        svg_widget.into()
     }
 }

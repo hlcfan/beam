@@ -117,6 +117,10 @@ impl Default for BeamApp {
 
             // Initialize spinner
             spinner: Spinner::new(),
+
+            // Initialize hover states
+            send_button_hovered: false,
+            cancel_button_hovered: false,
         }
     }
 }
@@ -240,6 +244,14 @@ impl BeamApp {
             }
             Message::CancelRequest => {
                 self.is_loading = false;
+                Task::none()
+            }
+            Message::SendButtonHovered(hovered) => {
+                self.send_button_hovered = hovered;
+                Task::none()
+            }
+            Message::CancelButtonHovered(hovered) => {
+                self.cancel_button_hovered = hovered;
                 Task::none()
             }
             Message::RequestCompleted(result) => {
@@ -1636,7 +1648,9 @@ impl BeamApp {
             self.show_url_tooltip,
             self.tooltip_variable_name.as_deref().unwrap_or(""),
             self.tooltip_variable_value.as_deref().unwrap_or(""),
-            self.tooltip_position.unwrap_or((0.0, 0.0))
+            self.tooltip_position.unwrap_or((0.0, 0.0)),
+            self.send_button_hovered,
+            self.cancel_button_hovered
         )
     }
 

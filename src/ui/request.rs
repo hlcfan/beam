@@ -1,11 +1,11 @@
-use crate::types::{RequestConfig, RequestTab, HttpMethod, AuthType, Message, Environment};
-use crate::ui::{icon, IconName};
-use iced::widget::{
-    button, column, container, pick_list, row, text, text_input, scrollable,
-    text_editor, space, mouse_area, stack, Space
-};
-use iced::{Element, Fill, Length, Color, Background, Border, Theme, Shadow, Vector};
+use crate::types::{AuthType, Environment, HttpMethod, Message, RequestConfig, RequestTab};
+use crate::ui::{IconName, icon};
 use iced::widget::button::Status;
+use iced::widget::{
+    Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
+    text_editor, text_input,
+};
+use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector};
 
 // Helper function for send/cancel button styling
 fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button::Style {
@@ -13,7 +13,7 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
         let base = button::Style::default();
         match status {
             Status::Hovered if is_interactive => button::Style {
-                background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                background: Some(Background::Color(Color::from_rgb(0.93, 0.93, 0.93))),
                 border: Border {
                     color: Color::TRANSPARENT,
                     width: 0.0,
@@ -34,7 +34,6 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
     }
 }
 
-
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
     is_loading: bool,
@@ -45,11 +44,14 @@ pub fn request_panel<'a>(
     tooltip_variable_name: &'a str,
     tooltip_variable_value: &'a str,
     tooltip_position: (f32, f32),
+    send_button_hovered: bool,
+    cancel_button_hovered: bool,
 ) -> Element<'a, Message> {
     // Environment pick_list for the URL row
     let env_pick_list = {
         // Create list of environment options including all environments plus "Configure"
-        let mut env_options: Vec<String> = environments.iter().map(|env| env.name.clone()).collect();
+        let mut env_options: Vec<String> =
+            environments.iter().map(|env| env.name.clone()).collect();
         env_options.push("Configure".to_string());
 
         // Determine the selected value
@@ -63,22 +65,18 @@ pub fn request_panel<'a>(
             None
         };
 
-        pick_list(
-            env_options,
-            selected_env,
-            |selected| {
-                if selected == "Configure" {
-                    Message::OpenEnvironmentPopup
+        pick_list(env_options, selected_env, |selected| {
+            if selected == "Configure" {
+                Message::OpenEnvironmentPopup
+            } else {
+                // Find the index of the selected environment
+                if let Some(index) = environments.iter().position(|env| env.name == selected) {
+                    Message::EnvironmentSelected(index)
                 } else {
-                    // Find the index of the selected environment
-                    if let Some(index) = environments.iter().position(|env| env.name == selected) {
-                        Message::EnvironmentSelected(index)
-                    } else {
-                        Message::DoNothing
-                    }
+                    Message::DoNothing
                 }
             }
-        )
+        })
         .width(150)
         .placeholder("🌍 No Environment")
     };
@@ -100,8 +98,8 @@ pub fn request_panel<'a>(
         text_input("Enter URL", &config.url)
             .on_input(Message::UrlChanged)
             .width(Length::Fill)
-            .style(|theme: &Theme, _status: text_input::Status| {
-                text_input::Style {
+            .style(
+                |theme: &Theme, _status: text_input::Status| text_input::Style {
                     border: Border {
                         color: Color::TRANSPARENT,
                         width: 0.0,
@@ -112,8 +110,8 @@ pub fn request_panel<'a>(
                     placeholder: theme.palette().text,
                     value: theme.palette().text,
                     selection: theme.palette().primary,
-                }
-            })
+                },
+            ),
     )
     .on_move(move |_point| {
         // Detect all environment variables in the URL
@@ -139,7 +137,8 @@ pub fn request_panel<'a>(
 
         if !variables.is_empty() {
             // Show all variables in the tooltip, one per line
-            let all_vars = variables.iter()
+            let all_vars = variables
+                .iter()
                 .map(|(name, value)| format!("{}: {}", name, value))
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -147,7 +146,7 @@ pub fn request_panel<'a>(
             Message::ShowUrlTooltip(
                 "Variables".to_string(),
                 all_vars,
-                20.0, // Fixed left padding
+                20.0,  // Fixed left padding
                 100.0, // Fixed position above URL input (environment bar + some spacing)
             )
         } else {
@@ -157,46 +156,61 @@ pub fn request_panel<'a>(
     .on_exit(Message::HideUrlTooltip);
 
     // Create send/cancel button based on loading state
-    let url_valid = !config.url.trim().is_empty() &&
-                   (config.url.starts_with("http://") ||
-                    config.url.starts_with("https://") ||
-                    config.url.contains("{{"));
+    let url_valid = !config.url.trim().is_empty()
+        && (config.url.starts_with("http://")
+            || config.url.starts_with("https://")
+            || config.url.contains("{{"));
 
     let send_button = if is_loading {
         // Show cancel icon when loading
-        button(
-            icon(IconName::Cancel)
-                .size(16)
+        let cancel_color = if cancel_button_hovered {
+            Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
+        } else {
+            Color::from_rgb(0.5, 0.5, 0.5) // Light gray default
+        };
+
+        mouse_area(
+            button(icon(IconName::Cancel).size(16).color(cancel_color))
+                .padding(8)
+                .on_press(Message::CancelRequest)
+                .style(icon_button_style(true)),
         )
-        .padding(8)
-        .on_press(Message::CancelRequest)
-        .style(icon_button_style(true))
+        .on_enter(Message::CancelButtonHovered(true))
+        .on_exit(Message::CancelButtonHovered(false))
     } else {
         // Show send icon when not loading
-        let send_btn = button(
-            icon(IconName::Send)
-                .size(16)
-        )
-        .padding(8);
+        let send_color = if send_button_hovered {
+            Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
+        } else {
+            Color::from_rgb(0.5, 0.5, 0.5) // Light gray default
+        };
 
         if url_valid {
-            send_btn
-                .on_press(Message::SendRequest)
-                .style(icon_button_style(true))
+            mouse_area(
+                button(icon(IconName::Send).size(16).color(send_color))
+                    .padding(8)
+                    .on_press(Message::SendRequest)
+                    .style(icon_button_style(true)),
+            )
+            .on_enter(Message::SendButtonHovered(true))
+            .on_exit(Message::SendButtonHovered(false))
         } else {
-            send_btn
-                .style(icon_button_style(false))
+            mouse_area(
+                button(icon(IconName::Send).size(16).color(send_color))
+                    .padding(8)
+                    .style(icon_button_style(false)),
+            )
+            .on_enter(Message::SendButtonHovered(true))
+            .on_exit(Message::SendButtonHovered(false))
         }
     };
 
-    let base_input = container(
-        row![
-            method_label,
-            url_input_with_hover,
-            space().width(5),
-            send_button,
-        ]
-    )
+    let base_input = container(row![
+        method_label,
+        url_input_with_hover,
+        space().width(5),
+        send_button,
+    ])
     .padding(2)
     .style(|_theme| container::Style {
         background: Some(Background::Color(Color::WHITE)),
@@ -212,14 +226,29 @@ pub fn request_panel<'a>(
 
     let connected_input = base_input;
 
-    let url_row = row![connected_input]
-    .align_y(iced::Alignment::Center);
+    let url_row = row![connected_input].align_y(iced::Alignment::Center);
 
     let tabs = row![
-        tab_button("Body", config.selected_tab == RequestTab::Body, RequestTab::Body),
-        tab_button("Params", config.selected_tab == RequestTab::Params, RequestTab::Params),
-        tab_button("Headers", config.selected_tab == RequestTab::Headers, RequestTab::Headers),
-        tab_button("Auth", config.selected_tab == RequestTab::Auth, RequestTab::Auth),
+        tab_button(
+            "Body",
+            config.selected_tab == RequestTab::Body,
+            RequestTab::Body
+        ),
+        tab_button(
+            "Params",
+            config.selected_tab == RequestTab::Params,
+            RequestTab::Params
+        ),
+        tab_button(
+            "Headers",
+            config.selected_tab == RequestTab::Headers,
+            RequestTab::Headers
+        ),
+        tab_button(
+            "Auth",
+            config.selected_tab == RequestTab::Auth,
+            RequestTab::Auth
+        ),
     ]
     .spacing(5);
 
@@ -245,21 +274,25 @@ pub fn request_panel<'a>(
 
     // Create left border
     let left_border = container("")
-                                 .width(Length::Fixed(1.0))
-                                 .height(Fill)
-                                 .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))), // Gray
-                                     ..Default::default()
-                                 });
+        .width(Length::Fixed(1.0))
+        .height(Fill)
+        .style(|_theme| container::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgb(
+                0.9, 0.9, 0.9,
+            ))), // Gray
+            ..Default::default()
+        });
 
     // Create right border
     let right_border = container("")
-                                 .width(Length::Fixed(1.0))
-                                 .height(Fill)
-                                 .style(|_theme| container::Style {
-                                     background: Some(iced::Background::Color(iced::Color::from_rgb(0.9, 0.9, 0.9))), // Gray
-                                     ..Default::default()
-                                 });
+        .width(Length::Fixed(1.0))
+        .height(Fill)
+        .style(|_theme| container::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgb(
+                0.9, 0.9, 0.9,
+            ))), // Gray
+            ..Default::default()
+        });
     let main_content = row![
         left_border,
         container(content)
@@ -286,9 +319,9 @@ pub fn request_panel<'a>(
                 }),
             // The actual dropdown menu
             container(method_dropdown())
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(iced::Padding::new(12.0).top(100.0)) // Left padding 12, top padding 100 to position dropdown
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(iced::Padding::new(12.0).top(100.0)) // Left padding 12, top padding 100 to position dropdown
         ]
         .into()
     } else {
@@ -306,9 +339,7 @@ pub fn request_panel<'a>(
                         text(tooltip_variable_name)
                             .size(12)
                             .color(Color::from_rgb(0.8, 0.8, 1.0)), // Light blue for header
-                        text(tooltip_variable_value)
-                            .size(11)
-                            .color(Color::WHITE),
+                        text(tooltip_variable_value).size(11).color(Color::WHITE),
                     ]
                     .spacing(4)
                 )
@@ -440,12 +471,10 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
                     },
                     _ => base,
                 }
-            })
+            }),
     );
 
-    scrollable(content.spacing(10))
-        .height(Length::Fill)
-        .into()
+    scrollable(content.spacing(10)).height(Length::Fill).into()
 }
 
 fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
@@ -488,19 +517,22 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
                     },
                     _ => base,
                 }
-            })
+            }),
     );
 
-    scrollable(content.spacing(10))
-        .height(Length::Fill)
-        .into()
+    scrollable(content.spacing(10)).height(Length::Fill).into()
 }
 
 fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     let auth_type_picker = column![
         text("Authentication Type"),
         pick_list(
-            vec![AuthType::None, AuthType::Bearer, AuthType::Basic, AuthType::ApiKey],
+            vec![
+                AuthType::None,
+                AuthType::Bearer,
+                AuthType::Basic,
+                AuthType::ApiKey
+            ],
             Some(config.auth_type.clone()),
             Message::AuthTypeChanged
         ),
@@ -511,52 +543,42 @@ fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         AuthType::None => {
             column![text("No authentication required")]
         }
-        AuthType::Bearer => {
-            column![
-                text("Bearer Token"),
-                text_input("Enter bearer token", &config.bearer_token)
-                    .on_input(Message::BearerTokenChanged)
-                    .width(Fill),
-            ]
-            .spacing(5)
-        }
-        AuthType::Basic => {
-            column![
-                text("Basic Authentication"),
-                text("Username"),
-                text_input("Enter username", &config.basic_username)
-                    .on_input(Message::BasicUsernameChanged)
-                    .width(Fill),
-                text("Password"),
-                text_input("Enter password", &config.basic_password)
-                    .on_input(Message::BasicPasswordChanged)
-                    .width(Fill),
-            ]
-            .spacing(5)
-        }
-        AuthType::ApiKey => {
-            column![
-                text("API Key Authentication"),
-                text("Header Name"),
-                text_input("Header name (e.g., X-API-Key)", &config.api_key_header)
-                    .on_input(Message::ApiKeyHeaderChanged)
-                    .width(Fill),
-                text("API Key"),
-                text_input("Enter API key", &config.api_key)
-                    .on_input(Message::ApiKeyChanged)
-                    .width(Fill),
-            ]
-            .spacing(5)
-        }
+        AuthType::Bearer => column![
+            text("Bearer Token"),
+            text_input("Enter bearer token", &config.bearer_token)
+                .on_input(Message::BearerTokenChanged)
+                .width(Fill),
+        ]
+        .spacing(5),
+        AuthType::Basic => column![
+            text("Basic Authentication"),
+            text("Username"),
+            text_input("Enter username", &config.basic_username)
+                .on_input(Message::BasicUsernameChanged)
+                .width(Fill),
+            text("Password"),
+            text_input("Enter password", &config.basic_password)
+                .on_input(Message::BasicPasswordChanged)
+                .width(Fill),
+        ]
+        .spacing(5),
+        AuthType::ApiKey => column![
+            text("API Key Authentication"),
+            text("Header Name"),
+            text_input("Header name (e.g., X-API-Key)", &config.api_key_header)
+                .on_input(Message::ApiKeyHeaderChanged)
+                .width(Fill),
+            text("API Key"),
+            text_input("Enter API key", &config.api_key)
+                .on_input(Message::ApiKeyChanged)
+                .width(Fill),
+        ]
+        .spacing(5),
     };
 
-    column![
-        auth_type_picker,
-        space().height(10),
-        auth_config
-    ]
-    .spacing(10)
-    .into()
+    column![auth_type_picker, space().height(10), auth_config]
+        .spacing(10)
+        .into()
 }
 
 fn method_button(method: &HttpMethod) -> Element<'_, Message> {
@@ -571,18 +593,16 @@ fn method_button(method: &HttpMethod) -> Element<'_, Message> {
             HttpMethod::DELETE => 80.0,
             HttpMethod::OPTIONS => 90.0,
         }))
-        .style(|theme: &Theme, _status: Status| {
-            button::Style {
-                background: Some(Background::Color(theme.palette().background)),
-                text_color: theme.palette().text,
-                border: Border {
-                    color: Color::TRANSPARENT,
-                    width: 0.0,
-                    radius: 0.0.into(),
-                },
-                shadow: Default::default(),
-                snap: true,
-            }
+        .style(|theme: &Theme, _status: Status| button::Style {
+            background: Some(Background::Color(theme.palette().background)),
+            text_color: theme.palette().text,
+            border: Border {
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 0.0.into(),
+            },
+            shadow: Default::default(),
+            snap: true,
         })
         .into()
 }
@@ -603,21 +623,42 @@ fn method_dropdown() -> Element<'static, Message> {
                 border: Border::default(),
                 shadow: Shadow::default(),
                 snap: true,
-            }
+            },
         }
     };
 
     container(
         column![
-            button(text("GET")).on_press(Message::MethodChanged(HttpMethod::GET)).width(Length::Fixed(90.0)).style(button_style),
-            button(text("POST")).on_press(Message::MethodChanged(HttpMethod::POST)).width(Length::Fixed(90.0)).style(button_style),
-            button(text("PUT")).on_press(Message::MethodChanged(HttpMethod::PUT)).width(Length::Fixed(90.0)).style(button_style),
-            button(text("DELETE")).on_press(Message::MethodChanged(HttpMethod::DELETE)).width(Length::Fixed(90.0)).style(button_style),
-            button(text("PATCH")).on_press(Message::MethodChanged(HttpMethod::PATCH)).width(Length::Fixed(90.0)).style(button_style),
-            button(text("HEAD")).on_press(Message::MethodChanged(HttpMethod::HEAD)).width(Length::Fixed(90.0)).style(button_style),
-            button(text("OPTIONS")).on_press(Message::MethodChanged(HttpMethod::OPTIONS)).width(Length::Fixed(90.0)).style(button_style),
+            button(text("GET"))
+                .on_press(Message::MethodChanged(HttpMethod::GET))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
+            button(text("POST"))
+                .on_press(Message::MethodChanged(HttpMethod::POST))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
+            button(text("PUT"))
+                .on_press(Message::MethodChanged(HttpMethod::PUT))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
+            button(text("DELETE"))
+                .on_press(Message::MethodChanged(HttpMethod::DELETE))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
+            button(text("PATCH"))
+                .on_press(Message::MethodChanged(HttpMethod::PATCH))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
+            button(text("HEAD"))
+                .on_press(Message::MethodChanged(HttpMethod::HEAD))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
+            button(text("OPTIONS"))
+                .on_press(Message::MethodChanged(HttpMethod::OPTIONS))
+                .width(Length::Fixed(90.0))
+                .style(button_style),
         ]
-        .spacing(1)
+        .spacing(1),
     )
     .padding(4)
     .style(|_theme: &Theme| container::Style {
