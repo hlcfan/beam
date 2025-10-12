@@ -13,7 +13,7 @@ cargo clean --release
 
 # Build the release binary
 echo "🔨 Building release binary..."
-cargo build --release
+cargo build --release --no-default-features
 
 # Create the macOS app bundle
 echo "📦 Creating macOS app bundle..."
