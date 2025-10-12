@@ -1,0 +1,151 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        default: 'v0.1.0'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # - target: x86_64-pc-windows-msvc
+          #   os: windows-latest
+          #   binary_name: beam.exe
+          #   archive_name: beam-windows-x86_64.zip
+          # - target: x86_64-apple-darwin
+          #   os: macos-13  # Intel-based macOS
+          #   binary_name: beam
+          #   archive_name: beam-macos-x86_64.tar.gz
+          # - target: aarch64-apple-darwin
+          #   os: macos-14  # Apple Silicon macOS
+          #   binary_name: beam
+          #   archive_name: beam-macos-arm64.tar.gz
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+            binary_name: beam
+            archive_name: beam-linux-x86_64.tar.gz
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+          profile: minimal
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Build release binary
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }} --no-default-features
+
+      - name: Create archive (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../${{ matrix.archive_name }} ${{ matrix.binary_name }}
+
+      - name: Create archive (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czf ../../../${{ matrix.archive_name }} ${{ matrix.binary_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Debug artifacts structure
+        run: |
+          echo "Artifacts directory structure:"
+          find artifacts -type f
+
+      - name: Move artifacts to root
+        run: |
+          echo "Files found by find command:"
+          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \)
+          echo "Moving files..."
+          find artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) -exec mv {} . \;
+          echo "Files in root after move:"
+          ls -la *.zip *.tar.gz 2>/dev/null || echo "No archive files found in root"
+
+      - name: Get tag name
+        id: tag_name
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}
+          tag_name: ${{ steps.tag_name.outputs.tag }}
+          name: Release ${{ steps.tag_name.outputs.tag }}
+          draft: false
+          prerelease: false
+          files: |
+            *.zip
+            *.tar.gz
+          body: |
+            ## Changes
+
+            - Release ${{ steps.tag_name.outputs.tag }}
+
+            ## Downloads
+
+            - **Linux (x86_64)**: beam-linux-x86_64.tar.gz
