@@ -414,6 +414,8 @@ impl BeamApp {
                             // Single click: select the request
                             self.current_request.method = request.method.clone();
                             self.current_request.url = request.url.clone();
+                            // Synchronize the managed URL input with the selected request's URL
+                            self.managed_url_input.set_value(request.url.clone());
 
                             // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
