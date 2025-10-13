@@ -58,9 +58,11 @@ impl Default for BeamApp {
         Self {
             panes,
             collections,
+            managed_url_input: ui::managed_text_input::ManagedTextInput::new("Enter URL".to_string()),
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
+                url_content: text_editor::Content::new(),
                 headers: vec![
                     ("Content-Type".to_string(), "application/json".to_string()),
                     ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
@@ -121,6 +123,10 @@ impl Default for BeamApp {
             // Initialize hover states
             send_button_hovered: false,
             cancel_button_hovered: false,
+            
+            // Initialize undo tracking
+            just_performed_undo: false,
+            processing_cmd_z: false,
         }
     }
 }
@@ -179,7 +185,8 @@ impl BeamApp {
                 Task::none()
             }
             Message::UrlChanged(url) => {
-                self.current_request.url = url;
+                self.current_request.url = url.clone();
+                self.current_request.url_content = text_editor::Content::with_text(&url);
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -190,6 +197,73 @@ impl BeamApp {
                 } else {
                     Task::none()
                 }
+            }
+            Message::ManagedUrlChanged(url) => {
+                println!("DEBUG: ManagedUrlChanged received with value: {}", url);
+                
+                // Check if this is a 'z' character being added during a Cmd+Z operation
+                // We need to completely ignore this to prevent visual flicker
+                if url.ends_with('z') && url.len() == self.managed_url_input.value.len() + 1 {
+                    // Check if this looks like a Cmd+Z scenario (z being added to existing content)
+                    let base_value = &url[..url.len()-1];
+                    if base_value == self.managed_url_input.value {
+                        println!("DEBUG: Detected 'z' character being added during potential Cmd+Z, completely ignoring this change");
+                        // Don't update anything - completely ignore this change to prevent visual flicker
+                        return Task::none();
+                    }
+                }
+                
+                self.just_performed_undo = false; // Reset flag for any other input
+                self.managed_url_input.set_value(url.clone());
+                self.current_request.url = url.clone();
+                self.current_request.url_content = text_editor::Content::with_text(&url);
+                println!("DEBUG: History length after change: {}", self.managed_url_input.history.len());
+
+                // Emit auto-save message if we have a current request
+                if let Some((collection_index, request_index)) = self.last_opened_request {
+                    Task::perform(
+                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Url } },
+                        |msg| msg,
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ManagedUrlUndo => {
+                println!("DEBUG: ManagedUrlUndo message received");
+                
+                if self.managed_url_input.undo() {
+                    println!("DEBUG: Undo successful, new value: {}", self.managed_url_input.value);
+                    self.current_request.url = self.managed_url_input.value.clone();
+                    self.current_request.url_content = text_editor::Content::with_text(&self.managed_url_input.value);
+                    self.just_performed_undo = true;
+                } else {
+                    println!("DEBUG: Undo failed - no history available");
+                }
+                Task::none()
+            }
+            Message::ManagedUrlRedo => {
+                println!("DEBUG: ManagedUrlRedo message received");
+                if self.managed_url_input.redo() {
+                    println!("DEBUG: Redo successful, new value: {}", self.managed_url_input.value);
+                    self.current_request.url = self.managed_url_input.value.clone();
+                    self.current_request.url_content = text_editor::Content::with_text(&self.managed_url_input.value);
+                } else {
+                    println!("DEBUG: Redo failed - no future history available");
+                }
+                Task::none()
+            }
+            Message::ManagedUrlFocused => {
+                self.managed_url_input.set_focused(true);
+                Task::none()
+            }
+            Message::ManagedUrlUnfocused => {
+                self.managed_url_input.set_focused(false);
+                Task::none()
+            }
+            Message::SetProcessingCmdZ(processing) => {
+                self.processing_cmd_z = processing;
+                Task::none()
             }
             Message::MethodChanged(method) => {
                 self.current_request.method = method;
@@ -333,7 +407,7 @@ impl BeamApp {
                         if is_double_click {
                             // Double-click detected: show rename modal
                             self.show_rename_modal = true;
-                            self.rename_target = Some((collection_index, request_index));
+                            self.rename_target = Some(RenameTarget::Request(collection_index, request_index));
                             self.rename_input = request.name.clone();
                             Task::none()
                         } else {
@@ -341,12 +415,13 @@ impl BeamApp {
                             self.current_request.method = request.method.clone();
                             self.current_request.url = request.url.clone();
 
-                            // Update the last opened request
-                            self.last_opened_request = Some((collection_index, request_index));
-
-                            // Save the last opened request to storage
+                            // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
-                                async move { Message::SaveLastOpenedRequest(collection_index, request_index) },
+                                async move {
+                                    // Small delay to allow UI to render first
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                                    Message::UpdateLastOpenedRequest(collection_index, request_index)
+                                },
                                 |msg| msg,
                             )
                         }
@@ -462,6 +537,21 @@ impl BeamApp {
                 self.response_body_content.perform(action);
                 Task::none()
             }
+            Message::UrlEditorAction(action) => {
+                self.current_request.url_content.perform(action);
+                // Sync the url string with the text editor content
+                self.current_request.url = self.current_request.url_content.text();
+
+                // Emit auto-save message if we have a current request
+                if let Some((collection_index, request_index)) = self.last_opened_request {
+                    Task::perform(
+                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Url } },
+                        |msg| msg,
+                    )
+                } else {
+                    Task::none()
+                }
+            }
             Message::AuthTypeChanged(auth_type) => {
                 self.current_request.auth_type = auth_type;
 
@@ -560,6 +650,11 @@ impl BeamApp {
                             self.rename_input.clear();
                             self.rename_target = None;
                         }
+                        Task::none()
+                    }
+                    iced::keyboard::Key::Character(ref c) if c == "z" => {
+                        // Check if this is Cmd+Z (undo) or Cmd+Shift+Z (redo)
+                        // For now, we'll handle this in the subscription with modifiers
                         Task::none()
                     }
                     _ => Task::none()
@@ -813,39 +908,34 @@ impl BeamApp {
                     };
                     collection.requests.push(new_request.clone());
 
-                    // Save only the new request, not the entire collection
+                    // Save the request asynchronously without blocking the UI
                     let collection_name = collection.name.clone();
-                    Task::perform(
-                        async move {
-                            let persistent_request = storage::PersistentRequest {
-                                name: new_request.name,
-                                method: new_request.method.to_string(),
-                                url: new_request.url,
-                                headers: Vec::new(),
-                                params: Vec::new(),
-                                body: String::new(),
-                                content_type: "application/json".to_string(),
-                                auth_type: "None".to_string(),
-                                bearer_token: None,
-                                basic_username: None,
-                                basic_password: None,
-                                api_key: None,
-                                api_key_header: None,
-                                metadata: storage::persistent_types::RequestMetadata::default(),
-                            };
+                    tokio::spawn(async move {
+                        let persistent_request = storage::PersistentRequest {
+                            name: new_request.name,
+                            method: new_request.method.to_string(),
+                            url: new_request.url,
+                            headers: Vec::new(),
+                            params: Vec::new(),
+                            body: String::new(),
+                            content_type: "application/json".to_string(),
+                            auth_type: "None".to_string(),
+                            bearer_token: None,
+                            basic_username: None,
+                            basic_password: None,
+                            api_key: None,
+                            api_key_header: None,
+                            metadata: storage::persistent_types::RequestMetadata::default(),
+                        };
 
-                            match storage::StorageManager::with_default_config().await {
-                                Ok(storage_manager) => {
-                                    match storage_manager.storage().save_request(&collection_name, &persistent_request).await {
-                                        Ok(_) => Ok(()),
-                                        Err(e) => Err(e.to_string()),
-                                    }
-                                }
-                                Err(e) => Err(e.to_string()),
+                        if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                            if let Err(e) = storage_manager.storage().save_request(&collection_name, &persistent_request).await {
+                                eprintln!("Failed to save request: {}", e);
                             }
-                        },
-                        Message::CollectionsSaved,
-                    )
+                        }
+                    });
+
+                    Task::none()
                 } else {
                     Task::none()
                 }
@@ -866,47 +956,25 @@ impl BeamApp {
                 };
                 self.collections.push(new_collection.clone());
 
-                // Save the newly created collection
-                Task::perform(
-                    async move {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().save_collection(&new_collection).await {
-                                    Ok(_) => Ok(()),
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            }
-                            Err(e) => Err(e.to_string()),
+                // Save the collection asynchronously without blocking the UI
+                tokio::spawn(async move {
+                    if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                        if let Err(e) = storage_manager.storage().save_collection(&new_collection).await {
+                            eprintln!("Failed to save collection: {}", e);
                         }
-                    },
-                    Message::CollectionsSaved,
-                )
+                    }
+                });
+
+                Task::none()
             }
             Message::RenameFolder(collection_index) => {
-                // For now, just add a number to the name as a placeholder
-                // In a real app, this would open a dialog or text input
-                if let Some(collection) = self.collections.get_mut(collection_index) {
-                    collection.name = format!("{} (Renamed)", collection.name);
-
-                    // Save the renamed collection
-                    let collection = collection.clone();
-                    Task::perform(
-                        async move {
-                            match storage::StorageManager::with_default_config().await {
-                                Ok(storage_manager) => {
-                                    match storage_manager.storage().save_collection(&collection).await {
-                                        Ok(_) => Ok(()),
-                                        Err(e) => Err(e.to_string()),
-                                    }
-                                }
-                                Err(e) => Err(e.to_string()),
-                            }
-                        },
-                        Message::CollectionsSaved,
-                    )
-                } else {
-                    Task::none()
+                // Show the rename modal for the folder
+                if let Some(collection) = self.collections.get(collection_index) {
+                    self.show_rename_modal = true;
+                    self.rename_input = collection.name.clone();
+                    self.rename_target = Some(RenameTarget::Folder(collection_index));
                 }
+                Task::none()
             }
             Message::SendRequestFromMenu(collection_index, request_index) => {
                 if let Some(collection) = self.collections.get(collection_index) {
@@ -943,7 +1011,7 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.show_rename_modal = true;
                         self.rename_input = request.name.clone();
-                        self.rename_target = Some((collection_index, request_index));
+                        self.rename_target = Some(RenameTarget::Request(collection_index, request_index));
                     }
                 }
                 Task::none()
@@ -953,11 +1021,12 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.show_rename_modal = true;
                         self.rename_input = request.name.clone();
-                        self.rename_target = Some((collection_index, request_index));
+                        self.rename_target = Some(RenameTarget::Request(collection_index, request_index));
                     }
                 }
                 Task::none()
             }
+
             Message::HideRenameModal => {
                 self.show_rename_modal = false;
                 self.rename_input.clear();
@@ -969,7 +1038,7 @@ impl BeamApp {
                 Task::none()
             }
             Message::ConfirmRename => {
-                if let Some((collection_index, request_index)) = self.rename_target {
+                if let Some(rename_target) = &self.rename_target {
                     let new_name = self.rename_input.trim().to_string();
 
                     // Validate the new name
@@ -978,48 +1047,77 @@ impl BeamApp {
                         return Task::none();
                     }
 
-                    // Check for duplicate names in the same collection
-                    if let Some(collection) = self.collections.get(collection_index) {
-                        if collection.requests.iter().enumerate().any(|(i, req)| i != request_index && req.name == new_name) {
-                            // TODO: Show error message for duplicate name
-                            return Task::none();
-                        }
-                    }
+                    match rename_target {
+                        RenameTarget::Request(collection_index, request_index) => {
+                            let collection_index = *collection_index;
+                            let request_index = *request_index;
 
-                    // Update the request name
-                    if let Some(collection) = self.collections.get_mut(collection_index) {
-                        if let Some(request) = collection.requests.get_mut(request_index) {
-                            let old_name = request.name.clone();
-                            request.name = new_name.clone();
+                            // Check for duplicate names in the same collection
+                            if let Some(collection) = self.collections.get(collection_index) {
+                                if collection.requests.iter().enumerate().any(|(i, req)| i != request_index && req.name == new_name) {
+                                    // TODO: Show error message for duplicate name
+                                    return Task::none();
+                                }
+                            }
 
-                            // Hide the modal
-                            self.show_rename_modal = false;
-                            self.rename_input.clear();
-                            self.rename_target = None;
+                            // Update the request name
+                            if let Some(collection) = self.collections.get_mut(collection_index) {
+                                if let Some(request) = collection.requests.get_mut(request_index) {
+                                    let old_name = request.name.clone();
+                                    request.name = new_name.clone();
 
-                            // Save the collection and rename the file
-                            let collection_name = collection.name.clone();
+                                    // Hide the modal
+                                    self.show_rename_modal = false;
+                                    self.rename_input.clear();
+                                    self.rename_target = None;
 
-                            return Task::perform(
-                                async move {
-                                    match storage::StorageManager::with_default_config().await {
-                                        Ok(storage_manager) => {
+                                    // Save the collection and rename the file (non-blocking)
+                                    let collection_name = collection.name.clone();
+
+                                    tokio::spawn(async move {
+                                        if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                                             let storage = storage_manager.storage();
-
-                                            // Rename the request file (this already updates the file content)
-                                            match storage.rename_request(&collection_name, &old_name, &new_name).await {
-                                                Ok(_) => Ok(()),
-                                                Err(e) => {
-                                                    eprintln!("Failed to rename request file: {}", e);
-                                                    Err(e.to_string())
-                                                }
+                                            if let Err(e) = storage.rename_request(&collection_name, &old_name, &new_name).await {
+                                                eprintln!("Failed to rename request file: {}", e);
                                             }
                                         }
-                                        Err(e) => Err(e.to_string()),
+                                    });
+
+                                    return Task::none();
+                                }
+                            }
+                        }
+                        RenameTarget::Folder(collection_index) => {
+                            let collection_index = *collection_index;
+
+                            // Check for duplicate folder names
+                            if self.collections.iter().enumerate().any(|(i, col)| i != collection_index && col.name == new_name) {
+                                // TODO: Show error message for duplicate name
+                                return Task::none();
+                            }
+
+                            // Update the folder name
+                            if let Some(collection) = self.collections.get_mut(collection_index) {
+                                let old_name = collection.name.clone();
+                                collection.name = new_name.clone();
+
+                                // Hide the modal
+                                self.show_rename_modal = false;
+                                self.rename_input.clear();
+                                self.rename_target = None;
+
+                                // Rename the collection folder (non-blocking)
+                                tokio::spawn(async move {
+                                    if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                                        let storage = storage_manager.storage();
+                                        if let Err(e) = storage.rename_collection(&old_name, &new_name).await {
+                                            eprintln!("Failed to rename collection folder: {}", e);
+                                        }
                                     }
-                                },
-                                Message::CollectionsSaved,
-                            );
+                                });
+
+                                return Task::none();
+                            }
                         }
                     }
                 }
@@ -1032,39 +1130,33 @@ impl BeamApp {
                         new_request.name = format!("{} (Copy)", new_request.name);
                         collection.requests.push(new_request.clone());
 
-                        // Save only the new duplicated request, not the entire collection
+                        // Save only the new duplicated request, not the entire collection (non-blocking)
                         let collection_name = collection.name.clone();
-                        Task::perform(
-                            async move {
-                                let persistent_request = storage::PersistentRequest {
-                                    name: new_request.name,
-                                    method: new_request.method.to_string(),
-                                    url: new_request.url,
-                                    headers: Vec::new(),
-                                    params: Vec::new(),
-                                    body: String::new(),
-                                    content_type: "application/json".to_string(),
-                                    auth_type: "None".to_string(),
-                                    bearer_token: None,
-                                    basic_username: None,
-                                    basic_password: None,
-                                    api_key: None,
-                                    api_key_header: None,
-                                    metadata: storage::persistent_types::RequestMetadata::default(),
-                                };
+                        tokio::spawn(async move {
+                            let persistent_request = storage::PersistentRequest {
+                                name: new_request.name,
+                                method: new_request.method.to_string(),
+                                url: new_request.url,
+                                headers: Vec::new(),
+                                params: Vec::new(),
+                                body: String::new(),
+                                content_type: "application/json".to_string(),
+                                auth_type: "None".to_string(),
+                                bearer_token: None,
+                                basic_username: None,
+                                basic_password: None,
+                                api_key: None,
+                                api_key_header: None,
+                                metadata: storage::persistent_types::RequestMetadata::default(),
+                            };
 
-                                match storage::StorageManager::with_default_config().await {
-                                    Ok(storage_manager) => {
-                                        match storage_manager.storage().save_request(&collection_name, &persistent_request).await {
-                                            Ok(_) => Ok(()),
-                                            Err(e) => Err(e.to_string()),
-                                        }
-                                    }
-                                    Err(e) => Err(e.to_string()),
+                            if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                                if let Err(e) = storage_manager.storage().save_request(&collection_name, &persistent_request).await {
+                                    eprintln!("Failed to save duplicated request: {}", e);
                                 }
-                            },
-                            Message::CollectionsSaved,
-                        )
+                            }
+                        });
+                        Task::none()
                     } else {
                         Task::none()
                     }
@@ -1082,30 +1174,24 @@ impl BeamApp {
                         // Remove from in-memory collection
                         collection.requests.remove(request_index);
 
-                        // Delete request file and save collection
+                        // Delete request file and save collection (non-blocking)
                         let collection = collection.clone();
-                        Task::perform(
-                            async move {
-                                match storage::StorageManager::with_default_config().await {
-                                    Ok(storage_manager) => {
-                                        let storage = storage_manager.storage();
+                        tokio::spawn(async move {
+                            if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                                let storage = storage_manager.storage();
 
-                                        // First delete the request file from disk
-                                        if let Err(e) = storage.delete_request(&collection_name, &request_name).await {
-                                            eprintln!("Failed to delete request file '{}': {}", request_name, e);
-                                        }
-
-                                        // Then save the updated collection
-                                        match storage.save_collection(&collection).await {
-                                            Ok(_) => Ok(()),
-                                            Err(e) => Err(e.to_string()),
-                                        }
-                                    }
-                                    Err(e) => Err(e.to_string()),
+                                // First delete the request file from disk
+                                if let Err(e) = storage.delete_request(&collection_name, &request_name).await {
+                                    eprintln!("Failed to delete request file '{}': {}", request_name, e);
                                 }
-                            },
-                            Message::CollectionsSaved,
-                        )
+
+                                // Then save the updated collection
+                                if let Err(e) = storage.save_collection(&collection).await {
+                                    eprintln!("Failed to save collection after deleting request: {}", e);
+                                }
+                            }
+                        });
+                        Task::none()
                     } else {
                         Task::none()
                     }
@@ -1175,9 +1261,37 @@ impl BeamApp {
                     Ok(collections) => {
                         if !collections.is_empty() {
                             self.collections = collections;
+                        } else {
+                            // Create default folder and request when no collections exist
+                            let default_request = SavedRequest {
+                                name: "New Request".to_string(),
+                                method: HttpMethod::GET,
+                                url: "https://httpbin.org/get".to_string(),
+                            };
+                            
+                            let default_collection = RequestCollection {
+                                name: "My Requests".to_string(),
+                                requests: vec![default_request],
+                                expanded: true,
+                            };
+                            
+                            self.collections = vec![default_collection];
+                            
+                            // Set the default request as the current request and mark it as opened
+                            self.current_request.method = HttpMethod::GET;
+                            self.current_request.url = "https://httpbin.org/get".to_string();
+                            self.last_opened_request = Some((0, 0)); // First collection, first request
                         }
-                        // After collections are loaded, now load the last opened request
-                        Task::perform(async { Message::LoadLastOpenedRequest }, |msg| msg)
+                        // After collections are loaded, defer loading the last opened request to avoid blocking startup
+                        // This allows the UI to be responsive immediately while the last request loads in the background
+                        Task::perform(
+                            async {
+                                // Add a small delay to allow the UI to render first
+                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                                Message::LoadLastOpenedRequest
+                            },
+                            |msg| msg,
+                        )
                     }
                     Err(e) => {
                         eprintln!("Failed to load collections: {}", e);
@@ -1359,19 +1473,22 @@ impl BeamApp {
 
             // Last opened request handlers
             Message::SaveLastOpenedRequest(collection_index, request_index) => {
-                Task::perform(
-                    async move {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().save_last_opened_request(collection_index, request_index).await {
-                                    Ok(_) => Ok(()),
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            }
-                            Err(e) => Err(e.to_string()),
+                // Save the last opened request asynchronously without blocking the UI
+                tokio::spawn(async move {
+                    if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                        if let Err(e) = storage_manager.storage().save_last_opened_request(collection_index, request_index).await {
+                            eprintln!("Failed to save last opened request: {}", e);
                         }
-                    },
-                    Message::LastOpenedRequestSaved,
+                    }
+                });
+                Task::none()
+            }
+            Message::UpdateLastOpenedRequest(collection_index, request_index) => {
+                // Update the last opened request state and save to storage
+                self.last_opened_request = Some((collection_index, request_index));
+                Task::perform(
+                    async move { Message::SaveLastOpenedRequest(collection_index, request_index) },
+                    |msg| msg,
                 )
             }
             Message::LoadLastOpenedRequest => {
@@ -1455,7 +1572,9 @@ impl BeamApp {
                     Ok(Some(request_config)) => {
                         println!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
                         // Update the current request with the loaded configuration
-                        self.current_request = request_config;
+                        self.current_request = request_config.clone();
+                        // Synchronize the managed text input with the loaded URL
+                        self.managed_url_input.set_value(request_config.url);
                     }
                     Ok(None) => {
                         eprintln!("No request configuration found for the last opened request");
@@ -1641,6 +1760,7 @@ impl BeamApp {
     fn request_config_view(&self) -> Element<'_, Message> {
         request_panel(
             &self.current_request,
+            &self.managed_url_input,
             self.is_loading,
             &self.environments,
             self.active_environment,
@@ -1881,8 +2001,14 @@ impl BeamApp {
     }
 
     fn rename_modal_view(&self) -> Element<'_, Message> {
+        let (title, description) = match &self.rename_target {
+            Some(RenameTarget::Folder(_)) => ("Rename Folder", "Enter a new name for the folder:"),
+            Some(RenameTarget::Request(_, _)) => ("Rename Request", "Enter a new name for the request:"),
+            None => ("Rename", "Enter a new name:"),
+        };
+
         let header = row![
-            text("Rename Request").size(18),
+            text(title).size(18),
             space().width(Fill),
             button(text("×"))
                 .on_press(Message::HideRenameModal)
@@ -1955,7 +2081,7 @@ impl BeamApp {
             column![
                 header,
                 space().height(20),
-                text("Enter a new name for the request:").size(14),
+                text(description).size(14),
                 space().height(10),
                 input_field,
                 space().height(20),
@@ -1991,8 +2117,41 @@ impl BeamApp {
             iced::Subscription::none()
         };
 
-        let keyboard_subscription = iced::keyboard::on_key_press(|key, _modifiers| {
-            Some(Message::KeyPressed(key))
+        let keyboard_subscription = iced::event::listen_with(|event, _status, _id| {
+            match event {
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { 
+                    key, 
+                    modifiers, 
+                    .. 
+                }) => {
+                    // Debug logging for all key presses
+                    println!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}", 
+                        key, modifiers.command(), modifiers.shift(), modifiers.control(), modifiers.alt());
+                    
+                    match key {
+                        iced::keyboard::Key::Character(ref c) if c == "z" => {
+                            println!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}", 
+                                modifiers.command(), modifiers.shift());
+                            
+                            if modifiers.command() && modifiers.shift() {
+                                println!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
+                                Some(Message::ManagedUrlRedo)
+                            } else if modifiers.command() {
+                                println!("DEBUG: Event-based Triggering Cmd+Z = Undo");
+                                Some(Message::ManagedUrlUndo)
+                            } else {
+                                println!("DEBUG: Event-based 'z' without command modifier, passing to KeyPressed");
+                                Some(Message::KeyPressed(key.clone()))
+                            }
+                        }
+                        _ => {
+                            println!("DEBUG: Event-based Other key, passing to KeyPressed");
+                            Some(Message::KeyPressed(key.clone()))
+                        }
+                    }
+                }
+                _ => None
+            }
         });
 
         iced::Subscription::batch([timer_subscription, keyboard_subscription])

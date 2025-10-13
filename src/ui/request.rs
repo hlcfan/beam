@@ -36,6 +36,7 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
 
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
+    managed_url_input: &'a crate::ui::managed_text_input::ManagedTextInput,
     is_loading: bool,
     environments: &'a [Environment],
     active_environment: Option<usize>,
@@ -93,67 +94,11 @@ pub fn request_panel<'a>(
     // Method label with dynamic width
     let method_label = method_button(&config.method);
 
-    // Connected method label and URL input with overlay dropdown
-    let url_input_with_hover = mouse_area(
-        text_input("Enter URL", &config.url)
-            .on_input(Message::UrlChanged)
-            .width(Length::Fill)
-            .style(
-                |theme: &Theme, _status: text_input::Status| text_input::Style {
-                    border: Border {
-                        color: Color::TRANSPARENT,
-                        width: 0.0,
-                        radius: 0.0.into(),
-                    },
-                    background: Background::Color(theme.palette().background),
-                    icon: Color::TRANSPARENT,
-                    placeholder: theme.palette().text,
-                    value: theme.palette().text,
-                    selection: theme.palette().primary,
-                },
-            ),
-    )
-    .on_move(move |_point| {
-        // Detect all environment variables in the URL
-        use regex::Regex;
-        let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
-
-        let mut variables = Vec::new();
-        for captures in re.captures_iter(&config.url) {
-            let variable_name = captures.get(1).unwrap().as_str().to_string();
-            let variable_value = if let Some(active_idx) = active_environment {
-                if let Some(env) = environments.get(active_idx) {
-                    env.get_variable(&variable_name)
-                        .map(|v| v.clone())
-                        .unwrap_or_else(|| "undefined".to_string())
-                } else {
-                    "undefined".to_string()
-                }
-            } else {
-                "undefined".to_string()
-            };
-            variables.push((variable_name, variable_value));
-        }
-
-        if !variables.is_empty() {
-            // Show all variables in the tooltip, one per line
-            let all_vars = variables
-                .iter()
-                .map(|(name, value)| format!("{}: {}", name, value))
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            Message::ShowUrlTooltip(
-                "Variables".to_string(),
-                all_vars,
-                20.0,  // Fixed left padding
-                100.0, // Fixed position above URL input (environment bar + some spacing)
-            )
-        } else {
-            Message::HideUrlTooltip
-        }
-    })
-    .on_exit(Message::HideUrlTooltip);
+    // Use the managed text input component
+    let url_input_with_hover = managed_url_input.view(
+        environments,
+        active_environment,
+    );
 
     // Create send/cancel button based on loading state
     let url_valid = !config.url.trim().is_empty()

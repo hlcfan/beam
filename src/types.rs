@@ -72,7 +72,7 @@ pub struct BeamApp {
     // Rename modal state
     pub show_rename_modal: bool,
     pub rename_input: String,
-    pub rename_target: Option<(usize, usize)>, // (collection_index, request_index)
+    pub rename_target: Option<RenameTarget>, // What is being renamed
 
     // Double-click detection state
     pub last_click_time: Option<std::time::Instant>,
@@ -94,6 +94,15 @@ pub struct BeamApp {
     // Hover states for buttons
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
+
+    // Managed URL input
+    pub managed_url_input: crate::ui::managed_text_input::ManagedTextInput,
+    
+    // Flag to track recent undo operations
+    pub just_performed_undo: bool,
+    
+    // Flag to track when Cmd+Z is being processed to prevent visual flicker
+    pub processing_cmd_z: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +123,7 @@ pub struct SavedRequest {
 pub struct RequestConfig {
     pub method: HttpMethod,
     pub url: String,
+    pub url_content: text_editor::Content,
     pub headers: Vec<(String, String)>,
     pub params: Vec<(String, String)>,
     pub body: text_editor::Content,
@@ -134,6 +144,7 @@ impl Clone for RequestConfig {
         Self {
             method: self.method.clone(),
             url: self.url.clone(),
+            url_content: text_editor::Content::with_text(&self.url_content.text()),
             headers: self.headers.clone(),
             params: self.params.clone(),
             body: text_editor::Content::with_text(&self.body.text()),
@@ -232,6 +243,12 @@ pub enum PaneContent {
 pub enum Message {
     PaneResized(pane_grid::ResizeEvent),
     UrlChanged(String),
+    ManagedUrlChanged(String),
+    ManagedUrlUndo,
+    ManagedUrlRedo,
+    SetProcessingCmdZ(bool),
+    ManagedUrlFocused,
+    ManagedUrlUnfocused,
     MethodChanged(HttpMethod),
 
     SendRequest,
@@ -254,6 +271,7 @@ pub enum Message {
     RemoveParam(usize),
     BodyChanged(text_editor::Action),
     ResponseBodyAction(text_editor::Action),
+    UrlEditorAction(text_editor::Action),
     AuthTypeChanged(AuthType),
     BearerTokenChanged(String),
     BasicUsernameChanged(String),
@@ -292,6 +310,7 @@ pub enum Message {
     // Rename modal
     #[allow(dead_code)]
     ShowRenameModal(usize, usize), // (collection_index, request_index)
+
     HideRenameModal,
     RenameInputChanged(String),
     ConfirmRename,
@@ -320,6 +339,7 @@ pub enum Message {
     #[allow(dead_code)]
     SaveInitialData,
     SaveLastOpenedRequest(usize, usize), // (collection_index, request_index)
+    UpdateLastOpenedRequest(usize, usize), // (collection_index, request_index) - deferred state update
     LoadLastOpenedRequest,
     LastOpenedRequestSaved(Result<(), String>),
     LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
@@ -347,6 +367,12 @@ pub enum RequestField {
     Headers,
     Params,
     Auth,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RenameTarget {
+    Folder(usize), // collection_index
+    Request(usize, usize), // (collection_index, request_index)
 }
 
 impl std::fmt::Display for HttpMethod {
