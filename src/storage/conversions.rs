@@ -18,6 +18,7 @@ impl ToPersistent<PersistentCollection> for RequestCollection {
             name: self.name.clone(),
             requests: self.requests.iter().map(|r| r.to_persistent()).collect(),
             metadata: CollectionMetadata {
+                name: self.name.clone(),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 modified_at: chrono::Utc::now().to_rfc3339(),
                 description: None,
@@ -138,7 +139,8 @@ impl FromPersistent<PersistentRequest> for RequestConfig {
                 "OPTIONS" => crate::types::HttpMethod::OPTIONS,
                 _ => crate::types::HttpMethod::GET,
             },
-            url: persistent.url,
+            url: persistent.url.clone(),
+            url_content: iced::widget::text_editor::Content::with_text(&persistent.url),
             headers,
             params: persistent.params,
             body: iced::widget::text_editor::Content::with_text(&persistent.body),

@@ -62,14 +62,14 @@ impl TomlFileStorage {
 
     /// Load a collection from disk
     async fn load_collection_from_disk(&self, collection_name: &str) -> Result<RequestCollection, StorageError> {
-        let collection_dir = self.collection_path(collection_name);
+        // Find collection directory by searching TOML metadata
+        let collection_dir = match self.find_collection_directory_by_name(collection_name).await? {
+            Some(dir) => dir,
+            None => return Err(StorageError::CollectionNotFound(collection_name.to_string())),
+        };
 
-        if !collection_dir.exists() {
-            return Err(StorageError::CollectionNotFound(collection_name.to_string()));
-        }
-
-        // Load collection metadata
-        let metadata_path = self.collection_metadata_path(collection_name);
+        // Load collection metadata from the found directory
+        let metadata_path = collection_dir.join("collection.toml");
         let metadata = if metadata_path.exists() {
             let content = fs::read_to_string(&metadata_path).await?;
             toml::from_str::<CollectionMetadata>(&content)
@@ -141,7 +141,7 @@ impl TomlFileStorage {
         }
 
         Ok(RequestCollection {
-            name: collection_name.to_string(),
+            name: metadata.name.clone(),
             requests,
             expanded: metadata.expanded,
         })
@@ -149,19 +149,21 @@ impl TomlFileStorage {
 
     /// Save a collection to disk (metadata only)
     async fn save_collection_to_disk(&self, collection: &RequestCollection) -> Result<(), StorageError> {
-        // Try to find existing collection directory first
-        let collection_dir = match self.find_collection_directory(&collection.name).await? {
+        // Try to find existing collection directory by name first
+        let collection_dir = match self.find_collection_directory_by_name(&collection.name).await? {
             Some(existing_dir) => existing_dir,
             None => {
-                // If no existing directory found, create a new one using the display name
-                let new_dir = self.collection_path(&collection.name);
+                // If no existing directory found, create a new one with numeric name
+                let numeric_folder = self.find_next_collection_number().await?;
+                let new_dir = self.collections_path.join(&numeric_folder);
                 fs::create_dir_all(&new_dir).await?;
                 new_dir
             }
         };
 
-        // Save collection metadata only
+        // Save collection metadata with the collection name stored in TOML
         let metadata = CollectionMetadata {
+            name: collection.name.clone(),
             created_at: chrono::Utc::now().to_rfc3339(),
             modified_at: chrono::Utc::now().to_rfc3339(),
             description: None,
@@ -234,6 +236,204 @@ impl TomlFileStorage {
 
         Ok(max_prefix + 1)
     }
+
+    /// Find the next available 4-digit numeric folder name for collections
+    async fn find_next_collection_number(&self) -> Result<String, StorageError> {
+        if !self.collections_path.exists() {
+            return Ok("0001".to_string());
+        }
+
+        let mut max_number = 0u32;
+        let mut entries = fs::read_dir(&self.collections_path).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
+                    // Check if folder name is a 4-digit number
+                    if folder_name.len() == 4 && folder_name.chars().all(|c| c.is_ascii_digit()) {
+                        if let Ok(number) = folder_name.parse::<u32>() {
+                            max_number = max_number.max(number);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(format!("{:04}", max_number + 1))
+    }
+
+    /// Find collection directory by searching for the collection name in TOML metadata
+    async fn find_collection_directory_by_name(&self, collection_name: &str) -> Result<Option<PathBuf>, StorageError> {
+        if !self.collections_path.exists() {
+            return Ok(None);
+        }
+
+        let mut entries = fs::read_dir(&self.collections_path).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                let metadata_path = path.join("collection.toml");
+                if metadata_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                        if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
+                            if metadata.name == collection_name {
+                                return Ok(Some(path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Migrate existing collections from folder-based names to numeric folders with TOML metadata
+    pub async fn migrate_collections_to_numeric_folders(&self) -> Result<(), StorageError> {
+        if !self.collections_path.exists() {
+            return Ok(());
+        }
+
+        let mut entries = fs::read_dir(&self.collections_path).await?;
+        let mut collections_to_migrate = Vec::new();
+        let mut collections_to_fix = Vec::new();
+
+        // Find collections that need migration or fixing
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
+                    let metadata_path = path.join("collection.toml");
+                    
+                    if folder_name.parse::<u32>().is_err() || !metadata_path.exists() {
+                        // Non-numeric folder or missing collection.toml - needs full migration
+                        collections_to_migrate.push((folder_name.to_string(), path));
+                    } else if metadata_path.exists() {
+                        // Numeric folder with collection.toml - check if name field is missing
+                        if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                            if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
+                                if metadata.name.is_empty() || metadata.name == "New Collection" {
+                                    // Name field is missing or default - needs fixing
+                                    collections_to_fix.push((folder_name.to_string(), path));
+                                }
+                            } else {
+                                // Invalid TOML - needs fixing
+                                collections_to_fix.push((folder_name.to_string(), path));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Migrate collections that need full migration (non-numeric folders)
+        for (original_name, old_path) in collections_to_migrate {
+            // Get next available numeric folder name
+            let numeric_folder = self.find_next_collection_number().await?;
+            let new_path = self.collections_path.join(&numeric_folder);
+
+            // Create new numeric folder
+            fs::create_dir_all(&new_path).await?;
+
+            // Create collection.toml with the original folder name as the collection name
+            let metadata = CollectionMetadata {
+                name: original_name.clone(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                modified_at: chrono::Utc::now().to_rfc3339(),
+                description: None,
+                version: "1.0".to_string(),
+                expanded: false,
+            };
+
+            let metadata_content = toml::to_string_pretty(&metadata)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+            let metadata_path = new_path.join("collection.toml");
+            fs::write(&metadata_path, metadata_content).await?;
+
+            // Copy all request files from old to new location
+            let mut old_entries = fs::read_dir(&old_path).await?;
+            while let Some(entry) = old_entries.next_entry().await? {
+                let file_path = entry.path();
+                if file_path.is_file() {
+                    if let Some(file_name) = file_path.file_name() {
+                        let new_file_path = new_path.join(file_name);
+                        fs::copy(&file_path, &new_file_path).await?;
+                    }
+                }
+            }
+
+            // Remove the old folder
+            fs::remove_dir_all(&old_path).await?;
+
+            println!("Migrated collection '{}' from folder-based to numeric storage", original_name);
+        }
+
+        // Fix collections that have missing or invalid name fields
+        for (folder_name, collection_path) in collections_to_fix {
+            let metadata_path = collection_path.join("collection.toml");
+            
+            // Try to determine the collection name from existing data
+            let collection_name = if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                if let Ok(mut metadata) = toml::from_str::<CollectionMetadata>(&content) {
+                    // If name is missing or default, use folder name or "My Requests"
+                    if metadata.name.is_empty() || metadata.name == "New Collection" {
+                        metadata.name = if folder_name == "0001" { "My Requests".to_string() } else { folder_name.clone() };
+                        metadata.modified_at = chrono::Utc::now().to_rfc3339();
+                        
+                        // Write the updated metadata back
+                        let metadata_content = toml::to_string_pretty(&metadata)
+                            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                        fs::write(&metadata_path, metadata_content).await?;
+                        
+                        println!("Fixed collection metadata for folder '{}' with name '{}'", folder_name, metadata.name);
+                        metadata.name
+                    } else {
+                        metadata.name
+                    }
+                } else {
+                    // Invalid TOML, create new metadata
+                    let collection_name = if folder_name == "0001" { "My Requests".to_string() } else { folder_name.clone() };
+                    let metadata = CollectionMetadata {
+                        name: collection_name.clone(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        modified_at: chrono::Utc::now().to_rfc3339(),
+                        description: None,
+                        version: "1.0".to_string(),
+                        expanded: false,
+                    };
+                    
+                    let metadata_content = toml::to_string_pretty(&metadata)
+                        .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                    fs::write(&metadata_path, metadata_content).await?;
+                    
+                    println!("Created new collection metadata for folder '{}' with name '{}'", folder_name, collection_name);
+                    collection_name
+                }
+            } else {
+                // No metadata file, create one
+                let collection_name = if folder_name == "0001" { "My Requests".to_string() } else { folder_name.clone() };
+                let metadata = CollectionMetadata {
+                    name: collection_name.clone(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    modified_at: chrono::Utc::now().to_rfc3339(),
+                    description: None,
+                    version: "1.0".to_string(),
+                    expanded: false,
+                };
+                
+                let metadata_content = toml::to_string_pretty(&metadata)
+                    .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+                fs::write(&metadata_path, metadata_content).await?;
+                
+                println!("Created collection metadata for folder '{}' with name '{}'", folder_name, collection_name);
+                collection_name
+            };
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
@@ -243,29 +443,39 @@ impl CollectionStorage for TomlFileStorage {
             return Ok(Vec::new());
         }
 
-        // First, collect all collection directory names
-        let mut collection_names = Vec::new();
+        // First, collect all collection directories with their metadata
+        let mut collection_data = Vec::new();
         let mut entries = fs::read_dir(&self.collections_path).await?;
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
             if path.is_dir() {
-                if let Some(collection_name) = path.file_name().and_then(|s| s.to_str()) {
-                    collection_names.push(collection_name.to_string());
+                let metadata_path = path.join("collection.toml");
+                if metadata_path.exists() {
+                    if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                        if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
+                            // Extract numeric folder name for sorting
+                            if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
+                                collection_data.push((folder_name.to_string(), metadata.name.clone()));
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Sort collection names by numeric prefix
-        sort_by_numeric_prefix(&mut collection_names);
+        // Sort by numeric folder names
+        collection_data.sort_by(|a, b| {
+            let num_a = a.0.parse::<u32>().unwrap_or(u32::MAX);
+            let num_b = b.0.parse::<u32>().unwrap_or(u32::MAX);
+            num_a.cmp(&num_b)
+        });
 
-        // Load collections in sorted order
+        // Load collections in sorted order using their actual names from metadata
         let mut collections = Vec::new();
-        for collection_name in collection_names {
+        for (_folder_name, collection_name) in collection_data {
             match self.load_collection_from_disk(&collection_name).await {
-                Ok(mut collection) => {
-                    // Remove numeric prefix from collection name for display
-                    collection.name = remove_numeric_prefix(&collection.name).to_string();
+                Ok(collection) => {
                     collections.push(collection);
                 },
                 Err(e) => {
@@ -286,34 +496,52 @@ impl CollectionStorage for TomlFileStorage {
     }
 
     async fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError> {
-        let collection_dir = self.collection_path(collection_name);
-
-        if !collection_dir.exists() {
-            return Err(StorageError::CollectionNotFound(collection_name.to_string()));
-        }
+        // Find collection directory by searching TOML metadata
+        let collection_dir = match self.find_collection_directory_by_name(collection_name).await? {
+            Some(dir) => dir,
+            None => return Err(StorageError::CollectionNotFound(collection_name.to_string())),
+        };
 
         fs::remove_dir_all(&collection_dir).await?;
         Ok(())
     }
 
     async fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError> {
-        let old_path = self.collection_path(old_name);
-        let new_path = self.collection_path(new_name);
+        // Find collection directory by old name
+        let collection_dir = match self.find_collection_directory_by_name(old_name).await? {
+            Some(dir) => dir,
+            None => return Err(StorageError::CollectionNotFound(old_name.to_string())),
+        };
 
-        if !old_path.exists() {
-            return Err(StorageError::CollectionNotFound(old_name.to_string()));
-        }
-
-        if new_path.exists() {
+        // Check if new name already exists
+        if self.find_collection_directory_by_name(new_name).await?.is_some() {
             return Err(StorageError::InvalidFormat(format!("Collection '{}' already exists", new_name)));
         }
 
-        fs::rename(&old_path, &new_path).await?;
+        // Load existing metadata
+        let metadata_path = collection_dir.join("collection.toml");
+        let mut metadata = if metadata_path.exists() {
+            let content = fs::read_to_string(&metadata_path).await?;
+            toml::from_str::<CollectionMetadata>(&content)
+                .map_err(|e| StorageError::SerializationError(e.to_string()))?
+        } else {
+            CollectionMetadata::default()
+        };
+
+        // Update the name and modified_at fields
+        metadata.name = new_name.to_string();
+        metadata.modified_at = chrono::Utc::now().to_rfc3339();
+
+        // Save updated metadata
+        let metadata_content = toml::to_string_pretty(&metadata)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+        fs::write(&metadata_path, metadata_content).await?;
+
         Ok(())
     }
 
     async fn save_request(&self, collection_name: &str, request: &PersistentRequest) -> Result<(), StorageError> {
-        let collection_dir = match self.find_collection_directory(collection_name).await? {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name).await? {
             Some(dir) => dir,
             None => return Err(StorageError::CollectionNotFound(collection_name.to_string())),
         };
@@ -365,7 +593,7 @@ impl CollectionStorage for TomlFileStorage {
     }
 
     async fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError> {
-        let collection_dir = match self.find_collection_directory(collection_name).await? {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name).await? {
             Some(dir) => dir,
             None => return Err(StorageError::CollectionNotFound(collection_name.to_string())),
         };
@@ -409,7 +637,7 @@ impl CollectionStorage for TomlFileStorage {
     }
 
     async fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError> {
-        let collection_dir = match self.find_collection_directory(collection_name).await? {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name).await? {
             Some(dir) => dir,
             None => return Err(StorageError::CollectionNotFound(collection_name.to_string())),
         };
@@ -590,7 +818,7 @@ impl CollectionStorage for TomlFileStorage {
 
         // Instead of using the display name, we need to find the actual file by index
         // Find the actual collection directory (which may have a numeric prefix)
-        let collection_dir = self.find_collection_directory(&collection.name).await?;
+        let collection_dir = self.find_collection_directory_by_name(&collection.name).await?;
         if collection_dir.is_none() {
             eprintln!("DEBUG: collection directory not found for: {}", collection.name);
             return Ok(None);
@@ -656,6 +884,12 @@ impl CollectionStorage for TomlFileStorage {
     async fn initialize_storage(&self) -> Result<(), StorageError> {
         // Don't create directories automatically on startup
         // Directories will be created only when needed (e.g., when saving data)
+        
+        // Run migration for existing collections to convert them to numeric folders
+        if self.collections_path.exists() {
+            self.migrate_collections_to_numeric_folders().await?;
+        }
+        
         Ok(())
     }
 

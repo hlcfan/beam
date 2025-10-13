@@ -53,6 +53,7 @@ pub struct PersistentCollection {
 /// Metadata for a collection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionMetadata {
+    pub name: String,
     pub created_at: String,
     pub modified_at: String,
     pub description: Option<String>,
@@ -64,6 +65,7 @@ impl Default for CollectionMetadata {
     fn default() -> Self {
         let now = chrono::Utc::now().to_rfc3339();
         Self {
+            name: "New Collection".to_string(),
             created_at: now.clone(),
             modified_at: now,
             description: None,
