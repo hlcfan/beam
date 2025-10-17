@@ -1,7 +1,7 @@
 use crate::types::{RequestCollection, Message, HttpMethod};
 use crate::ui::{icon, IconName};
-use iced::widget::{button, column, container, row, text, scrollable, space, mouse_area};
-use iced::{Element, Length, Color, Background, Border, Shadow, Vector, mouse};
+use iced::widget::{button, column, container, row, text, scrollable, space};
+use iced::{Element, Length, Color, Background, Border, Shadow, Vector};
 use iced::widget::container::Style;
 use iced::widget::button::Status;
 use iced_aw::ContextMenu;

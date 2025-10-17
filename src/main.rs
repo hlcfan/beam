@@ -58,7 +58,8 @@ impl Default for BeamApp {
         Self {
             panes,
             collections,
-            managed_url_input: ui::managed_text_input::ManagedTextInput::new("Enter URL".to_string()),
+            url_input: ui::url_input::UrlInput::new("Enter URL", "")
+                .on_input(Message::UrlInputChanged),
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
@@ -108,11 +109,7 @@ impl Default for BeamApp {
             last_click_time: None,
             last_click_target: None,
 
-            // Tooltip state for environment variables
-            show_url_tooltip: false,
-            tooltip_variable_name: None,
-            tooltip_variable_value: None,
-            tooltip_position: None,
+
 
             // Storage will be initialized asynchronously
             storage_manager: None,
@@ -198,26 +195,15 @@ impl BeamApp {
                     Task::none()
                 }
             }
-            Message::ManagedUrlChanged(url) => {
-                println!("DEBUG: ManagedUrlChanged received with value: {}", url);
-                
-                // Check if this is a 'z' character being added during a Cmd+Z operation
-                // We need to completely ignore this to prevent visual flicker
-                if url.ends_with('z') && url.len() == self.managed_url_input.value.len() + 1 {
-                    // Check if this looks like a Cmd+Z scenario (z being added to existing content)
-                    let base_value = &url[..url.len()-1];
-                    if base_value == self.managed_url_input.value {
-                        println!("DEBUG: Detected 'z' character being added during potential Cmd+Z, completely ignoring this change");
-                        // Don't update anything - completely ignore this change to prevent visual flicker
-                        return Task::none();
-                    }
-                }
+            Message::UrlInputChanged(url) => {
+                println!("DEBUG: UrlInputChanged received with value: {}", url);
                 
                 self.just_performed_undo = false; // Reset flag for any other input
-                self.managed_url_input.set_value(url.clone());
                 self.current_request.url = url.clone();
                 self.current_request.url_content = text_editor::Content::with_text(&url);
-                println!("DEBUG: History length after change: {}", self.managed_url_input.history.len());
+                
+                // Update the URL input component to reflect the change in the UI
+                self.url_input.set_value(url.clone());
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -229,36 +215,22 @@ impl BeamApp {
                     Task::none()
                 }
             }
-            Message::ManagedUrlUndo => {
-                println!("DEBUG: ManagedUrlUndo message received");
-                
-                if self.managed_url_input.undo() {
-                    println!("DEBUG: Undo successful, new value: {}", self.managed_url_input.value);
-                    self.current_request.url = self.managed_url_input.value.clone();
-                    self.current_request.url_content = text_editor::Content::with_text(&self.managed_url_input.value);
-                    self.just_performed_undo = true;
-                } else {
-                    println!("DEBUG: Undo failed - no history available");
-                }
+            Message::UrlInputUndo => {
+                println!("DEBUG: UrlInputUndo message received");
+                // TODO: Implement undo functionality for UrlInput
                 Task::none()
             }
-            Message::ManagedUrlRedo => {
-                println!("DEBUG: ManagedUrlRedo message received");
-                if self.managed_url_input.redo() {
-                    println!("DEBUG: Redo successful, new value: {}", self.managed_url_input.value);
-                    self.current_request.url = self.managed_url_input.value.clone();
-                    self.current_request.url_content = text_editor::Content::with_text(&self.managed_url_input.value);
-                } else {
-                    println!("DEBUG: Redo failed - no future history available");
-                }
+            Message::UrlInputRedo => {
+                println!("DEBUG: UrlInputRedo message received");
+                // TODO: Implement redo functionality for UrlInput
                 Task::none()
             }
-            Message::ManagedUrlFocused => {
-                self.managed_url_input.set_focused(true);
+            Message::UrlInputFocused => {
+                // TODO: Implement focus handling for UrlInput
                 Task::none()
             }
-            Message::ManagedUrlUnfocused => {
-                self.managed_url_input.set_focused(false);
+            Message::UrlInputUnfocused => {
+                // TODO: Implement unfocus handling for UrlInput
                 Task::none()
             }
             Message::SetProcessingCmdZ(processing) => {
@@ -414,8 +386,7 @@ impl BeamApp {
                             // Single click: select the request
                             self.current_request.method = request.method.clone();
                             self.current_request.url = request.url.clone();
-                            // Synchronize the managed URL input with the selected request's URL
-                            self.managed_url_input.set_value(request.url.clone());
+                            self.url_input.set_value(request.url.clone());
 
                             // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
@@ -543,6 +514,7 @@ impl BeamApp {
                 self.current_request.url_content.perform(action);
                 // Sync the url string with the text editor content
                 self.current_request.url = self.current_request.url_content.text();
+                self.url_input.set_value(self.current_request.url.clone());
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -983,6 +955,7 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.current_request.method = request.method.clone();
                         self.current_request.url = request.url.clone();
+                        self.url_input.set_value(request.url.clone());
                         self.is_loading = true;
                         self.request_start_time = Some(std::time::Instant::now());
                         self.current_elapsed_time = 0;
@@ -1282,6 +1255,7 @@ impl BeamApp {
                             // Set the default request as the current request and mark it as opened
                             self.current_request.method = HttpMethod::GET;
                             self.current_request.url = "https://httpbin.org/get".to_string();
+                            self.url_input.set_value("https://httpbin.org/get".to_string());
                             self.last_opened_request = Some((0, 0)); // First collection, first request
                         }
                         // After collections are loaded, defer loading the last opened request to avoid blocking startup
@@ -1575,8 +1549,8 @@ impl BeamApp {
                         println!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
                         // Update the current request with the loaded configuration
                         self.current_request = request_config.clone();
-                        // Synchronize the managed text input with the loaded URL
-                        self.managed_url_input.set_value(request_config.url);
+                        // Update the URL input to display the loaded URL
+                        self.url_input.set_value(request_config.url.clone());
                     }
                     Ok(None) => {
                         eprintln!("No request configuration found for the last opened request");
@@ -1663,20 +1637,7 @@ impl BeamApp {
                 }
                 Task::none()
             }
-            Message::ShowUrlTooltip(variable_name, variable_value, x, y) => {
-                self.show_url_tooltip = true;
-                self.tooltip_variable_name = Some(variable_name);
-                self.tooltip_variable_value = Some(variable_value);
-                self.tooltip_position = Some((x, y));
-                Task::none()
-            }
-            Message::HideUrlTooltip => {
-                self.show_url_tooltip = false;
-                self.tooltip_variable_name = None;
-                self.tooltip_variable_value = None;
-                self.tooltip_position = None;
-                Task::none()
-            }
+
         }
     }
 
@@ -1762,15 +1723,11 @@ impl BeamApp {
     fn request_config_view(&self) -> Element<'_, Message> {
         request_panel(
             &self.current_request,
-            &self.managed_url_input,
+            &self.url_input,
             self.is_loading,
             &self.environments,
             self.active_environment,
             self.method_menu_open,
-            self.show_url_tooltip,
-            self.tooltip_variable_name.as_deref().unwrap_or(""),
-            self.tooltip_variable_value.as_deref().unwrap_or(""),
-            self.tooltip_position.unwrap_or((0.0, 0.0)),
             self.send_button_hovered,
             self.cancel_button_hovered
         )
@@ -2137,10 +2094,10 @@ impl BeamApp {
                             
                             if modifiers.command() && modifiers.shift() {
                                 println!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
-                                Some(Message::ManagedUrlRedo)
+                                Some(Message::UrlInputRedo)
                             } else if modifiers.command() {
                                 println!("DEBUG: Event-based Triggering Cmd+Z = Undo");
-                                Some(Message::ManagedUrlUndo)
+                                Some(Message::UrlInputUndo)
                             } else {
                                 println!("DEBUG: Event-based 'z' without command modifier, passing to KeyPressed");
                                 Some(Message::KeyPressed(key.clone()))

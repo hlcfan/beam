@@ -36,15 +36,11 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
 
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
-    managed_url_input: &'a crate::ui::managed_text_input::ManagedTextInput,
+    url_input: &'a crate::ui::url_input::UrlInput<Message>,
     is_loading: bool,
     environments: &'a [Environment],
     active_environment: Option<usize>,
     method_menu_open: bool,
-    show_url_tooltip: bool,
-    tooltip_variable_name: &'a str,
-    tooltip_variable_value: &'a str,
-    tooltip_position: (f32, f32),
     send_button_hovered: bool,
     cancel_button_hovered: bool,
 ) -> Element<'a, Message> {
@@ -94,11 +90,8 @@ pub fn request_panel<'a>(
     // Method label with dynamic width
     let method_label = method_button(&config.method);
 
-    // Use the managed text input component
-    let url_input_with_hover = managed_url_input.view(
-        environments,
-        active_environment,
-    );
+    // Use the URL input component
+    let url_input_with_hover = url_input.view();
 
     // Create send/cancel button based on loading state
     let url_valid = !config.url.trim().is_empty()
@@ -273,46 +266,7 @@ pub fn request_panel<'a>(
         main_content.into()
     };
 
-    // Add tooltip overlay if needed
-    if show_url_tooltip {
-        stack![
-            base_layout,
-            // Tooltip overlay
-            container(
-                container(
-                    column![
-                        text(tooltip_variable_name)
-                            .size(12)
-                            .color(Color::from_rgb(0.8, 0.8, 1.0)), // Light blue for header
-                        text(tooltip_variable_value).size(11).color(Color::WHITE),
-                    ]
-                    .spacing(4)
-                )
-                .padding(8)
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 1.0))),
-                    border: Border {
-                        color: Color::from_rgb(0.6, 0.6, 0.6),
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    text_color: Some(Color::WHITE),
-                    shadow: Shadow {
-                        color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                        offset: Vector::new(2.0, 2.0),
-                        blur_radius: 4.0,
-                    },
-                    snap: true,
-                })
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(iced::Padding::new(tooltip_position.0).top(tooltip_position.1))
-        ]
-        .into()
-    } else {
-        base_layout
-    }
+    base_layout
 }
 
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {

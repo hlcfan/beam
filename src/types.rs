@@ -78,11 +78,7 @@ pub struct BeamApp {
     pub last_click_time: Option<std::time::Instant>,
     pub last_click_target: Option<(usize, usize)>, // (collection_index, request_index)
 
-    // Tooltip state for environment variables
-    pub show_url_tooltip: bool,
-    pub tooltip_variable_name: Option<String>,
-    pub tooltip_variable_value: Option<String>,
-    pub tooltip_position: Option<(f32, f32)>, // (x, y) position
+
 
     // Storage
     #[allow(dead_code)]
@@ -95,8 +91,8 @@ pub struct BeamApp {
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
 
-    // Managed URL input
-    pub managed_url_input: crate::ui::managed_text_input::ManagedTextInput,
+    // URL input
+    pub url_input: crate::ui::url_input::UrlInput<Message>,
     
     // Flag to track recent undo operations
     pub just_performed_undo: bool,
@@ -243,12 +239,12 @@ pub enum PaneContent {
 pub enum Message {
     PaneResized(pane_grid::ResizeEvent),
     UrlChanged(String),
-    ManagedUrlChanged(String),
-    ManagedUrlUndo,
-    ManagedUrlRedo,
+    UrlInputChanged(String),
+    UrlInputUndo,
+    UrlInputRedo,
     SetProcessingCmdZ(bool),
-    ManagedUrlFocused,
-    ManagedUrlUnfocused,
+    UrlInputFocused,
+    UrlInputUnfocused,
     MethodChanged(HttpMethod),
 
     SendRequest,
@@ -316,8 +312,7 @@ pub enum Message {
     ConfirmRename,
 
     // URL tooltip for environment variables
-    ShowUrlTooltip(String, String, f32, f32), // (variable_name, variable_value, x, y)
-    HideUrlTooltip,
+
 
     // Storage operations
     #[allow(dead_code)]

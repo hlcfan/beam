@@ -306,7 +306,7 @@ impl TomlFileStorage {
             if path.is_dir() {
                 if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
                     let metadata_path = path.join("collection.toml");
-                    
+
                     if folder_name.parse::<u32>().is_err() || !metadata_path.exists() {
                         // Non-numeric folder or missing collection.toml - needs full migration
                         collections_to_migrate.push((folder_name.to_string(), path));
@@ -373,7 +373,7 @@ impl TomlFileStorage {
         // Fix collections that have missing or invalid name fields
         for (folder_name, collection_path) in collections_to_fix {
             let metadata_path = collection_path.join("collection.toml");
-            
+
             // Try to determine the collection name from existing data
             let collection_name = if let Ok(content) = fs::read_to_string(&metadata_path).await {
                 if let Ok(mut metadata) = toml::from_str::<CollectionMetadata>(&content) {
@@ -381,12 +381,12 @@ impl TomlFileStorage {
                     if metadata.name.is_empty() || metadata.name == "New Collection" {
                         metadata.name = if folder_name == "0001" { "My Requests".to_string() } else { folder_name.clone() };
                         metadata.modified_at = chrono::Utc::now().to_rfc3339();
-                        
+
                         // Write the updated metadata back
                         let metadata_content = toml::to_string_pretty(&metadata)
                             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
                         fs::write(&metadata_path, metadata_content).await?;
-                        
+
                         println!("Fixed collection metadata for folder '{}' with name '{}'", folder_name, metadata.name);
                         metadata.name
                     } else {
@@ -403,11 +403,11 @@ impl TomlFileStorage {
                         version: "1.0".to_string(),
                         expanded: false,
                     };
-                    
+
                     let metadata_content = toml::to_string_pretty(&metadata)
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
                     fs::write(&metadata_path, metadata_content).await?;
-                    
+
                     println!("Created new collection metadata for folder '{}' with name '{}'", folder_name, collection_name);
                     collection_name
                 }
@@ -422,11 +422,11 @@ impl TomlFileStorage {
                     version: "1.0".to_string(),
                     expanded: false,
                 };
-                
+
                 let metadata_content = toml::to_string_pretty(&metadata)
                     .map_err(|e| StorageError::SerializationError(e.to_string()))?;
                 fs::write(&metadata_path, metadata_content).await?;
-                
+
                 println!("Created collection metadata for folder '{}' with name '{}'", folder_name, collection_name);
                 collection_name
             };
@@ -884,12 +884,12 @@ impl CollectionStorage for TomlFileStorage {
     async fn initialize_storage(&self) -> Result<(), StorageError> {
         // Don't create directories automatically on startup
         // Directories will be created only when needed (e.g., when saving data)
-        
+
         // Run migration for existing collections to convert them to numeric folders
         if self.collections_path.exists() {
             self.migrate_collections_to_numeric_folders().await?;
         }
-        
+
         Ok(())
     }
 
