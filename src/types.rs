@@ -48,6 +48,7 @@ pub struct BeamApp {
     pub panes: pane_grid::State<PaneContent>,
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
+    pub url_input: crate::ui::url_input::UrlInput<Message>,
     pub response: Option<ResponseData>,
     pub response_body_content: text_editor::Content,
     pub selected_response_tab: ResponseTab,
@@ -91,8 +92,7 @@ pub struct BeamApp {
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
 
-    // URL input
-    pub url_input: crate::ui::url_input::UrlInput<Message>,
+
     
     // Flag to track recent undo operations
     pub just_performed_undo: bool,

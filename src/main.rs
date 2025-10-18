@@ -58,8 +58,6 @@ impl Default for BeamApp {
         Self {
             panes,
             collections,
-            url_input: ui::url_input::UrlInput::new("Enter URL", "")
-                .on_input(Message::UrlInputChanged),
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
@@ -79,6 +77,8 @@ impl Default for BeamApp {
                 api_key: String::new(),
                 api_key_header: "X-API-Key".to_string(),
             },
+            url_input: ui::url_input::UrlInput::new("Enter URL...", "")
+                .on_input(Message::UrlInputChanged),
             response: None,
             response_body_content: text_editor::Content::new(),
             selected_response_tab: ResponseTab::Body,
@@ -202,7 +202,7 @@ impl BeamApp {
                 self.current_request.url = url.clone();
                 self.current_request.url_content = text_editor::Content::with_text(&url);
                 
-                // Update the URL input component to reflect the change in the UI
+                // Update the URL input widget value
                 self.url_input.set_value(url.clone());
 
                 // Emit auto-save message if we have a current request
@@ -386,7 +386,6 @@ impl BeamApp {
                             // Single click: select the request
                             self.current_request.method = request.method.clone();
                             self.current_request.url = request.url.clone();
-                            self.url_input.set_value(request.url.clone());
 
                             // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
@@ -514,7 +513,6 @@ impl BeamApp {
                 self.current_request.url_content.perform(action);
                 // Sync the url string with the text editor content
                 self.current_request.url = self.current_request.url_content.text();
-                self.url_input.set_value(self.current_request.url.clone());
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -640,6 +638,10 @@ impl BeamApp {
             Message::EnvironmentSelected(index) => {
                 if index < self.environments.len() {
                     self.active_environment = Some(index);
+
+                    // Update url_input with environment variables
+                    let environment_variables = self.environments[index].variables.clone();
+                    self.url_input = self.url_input.clone().environment_variables(environment_variables);
 
                     // Save the active environment to storage
                     let environments = self.environments.clone();
@@ -773,6 +775,12 @@ impl BeamApp {
                         env.variables.insert(key, value.clone());
                     }
 
+                    // Update url_input if this is the active environment
+                    if self.active_environment == Some(env_index) {
+                        let environment_variables = env.variables.clone();
+                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                    }
+
                     // Save environments after variable key change
                     let environments = self.environments.clone();
                     Task::perform(
@@ -800,6 +808,12 @@ impl BeamApp {
                         env.variables.insert(key.clone(), value);
                     }
 
+                    // Update url_input if this is the active environment
+                    if self.active_environment == Some(env_index) {
+                        let environment_variables = env.variables.clone();
+                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                    }
+
                     // Save environments after variable value change
                     let environments = self.environments.clone();
                     Task::perform(
@@ -824,6 +838,12 @@ impl BeamApp {
                 if let Some(env) = self.environments.get_mut(env_index) {
                     let var_count = env.variables.len();
                     env.add_variable(format!("variable_{}", var_count + 1), String::new());
+
+                    // Update url_input if this is the active environment
+                    if self.active_environment == Some(env_index) {
+                        let environment_variables = env.variables.clone();
+                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                    }
 
                     // Save environments after adding variable
                     let environments = self.environments.clone();
@@ -850,6 +870,12 @@ impl BeamApp {
                     let variables: Vec<(String, String)> = env.variables.clone().into_iter().collect();
                     if let Some((key, _)) = variables.get(var_index) {
                         env.variables.remove(key);
+                    }
+
+                    // Update url_input if this is the active environment
+                    if self.active_environment == Some(env_index) {
+                        let environment_variables = env.variables.clone();
+                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
                     }
 
                     // Save environments after removing variable
@@ -955,7 +981,6 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.current_request.method = request.method.clone();
                         self.current_request.url = request.url.clone();
-                        self.url_input.set_value(request.url.clone());
                         self.is_loading = true;
                         self.request_start_time = Some(std::time::Instant::now());
                         self.current_elapsed_time = 0;
@@ -1255,7 +1280,6 @@ impl BeamApp {
                             // Set the default request as the current request and mark it as opened
                             self.current_request.method = HttpMethod::GET;
                             self.current_request.url = "https://httpbin.org/get".to_string();
-                            self.url_input.set_value("https://httpbin.org/get".to_string());
                             self.last_opened_request = Some((0, 0)); // First collection, first request
                         }
                         // After collections are loaded, defer loading the last opened request to avoid blocking startup
@@ -1362,6 +1386,10 @@ impl BeamApp {
                         // Find the environment by name and set it as active
                         if let Some(index) = self.environments.iter().position(|env| env.name == active_env_name) {
                             self.active_environment = Some(index);
+                            
+                            // Update url_input with environment variables
+                            let environment_variables = self.environments[index].variables.clone();
+                            self.url_input = self.url_input.clone().environment_variables(environment_variables);
                         }
                     }
                     Ok(None) => {
@@ -1549,8 +1577,17 @@ impl BeamApp {
                         println!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
                         // Update the current request with the loaded configuration
                         self.current_request = request_config.clone();
-                        // Update the URL input to display the loaded URL
+                        
+                        // Update the URL input with the loaded URL
                         self.url_input.set_value(request_config.url.clone());
+                        
+                        // Update URL input with environment variables if there's an active environment
+                        if let Some(env_index) = self.active_environment {
+                            if let Some(env) = self.environments.get(env_index) {
+                                let environment_variables = env.variables.clone();
+                                self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                            }
+                        }
                     }
                     Ok(None) => {
                         eprintln!("No request configuration found for the last opened request");
@@ -1721,6 +1758,17 @@ impl BeamApp {
     }
 
     fn request_config_view(&self) -> Element<'_, Message> {
+        // Get environment variables for the active environment
+        let environment_variables = if let Some(env_index) = self.active_environment {
+            if let Some(env) = self.environments.get(env_index) {
+                env.variables.clone()
+            } else {
+                std::collections::HashMap::new()
+            }
+        } else {
+            std::collections::HashMap::new()
+        };
+
         request_panel(
             &self.current_request,
             &self.url_input,

@@ -6,6 +6,7 @@ use iced::mouse::{self, Button, Cursor};
 use std::time::{Duration, Instant};
 use std::marker::PhantomData;
 use regex::Regex;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
@@ -92,6 +93,7 @@ where
     id: Option<widget::Id>,
     history: Vec<HistoryEntry>,
     history_index: usize,
+    environment_variables: HashMap<String, String>,
     _phantom: PhantomData<Message>,
 }
 
@@ -118,6 +120,7 @@ where
             id: None,
             history: Vec::new(),
             history_index: 0,
+            environment_variables: HashMap::new(),
             _phantom: PhantomData,
         }
     }
@@ -146,6 +149,7 @@ where
             id: None,
             history: Vec::new(),
             history_index: 0,
+            environment_variables: HashMap::new(),
             _phantom: PhantomData,
         }
     }
@@ -212,6 +216,11 @@ where
 
     pub fn syntax_highlighting(mut self, highlighting: SyntaxHighlighting) -> Self {
         self.syntax_highlighting = highlighting;
+        self
+    }
+
+    pub fn environment_variables(mut self, variables: HashMap<String, String>) -> Self {
+        self.environment_variables = variables;
         self
     }
 
@@ -312,8 +321,17 @@ where
 
                 // Add tooltip for variable segments
                 if segment.segment_type == SegmentType::Variable {
+                    // Extract variable name (remove {{ and }})
+                    let variable_name = segment_text.trim_start_matches("{{").trim_end_matches("}}").trim();
+                    
+                    // Get actual value from environment variables or show "undefined"
+                    let variable_value = self.environment_variables
+                        .get(variable_name)
+                        .map(|v| v.as_str())
+                        .unwrap_or("undefined");
+                    
                     let tooltip_content = container(
-                        text(format!("Variable: {}", segment_text.clone()))
+                        text(variable_value)
                             .size(14)
                             .color(Color::WHITE)
                     )
@@ -409,13 +427,8 @@ where
             text_input::Style {
                 background: Background::Color(palette.background),
                 border: Border {
-                    color: match status {
-                        text_input::Status::Active => palette.primary,
-                        text_input::Status::Hovered => palette.primary,
-                        text_input::Status::Focused { .. } => palette.primary,
-                        text_input::Status::Disabled => palette.text,
-                    },
-                    width: 1.0,
+                    color: Color::TRANSPARENT, // No border
+                    width: 0.0,
                     radius: 4.0.into(),
                 },
                 icon: palette.text,
