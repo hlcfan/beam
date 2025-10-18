@@ -342,7 +342,7 @@ where
 
         let mut row_elements: Vec<Element<Message>> = Vec::new();
 
-        for segment in segments {
+        for segment in segments.iter() {
             let color = match segment.segment_type {
                 SegmentType::Variable => self.syntax_highlighting.variable_color,
                 SegmentType::String => self.syntax_highlighting.string_color,
@@ -352,24 +352,28 @@ where
             };
 
             let segment_text = segment.text.clone(); // Clone to avoid lifetime issues
-            let segment_type = segment.segment_type.clone();
 
             if segment.segment_type != SegmentType::Normal {
-                let text_element = text(segment_text.clone())
+                let mut text_element = text(segment_text.clone())
                     .size(self.size)
                     .color(color);
+
+                // Apply the same font as the text input if specified
+                if let Some(font) = self.font {
+                    text_element = text_element.font(font);
+                }
 
                 // Add tooltip for variable segments
                 if segment.segment_type == SegmentType::Variable {
                     // Extract variable name (remove {{ and }})
                     let variable_name = segment_text.trim_start_matches("{{").trim_end_matches("}}").trim();
-                    
+
                     // Get actual value from environment variables or show "undefined"
                     let variable_value = self.environment_variables
                         .get(variable_name)
                         .map(|v| v.as_str())
                         .unwrap_or("undefined");
-                    
+
                     let tooltip_content = container(
                         text(variable_value)
                             .size(14)
@@ -400,17 +404,19 @@ where
                         )
                         .into()
                     );
-                } else {
-                    row_elements.push(text_element.into());
                 }
             } else {
                 // For normal text, add transparent space to maintain positioning
-                row_elements.push(
-                    text(segment_text)
-                        .size(self.size)
-                        .color(Color::TRANSPARENT)
-                        .into()
-                );
+                let mut transparent_text = text(segment_text)
+                    .size(self.size)
+                    .color(Color::TRANSPARENT);
+
+                // Apply the same font as the text input if specified
+                if let Some(font) = self.font {
+                    transparent_text = transparent_text.font(font);
+                }
+
+                row_elements.push(transparent_text.into());
             }
         }
 

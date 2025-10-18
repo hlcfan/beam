@@ -31,7 +31,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        let initial_text = "https://{{host}}/api/{{version}}/users".to_string();
+        let initial_text = "https://{{host}}/api/{{version1}}/users/{{version2}}/users/{{version3}}/users/{{version4}}/users/{{version5}}/users/{{version6}}/users/{{version7}}/users/{{version8}}/users/{{version9}}/users/{{version10}}/users/{{version11}}/users/{{version12}}/users".to_string();
         let syntax_highlighting = beam::ui::url_input::SyntaxHighlighting {
             enabled: true,
             variable_color: Color::from_rgb(0.2, 0.4, 0.8),
