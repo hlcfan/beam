@@ -94,6 +94,7 @@ where
     history: Vec<HistoryEntry>,
     history_index: usize,
     environment_variables: HashMap<String, String>,
+    border: Border,
     _phantom: PhantomData<Message>,
 }
 
@@ -121,6 +122,11 @@ where
             history: Vec::new(),
             history_index: 0,
             environment_variables: HashMap::new(),
+            border: Border {
+                color: Color::from_rgb(0.8, 0.8, 0.8),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
             _phantom: PhantomData,
         }
     }
@@ -150,6 +156,11 @@ where
             history: Vec::new(),
             history_index: 0,
             environment_variables: HashMap::new(),
+            border: Border {
+                color: Color::from_rgb(0.8, 0.8, 0.8),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
             _phantom: PhantomData,
         }
     }
@@ -231,6 +242,35 @@ where
 
     pub fn id(mut self, id: widget::Id) -> Self {
         self.id = Some(id);
+        self
+    }
+
+    pub fn border(mut self, border: Border) -> Self {
+        self.border = border;
+        self
+    }
+
+    pub fn border_color(mut self, color: Color) -> Self {
+        self.border.color = color;
+        self
+    }
+
+    pub fn border_width(mut self, width: f32) -> Self {
+        self.border.width = width;
+        self
+    }
+
+    pub fn border_radius(mut self, radius: f32) -> Self {
+        self.border.radius = radius.into();
+        self
+    }
+
+    pub fn no_border(mut self) -> Self {
+        self.border = Border {
+            color: Color::TRANSPARENT,
+            width: 0.0,
+            radius: self.border.radius,
+        };
         self
     }
 
@@ -421,16 +461,13 @@ where
         }
 
         // Create the base input with custom styling
-        let styled_input = input.style(|theme: &Theme, status| {
+        let border = self.border.clone();
+        let styled_input = input.style(move |theme: &Theme, status| {
             let palette = theme.palette();
 
             text_input::Style {
                 background: Background::Color(palette.background),
-                border: Border {
-                    color: Color::TRANSPARENT, // No border
-                    width: 0.0,
-                    radius: 4.0.into(),
-                },
+                border: border.clone(),
                 icon: palette.text,
                 placeholder: palette.text,
                 value: palette.text,

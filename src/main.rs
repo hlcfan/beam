@@ -78,7 +78,8 @@ impl Default for BeamApp {
                 api_key_header: "X-API-Key".to_string(),
             },
             url_input: ui::url_input::UrlInput::new("Enter URL...", "")
-                .on_input(Message::UrlInputChanged),
+                .on_input(Message::UrlInputChanged)
+                .no_border(),
             response: None,
             response_body_content: text_editor::Content::new(),
             selected_response_tab: ResponseTab::Body,
