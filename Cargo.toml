@@ -27,8 +27,9 @@ urlencoding = "2.1"
 base64 = "0.22"
 regex = "1.10"
 rust-embed = "8.5"
-
 blurhash = "0.2.3"
+log = "0.4"
+env_logger = "0.10"
 
 [patch.crates-io]
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
