@@ -44,6 +44,44 @@ fn format_bytes(bytes: usize) -> String {
     }
 }
 
+/// Maps content-type to appropriate syntax highlighting language
+fn get_syntax_from_content_type(content_type: &str) -> &'static str {
+    let content_type_lower = content_type.to_lowercase();
+
+    if content_type_lower.contains("json") {
+        "json"
+    } else if content_type_lower.contains("xml") || content_type_lower.contains("html") {
+        "xml"
+    } else if content_type_lower.contains("javascript") || content_type_lower.contains("js") {
+        "javascript"
+    } else if content_type_lower.contains("css") {
+        "css"
+    } else if content_type_lower.contains("yaml") || content_type_lower.contains("yml") {
+        "yaml"
+    } else if content_type_lower.contains("sql") {
+        "sql"
+    } else if content_type_lower.contains("python") {
+        "python"
+    } else if content_type_lower.contains("rust") {
+        "rust"
+    } else if content_type_lower.contains("c++") || content_type_lower.contains("cpp") {
+        "cpp"
+    } else if content_type_lower.contains("java") {
+        "java"
+    } else if content_type_lower.contains("markdown") || content_type_lower.contains("md") {
+        "markdown"
+    } else if content_type_lower.contains("toml") {
+        "toml"
+    } else if content_type_lower.contains("ini") {
+        "ini"
+    } else if content_type_lower.contains("bash") || content_type_lower.contains("shell") {
+        "bash"
+    } else {
+        // Default to JSON for unknown content types
+        "json"
+    }
+}
+
 pub fn response_panel<'a>(
     response: &'a Option<ResponseData>,
     response_body_content: &'a text_editor::Content,
@@ -291,11 +329,12 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
 
             body_column = body_column.push(binary_info);
         } else {
-            // For text responses, use the normal text editor
+            // For text responses, use the normal text editor with dynamic syntax highlighting
+            let syntax_language = get_syntax_from_content_type(&resp.content_type);
             body_column = body_column
                 .push(
                     text_editor(content)
-                        .highlight("json", highlighter::Theme::SolarizedDark)
+                        .highlight(syntax_language, highlighter::Theme::SolarizedDark)
                         .on_action(Message::ResponseBodyAction)
                         .height(Length::Fill)
                         .style(response_text_editor_style)
