@@ -485,7 +485,7 @@ where
         if self.syntax_highlighting.enabled && !self.value.is_empty() {
             stack![
                 styled_input,
-                self.create_syntax_overlay()
+                // self.create_syntax_overlay()
             ]
             .into()
         } else {
