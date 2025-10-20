@@ -59,7 +59,7 @@ impl ToPersistent<PersistentRequest> for SavedRequest {
             basic_password: None,
             api_key: None,
             api_key_header: None,
-            metadata: RequestMetadata::default(),
+            metadata: Some(RequestMetadata::default()),
         }
     }
 }
@@ -107,7 +107,7 @@ impl ToPersistent<PersistentRequest> for RequestConfig {
             basic_password: if self.basic_password.is_empty() { None } else { Some(self.basic_password.clone()) },
             api_key: if self.api_key.is_empty() { None } else { Some(self.api_key.clone()) },
             api_key_header: if self.api_key_header.is_empty() { None } else { Some(self.api_key_header.clone()) },
-            metadata: RequestMetadata::default(),
+            metadata: Some(RequestMetadata::default()),
         }
     }
 }
@@ -140,7 +140,6 @@ impl FromPersistent<PersistentRequest> for RequestConfig {
                 _ => crate::types::HttpMethod::GET,
             },
             url: persistent.url.clone(),
-            url_content: iced::widget::text_editor::Content::with_text(&persistent.url),
             headers,
             params: persistent.params,
             body: iced::widget::text_editor::Content::with_text(&persistent.body),

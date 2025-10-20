@@ -1,7 +1,8 @@
 use super::{CollectionStorage, StorageError, PersistentRequest, PersistentEnvironments, PersistentEnvironment, CollectionMetadata, EnvironmentsMetadata};
-use crate::types::{RequestCollection, Environment};
+use crate::types::{RequestCollection, Environment, SerializableRequestConfig};
 use std::path::{Path, PathBuf};
 use tokio::fs;
+use log::{info, error};
 
 /// TOML-based file storage implementation
 pub struct TomlFileStorage {
@@ -201,7 +202,7 @@ impl TomlFileStorage {
                 basic_password: None,
                 api_key: None,
                 api_key_header: None,
-                metadata: super::persistent_types::RequestMetadata::default(),
+                metadata: Some(super::persistent_types::RequestMetadata::default()),
             };
 
             self.save_request(&collection.name, &persistent_request).await?;
@@ -479,7 +480,7 @@ impl CollectionStorage for TomlFileStorage {
                     collections.push(collection);
                 },
                 Err(e) => {
-                    eprintln!("Warning: Failed to load collection '{}': {}", collection_name, e);
+                    error!("Warning: Failed to load collection '{}': {}", collection_name, e);
                 }
             }
         }
@@ -569,6 +570,66 @@ impl CollectionStorage for TomlFileStorage {
                 if let Ok(content) = fs::read_to_string(&path).await {
                     if let Ok(existing_request) = toml::from_str::<PersistentRequest>(&content) {
                         if existing_request.name == request.name {
+                            existing_file_path = Some(path);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Use existing file path if found, otherwise create new file with next available numeric prefix
+        let request_path = if let Some(existing_path) = existing_file_path {
+            existing_path
+        } else {
+            // Find next available numeric prefix for new request
+            let next_prefix = self.find_next_numeric_prefix(&collection_dir).await?;
+            let filename = format!("{:04}.toml", next_prefix);
+            collection_dir.join(filename)
+        };
+
+        fs::write(&request_path, request_content).await?;
+
+        Ok(())
+    }
+
+    async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &SerializableRequestConfig) -> Result<(), StorageError> {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name).await? {
+            Some(dir) => dir,
+            None => return Err(StorageError::CollectionNotFound(collection_name.to_string())),
+        };
+
+        let request_content = toml::to_string_pretty(request_config)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        // Find existing file that contains this request by checking file content
+        let mut existing_file_path = None;
+        let mut entries = fs::read_dir(&collection_dir).await?;
+
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+                let filename = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown");
+
+                // Skip collection metadata file
+                if filename == "collection" {
+                    continue;
+                }
+
+                // Read the file content and check if it matches this request
+                if let Ok(content) = fs::read_to_string(&path).await {
+                    // Try to parse as SerializableRequestConfig first (new format)
+                    if let Ok(existing_request) = toml::from_str::<SerializableRequestConfig>(&content) {
+                        if existing_request.name == request_name {
+                            existing_file_path = Some(path);
+                            break;
+                        }
+                    }
+                    // If that fails, try to parse as PersistentRequest (old format)
+                    else if let Ok(existing_request) = toml::from_str::<PersistentRequest>(&content) {
+                        if existing_request.name == request_name {
                             existing_file_path = Some(path);
                             break;
                         }

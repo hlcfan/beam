@@ -16,8 +16,13 @@ use iced::widget::{
 use iced::{Element, Fill, Length, Size, Theme, Color, Task, Vector};
 use std::collections::HashMap;
 use serde_json;
+use log::{info, trace, warn, Log, error};
 
 pub fn main() -> iced::Result {
+    env_logger::Builder::from_default_env()
+        .format_timestamp_secs()
+        .init();
+
     iced::application(
             || (BeamApp::default(), Task::perform(async { Message::InitializeStorage }, |msg| msg)),
             BeamApp::update,
@@ -61,7 +66,6 @@ impl Default for BeamApp {
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
-                url_content: text_editor::Content::new(),
                 headers: vec![
                     ("Content-Type".to_string(), "application/json".to_string()),
                     ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
@@ -109,8 +113,6 @@ impl Default for BeamApp {
             // Double-click detection state
             last_click_time: None,
             last_click_target: None,
-
-
 
             // Storage will be initialized asynchronously
             storage_manager: None,
@@ -192,7 +194,6 @@ impl BeamApp {
             }
             Message::UrlChanged(url) => {
                 self.current_request.url = url.clone();
-                self.current_request.url_content = text_editor::Content::with_text(&url);
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -209,7 +210,6 @@ impl BeamApp {
 
                 self.just_performed_undo = false; // Reset flag for any other input
                 self.current_request.url = url.clone();
-                self.current_request.url_content = text_editor::Content::with_text(&url);
 
                 // Update the URL input widget value
                 self.url_input.set_value(url.clone());
@@ -261,40 +261,43 @@ impl BeamApp {
                 }
             }
             Message::SendRequest => {
+                // let now = std::time::SystemTime::now();
                 self.is_loading = true;
                 self.request_start_time = Some(std::time::Instant::now());
                 self.current_elapsed_time = 0;
+                info!("DEBUG: SendRequest message received");
 
                 // Create a copy of the config with resolved variables
                 let mut config = self.current_request.clone();
 
+                info!("resolve varaibles");
                 // Resolve variables in URL
                 config.url = self.resolve_variables(&config.url);
-
+                info!("DEBUG: Resolved URL: {}", config.url);
                 // Resolve variables in headers
                 for (key, value) in &mut config.headers {
                     *key = self.resolve_variables(key);
                     *value = self.resolve_variables(value);
                 }
-
+                info!("DEBUG: Resolved Headers");
                 // Resolve variables in params
                 for (key, value) in &mut config.params {
                     *key = self.resolve_variables(key);
                     *value = self.resolve_variables(value);
                 }
-
+                info!("DEBUG: Resolved Params");
                 // Resolve variables in body
                 let body_text = config.body.text();
                 let resolved_body = self.resolve_variables(&body_text);
                 config.body = text_editor::Content::with_text(&resolved_body);
-
+                info!("DEBUG: Resolved Body");
                 // Resolve variables in authentication fields
                 config.bearer_token = self.resolve_variables(&config.bearer_token);
                 config.basic_username = self.resolve_variables(&config.basic_username);
                 config.basic_password = self.resolve_variables(&config.basic_password);
                 config.api_key = self.resolve_variables(&config.api_key);
                 config.api_key_header = self.resolve_variables(&config.api_key_header);
-
+                info!("DEBUG: Sending request with config: {:?}", config);
                 Task::perform(send_request(config), Message::RequestCompleted)
             }
             Message::CancelRequest => {
@@ -504,14 +507,25 @@ impl BeamApp {
                 Task::none()
             }
             Message::BodyChanged(action) => {
+                // Only trigger auto-save for actual content-changing actions
+                // Don't save for navigation actions like clicking, selecting, scrolling
+                let should_save = match &action {
+                    text_editor::Action::Edit(_) => true, // Only Edit actions change content
+                    _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
+                };
+
                 self.current_request.body.perform(action);
 
-                // Emit auto-save message if we have a current request
-                if let Some((collection_index, request_index)) = self.last_opened_request {
-                    Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Body } },
-                        |msg| msg,
-                    )
+                if should_save {
+                    // Emit auto-save message if we have a current request
+                    if let Some((collection_index, request_index)) = self.last_opened_request {
+                        Task::perform(
+                            async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Body } },
+                            |msg| msg,
+                        )
+                    } else {
+                        Task::none()
+                    }
                 } else {
                     Task::none()
                 }
@@ -539,21 +553,7 @@ impl BeamApp {
                 }
                 Task::none()
             }
-            Message::UrlEditorAction(action) => {
-                self.current_request.url_content.perform(action);
-                // Sync the url string with the text editor content
-                self.current_request.url = self.current_request.url_content.text();
 
-                // Emit auto-save message if we have a current request
-                if let Some((collection_index, request_index)) = self.last_opened_request {
-                    Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Url } },
-                        |msg| msg,
-                    )
-                } else {
-                    Task::none()
-                }
-            }
             Message::AuthTypeChanged(auth_type) => {
                 self.current_request.auth_type = auth_type;
 
@@ -681,10 +681,10 @@ impl BeamApp {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
                                     if let Err(e) = storage_manager.storage().save_environments_with_active(&environments, Some(&active_env_name)).await {
-                                        eprintln!("Failed to save active environment: {}", e);
+                                        error!("Failed to save active environment: {}", e);
                                     }
                                 }
-                                Err(e) => eprintln!("Failed to create storage manager: {}", e),
+                                Err(e) => error!("Failed to create storage manager: {}", e),
                             }
                             Message::DoNothing
                         },
@@ -955,12 +955,12 @@ impl BeamApp {
                             basic_password: None,
                             api_key: None,
                             api_key_header: None,
-                            metadata: storage::persistent_types::RequestMetadata::default(),
+                            metadata: Some(storage::persistent_types::RequestMetadata::default()),
                         };
 
                         if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                             if let Err(e) = storage_manager.storage().save_request(&collection_name, &persistent_request).await {
-                                eprintln!("Failed to save request: {}", e);
+                                error!("Failed to save request: {}", e);
                             }
                         }
                     });
@@ -990,7 +990,7 @@ impl BeamApp {
                 tokio::spawn(async move {
                     if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                         if let Err(e) = storage_manager.storage().save_collection(&new_collection).await {
-                            eprintln!("Failed to save collection: {}", e);
+                            error!("Failed to save collection: {}", e);
                         }
                     }
                 });
@@ -1108,7 +1108,7 @@ impl BeamApp {
                                         if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                                             let storage = storage_manager.storage();
                                             if let Err(e) = storage.rename_request(&collection_name, &old_name, &new_name).await {
-                                                eprintln!("Failed to rename request file: {}", e);
+                                                error!("Failed to rename request file: {}", e);
                                             }
                                         }
                                     });
@@ -1141,7 +1141,7 @@ impl BeamApp {
                                     if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                                         let storage = storage_manager.storage();
                                         if let Err(e) = storage.rename_collection(&old_name, &new_name).await {
-                                            eprintln!("Failed to rename collection folder: {}", e);
+                                            error!("Failed to rename collection folder: {}", e);
                                         }
                                     }
                                 });
@@ -1177,12 +1177,12 @@ impl BeamApp {
                                 basic_password: None,
                                 api_key: None,
                                 api_key_header: None,
-                                metadata: storage::persistent_types::RequestMetadata::default(),
+                                metadata: Some(storage::persistent_types::RequestMetadata::default()),
                             };
 
                             if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                                 if let Err(e) = storage_manager.storage().save_request(&collection_name, &persistent_request).await {
-                                    eprintln!("Failed to save duplicated request: {}", e);
+                                    error!("Failed to save duplicated request: {}", e);
                                 }
                             }
                         });
@@ -1212,12 +1212,12 @@ impl BeamApp {
 
                                 // First delete the request file from disk
                                 if let Err(e) = storage.delete_request(&collection_name, &request_name).await {
-                                    eprintln!("Failed to delete request file '{}': {}", request_name, e);
+                                    error!("Failed to delete request file '{}': {}", request_name, e);
                                 }
 
                                 // Then save the updated collection
                                 if let Err(e) = storage.save_collection(&collection).await {
-                                    eprintln!("Failed to save collection after deleting request: {}", e);
+                                    error!("Failed to save collection after deleting request: {}", e);
                                 }
                             }
                         });
@@ -1261,7 +1261,7 @@ impl BeamApp {
                         ])
                     }
                     Err(e) => {
-                        eprintln!("Failed to initialize storage: {}", e);
+                        error!("Failed to initialize storage: {}", e);
                         Task::none()
                     }
                 }
@@ -1324,7 +1324,7 @@ impl BeamApp {
                         )
                     }
                     Err(e) => {
-                        eprintln!("Failed to load collections: {}", e);
+                        error!("Failed to load collections: {}", e);
                         Task::none()
                     }
                 }
@@ -1356,7 +1356,7 @@ impl BeamApp {
                         println!("Collection saved successfully");
                     }
                     Err(e) => {
-                        eprintln!("Failed to save collection: {}", e);
+                        error!("Failed to save collection: {}", e);
                     }
                 }
                 Task::none()
@@ -1389,7 +1389,7 @@ impl BeamApp {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to load environments: {}", e);
+                        error!("Failed to load environments: {}", e);
                         Task::none()
                     }
                 }
@@ -1427,7 +1427,7 @@ impl BeamApp {
                         self.active_environment = None;
                     }
                     Err(e) => {
-                        eprintln!("Failed to load active environment: {}", e);
+                        error!("Failed to load active environment: {}", e);
                     }
                 }
                 Task::none()
@@ -1448,7 +1448,7 @@ impl BeamApp {
                                 let env_path = storage_manager.config().base_path.join("environments.toml");
                                 if !env_path.exists() {
                                     if let Err(e) = storage.save_environments(&environments).await {
-                                        eprintln!("Failed to save initial environments: {}", e);
+                                        error!("Failed to save initial environments: {}", e);
                                     } else {
                                         println!("Initial environments saved successfully");
                                     }
@@ -1461,7 +1461,7 @@ impl BeamApp {
                                         .join(&collection.name);
                                     if !collection_path.exists() {
                                         if let Err(e) = storage.save_collection_with_requests(collection).await {
-                                            eprintln!("Failed to save initial collection '{}': {}", collection.name, e);
+                                            error!("Failed to save initial collection '{}': {}", collection.name, e);
                                         } else {
                                             println!("Initial collection '{}' saved successfully", collection.name);
                                         }
@@ -1499,7 +1499,7 @@ impl BeamApp {
                         println!("Environments saved successfully");
                     }
                     Err(e) => {
-                        eprintln!("Failed to save environments: {}", e);
+                        error!("Failed to save environments: {}", e);
                     }
                 }
                 Task::none()
@@ -1511,7 +1511,7 @@ impl BeamApp {
                 tokio::spawn(async move {
                     if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
                         if let Err(e) = storage_manager.storage().save_last_opened_request(collection_index, request_index).await {
-                            eprintln!("Failed to save last opened request: {}", e);
+                            error!("Failed to save last opened request: {}", e);
                         }
                     }
                 });
@@ -1547,7 +1547,7 @@ impl BeamApp {
                         // Successfully saved last opened request
                     }
                     Err(e) => {
-                        eprintln!("Failed to save last opened request: {}", e);
+                        error!("Failed to save last opened request: {}", e);
                     }
                 }
                 Task::none()
@@ -1595,7 +1595,7 @@ impl BeamApp {
                         Task::none()
                     }
                     Err(e) => {
-                        eprintln!("Failed to load last opened request: {}", e);
+                        error!("Failed to load last opened request: {}", e);
                         self.last_opened_request = None;
                         Task::none()
                     }
@@ -1620,10 +1620,10 @@ impl BeamApp {
                         }
                     }
                     Ok(None) => {
-                        eprintln!("No request configuration found for the last opened request");
+                        error!("No request configuration found for the last opened request");
                     }
                     Err(e) => {
-                        eprintln!("Failed to load request configuration: {}", e);
+                        error!("Failed to load request configuration: {}", e);
                     }
                 }
                 Task::none()
@@ -1646,29 +1646,35 @@ impl BeamApp {
                 )
             }
             Message::SaveRequestDebounced { collection_index, request_index } => {
+                info!("=== SaveRequestDebounced - collection_index: {}, request_index: {}", collection_index, request_index);
                 let key = (collection_index, request_index);
 
                 // Check if this save is still valid (no newer changes)
                 if let Some(last_change_time) = self.debounce_timers.get(&key) {
+                    info!("====1");
                     let elapsed = last_change_time.elapsed();
                     if elapsed >= std::time::Duration::from_millis(self.debounce_delay_ms) {
                         // Remove the timer entry and save the request
                         self.debounce_timers.remove(&key);
+                        info!("====2");
 
                         // Get collection name and request name for saving
                         if let Some(collection) = self.collections.get(collection_index) {
+                            info!("====3");
                             if let Some(saved_request) = collection.requests.get(request_index) {
+                                info!("====4");
                                 let collection_name = collection.name.clone();
+                                info!("====5");
                                 let request_name = saved_request.name.clone();
-                                let current_request = self.current_request.clone();
-
+                                let serializable_request = self.current_request.to_serializable(request_name.clone());
+                                info!("===start perform auto save request");
                                 Task::perform(
                                     async move {
-                                        let persistent_request = current_request.to_persistent_with_name(request_name);
-
                                         match storage::StorageManager::with_default_config().await {
                                             Ok(storage_manager) => {
-                                                match storage_manager.storage().save_request(&collection_name, &persistent_request).await {
+                                                info!("===done perform auto save request");
+
+                                                match storage_manager.storage().save_serializable_request(&collection_name, &request_name, &serializable_request).await {
                                                     Ok(_) => Ok(()),
                                                     Err(e) => Err(e.to_string()),
                                                 }
@@ -1699,7 +1705,7 @@ impl BeamApp {
                         println!("Request auto-saved successfully");
                     }
                     Err(e) => {
-                        eprintln!("Failed to auto-save request: {}", e);
+                        error!("Failed to auto-save request: {}", e);
                     }
                 }
                 Task::none()
@@ -2161,28 +2167,28 @@ impl BeamApp {
                     modifiers,
                     ..
                 }) => {
-                    // Debug logging for all key presses
-                    println!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}",
-                        key, modifiers.command(), modifiers.shift(), modifiers.control(), modifiers.alt());
+                    // // Debug logging for all key presses
+                    // println!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}",
+                    //     key, modifiers.command(), modifiers.shift(), modifiers.control(), modifiers.alt());
 
                     match key {
                         iced::keyboard::Key::Character(ref c) if c == "z" => {
-                            println!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}",
-                                modifiers.command(), modifiers.shift());
+                            // println!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}",
+                            //     modifiers.command(), modifiers.shift());
 
                             if modifiers.command() && modifiers.shift() {
-                                println!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
+                                // println!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
                                 Some(Message::UrlInputRedo)
                             } else if modifiers.command() {
-                                println!("DEBUG: Event-based Triggering Cmd+Z = Undo");
+                                // println!("DEBUG: Event-based Triggering Cmd+Z = Undo");
                                 Some(Message::UrlInputUndo)
                             } else {
-                                println!("DEBUG: Event-based 'z' without command modifier, passing to KeyPressed");
+                                // println!("DEBUG: Event-based 'z' without command modifier, passing to KeyPressed");
                                 Some(Message::KeyPressed(key.clone()))
                             }
                         }
                         _ => {
-                            println!("DEBUG: Event-based Other key, passing to KeyPressed");
+                            // println!("DEBUG: Event-based Other key, passing to KeyPressed");
                             Some(Message::KeyPressed(key.clone()))
                         }
                     }

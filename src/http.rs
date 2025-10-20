@@ -1,10 +1,11 @@
 use crate::types::{HttpMethod, RequestConfig, ResponseData, AuthType};
 use std::time::Instant;
 use base64::{Engine as _, engine::general_purpose};
+use log::{info, trace, warn, Log};
 
 fn is_binary_content_type(content_type: &str) -> bool {
     let content_type_lower = content_type.to_lowercase();
-    
+
     // Check for text-based content types
     if content_type_lower.starts_with("text/") ||
        content_type_lower.starts_with("application/json") ||
@@ -14,7 +15,7 @@ fn is_binary_content_type(content_type: &str) -> bool {
        content_type_lower.contains("charset") {
         return false;
     }
-    
+
     // Check for known binary content types
     if content_type_lower.starts_with("image/") ||
        content_type_lower.starts_with("video/") ||
@@ -25,27 +26,30 @@ fn is_binary_content_type(content_type: &str) -> bool {
        content_type_lower.starts_with("application/x-") {
         return true;
     }
-    
+
     // Default to binary for unknown types
     true
 }
 
 pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String> {
     let start_time = Instant::now();
-    
+    info!("DEBUG: send_request");
+
     // Validate URL
     if config.url.trim().is_empty() {
         return Err("URL cannot be empty".to_string());
     }
-    
+
     // Basic URL validation
     if !config.url.starts_with("http://") && !config.url.starts_with("https://") {
         return Err("URL must start with http:// or https://".to_string());
     }
-    
+
+    // TODO: reuse the client
     let client = reqwest::Client::new();
-    
+
     // Build the request
+    // TODO: use client.request directly instead of match clause
     let mut request_builder = match config.method {
         HttpMethod::GET => client.get(&config.url),
         HttpMethod::POST => client.post(&config.url),
@@ -111,7 +115,7 @@ pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String>
         let body_text = config.body.text();
         if !body_text.is_empty() {
             request_builder = request_builder.body(body_text);
-            
+
             // Set content type if not already set
             if !config.headers.iter().any(|(k, _)| k.to_lowercase() == "content-type") {
                 request_builder = request_builder.header("Content-Type", &config.content_type);
@@ -119,12 +123,14 @@ pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String>
         }
     }
 
+    info!("DEBUG: sending request - {:?}", Instant::now());
     // Send the request
     match request_builder.send().await {
         Ok(response) => {
+            info!("DEBUG: done sending request - {:?}", Instant::now());
             let status = response.status().as_u16();
             let status_text = response.status().canonical_reason().unwrap_or("Unknown").to_string();
-            
+
             // Extract headers
             let mut headers = Vec::new();
             for (name, value) in response.headers() {
@@ -194,13 +200,13 @@ pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String>
 
 pub fn generate_curl_command(config: &RequestConfig) -> String {
     let mut curl_parts = vec!["curl".to_string()];
-    
+
     // Add method
     if config.method != HttpMethod::GET {
         curl_parts.push("-X".to_string());
         curl_parts.push(config.method.to_string());
     }
-    
+
     // Add headers
     for (key, value) in &config.headers {
         if !key.is_empty() && !value.is_empty() {
@@ -208,7 +214,7 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
             curl_parts.push(format!("'{}: {}'", key, value));
         }
     }
-    
+
     // Add authentication
     match config.auth_type {
         AuthType::None => {
@@ -238,7 +244,7 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
             }
         }
     }
-    
+
     // Add body for POST, PUT, PATCH requests
     if matches!(config.method, HttpMethod::POST | HttpMethod::PUT | HttpMethod::PATCH) {
         let body_text = config.body.text();
@@ -247,7 +253,7 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
             curl_parts.push(format!("'{}'", body_text.replace("'", "'\\''")));
         }
     }
-    
+
     // Build URL with query parameters
     let mut url = config.url.clone();
     let query_params: Vec<String> = config.params
@@ -255,7 +261,7 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
         .filter(|(k, v)| !k.is_empty() && !v.is_empty())
         .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
         .collect();
-    
+
     if !query_params.is_empty() {
         if url.contains('?') {
             url.push('&');
@@ -264,8 +270,8 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
         }
         url.push_str(&query_params.join("&"));
     }
-    
+
     curl_parts.push(format!("'{}'", url));
-    
+
     curl_parts.join(" ")
 }
