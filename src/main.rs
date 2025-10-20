@@ -130,21 +130,29 @@ impl Default for BeamApp {
 }
 
 impl BeamApp {
-    fn create_response_content(body: &str) -> text_editor::Content {
+    fn update_response_content(content: &mut text_editor::Content, body: &str) {
         // Try to format JSON if the content is not too large (limit to 100KB)
         const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
 
-        if body.len() <= MAX_JSON_FORMAT_SIZE {
+        let text_to_set = if body.len() <= MAX_JSON_FORMAT_SIZE {
             // Try to parse and format as JSON
             if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
                 if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
-                    return text_editor::Content::with_text(&formatted_json);
+                    formatted_json
+                } else {
+                    body.to_string()
                 }
+            } else {
+                body.to_string()
             }
-        }
+        } else {
+            // If too large, return original content
+            body.to_string()
+        };
 
-        // If not JSON or too large, return original content
-        text_editor::Content::with_text(body)
+        // Update the existing content
+        content.perform(text_editor::Action::SelectAll);
+        content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(text_to_set.into())));
     }
 
     /// Resolves variables in the format {{variable_name}} using the active environment
@@ -306,11 +314,11 @@ impl BeamApp {
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        self.response_body_content = Self::create_response_content(&response.body);
+                        Self::update_response_content(&mut self.response_body_content, &response.body);
                         self.response = Some(response);
                     }
                     Err(error) => {
-                        self.response_body_content = Self::create_response_content(&error);
+                        Self::update_response_content(&mut self.response_body_content, &error);
                         self.response = Some(ResponseData {
                             status: 0,
                             status_text: "Error".to_string(),

@@ -75,7 +75,7 @@ pub fn request_panel<'a>(
             }
         })
         .width(150)
-        .placeholder("🌍 No Environment")
+        .placeholder("No Environment")
     };
 
     // Environment bar
