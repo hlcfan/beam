@@ -99,7 +99,7 @@ impl ToPersistent<PersistentRequest> for RequestConfig {
             url: self.url.clone(),
             headers: self.headers.clone(),
             params: self.params.clone(),
-            body: self.body.text(),
+            body: self.body.clone(),
             content_type: self.content_type.clone(),
             auth_type: auth_type.to_string(),
             bearer_token: if self.bearer_token.is_empty() { None } else { Some(self.bearer_token.clone()) },
@@ -142,7 +142,7 @@ impl FromPersistent<PersistentRequest> for RequestConfig {
             url: persistent.url.clone(),
             headers,
             params: persistent.params,
-            body: iced::widget::text_editor::Content::with_text(&persistent.body),
+            body: persistent.body,
             content_type: persistent.content_type,
             auth_type,
             selected_tab: crate::types::RequestTab::Body, // Default to Body tab

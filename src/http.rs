@@ -112,9 +112,8 @@ pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String>
 
     // Add body for POST, PUT, PATCH requests
     if matches!(config.method, HttpMethod::POST | HttpMethod::PUT | HttpMethod::PATCH) {
-        let body_text = config.body.text();
-        if !body_text.is_empty() {
-            request_builder = request_builder.body(body_text);
+        if !config.body.is_empty() {
+            request_builder = request_builder.body(config.body.clone());
 
             // Set content type if not already set
             if !config.headers.iter().any(|(k, _)| k.to_lowercase() == "content-type") {
@@ -247,10 +246,9 @@ pub fn generate_curl_command(config: &RequestConfig) -> String {
 
     // Add body for POST, PUT, PATCH requests
     if matches!(config.method, HttpMethod::POST | HttpMethod::PUT | HttpMethod::PATCH) {
-        let body_text = config.body.text();
-        if !body_text.is_empty() {
+        if !config.body.is_empty() {
             curl_parts.push("-d".to_string());
-            curl_parts.push(format!("'{}'", body_text.replace("'", "'\\''")));
+            curl_parts.push(format!("'{}'", config.body.replace("'", "'\\''")));
         }
     }
 

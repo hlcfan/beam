@@ -37,6 +37,7 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
     url_input: &'a crate::ui::url_input::UrlInput<Message>,
+    request_body_content: &'a text_editor::Content,
     is_loading: bool,
     environments: &'a [Environment],
     active_environment: Option<usize>,
@@ -191,11 +192,11 @@ pub fn request_panel<'a>(
     .spacing(5);
 
     let tab_content = match config.selected_tab {
-        RequestTab::Body => body_tab(config),
+        RequestTab::Body => body_tab(request_body_content),
         RequestTab::Params => params_tab(config),
         RequestTab::Headers => headers_tab(config),
         RequestTab::Auth => auth_tab(config),
-        RequestTab::Environment => body_tab(config), // Fallback to body tab if somehow Environment is selected
+        RequestTab::Environment => body_tab(request_body_content), // Fallback to body tab if somehow Environment is selected
     };
 
     let content = column![
@@ -308,9 +309,9 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
         .into()
 }
 
-fn body_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
+fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, Message> {
     column![
-        text_editor(&config.body)
+        text_editor(request_body_content)
             .on_action(Message::BodyChanged)
             .height(Length::Fill)
             .style(|theme: &Theme, _status: text_editor::Status| {

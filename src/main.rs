@@ -71,7 +71,7 @@ impl Default for BeamApp {
                     ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
                 ],
                 params: vec![],
-                body: text_editor::Content::new(),
+                body: String::new(),
                 content_type: "application/json".to_string(),
                 auth_type: AuthType::None,
                 selected_tab: RequestTab::Body,
@@ -86,6 +86,7 @@ impl Default for BeamApp {
                 .no_border(),
             response: None,
             response_body_content: text_editor::Content::new(),
+            request_body_content: text_editor::Content::new(),
             selected_response_tab: ResponseTab::Body,
 
             is_loading: false,
@@ -206,7 +207,7 @@ impl BeamApp {
                 }
             }
             Message::UrlInputChanged(url) => {
-                println!("DEBUG: UrlInputChanged received with value: {}", url);
+                info!("DEBUG: UrlInputChanged received with value: {}", url);
 
                 self.just_performed_undo = false; // Reset flag for any other input
                 self.current_request.url = url.clone();
@@ -225,12 +226,12 @@ impl BeamApp {
                 }
             }
             Message::UrlInputUndo => {
-                println!("DEBUG: UrlInputUndo message received");
+                info!("DEBUG: UrlInputUndo message received");
                 // TODO: Implement undo functionality for UrlInput
                 Task::none()
             }
             Message::UrlInputRedo => {
-                println!("DEBUG: UrlInputRedo message received");
+                info!("DEBUG: UrlInputRedo message received");
                 // TODO: Implement redo functionality for UrlInput
                 Task::none()
             }
@@ -287,9 +288,7 @@ impl BeamApp {
                 }
                 info!("DEBUG: Resolved Params");
                 // Resolve variables in body
-                let body_text = config.body.text();
-                let resolved_body = self.resolve_variables(&body_text);
-                config.body = text_editor::Content::with_text(&resolved_body);
+                config.body = self.resolve_variables(&config.body);
                 info!("DEBUG: Resolved Body");
                 // Resolve variables in authentication fields
                 config.bearer_token = self.resolve_variables(&config.bearer_token);
@@ -297,7 +296,7 @@ impl BeamApp {
                 config.basic_password = self.resolve_variables(&config.basic_password);
                 config.api_key = self.resolve_variables(&config.api_key);
                 config.api_key_header = self.resolve_variables(&config.api_key_header);
-                info!("DEBUG: Sending request with config: {:?}", config);
+                info!("DEBUG: Sending request with config");
                 Task::perform(send_request(config), Message::RequestCompleted)
             }
             Message::CancelRequest => {
@@ -514,7 +513,9 @@ impl BeamApp {
                     _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
                 };
 
-                self.current_request.body.perform(action);
+                self.request_body_content.perform(action);
+                // Sync the String body with the text editor content
+                self.current_request.body = self.request_body_content.text();
 
                 if should_save {
                     // Emit auto-save message if we have a current request
@@ -1030,7 +1031,7 @@ impl BeamApp {
                         temp_config.url = request.url.clone();
                         let curl_command = generate_curl_command(&temp_config);
                         // In a real app, you'd copy to clipboard here
-                        println!("Curl command: {}", curl_command);
+                        info!("Curl command: {}", curl_command);
                     }
                 }
                 Task::none()
@@ -1353,7 +1354,7 @@ impl BeamApp {
             Message::CollectionsSaved(result) => {
                 match result {
                     Ok(_) => {
-                        println!("Collection saved successfully");
+                        info!("Collection saved successfully");
                     }
                     Err(e) => {
                         error!("Failed to save collection: {}", e);
@@ -1450,7 +1451,7 @@ impl BeamApp {
                                     if let Err(e) = storage.save_environments(&environments).await {
                                         error!("Failed to save initial environments: {}", e);
                                     } else {
-                                        println!("Initial environments saved successfully");
+                                        info!("Initial environments saved successfully");
                                     }
                                 }
 
@@ -1463,7 +1464,7 @@ impl BeamApp {
                                         if let Err(e) = storage.save_collection_with_requests(collection).await {
                                             error!("Failed to save initial collection '{}': {}", collection.name, e);
                                         } else {
-                                            println!("Initial collection '{}' saved successfully", collection.name);
+                                            info!("Initial collection '{}' saved successfully", collection.name);
                                         }
                                     }
                                 }
@@ -1496,7 +1497,7 @@ impl BeamApp {
             Message::EnvironmentsSaved(result) => {
                 match result {
                     Ok(_) => {
-                        println!("Environments saved successfully");
+                        info!("Environments saved successfully");
                     }
                     Err(e) => {
                         error!("Failed to save environments: {}", e);
@@ -1555,21 +1556,21 @@ impl BeamApp {
             Message::LastOpenedRequestLoaded(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
-                        println!("DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}", collection_index, request_index);
+                        info!("DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}", collection_index, request_index);
                         // Restore the last opened request
                         self.last_opened_request = Some((collection_index, request_index));
 
                         // Automatically expand the collection containing the last opened request
                         if let Some(collection) = self.collections.get_mut(collection_index) {
                             collection.expanded = true;
-                            println!("DEBUG: Automatically expanded collection '{}' containing last opened request", collection.name);
+                            info!("DEBUG: Automatically expanded collection '{}' containing last opened request", collection.name);
                         }
 
                         // Load the complete request configuration
                         let collections = self.collections.clone();
                         Task::perform(
                             async move {
-                                println!("DEBUG: Loading request by indices - collection_index: {}, request_index: {}", collection_index, request_index);
+                                info!("DEBUG: Loading request by indices - collection_index: {}, request_index: {}", collection_index, request_index);
                                 match storage::StorageManager::with_default_config().await {
                                     Ok(storage_manager) => {
                                         match storage_manager.storage().load_request_by_indices(&collections, collection_index, request_index).await {
@@ -1604,20 +1605,27 @@ impl BeamApp {
             Message::RequestConfigLoaded(result) => {
                 match result {
                     Ok(Some(request_config)) => {
-                        println!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
+                        info!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
                         // Update the current request with the loaded configuration
-                        self.current_request = request_config.clone();
-
+                        let current_request = request_config.clone();
+                        info!("====1: ");
+                        // Sync the request body content with the loaded body
+                        // self.request_body_content = text_editor::Content::with_text(&);
+                        self.request_body_content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(current_request.body.clone().into())));
+                        info!("====2: ");
                         // Update the URL input with the loaded URL
-                        self.url_input.set_value(request_config.url.clone());
-
+                        self.url_input.set_value(current_request.url.clone());
+                        info!("====3: ");
                         // Update URL input with environment variables if there's an active environment
                         if let Some(env_index) = self.active_environment {
                             if let Some(env) = self.environments.get(env_index) {
                                 let environment_variables = env.variables.clone();
                                 self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                                info!("====4: ");
                             }
                         }
+                        self.current_request = current_request;
+                        info!("===request load successed");
                     }
                     Ok(None) => {
                         error!("No request configuration found for the last opened request");
@@ -1702,7 +1710,7 @@ impl BeamApp {
             Message::RequestSaved(result) => {
                 match result {
                     Ok(_) => {
-                        println!("Request auto-saved successfully");
+                        info!("Request auto-saved successfully");
                     }
                     Err(e) => {
                         error!("Failed to auto-save request: {}", e);
@@ -1808,6 +1816,7 @@ impl BeamApp {
         request_panel(
             &self.current_request,
             &self.url_input,
+            &self.request_body_content,
             self.is_loading,
             &self.environments,
             self.active_environment,
@@ -2168,27 +2177,27 @@ impl BeamApp {
                     ..
                 }) => {
                     // // Debug logging for all key presses
-                    // println!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}",
+                    // info!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}",
                     //     key, modifiers.command(), modifiers.shift(), modifiers.control(), modifiers.alt());
 
                     match key {
                         iced::keyboard::Key::Character(ref c) if c == "z" => {
-                            // println!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}",
+                            // info!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}",
                             //     modifiers.command(), modifiers.shift());
 
                             if modifiers.command() && modifiers.shift() {
-                                // println!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
+                                // info!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
                                 Some(Message::UrlInputRedo)
                             } else if modifiers.command() {
-                                // println!("DEBUG: Event-based Triggering Cmd+Z = Undo");
+                                // info!("DEBUG: Event-based Triggering Cmd+Z = Undo");
                                 Some(Message::UrlInputUndo)
                             } else {
-                                // println!("DEBUG: Event-based 'z' without command modifier, passing to KeyPressed");
+                                // info!("DEBUG: Event-based 'z' without command modifier, passing to KeyPressed");
                                 Some(Message::KeyPressed(key.clone()))
                             }
                         }
                         _ => {
-                            // println!("DEBUG: Event-based Other key, passing to KeyPressed");
+                            // info!("DEBUG: Event-based Other key, passing to KeyPressed");
                             Some(Message::KeyPressed(key.clone()))
                         }
                     }
