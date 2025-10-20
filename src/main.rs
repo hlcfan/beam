@@ -517,7 +517,26 @@ impl BeamApp {
                 }
             }
             Message::ResponseBodyAction(action) => {
-                self.response_body_content.perform(action);
+                // Filter actions to allow only read-only operations
+                // Allow: select, copy, scroll, move cursor
+                // Block: edit actions (insert, paste, delete, etc.)
+                match &action {
+                    text_editor::Action::Move(_) |
+                    text_editor::Action::Select(_) |
+                    text_editor::Action::SelectWord |
+                    text_editor::Action::SelectLine |
+                    text_editor::Action::SelectAll |
+                    text_editor::Action::Click(_) |
+                    text_editor::Action::Drag(_) |
+                    text_editor::Action::Scroll { .. } => {
+                        // Allow read-only actions
+                        self.response_body_content.perform(action);
+                    }
+                    text_editor::Action::Edit(_) => {
+                        // Block all edit actions (insert, paste, delete, etc.)
+                        // Do nothing - this prevents editing
+                    }
+                }
                 Task::none()
             }
             Message::UrlEditorAction(action) => {
