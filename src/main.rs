@@ -121,7 +121,7 @@ impl Default for BeamApp {
             // Initialize hover states
             send_button_hovered: false,
             cancel_button_hovered: false,
-            
+
             // Initialize undo tracking
             just_performed_undo: false,
             processing_cmd_z: false,
@@ -198,11 +198,11 @@ impl BeamApp {
             }
             Message::UrlInputChanged(url) => {
                 println!("DEBUG: UrlInputChanged received with value: {}", url);
-                
+
                 self.just_performed_undo = false; // Reset flag for any other input
                 self.current_request.url = url.clone();
                 self.current_request.url_content = text_editor::Content::with_text(&url);
-                
+
                 // Update the URL input widget value
                 self.url_input.set_value(url.clone());
 
@@ -387,6 +387,8 @@ impl BeamApp {
                             // Single click: select the request
                             self.current_request.method = request.method.clone();
                             self.current_request.url = request.url.clone();
+
+                            self.url_input.set_value(request.url.clone());
 
                             // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
@@ -1269,15 +1271,15 @@ impl BeamApp {
                                 method: HttpMethod::GET,
                                 url: "https://httpbin.org/get".to_string(),
                             };
-                            
+
                             let default_collection = RequestCollection {
                                 name: "My Requests".to_string(),
                                 requests: vec![default_request],
                                 expanded: true,
                             };
-                            
+
                             self.collections = vec![default_collection];
-                            
+
                             // Set the default request as the current request and mark it as opened
                             self.current_request.method = HttpMethod::GET;
                             self.current_request.url = "https://httpbin.org/get".to_string();
@@ -1387,7 +1389,7 @@ impl BeamApp {
                         // Find the environment by name and set it as active
                         if let Some(index) = self.environments.iter().position(|env| env.name == active_env_name) {
                             self.active_environment = Some(index);
-                            
+
                             // Update url_input with environment variables
                             let environment_variables = self.environments[index].variables.clone();
                             self.url_input = self.url_input.clone().environment_variables(environment_variables);
@@ -1578,10 +1580,10 @@ impl BeamApp {
                         println!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
                         // Update the current request with the loaded configuration
                         self.current_request = request_config.clone();
-                        
+
                         // Update the URL input with the loaded URL
                         self.url_input.set_value(request_config.url.clone());
-                        
+
                         // Update URL input with environment variables if there's an active environment
                         if let Some(env_index) = self.active_environment {
                             if let Some(env) = self.environments.get(env_index) {
@@ -2127,20 +2129,20 @@ impl BeamApp {
 
         let keyboard_subscription = iced::event::listen_with(|event, _status, _id| {
             match event {
-                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { 
-                    key, 
-                    modifiers, 
-                    .. 
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key,
+                    modifiers,
+                    ..
                 }) => {
                     // Debug logging for all key presses
-                    println!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}", 
+                    println!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}",
                         key, modifiers.command(), modifiers.shift(), modifiers.control(), modifiers.alt());
-                    
+
                     match key {
                         iced::keyboard::Key::Character(ref c) if c == "z" => {
-                            println!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}", 
+                            println!("DEBUG: Event-based 'z' key detected with modifiers - command: {}, shift: {}",
                                 modifiers.command(), modifiers.shift());
-                            
+
                             if modifiers.command() && modifiers.shift() {
                                 println!("DEBUG: Event-based Triggering Cmd+Shift+Z = Redo");
                                 Some(Message::UrlInputRedo)
