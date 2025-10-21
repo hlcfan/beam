@@ -1,17 +1,144 @@
 use crate::types::{AuthType, Environment, HttpMethod, Message, RequestConfig, RequestTab};
-use crate::ui::{icon, url_input, IconName};
+use crate::ui::{IconName, icon, url_input};
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
     text_editor, text_input,
 };
 use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector};
-use url_input::{UrlInput};
+use url_input::UrlInput;
+
+#[derive(Debug, Clone)]
+pub struct RequestPanel {
+    pub request_body_content: text_editor::Content,
+    pub config: RequestConfig,
+    pub url: String,
+    pub is_loading: bool,
+    pub environments: Vec<Environment>,
+    pub active_environment: Option<usize>,
+    pub method_menu_open: bool,
+    pub send_button_hovered: bool,
+    pub cancel_button_hovered: bool,
+}
+
+impl Default for RequestPanel {
+    fn default() -> Self {
+        Self {
+            request_body_content: text_editor::Content::new(),
+            config: RequestConfig {
+                method: HttpMethod::GET,
+                url: String::new(),
+                headers: vec![
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
+                ],
+                params: vec![],
+                body: String::new(),
+                content_type: "application/json".to_string(),
+                auth_type: AuthType::None,
+                selected_tab: RequestTab::Body,
+                bearer_token: String::new(),
+                basic_username: String::new(),
+                basic_password: String::new(),
+                api_key: String::new(),
+                api_key_header: "X-API-Key".to_string(),
+            },
+            url: String::new(),
+            is_loading: false,
+            environments: Vec::new(),
+            active_environment: None,
+            method_menu_open: false,
+            send_button_hovered: false,
+            cancel_button_hovered: false,
+        }
+    }
+}
+
+impl RequestPanel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, action: text_editor::Action) -> (bool, String) {
+        // Only trigger auto-save for actual content-changing actions
+        let should_save = match &action {
+            text_editor::Action::Edit(_) => true, // Only Edit actions change content
+            _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
+        };
+
+        self.request_body_content.perform(action);
+        let body_text = self.request_body_content.text();
+
+        (should_save, body_text)
+    }
+
+    pub fn handle_body_changed(
+        &mut self,
+        action: text_editor::Action,
+        last_opened_request: Option<(usize, usize)>,
+    ) -> (String, iced::Task<crate::types::Message>) {
+        use crate::types::{Message, RequestField};
+        use iced::Task;
+        use log::info;
+
+        info!("Body changed action: {:?}", action);
+
+        // Only trigger auto-save for actual content-changing actions
+        // Don't save for navigation actions like clicking, selecting, scrolling
+        let should_save = match &action {
+            text_editor::Action::Edit(_) => true, // Only Edit actions change content
+            _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
+        };
+
+        self.request_body_content.perform(action);
+        // Get the updated body text
+        let body_text = self.request_body_content.text();
+
+        let task = if should_save {
+            // Emit auto-save message if we have a current request
+            if let Some((collection_index, request_index)) = last_opened_request {
+                Task::perform(
+                    async move {
+                        Message::RequestFieldChanged {
+                            collection_index,
+                            request_index,
+                            field: RequestField::Body,
+                        }
+                    },
+                    |msg| msg,
+                )
+            } else {
+                Task::none()
+            }
+        } else {
+            Task::none()
+        };
+
+        (body_text, task)
+    }
+
+    pub fn set_body_content(&mut self, body: String) {
+        self.request_body_content
+            .perform(text_editor::Action::SelectAll);
+        self.request_body_content
+            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                body.into(),
+            )));
+    }
+
+    pub fn get_body_text(&self) -> String {
+        self.request_body_content.text()
+    }
+
+    pub fn handle_body_action(&mut self, action: text_editor::Action) {
+        self.request_body_content.perform(action);
+    }
+}
 
 pub fn request_panel<'a>(
     config: &'a RequestConfig,
     url: &'a str,
-    request_body_content: &'a text_editor::Content,
+    panel: &'a RequestPanel,
     is_loading: bool,
     environments: &'a [Environment],
     active_environment: Option<usize>,
@@ -117,8 +244,7 @@ pub fn request_panel<'a>(
 
     let base_input = container(row![
         method_label,
-        UrlInput::new("Enter URL...", url)
-            .on_input(Message::UrlInputChanged),
+        UrlInput::new("Enter URL...", url).on_input(Message::UrlInputChanged),
         space().width(5),
         send_button,
     ])
@@ -164,11 +290,11 @@ pub fn request_panel<'a>(
     .spacing(5);
 
     let tab_content = match config.selected_tab {
-        RequestTab::Body => body_tab(request_body_content),
+        RequestTab::Body => body_tab(&panel.request_body_content),
         RequestTab::Params => params_tab(config),
         RequestTab::Headers => headers_tab(config),
         RequestTab::Auth => auth_tab(config),
-        RequestTab::Environment => body_tab(request_body_content), // Fallback to body tab if somehow Environment is selected
+        RequestTab::Environment => body_tab(&panel.request_body_content), // Fallback to body tab if somehow Environment is selected
     };
 
     let content = column![
@@ -213,7 +339,7 @@ pub fn request_panel<'a>(
         right_border
     ];
 
-    let base_layout = if method_menu_open {
+    let base_layout = if panel.method_menu_open {
         stack![
             main_content,
             // Transparent overlay to detect clicks outside the menu
@@ -282,24 +408,24 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
 }
 
 fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, Message> {
-    column![
-        text_editor(request_body_content)
-            .on_action(Message::BodyChanged)
-            .height(Length::Fill)
-            .style(|theme: &Theme, _status: text_editor::Status| {
-                text_editor::Style {
-                    background: Background::Color(theme.palette().background),
-                    border: Border {
-                        color: Color::from_rgb(0.9, 0.9, 0.9),
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                    value: theme.palette().text,
-                    selection: theme.palette().primary,
-                }
-            })
-    ]
+    let text_editor_widget = text_editor(request_body_content)
+        .on_action(Message::BodyChanged)
+        .height(Length::Fill)
+        .style(
+            |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                background: Background::Color(theme.palette().background),
+                border: Border {
+                    color: Color::from_rgb(0.9, 0.9, 0.9),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                value: theme.palette().text,
+                selection: theme.palette().primary,
+            },
+        );
+
+    text_editor_widget
     .into()
 }
 
@@ -421,7 +547,6 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
         }
     }
 }
-
 
 fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     let auth_type_picker = column![
@@ -550,24 +675,22 @@ fn method_dropdown() -> Element<'static, Message> {
         })
         .collect();
 
-    container(
-        column(method_buttons)
-    )
-    .padding(4)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::WHITE)),
-        border: Border {
-            color: Color::from_rgb(0.9, 0.9, 0.9),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        text_color: None,
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
-            offset: Vector::new(0.0, 2.0),
-            blur_radius: 4.0,
-        },
-        snap: true,
-    })
-    .into()
+    container(column(method_buttons))
+        .padding(4)
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::WHITE)),
+            border: Border {
+                color: Color::from_rgb(0.9, 0.9, 0.9),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            text_color: None,
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 4.0,
+            },
+            snap: true,
+        })
+        .into()
 }

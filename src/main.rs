@@ -85,7 +85,7 @@ impl Default for BeamApp {
                 api_key_header: "X-API-Key".to_string(),
             },
             response_panel: ResponsePanel::new(),
-            request_body_content: text_editor::Content::new(),
+            request_panel: RequestPanel::default(),
             request_start_time: None,
 
             // Initialize with empty environments
@@ -500,30 +500,10 @@ impl BeamApp {
                 Task::none()
             }
             Message::BodyChanged(action) => {
-                // Only trigger auto-save for actual content-changing actions
-                // Don't save for navigation actions like clicking, selecting, scrolling
-                let should_save = match &action {
-                    text_editor::Action::Edit(_) => true, // Only Edit actions change content
-                    _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
-                };
-
-                self.request_body_content.perform(action);
+                let (body_text, task) = self.request_panel.handle_body_changed(action, self.last_opened_request);
                 // Sync the String body with the text editor content
-                self.current_request.body = self.request_body_content.text();
-
-                if should_save {
-                    // Emit auto-save message if we have a current request
-                    if let Some((collection_index, request_index)) = self.last_opened_request {
-                        Task::perform(
-                            async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Body } },
-                            |msg| msg,
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                }
+                self.current_request.body = body_text;
+                task
             }
             Message::ResponsePanel(action) => {
                 self.response_panel.update(action)
@@ -1568,8 +1548,7 @@ impl BeamApp {
                         let current_request = request_config.clone();
                         info!("====1: ");
                         // Sync the request body content with the loaded body
-                        self.request_body_content.perform(text_editor::Action::SelectAll);
-                        self.request_body_content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(current_request.body.clone().into())));
+                        self.request_panel.set_body_content(current_request.body.clone());
                         info!("====2: ");
                         // Update the URL string with the loaded URL
                         self.url = current_request.url.clone();
@@ -1753,21 +1732,10 @@ impl BeamApp {
     }
 
     fn request_config_view(&self) -> Element<'_, Message> {
-        // Get environment variables for the active environment
-        // let environment_variables = if let Some(env_index) = self.active_environment {
-        //     if let Some(env) = self.environments.get(env_index) {
-        //         env.variables.clone()
-        //     } else {
-        //         std::collections::HashMap::new()
-        //     }
-        // } else {
-        //     std::collections::HashMap::new()
-        // };
-
         request_panel(
             &self.current_request,
             &self.url,
-            &self.request_body_content,
+            &self.request_panel,
             self.response_panel.is_loading,
             &self.environments,
             self.active_environment,

@@ -2,6 +2,7 @@ use iced::widget::{text_editor, pane_grid};
 use iced::{Color};
 use iced::advanced::text::Highlighter;
 use crate::storage::StorageManager;
+use crate::ui::request::RequestPanel;
 use std::collections::HashMap;
 use std::time::Instant;
 use log::{info};
@@ -53,7 +54,7 @@ pub struct BeamApp {
     pub current_request: RequestConfig,
     pub url: String,
     pub response_panel: ResponsePanel,
-    pub request_body_content: text_editor::Content,
+    pub request_panel: RequestPanel,
     pub request_start_time: Option<std::time::Instant>,
 
     // Environment management
