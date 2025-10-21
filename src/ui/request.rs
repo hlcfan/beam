@@ -5,7 +5,199 @@ use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
     text_editor, text_input,
 };
-use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector};
+use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector, Task};
+
+#[derive(Debug, Clone)]
+pub enum Action {
+    TabSelected(RequestTab),
+    HeaderKeyChanged(usize, String),
+    HeaderValueChanged(usize, String),
+    AddHeader,
+    RemoveHeader(usize),
+    ParamKeyChanged(usize, String),
+    ParamValueChanged(usize, String),
+    AddParam,
+    RemoveParam(usize),
+    BodyChanged(text_editor::Action),
+    AuthTypeChanged(AuthType),
+    BearerTokenChanged(String),
+    BasicUsernameChanged(String),
+    BasicPasswordChanged(String),
+    ApiKeyChanged(String),
+    ApiKeyHeaderChanged(String),
+    MethodChanged(HttpMethod),
+    ToggleMethodMenu,
+    CloseMethodMenu,
+    // Higher-level actions that need to be forwarded to main app
+    SendRequest,
+    CancelRequest,
+    SendButtonHovered(bool),
+    CancelButtonHovered(bool),
+    OpenEnvironmentPopup,
+    EnvironmentSelected(usize),
+    DoNothing,
+    None,
+}
+
+#[derive(Debug)]
+pub struct RequestPanel {
+    pub config: RequestConfig,
+    pub request_body_content: text_editor::Content,
+    pub method_menu_open: bool,
+}
+
+impl RequestPanel {
+    pub fn new() -> Self {
+        Self {
+            config: RequestConfig {
+                method: HttpMethod::GET,
+                url: String::new(),
+                headers: vec![
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                    ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
+                ],
+                params: vec![],
+                body: String::new(),
+                content_type: "application/json".to_string(),
+                auth_type: AuthType::None,
+                selected_tab: RequestTab::Body,
+                bearer_token: String::new(),
+                basic_username: String::new(),
+                basic_password: String::new(),
+                api_key: String::new(),
+                api_key_header: "X-API-Key".to_string(),
+            },
+            request_body_content: text_editor::Content::new(),
+            method_menu_open: false,
+        }
+    }
+
+    pub fn update(&mut self, action: Action) -> Task<Message> {
+        match action {
+            Action::TabSelected(tab) => {
+                self.config.selected_tab = tab;
+                Task::none()
+            }
+            Action::HeaderKeyChanged(index, key) => {
+                if let Some(header) = self.config.headers.get_mut(index) {
+                    header.0 = key;
+                }
+                Task::none()
+            }
+            Action::HeaderValueChanged(index, value) => {
+                if let Some(header) = self.config.headers.get_mut(index) {
+                    header.1 = value;
+                }
+                Task::none()
+            }
+            Action::AddHeader => {
+                self.config.headers.push((String::new(), String::new()));
+                Task::none()
+            }
+            Action::RemoveHeader(index) => {
+                if index < self.config.headers.len() {
+                    self.config.headers.remove(index);
+                }
+                Task::none()
+            }
+            Action::ParamKeyChanged(index, key) => {
+                if let Some(param) = self.config.params.get_mut(index) {
+                    param.0 = key;
+                }
+                Task::none()
+            }
+            Action::ParamValueChanged(index, value) => {
+                if let Some(param) = self.config.params.get_mut(index) {
+                    param.1 = value;
+                }
+                Task::none()
+            }
+            Action::AddParam => {
+                self.config.params.push((String::new(), String::new()));
+                Task::none()
+            }
+            Action::RemoveParam(index) => {
+                if index < self.config.params.len() {
+                    self.config.params.remove(index);
+                }
+                Task::none()
+            }
+            Action::BodyChanged(text_action) => {
+                self.request_body_content.perform(text_action);
+                self.config.body = self.request_body_content.text();
+                Task::none()
+            }
+            Action::AuthTypeChanged(auth_type) => {
+                self.config.auth_type = auth_type;
+                Task::none()
+            }
+            Action::BearerTokenChanged(token) => {
+                self.config.bearer_token = token;
+                Task::none()
+            }
+            Action::BasicUsernameChanged(username) => {
+                self.config.basic_username = username;
+                Task::none()
+            }
+            Action::BasicPasswordChanged(password) => {
+                self.config.basic_password = password;
+                Task::none()
+            }
+            Action::ApiKeyChanged(key) => {
+                self.config.api_key = key;
+                Task::none()
+            }
+            Action::ApiKeyHeaderChanged(header) => {
+                self.config.api_key_header = header;
+                Task::none()
+            }
+            Action::MethodChanged(method) => {
+                self.config.method = method;
+                self.method_menu_open = false;
+                Task::none()
+            }
+            Action::ToggleMethodMenu => {
+                self.method_menu_open = !self.method_menu_open;
+                Task::none()
+            }
+            Action::CloseMethodMenu => {
+                self.method_menu_open = false;
+                Task::none()
+            }
+            // These actions need to be forwarded to the main application
+            Action::SendRequest => Task::done(Message::SendRequest),
+            Action::CancelRequest => Task::done(Message::CancelRequest),
+            Action::SendButtonHovered(hovered) => Task::done(Message::SendButtonHovered(hovered)),
+            Action::CancelButtonHovered(hovered) => Task::done(Message::CancelButtonHovered(hovered)),
+            Action::OpenEnvironmentPopup => Task::done(Message::OpenEnvironmentPopup),
+            Action::EnvironmentSelected(index) => Task::done(Message::EnvironmentSelected(index)),
+            Action::DoNothing => Task::done(Message::DoNothing),
+            Action::None => Task::none(),
+        }
+    }
+
+    pub fn render<'a>(
+        &'a self,
+        url_input: &'a crate::ui::url_input::UrlInput<Message>,
+        is_loading: bool,
+        environments: &'a [Environment],
+        active_environment: Option<usize>,
+        send_button_hovered: bool,
+        cancel_button_hovered: bool,
+    ) -> Element<'a, Action> {
+        request_panel_internal(
+            &self.config,
+            url_input,
+            &self.request_body_content,
+            is_loading,
+            environments,
+            active_environment,
+            self.method_menu_open,
+            send_button_hovered,
+            cancel_button_hovered,
+        )
+    }
+}
 
 // Helper function for send/cancel button styling
 fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button::Style {
@@ -34,7 +226,7 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
     }
 }
 
-pub fn request_panel<'a>(
+pub fn request_panel_internal<'a>(
     config: &'a RequestConfig,
     url_input: &'a crate::ui::url_input::UrlInput<Message>,
     request_body_content: &'a text_editor::Content,
@@ -44,7 +236,7 @@ pub fn request_panel<'a>(
     method_menu_open: bool,
     send_button_hovered: bool,
     cancel_button_hovered: bool,
-) -> Element<'a, Message> {
+) -> Element<'a, Action> {
     // Environment pick_list for the URL row
     let env_pick_list = {
         // Create list of environment options including all environments plus "Configure"
@@ -65,13 +257,13 @@ pub fn request_panel<'a>(
 
         pick_list(env_options, selected_env, |selected| {
             if selected == "Configure" {
-                Message::OpenEnvironmentPopup
+                Action::OpenEnvironmentPopup
             } else {
                 // Find the index of the selected environment
                 if let Some(index) = environments.iter().position(|env| env.name == selected) {
-                    Message::EnvironmentSelected(index)
+                    Action::EnvironmentSelected(index)
                 } else {
-                    Message::DoNothing
+                    Action::DoNothing
                 }
             }
         })
@@ -91,8 +283,11 @@ pub fn request_panel<'a>(
     // Method label with dynamic width
     let method_label = method_button(&config.method);
 
-    // Use the URL input component
-    let url_input_with_hover = url_input.view();
+    // Use the URL input component and map Message to Action
+    let url_input_with_hover = url_input.view().map(|msg| match msg {
+        Message::UrlInputChanged(_) => Action::None, // URL input changes are handled at app level
+        _ => Action::None,
+    });
 
     // Create send/cancel button based on loading state
     let url_valid = !config.url.trim().is_empty()
@@ -111,11 +306,11 @@ pub fn request_panel<'a>(
         mouse_area(
             button(icon(IconName::Cancel).size(16).color(cancel_color))
                 .padding(8)
-                .on_press(Message::CancelRequest)
+                .on_press(Action::CancelRequest)
                 .style(icon_button_style(true)),
         )
-        .on_enter(Message::CancelButtonHovered(true))
-        .on_exit(Message::CancelButtonHovered(false))
+        .on_enter(Action::CancelButtonHovered(true))
+        .on_exit(Action::CancelButtonHovered(false))
     } else {
         // Show send icon when not loading
         let send_color = if send_button_hovered {
@@ -128,19 +323,19 @@ pub fn request_panel<'a>(
             mouse_area(
                 button(icon(IconName::Send).size(16).color(send_color))
                     .padding(8)
-                    .on_press(Message::SendRequest)
+                    .on_press(Action::SendRequest)
                     .style(icon_button_style(true)),
             )
-            .on_enter(Message::SendButtonHovered(true))
-            .on_exit(Message::SendButtonHovered(false))
+            .on_enter(Action::SendButtonHovered(true))
+            .on_exit(Action::SendButtonHovered(false))
         } else {
             mouse_area(
                 button(icon(IconName::Send).size(16).color(send_color))
                     .padding(8)
                     .style(icon_button_style(false)),
             )
-            .on_enter(Message::SendButtonHovered(true))
-            .on_exit(Message::SendButtonHovered(false))
+            .on_enter(Action::SendButtonHovered(true))
+            .on_exit(Action::SendButtonHovered(false))
         }
     };
 
@@ -246,7 +441,7 @@ pub fn request_panel<'a>(
             main_content,
             // Transparent overlay to detect clicks outside the menu
             button(Space::new().width(Length::Fill).height(Length::Fill))
-                .on_press(Message::CloseMethodMenu)
+                .on_press(Action::CloseMethodMenu)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|_theme, _status| button::Style {
@@ -270,9 +465,9 @@ pub fn request_panel<'a>(
     base_layout
 }
 
-fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
+fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Action> {
     button(text(label))
-        .on_press(Message::TabSelected(tab))
+        .on_press(Action::TabSelected(tab))
         .style(move |_theme, status| {
             let base = button::Style::default();
             if is_active {
@@ -309,10 +504,10 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
         .into()
 }
 
-fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, Message> {
+fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, Action> {
     column![
         text_editor(request_body_content)
-            .on_action(Message::BodyChanged)
+            .on_action(Action::BodyChanged)
             .height(Length::Fill)
             .style(|theme: &Theme, _status: text_editor::Status| {
                 text_editor::Style {
@@ -331,7 +526,7 @@ fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, M
     .into()
 }
 
-fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
+fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Action> {
     let mut content = column![
         row![
             text("Key").width(Length::FillPortion(1)),
@@ -344,13 +539,13 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     for (index, (key, value)) in config.params.iter().enumerate() {
         let param_row = row![
             text_input("Key", key)
-                .on_input(move |input| Message::ParamKeyChanged(index, input))
+                .on_input(move |input| Action::ParamKeyChanged(index, input))
                 .width(Length::FillPortion(1)),
             text_input("Value", value)
-                .on_input(move |input| Message::ParamValueChanged(index, input))
+                .on_input(move |input| Action::ParamValueChanged(index, input))
                 .width(Length::FillPortion(1)),
             button(text("×"))
-                .on_press(Message::RemoveParam(index))
+                .on_press(Action::RemoveParam(index))
                 .width(50)
         ]
         .spacing(10)
@@ -361,7 +556,7 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 
     content = content.push(
         button(text("Add Parameter"))
-            .on_press(Message::AddParam)
+            .on_press(Action::AddParam)
             .style(move |_theme, status| {
                 let base = button::Style::default();
                 match status {
@@ -377,7 +572,7 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     scrollable(content.spacing(10)).height(Length::Fill).into()
 }
 
-fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
+fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Action> {
     let mut content = column![
         row![
             text("Key").width(Length::FillPortion(1)),
@@ -389,14 +584,14 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 
     for (index, (key, value)) in config.headers.iter().enumerate() {
         let header_row = row![
-            text_input("Header name", key)
-                .on_input(move |input| Message::HeaderKeyChanged(index, input))
+            text_input("Key", key)
+                .on_input(move |input| Action::HeaderKeyChanged(index, input))
                 .width(Length::FillPortion(1)),
-            text_input("Header value", value)
-                .on_input(move |input| Message::HeaderValueChanged(index, input))
+            text_input("Value", value)
+                .on_input(move |input| Action::HeaderValueChanged(index, input))
                 .width(Length::FillPortion(1)),
             button(text("×"))
-                .on_press(Message::RemoveHeader(index))
+                .on_press(Action::RemoveHeader(index))
                 .width(50)
         ]
         .spacing(10)
@@ -407,7 +602,7 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 
     content = content.push(
         button(text("Add Header"))
-            .on_press(Message::AddHeader)
+            .on_press(Action::AddHeader)
             .style(move |_theme, status| {
                 let base = button::Style::default();
                 match status {
@@ -423,158 +618,134 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     scrollable(content.spacing(10)).height(Length::Fill).into()
 }
 
-fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
-    let auth_type_picker = column![
-        text("Authentication Type"),
-        pick_list(
-            vec![
-                AuthType::None,
-                AuthType::Bearer,
-                AuthType::Basic,
-                AuthType::ApiKey
-            ],
-            Some(config.auth_type.clone()),
-            Message::AuthTypeChanged
-        ),
-    ]
-    .spacing(5);
+fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Action> {
+    let auth_type_picker = pick_list(
+        vec![AuthType::None, AuthType::Bearer, AuthType::Basic, AuthType::ApiKey],
+        Some(config.auth_type.clone()),
+        Action::AuthTypeChanged,
+    );
 
-    let auth_config = match config.auth_type {
-        AuthType::None => {
-            column![text("No authentication required")]
-        }
+    let auth_content: Element<'a, Action> = match config.auth_type {
+        AuthType::None => column![].into(),
         AuthType::Bearer => column![
             text("Bearer Token"),
-            text_input("Enter bearer token", &config.bearer_token)
-                .on_input(Message::BearerTokenChanged)
-                .width(Fill),
+            text_input("Token", &config.bearer_token)
+                 .on_input(Action::BearerTokenChanged)
         ]
-        .spacing(5),
+        .spacing(10)
+        .into(),
         AuthType::Basic => column![
-            text("Basic Authentication"),
             text("Username"),
-            text_input("Enter username", &config.basic_username)
-                .on_input(Message::BasicUsernameChanged)
-                .width(Fill),
+            text_input("Username", &config.basic_username)
+                .on_input(Action::BasicUsernameChanged),
             text("Password"),
-            text_input("Enter password", &config.basic_password)
-                .on_input(Message::BasicPasswordChanged)
-                .width(Fill),
+            text_input("Password", &config.basic_password)
+                 .on_input(Action::BasicPasswordChanged)
         ]
-        .spacing(5),
+        .spacing(10)
+        .into(),
         AuthType::ApiKey => column![
-            text("API Key Authentication"),
-            text("Header Name"),
-            text_input("Header name (e.g., X-API-Key)", &config.api_key_header)
-                .on_input(Message::ApiKeyHeaderChanged)
-                .width(Fill),
             text("API Key"),
-            text_input("Enter API key", &config.api_key)
-                .on_input(Message::ApiKeyChanged)
-                .width(Fill),
+            text_input("Key", &config.api_key)
+                 .on_input(Action::ApiKeyChanged),
+            text("Header Name"),
+            text_input("Header", &config.api_key_header)
+                .on_input(Action::ApiKeyHeaderChanged)
         ]
-        .spacing(5),
+        .spacing(10)
+        .into(),
     };
 
-    column![auth_type_picker, space().height(10), auth_config]
-        .spacing(10)
-        .into()
+    column![
+        text("Authentication Type"),
+        auth_type_picker,
+        auth_content
+    ]
+    .spacing(20)
+    .into()
 }
 
-fn method_button(method: &HttpMethod) -> Element<'_, Message> {
-    button(text(method.to_string()))
-        .on_press(Message::ToggleMethodMenu)
-        .width(Length::Fixed(match method {
-            HttpMethod::GET => 50.0,
-            HttpMethod::PUT => 50.0,
-            HttpMethod::POST => 60.0,
-            HttpMethod::HEAD => 60.0,
-            HttpMethod::PATCH => 75.0,
-            HttpMethod::DELETE => 80.0,
-            HttpMethod::OPTIONS => 90.0,
-        }))
-        .style(|theme: &Theme, _status: Status| button::Style {
-            background: Some(Background::Color(theme.palette().background)),
-            text_color: theme.palette().text,
-            border: Border {
-                color: Color::TRANSPARENT,
-                width: 0.0,
-                radius: 0.0.into(),
-            },
-            shadow: Default::default(),
-            snap: true,
+fn method_button(method: &HttpMethod) -> Element<'_, Action> {
+    let method_text = match method {
+        HttpMethod::GET => "GET",
+        HttpMethod::POST => "POST",
+        HttpMethod::PUT => "PUT",
+        HttpMethod::DELETE => "DELETE",
+        HttpMethod::PATCH => "PATCH",
+        HttpMethod::HEAD => "HEAD",
+        HttpMethod::OPTIONS => "OPTIONS",
+    };
+
+    button(text(method_text))
+        .on_press(Action::ToggleMethodMenu)
+        .style(move |_theme, status| {
+            let base = button::Style::default();
+            match status {
+                Status::Hovered => button::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    ..base
+                },
+                _ => base,
+            }
         })
         .into()
 }
 
-fn method_dropdown() -> Element<'static, Message> {
-    let button_style = |_theme: &Theme, status: Status| {
-        match status {
-            Status::Hovered => button::Style {
-                background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))), // Light gray on hover
-                text_color: Color::BLACK,
-                border: Border::default(),
-                shadow: Shadow::default(),
-                snap: true,
-            },
-            _ => button::Style {
-                background: Some(Background::Color(Color::WHITE)), // White default
-                text_color: Color::BLACK,
-                border: Border::default(),
-                shadow: Shadow::default(),
-                snap: true,
-            },
-        }
-    };
+fn method_dropdown() -> Element<'static, Action> {
+    let methods = vec![
+        HttpMethod::GET,
+        HttpMethod::POST,
+        HttpMethod::PUT,
+        HttpMethod::DELETE,
+        HttpMethod::PATCH,
+        HttpMethod::HEAD,
+        HttpMethod::OPTIONS,
+    ];
 
-    container(
-        column![
-            button(text("GET"))
-                .on_press(Message::MethodChanged(HttpMethod::GET))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-            button(text("POST"))
-                .on_press(Message::MethodChanged(HttpMethod::POST))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-            button(text("PUT"))
-                .on_press(Message::MethodChanged(HttpMethod::PUT))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-            button(text("DELETE"))
-                .on_press(Message::MethodChanged(HttpMethod::DELETE))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-            button(text("PATCH"))
-                .on_press(Message::MethodChanged(HttpMethod::PATCH))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-            button(text("HEAD"))
-                .on_press(Message::MethodChanged(HttpMethod::HEAD))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-            button(text("OPTIONS"))
-                .on_press(Message::MethodChanged(HttpMethod::OPTIONS))
-                .width(Length::Fixed(90.0))
-                .style(button_style),
-        ]
-        .spacing(1),
-    )
-    .padding(4)
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::WHITE)),
-        border: Border {
-            color: Color::from_rgb(0.9, 0.9, 0.9),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        text_color: None,
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
-            offset: Vector::new(0.0, 2.0),
-            blur_radius: 4.0,
-        },
-        snap: true,
-    })
-    .into()
+    let mut dropdown_content = column![];
+
+    for method in methods {
+        let method_text = match method {
+            HttpMethod::GET => "GET",
+            HttpMethod::POST => "POST",
+            HttpMethod::PUT => "PUT",
+            HttpMethod::DELETE => "DELETE",
+            HttpMethod::PATCH => "PATCH",
+            HttpMethod::HEAD => "HEAD",
+            HttpMethod::OPTIONS => "OPTIONS",
+        };
+
+        dropdown_content = dropdown_content.push(
+            button(text(method_text))
+                .on_press(Action::MethodChanged(method))
+                .width(Length::Fill)
+                .style(move |_theme, status| {
+                    let base = button::Style::default();
+                    match status {
+                        Status::Hovered => button::Style {
+                            background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                            ..base
+                        },
+                        _ => base,
+                    }
+                }),
+        );
+    }
+
+    container(dropdown_content)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(Color::WHITE)),
+            border: Border {
+                color: Color::from_rgb(0.8, 0.8, 0.8),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 4.0,
+            },
+            ..Default::default()
+        })
+        .into()
 }

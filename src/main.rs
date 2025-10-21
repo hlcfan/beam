@@ -20,7 +20,7 @@ use log::{info, trace, warn, Log, error};
 
 pub fn main() -> iced::Result {
     env_logger::Builder::from_default_env()
-        .format_timestamp_secs()
+        .format_timestamp_millis()
         .init();
 
     iced::application(
@@ -84,14 +84,10 @@ impl Default for BeamApp {
             url_input: ui::url_input::UrlInput::new("Enter URL...", "")
                 .on_input(Message::UrlInputChanged)
                 .no_border(),
-            response: None,
-            response_body_content: text_editor::Content::new(),
+            response_panel: ResponsePanel::new(),
+            request_panel: ui::request::RequestPanel::new(),
             request_body_content: text_editor::Content::new(),
-            selected_response_tab: ResponseTab::Body,
-
-            is_loading: false,
             request_start_time: None,
-            current_elapsed_time: 0,
 
             // Initialize with empty environments
             environments: vec![],
@@ -118,9 +114,6 @@ impl Default for BeamApp {
             // Storage will be initialized asynchronously
             storage_manager: None,
 
-            // Initialize spinner
-            spinner: Spinner::new(),
-
             // Initialize hover states
             send_button_hovered: false,
             cancel_button_hovered: false,
@@ -133,6 +126,12 @@ impl Default for BeamApp {
 }
 
 impl BeamApp {
+    fn sync_request_panel_state(&mut self) {
+        self.request_panel.config = self.current_request.clone();
+        self.request_panel.request_body_content = self.request_body_content.clone();
+        self.request_panel.method_menu_open = self.method_menu_open;
+    }
+
     fn update_response_content(content: &mut text_editor::Content, body: &str) {
         // Try to format JSON if the content is not too large (limit to 100KB)
         const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
@@ -250,6 +249,7 @@ impl BeamApp {
             Message::MethodChanged(method) => {
                 self.current_request.method = method;
                 self.method_menu_open = false; // Close menu after selection
+                self.sync_request_panel_state();
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -263,9 +263,9 @@ impl BeamApp {
             }
             Message::SendRequest => {
                 // let now = std::time::SystemTime::now();
-                self.is_loading = true;
+                self.response_panel.set_loading(true);
                 self.request_start_time = Some(std::time::Instant::now());
-                self.current_elapsed_time = 0;
+                self.response_panel.set_elapsed_time(0);
                 info!("DEBUG: SendRequest message received");
 
                 // Create a copy of the config with resolved variables
@@ -300,7 +300,7 @@ impl BeamApp {
                 Task::perform(send_request(config), Message::RequestCompleted)
             }
             Message::CancelRequest => {
-                self.is_loading = false;
+                self.response_panel.set_loading(false);
                 Task::none()
             }
             Message::SendButtonHovered(hovered) => {
@@ -312,16 +312,18 @@ impl BeamApp {
                 Task::none()
             }
             Message::RequestCompleted(result) => {
-                self.is_loading = false;
+                info!("===request completed");
+                self.response_panel.set_loading(false);
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        Self::update_response_content(&mut self.response_body_content, &response.body);
-                        self.response = Some(response);
+                        Self::update_response_content(self.response_panel.get_response_body_content_mut(), &response.body);
+                        info!("===response updated");
+                        self.response_panel.set_response(Some(response));
                     }
                     Err(error) => {
-                        Self::update_response_content(&mut self.response_body_content, &error);
-                        self.response = Some(ResponseData {
+                        Self::update_response_content(self.response_panel.get_response_body_content_mut(), &error);
+                        self.response_panel.set_response(Some(ResponseData {
                             status: 0,
                             status_text: "Error".to_string(),
                             headers: vec![],
@@ -330,18 +332,20 @@ impl BeamApp {
                             is_binary: false,
                             size: 0,
                             time: 0,
-                        });
+                        }));
                     }
                 }
+
+                info!("===response all done");
                 Task::none()
             }
             Message::TimerTick => {
                 if let Some(start_time) = self.request_start_time {
-                    self.current_elapsed_time = start_time.elapsed().as_millis() as u64;
+                    self.response_panel.set_elapsed_time(start_time.elapsed().as_millis() as u64);
                 }
                 // Update spinner animation
-                if self.is_loading {
-                    self.spinner.update();
+                if self.response_panel.is_loading {
+                    self.response_panel.update_spinner();
                 }
                 Task::none()
             }
@@ -399,6 +403,7 @@ impl BeamApp {
                             self.current_request.url = request.url.clone();
 
                             self.url_input.set_value(request.url.clone());
+                            self.sync_request_panel_state();
 
                             // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
@@ -419,12 +424,10 @@ impl BeamApp {
             }
             Message::TabSelected(tab) => {
                 self.current_request.selected_tab = tab;
+                self.sync_request_panel_state();
                 Task::none()
             }
-            Message::ResponseTabSelected(tab) => {
-                self.selected_response_tab = tab;
-                Task::none()
-            }
+
             Message::HeaderKeyChanged(index, key) => {
                 if let Some(header) = self.current_request.headers.get_mut(index) {
                     header.0 = key;
@@ -516,6 +519,7 @@ impl BeamApp {
                 self.request_body_content.perform(action);
                 // Sync the String body with the text editor content
                 self.current_request.body = self.request_body_content.text();
+                self.sync_request_panel_state();
 
                 if should_save {
                     // Emit auto-save message if we have a current request
@@ -531,28 +535,8 @@ impl BeamApp {
                     Task::none()
                 }
             }
-            Message::ResponseBodyAction(action) => {
-                // Filter actions to allow only read-only operations
-                // Allow: select, copy, scroll, move cursor
-                // Block: edit actions (insert, paste, delete, etc.)
-                match &action {
-                    text_editor::Action::Move(_) |
-                    text_editor::Action::Select(_) |
-                    text_editor::Action::SelectWord |
-                    text_editor::Action::SelectLine |
-                    text_editor::Action::SelectAll |
-                    text_editor::Action::Click(_) |
-                    text_editor::Action::Drag(_) |
-                    text_editor::Action::Scroll { .. } => {
-                        // Allow read-only actions
-                        self.response_body_content.perform(action);
-                    }
-                    text_editor::Action::Edit(_) => {
-                        // Block all edit actions (insert, paste, delete, etc.)
-                        // Do nothing - this prevents editing
-                    }
-                }
-                Task::none()
+            Message::ResponsePanel(action) => {
+                self.response_panel.update(action)
             }
 
             Message::AuthTypeChanged(auth_type) => {
@@ -929,7 +913,6 @@ impl BeamApp {
                     Task::none()
                 }
             }
-
             Message::AddHttpRequest(collection_index) => {
                 if let Some(collection) = self.collections.get_mut(collection_index) {
                     let new_request = SavedRequest {
@@ -1012,9 +995,9 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.current_request.method = request.method.clone();
                         self.current_request.url = request.url.clone();
-                        self.is_loading = true;
+                        self.response_panel.set_loading(true);
                         self.request_start_time = Some(std::time::Instant::now());
-                        self.current_elapsed_time = 0;
+                        self.response_panel.set_elapsed_time(0);
                         let config = self.current_request.clone();
 
                         return Task::perform(send_request(config), Message::RequestCompleted);
@@ -1232,13 +1215,14 @@ impl BeamApp {
             }
             Message::ToggleMethodMenu => {
                 self.method_menu_open = !self.method_menu_open;
+                self.sync_request_panel_state();
                 Task::none()
             }
             Message::CloseMethodMenu => {
                 self.method_menu_open = false;
+                self.sync_request_panel_state();
                 Task::none()
             }
-
             // Storage operations
             Message::InitializeStorage => {
                 Task::perform(
@@ -1330,6 +1314,7 @@ impl BeamApp {
                     }
                 }
             }
+            // TODO: not used event
             Message::SaveCollection(collection_index) => {
                 if let Some(collection) = self.collections.get(collection_index) {
                     let collection = collection.clone();
@@ -1610,7 +1595,7 @@ impl BeamApp {
                         let current_request = request_config.clone();
                         info!("====1: ");
                         // Sync the request body content with the loaded body
-                        // self.request_body_content = text_editor::Content::with_text(&);
+                        self.request_body_content.perform(text_editor::Action::SelectAll);
                         self.request_body_content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(current_request.body.clone().into())));
                         info!("====2: ");
                         // Update the URL input with the loaded URL
@@ -1625,6 +1610,7 @@ impl BeamApp {
                             }
                         }
                         self.current_request = current_request;
+                        self.sync_request_panel_state();
                         info!("===request load successed");
                     }
                     Ok(None) => {
@@ -1813,28 +1799,49 @@ impl BeamApp {
             std::collections::HashMap::new()
         };
 
-        request_panel(
-            &self.current_request,
+        self.request_panel.render(
             &self.url_input,
-            &self.request_body_content,
-            self.is_loading,
+            self.response_panel.is_loading,
             &self.environments,
             self.active_environment,
-            self.method_menu_open,
             self.send_button_hovered,
             self.cancel_button_hovered
-        )
+        ).map(|action| {
+            // Convert request panel actions to main app messages
+            match action {
+                ui::request::Action::SendRequest => Message::SendRequest,
+                ui::request::Action::CancelRequest => Message::CancelRequest,
+                ui::request::Action::SendButtonHovered(hovered) => Message::SendButtonHovered(hovered),
+                ui::request::Action::CancelButtonHovered(hovered) => Message::CancelButtonHovered(hovered),
+                ui::request::Action::OpenEnvironmentPopup => Message::OpenEnvironmentPopup,
+                ui::request::Action::EnvironmentSelected(index) => Message::EnvironmentSelected(index),
+                ui::request::Action::MethodChanged(method) => Message::MethodChanged(method),
+                ui::request::Action::ToggleMethodMenu => Message::ToggleMethodMenu,
+                ui::request::Action::CloseMethodMenu => Message::CloseMethodMenu,
+                ui::request::Action::TabSelected(tab) => Message::TabSelected(tab),
+                ui::request::Action::HeaderKeyChanged(index, key) => Message::HeaderKeyChanged(index, key),
+                ui::request::Action::HeaderValueChanged(index, value) => Message::HeaderValueChanged(index, value),
+                ui::request::Action::AddHeader => Message::AddHeader,
+                ui::request::Action::RemoveHeader(index) => Message::RemoveHeader(index),
+                ui::request::Action::ParamKeyChanged(index, key) => Message::ParamKeyChanged(index, key),
+                ui::request::Action::ParamValueChanged(index, value) => Message::ParamValueChanged(index, value),
+                ui::request::Action::AddParam => Message::AddParam,
+                ui::request::Action::RemoveParam(index) => Message::RemoveParam(index),
+                ui::request::Action::BodyChanged(action) => Message::BodyChanged(action),
+                ui::request::Action::AuthTypeChanged(auth_type) => Message::AuthTypeChanged(auth_type),
+                ui::request::Action::BearerTokenChanged(token) => Message::BearerTokenChanged(token),
+                ui::request::Action::BasicUsernameChanged(username) => Message::BasicUsernameChanged(username),
+                ui::request::Action::BasicPasswordChanged(password) => Message::BasicPasswordChanged(password),
+                ui::request::Action::ApiKeyChanged(key) => Message::ApiKeyChanged(key),
+                ui::request::Action::ApiKeyHeaderChanged(header) => Message::ApiKeyHeaderChanged(header),
+                ui::request::Action::DoNothing => Message::DoNothing,
+                ui::request::Action::None => Message::DoNothing,
+            }
+        })
     }
 
     fn response_view(&self) -> Element<'_, Message> {
-        response_panel(
-            &self.response,
-            &self.response_body_content,
-            self.selected_response_tab.clone(),
-            self.is_loading,
-            self.current_elapsed_time,
-            &self.spinner,
-        )
+        self.response_panel.render().map(Message::ResponsePanel)
     }
 
     fn environment_popup_view(&self) -> Element<'_, Message> {
@@ -2162,7 +2169,7 @@ impl BeamApp {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        let timer_subscription = if self.is_loading {
+        let timer_subscription = if self.response_panel.is_loading {
             iced::time::every(std::time::Duration::from_millis(100))
                 .map(|_| Message::TimerTick)
         } else {

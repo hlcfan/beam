@@ -52,14 +52,10 @@ pub struct BeamApp {
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
     pub url_input: crate::ui::url_input::UrlInput<Message>,
-    pub response: Option<ResponseData>,
-    pub response_body_content: text_editor::Content,
+    pub response_panel: ResponsePanel,
+    pub request_panel: crate::ui::request::RequestPanel,
     pub request_body_content: text_editor::Content,
-    pub selected_response_tab: ResponseTab,
-
-    pub is_loading: bool,
     pub request_start_time: Option<std::time::Instant>,
-    pub current_elapsed_time: u64, // milliseconds
 
     // Environment management
     pub environments: Vec<Environment>,
@@ -88,9 +84,6 @@ pub struct BeamApp {
     // Storage
     #[allow(dead_code)]
     pub storage_manager: Option<StorageManager>,
-
-    // Spinner for loading animation
-    pub spinner: crate::ui::Spinner,
 
     // Hover states for buttons
     pub send_button_hovered: bool,
@@ -156,7 +149,7 @@ pub struct SerializableRequestConfig {
     pub basic_password: String,
     pub api_key: String,
     pub api_key_header: String,
-    
+
     // Metadata field (optional for backward compatibility)
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
@@ -259,7 +252,7 @@ pub enum RequestTab {
     Environment,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResponseTab {
     Body,
     Headers,
@@ -324,7 +317,6 @@ pub enum Message {
     CollectionToggled(usize),
     RequestSelected(usize, usize),
     TabSelected(RequestTab),
-    ResponseTabSelected(ResponseTab),
     HeaderKeyChanged(usize, String),
     HeaderValueChanged(usize, String),
     AddHeader,
@@ -334,7 +326,7 @@ pub enum Message {
     AddParam,
     RemoveParam(usize),
     BodyChanged(text_editor::Action),
-    ResponseBodyAction(text_editor::Action),
+    ResponsePanel(crate::ui::response::Action),
     AuthTypeChanged(AuthType),
     BearerTokenChanged(String),
     BasicUsernameChanged(String),
@@ -460,4 +452,14 @@ impl std::fmt::Display for AuthType {
             AuthType::ApiKey => write!(f, "API Key"),
         }
     }
+}
+
+#[derive(Debug)]
+pub struct ResponsePanel {
+    pub response: Option<ResponseData>,
+    pub response_body_content: text_editor::Content,
+    pub selected_tab: ResponseTab,
+    pub is_loading: bool,
+    pub current_elapsed_time: u64,
+    pub spinner: crate::ui::Spinner,
 }
