@@ -1,12 +1,10 @@
-use iced::widget::{text, row, column, container, stack, mouse_area, Space, text_input, tooltip};
-use iced::{Element, Length, Background, Border, Color, Theme, Alignment, Shadow, Vector, Point, Size, Rectangle, Padding, widget};
-use iced::event::{Event, Status};
-use iced::keyboard::{self, Key, Modifiers};
-use iced::mouse::{self, Button, Cursor};
-use std::time::{Duration, Instant};
-use std::marker::PhantomData;
+use iced::widget::{Space, container, mouse_area, row, stack, text, text_input, tooltip};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Padding, Shadow, Theme, Vector, widget,
+};
 use regex::Regex;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 #[derive(Debug, Clone)]
 pub struct HistoryEntry {
@@ -162,6 +160,67 @@ where
                 radius: 4.0.into(),
             },
             _phantom: PhantomData,
+        }
+    }
+}
+
+impl<Message> From<UrlInput<Message>> for Element<'static, Message>
+where
+    Message: Clone + 'static,
+{
+    fn from(input: UrlInput<Message>) -> Self {
+        // Implement the entire view logic here, taking ownership of input
+        let mut text_input_widget = if input.is_secure {
+            text_input(&input.placeholder, &input.value).secure(true)
+        } else {
+            text_input(&input.placeholder, &input.value)
+        };
+
+        text_input_widget = text_input_widget
+            .width(input.width)
+            .size(input.size)
+            .padding(input.padding);
+
+        if let Some(id) = &input.id {
+            text_input_widget = text_input_widget.id(id.clone());
+        }
+
+        if let Some(font) = input.font {
+            text_input_widget = text_input_widget.font(font);
+        }
+
+        if let Some(callback) = input.on_input {
+            text_input_widget = text_input_widget.on_input(callback);
+        }
+
+        if let Some(ref message) = input.on_submit {
+            text_input_widget = text_input_widget.on_submit(message.clone());
+        }
+
+        // Create the base input with custom styling
+        let border = input.border.clone();
+        let styled_input = text_input_widget.style(move |theme: &Theme, status| {
+            let palette = theme.palette();
+
+            text_input::Style {
+                background: Background::Color(palette.background),
+                border: border.clone(),
+                icon: palette.text,
+                placeholder: palette.text,
+                value: palette.text,
+                selection: palette.primary,
+            }
+        });
+
+        // Create the final element with syntax highlighting if enabled
+        if input.syntax_highlighting.enabled && !input.value.is_empty() {
+            stack![
+                styled_input,
+                // input.create_syntax_overlay() // Can't call this since we consumed input
+            ]
+            .into()
+        } else {
+            styled_input.into()
         }
     }
 }
@@ -354,9 +413,7 @@ where
             let segment_text = segment.text.clone(); // Clone to avoid lifetime issues
 
             if segment.segment_type != SegmentType::Normal {
-                let mut text_element = text(segment_text.clone())
-                    .size(self.size)
-                    .color(color);
+                let mut text_element = text(segment_text.clone()).size(self.size).color(color);
 
                 // Apply the same font as the text input if specified
                 if let Some(font) = self.font {
@@ -366,50 +423,45 @@ where
                 // Add tooltip for variable segments
                 if segment.segment_type == SegmentType::Variable {
                     // Extract variable name (remove {{ and }})
-                    let variable_name = segment_text.trim_start_matches("{{").trim_end_matches("}}").trim();
+                    let variable_name = segment_text
+                        .trim_start_matches("{{")
+                        .trim_end_matches("}}")
+                        .trim();
 
                     // Get actual value from environment variables or show "undefined"
-                    let variable_value = self.environment_variables
+                    let variable_value = self
+                        .environment_variables
                         .get(variable_name)
                         .map(|v| v.as_str())
                         .unwrap_or("undefined");
 
-                    let tooltip_content = container(
-                        text(variable_value)
-                            .size(14)
-                            .color(Color::WHITE)
-                    )
-                    .padding(8)
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.2, 0.2, 0.2))),
-                        border: Border {
-                            color: Color::from_rgb(0.6, 0.6, 0.6),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        shadow: Shadow {
-                            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                            offset: Vector::new(0.0, 2.0),
-                            blur_radius: 4.0,
-                        },
-                        text_color: Some(Color::WHITE),
-                        snap: false,
-                    });
+                    let tooltip_content =
+                        container(text(variable_value).size(14).color(Color::WHITE))
+                            .padding(8)
+                            .style(|_theme: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb(0.2, 0.2, 0.2))),
+                                border: Border {
+                                    color: Color::from_rgb(0.6, 0.6, 0.6),
+                                    width: 1.0,
+                                    radius: 4.0.into(),
+                                },
+                                shadow: Shadow {
+                                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+                                    offset: Vector::new(0.0, 2.0),
+                                    blur_radius: 4.0,
+                                },
+                                text_color: Some(Color::WHITE),
+                                snap: false,
+                            });
 
                     row_elements.push(
-                        tooltip(
-                            text_element,
-                            tooltip_content,
-                            tooltip::Position::Top
-                        )
-                        .into()
+                        tooltip(text_element, tooltip_content, tooltip::Position::Top).into(),
                     );
                 }
             } else {
                 // For normal text, add transparent space to maintain positioning
-                let mut transparent_text = text(segment_text)
-                    .size(self.size)
-                    .color(Color::TRANSPARENT);
+                let mut transparent_text =
+                    text(segment_text).size(self.size).color(Color::TRANSPARENT);
 
                 // Apply the same font as the text input if specified
                 if let Some(font) = self.font {
@@ -425,73 +477,13 @@ where
         } else {
             // Create the overlay wrapped in a mouse_area that ignores all events
             mouse_area(
-                container(
-                    row(row_elements)
-                        .align_y(Alignment::Center)
-                )
-                .padding(self.padding)
+                container(row(row_elements).align_y(Alignment::Center)).padding(self.padding),
             )
             .into()
         }
     }
 
 
-
-    pub fn view(&self) -> Element<Message> {
-        let mut input = if self.is_secure {
-            text_input(&self.placeholder, &self.value)
-                .secure(true)
-        } else {
-            text_input(&self.placeholder, &self.value)
-        };
-
-        input = input
-            .width(self.width)
-            .size(self.size)
-            .padding(self.padding);
-
-        if let Some(id) = &self.id {
-            input = input.id(id.clone());
-        }
-
-        if let Some(font) = self.font {
-            input = input.font(font);
-        }
-
-        if let Some(callback) = self.on_input {
-            input = input.on_input(callback);
-        }
-
-        if let Some(ref message) = self.on_submit {
-            input = input.on_submit(message.clone());
-        }
-
-        // Create the base input with custom styling
-        let border = self.border.clone();
-        let styled_input = input.style(move |theme: &Theme, status| {
-            let palette = theme.palette();
-
-            text_input::Style {
-                background: Background::Color(palette.background),
-                border: border.clone(),
-                icon: palette.text,
-                placeholder: palette.text,
-                value: palette.text,
-                selection: palette.primary,
-            }
-        });
-
-        // Create the final element with syntax highlighting if enabled
-        if self.syntax_highlighting.enabled && !self.value.is_empty() {
-            stack![
-                styled_input,
-                // self.create_syntax_overlay()
-            ]
-            .into()
-        } else {
-            styled_input.into()
-        }
-    }
 }
 
 /// Wrapper for CustomTextInput with callback support
@@ -519,7 +511,11 @@ where
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
-        self.input.view()
+    pub fn view<'a>(&'a self) -> Element<'static, Message>
+    where
+        Message: 'static
+    {
+        self.input.clone().into()
     }
 }
+

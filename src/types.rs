@@ -51,9 +51,8 @@ pub struct BeamApp {
     pub panes: pane_grid::State<PaneContent>,
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
-    pub url_input: crate::ui::url_input::UrlInput<Message>,
+    pub url: String,
     pub response_panel: ResponsePanel,
-    pub request_panel: crate::ui::request::RequestPanel,
     pub request_body_content: text_editor::Content,
     pub request_start_time: Option<std::time::Instant>,
 

@@ -19,7 +19,9 @@ use serde_json;
 use log::{info, trace, warn, Log, error};
 
 pub fn main() -> iced::Result {
-    env_logger::Builder::from_default_env()
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info")
+    )
         .format_timestamp_millis()
         .init();
 
@@ -63,6 +65,7 @@ impl Default for BeamApp {
         Self {
             panes,
             collections,
+            url: String::new(),
             current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
@@ -81,11 +84,7 @@ impl Default for BeamApp {
                 api_key: String::new(),
                 api_key_header: "X-API-Key".to_string(),
             },
-            url_input: ui::url_input::UrlInput::new("Enter URL...", "")
-                .on_input(Message::UrlInputChanged)
-                .no_border(),
             response_panel: ResponsePanel::new(),
-            request_panel: ui::request::RequestPanel::new(),
             request_body_content: text_editor::Content::new(),
             request_start_time: None,
 
@@ -126,12 +125,6 @@ impl Default for BeamApp {
 }
 
 impl BeamApp {
-    fn sync_request_panel_state(&mut self) {
-        self.request_panel.config = self.current_request.clone();
-        self.request_panel.request_body_content = self.request_body_content.clone();
-        self.request_panel.method_menu_open = self.method_menu_open;
-    }
-
     fn update_response_content(content: &mut text_editor::Content, body: &str) {
         // Try to format JSON if the content is not too large (limit to 100KB)
         const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
@@ -212,7 +205,8 @@ impl BeamApp {
                 self.current_request.url = url.clone();
 
                 // Update the URL input widget value
-                self.url_input.set_value(url.clone());
+                // TODO: Call requestConfig update to update the value
+                // self.url_input.set_value(url.clone());
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -249,7 +243,6 @@ impl BeamApp {
             Message::MethodChanged(method) => {
                 self.current_request.method = method;
                 self.method_menu_open = false; // Close menu after selection
-                self.sync_request_panel_state();
 
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
@@ -402,8 +395,7 @@ impl BeamApp {
                             self.current_request.method = request.method.clone();
                             self.current_request.url = request.url.clone();
 
-                            self.url_input.set_value(request.url.clone());
-                            self.sync_request_panel_state();
+                            self.url = request.url.clone();
 
                             // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
                             Task::perform(
@@ -424,7 +416,6 @@ impl BeamApp {
             }
             Message::TabSelected(tab) => {
                 self.current_request.selected_tab = tab;
-                self.sync_request_panel_state();
                 Task::none()
             }
 
@@ -519,7 +510,6 @@ impl BeamApp {
                 self.request_body_content.perform(action);
                 // Sync the String body with the text editor content
                 self.current_request.body = self.request_body_content.text();
-                self.sync_request_panel_state();
 
                 if should_save {
                     // Emit auto-save message if we have a current request
@@ -654,9 +644,8 @@ impl BeamApp {
                 if index < self.environments.len() {
                     self.active_environment = Some(index);
 
-                    // Update url_input with environment variables
-                    let environment_variables = self.environments[index].variables.clone();
-                    self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                    // Environment variables will be applied during URL resolution
+                    // No direct field updates needed as url_input component was removed
 
                     // Save the active environment to storage
                     let environments = self.environments.clone();
@@ -790,11 +779,7 @@ impl BeamApp {
                         env.variables.insert(key, value.clone());
                     }
 
-                    // Update url_input if this is the active environment
-                    if self.active_environment == Some(env_index) {
-                        let environment_variables = env.variables.clone();
-                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
-                    }
+                    // If this is the active environment, URL updates will reflect on next render
 
                     // Save environments after variable key change
                     let environments = self.environments.clone();
@@ -823,11 +808,8 @@ impl BeamApp {
                         env.variables.insert(key.clone(), value);
                     }
 
-                    // Update url_input if this is the active environment
-                    if self.active_environment == Some(env_index) {
-                        let environment_variables = env.variables.clone();
-                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
-                    }
+                    // Environment variables will be applied during URL resolution
+                    // No direct field updates needed as url_input component was removed
 
                     // Save environments after variable value change
                     let environments = self.environments.clone();
@@ -854,11 +836,8 @@ impl BeamApp {
                     let var_count = env.variables.len();
                     env.add_variable(format!("variable_{}", var_count + 1), String::new());
 
-                    // Update url_input if this is the active environment
-                    if self.active_environment == Some(env_index) {
-                        let environment_variables = env.variables.clone();
-                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
-                    }
+                    // Environment variables will be applied during URL resolution
+                    // No direct field updates needed as url_input component was removed
 
                     // Save environments after adding variable
                     let environments = self.environments.clone();
@@ -887,11 +866,8 @@ impl BeamApp {
                         env.variables.remove(key);
                     }
 
-                    // Update url_input if this is the active environment
-                    if self.active_environment == Some(env_index) {
-                        let environment_variables = env.variables.clone();
-                        self.url_input = self.url_input.clone().environment_variables(environment_variables);
-                    }
+                    // Environment variables will be applied during URL resolution
+                    // No direct field updates needed as url_input component was removed
 
                     // Save environments after removing variable
                     let environments = self.environments.clone();
@@ -1215,12 +1191,10 @@ impl BeamApp {
             }
             Message::ToggleMethodMenu => {
                 self.method_menu_open = !self.method_menu_open;
-                self.sync_request_panel_state();
                 Task::none()
             }
             Message::CloseMethodMenu => {
                 self.method_menu_open = false;
-                self.sync_request_panel_state();
                 Task::none()
             }
             // Storage operations
@@ -1403,9 +1377,8 @@ impl BeamApp {
                         if let Some(index) = self.environments.iter().position(|env| env.name == active_env_name) {
                             self.active_environment = Some(index);
 
-                            // Update url_input with environment variables
-                            let environment_variables = self.environments[index].variables.clone();
-                            self.url_input = self.url_input.clone().environment_variables(environment_variables);
+                            // Environment variables will be applied during URL resolution
+                            // No direct field updates needed as url_input component was removed
                         }
                     }
                     Ok(None) => {
@@ -1598,19 +1571,11 @@ impl BeamApp {
                         self.request_body_content.perform(text_editor::Action::SelectAll);
                         self.request_body_content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(current_request.body.clone().into())));
                         info!("====2: ");
-                        // Update the URL input with the loaded URL
-                        self.url_input.set_value(current_request.url.clone());
+                        // Update the URL string with the loaded URL
+                        self.url = current_request.url.clone();
                         info!("====3: ");
-                        // Update URL input with environment variables if there's an active environment
-                        if let Some(env_index) = self.active_environment {
-                            if let Some(env) = self.environments.get(env_index) {
-                                let environment_variables = env.variables.clone();
-                                self.url_input = self.url_input.clone().environment_variables(environment_variables);
-                                info!("====4: ");
-                            }
-                        }
+                        // Environment variables applied to URL input are handled during rendering
                         self.current_request = current_request;
-                        self.sync_request_panel_state();
                         info!("===request load successed");
                     }
                     Ok(None) => {
@@ -1789,55 +1754,27 @@ impl BeamApp {
 
     fn request_config_view(&self) -> Element<'_, Message> {
         // Get environment variables for the active environment
-        let environment_variables = if let Some(env_index) = self.active_environment {
-            if let Some(env) = self.environments.get(env_index) {
-                env.variables.clone()
-            } else {
-                std::collections::HashMap::new()
-            }
-        } else {
-            std::collections::HashMap::new()
-        };
+        // let environment_variables = if let Some(env_index) = self.active_environment {
+        //     if let Some(env) = self.environments.get(env_index) {
+        //         env.variables.clone()
+        //     } else {
+        //         std::collections::HashMap::new()
+        //     }
+        // } else {
+        //     std::collections::HashMap::new()
+        // };
 
-        self.request_panel.render(
-            &self.url_input,
+        request_panel(
+            &self.current_request,
+            &self.url,
+            &self.request_body_content,
             self.response_panel.is_loading,
             &self.environments,
             self.active_environment,
+            self.method_menu_open,
             self.send_button_hovered,
             self.cancel_button_hovered
-        ).map(|action| {
-            // Convert request panel actions to main app messages
-            match action {
-                ui::request::Action::SendRequest => Message::SendRequest,
-                ui::request::Action::CancelRequest => Message::CancelRequest,
-                ui::request::Action::SendButtonHovered(hovered) => Message::SendButtonHovered(hovered),
-                ui::request::Action::CancelButtonHovered(hovered) => Message::CancelButtonHovered(hovered),
-                ui::request::Action::OpenEnvironmentPopup => Message::OpenEnvironmentPopup,
-                ui::request::Action::EnvironmentSelected(index) => Message::EnvironmentSelected(index),
-                ui::request::Action::MethodChanged(method) => Message::MethodChanged(method),
-                ui::request::Action::ToggleMethodMenu => Message::ToggleMethodMenu,
-                ui::request::Action::CloseMethodMenu => Message::CloseMethodMenu,
-                ui::request::Action::TabSelected(tab) => Message::TabSelected(tab),
-                ui::request::Action::HeaderKeyChanged(index, key) => Message::HeaderKeyChanged(index, key),
-                ui::request::Action::HeaderValueChanged(index, value) => Message::HeaderValueChanged(index, value),
-                ui::request::Action::AddHeader => Message::AddHeader,
-                ui::request::Action::RemoveHeader(index) => Message::RemoveHeader(index),
-                ui::request::Action::ParamKeyChanged(index, key) => Message::ParamKeyChanged(index, key),
-                ui::request::Action::ParamValueChanged(index, value) => Message::ParamValueChanged(index, value),
-                ui::request::Action::AddParam => Message::AddParam,
-                ui::request::Action::RemoveParam(index) => Message::RemoveParam(index),
-                ui::request::Action::BodyChanged(action) => Message::BodyChanged(action),
-                ui::request::Action::AuthTypeChanged(auth_type) => Message::AuthTypeChanged(auth_type),
-                ui::request::Action::BearerTokenChanged(token) => Message::BearerTokenChanged(token),
-                ui::request::Action::BasicUsernameChanged(username) => Message::BasicUsernameChanged(username),
-                ui::request::Action::BasicPasswordChanged(password) => Message::BasicPasswordChanged(password),
-                ui::request::Action::ApiKeyChanged(key) => Message::ApiKeyChanged(key),
-                ui::request::Action::ApiKeyHeaderChanged(header) => Message::ApiKeyHeaderChanged(header),
-                ui::request::Action::DoNothing => Message::DoNothing,
-                ui::request::Action::None => Message::DoNothing,
-            }
-        })
+        )
     }
 
     fn response_view(&self) -> Element<'_, Message> {
