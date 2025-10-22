@@ -301,7 +301,7 @@ pub fn request_panel<'a>(
         env_bar,
         space().height(5),
         url_row,
-        space().height(10),
+        space().height(5),
         tabs,
         space().height(5),
         tab_content
@@ -410,7 +410,6 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
 fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, Message> {
     let text_editor_widget = text_editor(request_body_content)
         .on_action(Message::BodyChanged)
-        .height(Length::Fill)
         .style(
             |theme: &Theme, _status: text_editor::Status| text_editor::Style {
                 background: Background::Color(theme.palette().background),
@@ -425,8 +424,7 @@ fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, M
             },
         );
 
-    text_editor_widget
-    .into()
+    scrollable(text_editor_widget).height(Length::Fill).into()
 }
 
 fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
