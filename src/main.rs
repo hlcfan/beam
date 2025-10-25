@@ -1,40 +1,42 @@
-mod types;
 mod http;
-mod ui;
-mod storage;
 mod icons;
+mod storage;
+mod types;
+mod ui;
 
-use types::*;
 use http::*;
+use types::*;
 use ui::*;
 
-use iced::widget::pane_grid::{self, PaneGrid, Axis};
+use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
-    button, column, container, row, text, text_input, text_editor, pick_list, scrollable,
-    stack, space
+    button, column, container, pick_list, row, scrollable, space, stack, text, text_editor,
+    text_input,
 };
-use iced::{Element, Fill, Length, Size, Theme, Color, Task, Vector};
-use std::collections::HashMap;
+use iced::{Color, Element, Fill, Length, Size, Task, Theme, Vector};
+use log::{Log, error, info, trace, warn};
 use serde_json;
-use log::{info, trace, warn, Log, error};
+use std::collections::HashMap;
 
 pub fn main() -> iced::Result {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info")
-    )
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
 
     iced::application(
-            || (BeamApp::default(), Task::perform(async { Message::InitializeStorage }, |msg| msg)),
-            BeamApp::update,
-            BeamApp::view,
-        )
-        .title(|_: &BeamApp| "Beam".to_string())
-        .subscription(BeamApp::subscription)
-        .window_size(Size::new(1200.0, 800.0))
-        .run()
-
+        || {
+            (
+                BeamApp::default(),
+                Task::perform(async { Message::InitializeStorage }, |msg| msg),
+            )
+        },
+        BeamApp::update,
+        BeamApp::view,
+    )
+    .title(|_: &BeamApp| "Beam".to_string())
+    .subscription(BeamApp::subscription)
+    .window_size(Size::new(1200.0, 800.0))
+    .run()
 }
 
 impl Default for BeamApp {
@@ -42,18 +44,14 @@ impl Default for BeamApp {
         let (mut panes, collections_pane) = pane_grid::State::new(PaneContent::Collections);
 
         // Split vertically to create request config pane (middle panel)
-        let (request_pane, first_split) = panes.split(
-            Axis::Vertical,
-            collections_pane,
-            PaneContent::RequestConfig,
-        ).unwrap();
+        let (request_pane, first_split) = panes
+            .split(Axis::Vertical, collections_pane, PaneContent::RequestConfig)
+            .unwrap();
 
         // Split vertically again to create response pane (right panel)
-        let (_, second_split) = panes.split(
-            Axis::Vertical,
-            request_pane,
-            PaneContent::Response,
-        ).unwrap();
+        let (_, second_split) = panes
+            .split(Axis::Vertical, request_pane, PaneContent::Response)
+            .unwrap();
 
         // Set three-panel horizontal layout ratios
         // Collections: 25%, Request Config: 40%, Response: 35%
@@ -125,60 +123,6 @@ impl Default for BeamApp {
 }
 
 impl BeamApp {
-    fn update_response_content(content: &mut text_editor::Content, body: &str) {
-        // Try to format JSON if the content is not too large (limit to 100KB)
-        const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
-
-        let text_to_set = if body.len() <= MAX_JSON_FORMAT_SIZE {
-            // Try to parse and format as JSON
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
-                if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
-                    formatted_json
-                } else {
-                    body.to_string()
-                }
-            } else {
-                body.to_string()
-            }
-        } else {
-            // If too large, return original content
-            body.to_string()
-        };
-
-        // Update the existing content
-        content.perform(text_editor::Action::SelectAll);
-        content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(text_to_set.into())));
-    }
-
-    /// Resolves variables in the format {{variable_name}} using the active environment
-    fn resolve_variables(&self, input: &str) -> String {
-        if let Some(active_env_index) = self.active_environment {
-            if let Some(active_env) = self.environments.get(active_env_index) {
-                let mut result = input.to_string();
-
-                // Use regex to find all {{variable_name}} patterns
-                use regex::Regex;
-                let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
-
-                // Replace each variable with its value from the active environment
-                for captures in re.captures_iter(input) {
-                    if let Some(var_name) = captures.get(1) {
-                        let var_name = var_name.as_str().trim();
-                        if let Some(var_value) = active_env.get_variable(var_name) {
-                            let pattern = format!("{{{{{}}}}}", var_name);
-                            result = result.replace(&pattern, var_value);
-                        }
-                    }
-                }
-
-                return result;
-            }
-        }
-
-        // If no active environment or variable not found, return original string
-        input.to_string()
-    }
-
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::PaneResized(event) => {
@@ -191,7 +135,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Url } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Url,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -211,7 +161,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Url } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Url,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -247,7 +203,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Method } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Method,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -310,12 +272,18 @@ impl BeamApp {
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        Self::update_response_content(self.response_panel.get_response_body_content_mut(), &response.body);
+                        Self::update_response_content(
+                            self.response_panel.get_response_body_content_mut(),
+                            &response.body,
+                        );
                         info!("===response updated");
                         self.response_panel.set_response(Some(response));
                     }
                     Err(error) => {
-                        Self::update_response_content(self.response_panel.get_response_body_content_mut(), &error);
+                        Self::update_response_content(
+                            self.response_panel.get_response_body_content_mut(),
+                            &error,
+                        );
                         self.response_panel.set_response(Some(ResponseData {
                             status: 0,
                             status_text: "Error".to_string(),
@@ -334,7 +302,8 @@ impl BeamApp {
             }
             Message::TimerTick => {
                 if let Some(start_time) = self.request_start_time {
-                    self.response_panel.set_elapsed_time(start_time.elapsed().as_millis() as u64);
+                    self.response_panel
+                        .set_elapsed_time(start_time.elapsed().as_millis() as u64);
                 }
                 // Update spinner animation
                 if self.response_panel.is_loading {
@@ -352,7 +321,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_collection(&collection).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_collection(&collection)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -374,8 +347,10 @@ impl BeamApp {
 
                         // Check for double-click (within 500ms and same target)
                         let is_double_click = if let (Some(last_time), Some(last_target)) =
-                            (self.last_click_time, self.last_click_target) {
-                            last_target == current_target && now.duration_since(last_time).as_millis() < 500
+                            (self.last_click_time, self.last_click_target)
+                        {
+                            last_target == current_target
+                                && now.duration_since(last_time).as_millis() < 500
                         } else {
                             false
                         };
@@ -387,7 +362,8 @@ impl BeamApp {
                         if is_double_click {
                             // Double-click detected: show rename modal
                             self.show_rename_modal = true;
-                            self.rename_target = Some(RenameTarget::Request(collection_index, request_index));
+                            self.rename_target =
+                                Some(RenameTarget::Request(collection_index, request_index));
                             self.rename_input = request.name.clone();
                             Task::none()
                         } else {
@@ -401,8 +377,12 @@ impl BeamApp {
                             Task::perform(
                                 async move {
                                     // Small delay to allow UI to render first
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                                    Message::UpdateLastOpenedRequest(collection_index, request_index)
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(10))
+                                        .await;
+                                    Message::UpdateLastOpenedRequest(
+                                        collection_index,
+                                        request_index,
+                                    )
                                 },
                                 |msg| msg,
                             )
@@ -427,7 +407,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Headers } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Headers,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -442,7 +428,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Headers } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Headers,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -450,7 +442,9 @@ impl BeamApp {
                 }
             }
             Message::AddHeader => {
-                self.current_request.headers.push((String::new(), String::new()));
+                self.current_request
+                    .headers
+                    .push((String::new(), String::new()));
                 Task::none()
             }
             Message::RemoveHeader(index) => {
@@ -467,7 +461,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Params } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Params,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -482,7 +482,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Params } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Params,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -490,7 +496,9 @@ impl BeamApp {
                 }
             }
             Message::AddParam => {
-                self.current_request.params.push((String::new(), String::new()));
+                self.current_request
+                    .params
+                    .push((String::new(), String::new()));
                 Task::none()
             }
             Message::RemoveParam(index) => {
@@ -500,14 +508,14 @@ impl BeamApp {
                 Task::none()
             }
             Message::BodyChanged(action) => {
-                let (body_text, task) = self.request_panel.handle_body_changed(action, self.last_opened_request);
+                let (body_text, task) = self
+                    .request_panel
+                    .handle_body_changed(action, self.last_opened_request);
                 // Sync the String body with the text editor content
                 self.current_request.body = body_text;
                 task
             }
-            Message::ResponsePanel(action) => {
-                self.response_panel.update(action)
-            }
+            Message::ResponsePanel(action) => self.response_panel.update(action),
 
             Message::AuthTypeChanged(auth_type) => {
                 self.current_request.auth_type = auth_type;
@@ -515,7 +523,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Auth } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Auth,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -528,7 +542,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Auth } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Auth,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -541,7 +561,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Auth } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Auth,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -554,7 +580,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Auth } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Auth,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -567,7 +599,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Auth } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Auth,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -580,7 +618,13 @@ impl BeamApp {
                 // Emit auto-save message if we have a current request
                 if let Some((collection_index, request_index)) = self.last_opened_request {
                     Task::perform(
-                        async move { Message::RequestFieldChanged { collection_index, request_index, field: RequestField::Auth } },
+                        async move {
+                            Message::RequestFieldChanged {
+                                collection_index,
+                                request_index,
+                                field: RequestField::Auth,
+                            }
+                        },
                         |msg| msg,
                     )
                 } else {
@@ -614,12 +658,10 @@ impl BeamApp {
                         // For now, we'll handle this in the subscription with modifiers
                         Task::none()
                     }
-                    _ => Task::none()
+                    _ => Task::none(),
                 }
             }
-            Message::DoNothing => {
-                Task::none()
-            }
+            Message::DoNothing => Task::none(),
             Message::EnvironmentSelected(index) => {
                 if index < self.environments.len() {
                     self.active_environment = Some(index);
@@ -634,7 +676,14 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    if let Err(e) = storage_manager.storage().save_environments_with_active(&environments, Some(&active_env_name)).await {
+                                    if let Err(e) = storage_manager
+                                        .storage()
+                                        .save_environments_with_active(
+                                            &environments,
+                                            Some(&active_env_name),
+                                        )
+                                        .await
+                                    {
                                         error!("Failed to save active environment: {}", e);
                                     }
                                 }
@@ -649,7 +698,8 @@ impl BeamApp {
                 }
             }
             Message::AddEnvironment => {
-                let new_env = Environment::new(format!("Environment {}", self.environments.len() + 1));
+                let new_env =
+                    Environment::new(format!("Environment {}", self.environments.len() + 1));
                 self.environments.push(new_env);
                 // Set the newly created environment as active
                 self.active_environment = Some(self.environments.len() - 1);
@@ -660,7 +710,11 @@ impl BeamApp {
                     async move {
                         match storage::StorageManager::with_default_config().await {
                             Ok(storage_manager) => {
-                                match storage_manager.storage().save_environments(&environments).await {
+                                match storage_manager
+                                    .storage()
+                                    .save_environments(&environments)
+                                    .await
+                                {
                                     Ok(_) => Ok(()),
                                     Err(e) => Err(e.to_string()),
                                 }
@@ -689,7 +743,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -713,7 +771,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -729,7 +791,11 @@ impl BeamApp {
             }
             Message::EnvironmentDescriptionChanged(env_index, description) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    env.description = if description.is_empty() { None } else { Some(description) };
+                    env.description = if description.is_empty() {
+                        None
+                    } else {
+                        Some(description)
+                    };
 
                     // Save environments after description change
                     let environments = self.environments.clone();
@@ -737,7 +803,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -753,7 +823,8 @@ impl BeamApp {
             }
             Message::VariableKeyChanged(env_index, var_index, key) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    let variables: Vec<(String, String)> = env.variables.clone().into_iter().collect();
+                    let variables: Vec<(String, String)> =
+                        env.variables.clone().into_iter().collect();
                     if let Some((old_key, value)) = variables.get(var_index) {
                         env.variables.remove(old_key);
                         env.variables.insert(key, value.clone());
@@ -767,7 +838,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -783,7 +858,8 @@ impl BeamApp {
             }
             Message::VariableValueChanged(env_index, var_index, value) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    let variables: Vec<(String, String)> = env.variables.clone().into_iter().collect();
+                    let variables: Vec<(String, String)> =
+                        env.variables.clone().into_iter().collect();
                     if let Some((key, _)) = variables.get(var_index) {
                         env.variables.insert(key.clone(), value);
                     }
@@ -797,7 +873,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -825,7 +905,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -841,7 +925,8 @@ impl BeamApp {
             }
             Message::RemoveVariable(env_index, var_index) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    let variables: Vec<(String, String)> = env.variables.clone().into_iter().collect();
+                    let variables: Vec<(String, String)> =
+                        env.variables.clone().into_iter().collect();
                     if let Some((key, _)) = variables.get(var_index) {
                         env.variables.remove(key);
                     }
@@ -855,7 +940,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_environments(&environments).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_environments(&environments)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -898,8 +987,14 @@ impl BeamApp {
                             metadata: Some(storage::persistent_types::RequestMetadata::default()),
                         };
 
-                        if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
-                            if let Err(e) = storage_manager.storage().save_request(&collection_name, &persistent_request).await {
+                        if let Ok(storage_manager) =
+                            storage::StorageManager::with_default_config().await
+                        {
+                            if let Err(e) = storage_manager
+                                .storage()
+                                .save_request(&collection_name, &persistent_request)
+                                .await
+                            {
                                 error!("Failed to save request: {}", e);
                             }
                         }
@@ -928,8 +1023,14 @@ impl BeamApp {
 
                 // Save the collection asynchronously without blocking the UI
                 tokio::spawn(async move {
-                    if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
-                        if let Err(e) = storage_manager.storage().save_collection(&new_collection).await {
+                    if let Ok(storage_manager) =
+                        storage::StorageManager::with_default_config().await
+                    {
+                        if let Err(e) = storage_manager
+                            .storage()
+                            .save_collection(&new_collection)
+                            .await
+                        {
                             error!("Failed to save collection: {}", e);
                         }
                     }
@@ -981,7 +1082,8 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.show_rename_modal = true;
                         self.rename_input = request.name.clone();
-                        self.rename_target = Some(RenameTarget::Request(collection_index, request_index));
+                        self.rename_target =
+                            Some(RenameTarget::Request(collection_index, request_index));
                     }
                 }
                 Task::none()
@@ -991,7 +1093,8 @@ impl BeamApp {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.show_rename_modal = true;
                         self.rename_input = request.name.clone();
-                        self.rename_target = Some(RenameTarget::Request(collection_index, request_index));
+                        self.rename_target =
+                            Some(RenameTarget::Request(collection_index, request_index));
                     }
                 }
                 Task::none()
@@ -1024,7 +1127,12 @@ impl BeamApp {
 
                             // Check for duplicate names in the same collection
                             if let Some(collection) = self.collections.get(collection_index) {
-                                if collection.requests.iter().enumerate().any(|(i, req)| i != request_index && req.name == new_name) {
+                                if collection
+                                    .requests
+                                    .iter()
+                                    .enumerate()
+                                    .any(|(i, req)| i != request_index && req.name == new_name)
+                                {
                                     // TODO: Show error message for duplicate name
                                     return Task::none();
                                 }
@@ -1045,9 +1153,18 @@ impl BeamApp {
                                     let collection_name = collection.name.clone();
 
                                     tokio::spawn(async move {
-                                        if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                                        if let Ok(storage_manager) =
+                                            storage::StorageManager::with_default_config().await
+                                        {
                                             let storage = storage_manager.storage();
-                                            if let Err(e) = storage.rename_request(&collection_name, &old_name, &new_name).await {
+                                            if let Err(e) = storage
+                                                .rename_request(
+                                                    &collection_name,
+                                                    &old_name,
+                                                    &new_name,
+                                                )
+                                                .await
+                                            {
                                                 error!("Failed to rename request file: {}", e);
                                             }
                                         }
@@ -1061,7 +1178,12 @@ impl BeamApp {
                             let collection_index = *collection_index;
 
                             // Check for duplicate folder names
-                            if self.collections.iter().enumerate().any(|(i, col)| i != collection_index && col.name == new_name) {
+                            if self
+                                .collections
+                                .iter()
+                                .enumerate()
+                                .any(|(i, col)| i != collection_index && col.name == new_name)
+                            {
                                 // TODO: Show error message for duplicate name
                                 return Task::none();
                             }
@@ -1078,9 +1200,13 @@ impl BeamApp {
 
                                 // Rename the collection folder (non-blocking)
                                 tokio::spawn(async move {
-                                    if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                                    if let Ok(storage_manager) =
+                                        storage::StorageManager::with_default_config().await
+                                    {
                                         let storage = storage_manager.storage();
-                                        if let Err(e) = storage.rename_collection(&old_name, &new_name).await {
+                                        if let Err(e) =
+                                            storage.rename_collection(&old_name, &new_name).await
+                                        {
                                             error!("Failed to rename collection folder: {}", e);
                                         }
                                     }
@@ -1117,11 +1243,19 @@ impl BeamApp {
                                 basic_password: None,
                                 api_key: None,
                                 api_key_header: None,
-                                metadata: Some(storage::persistent_types::RequestMetadata::default()),
+                                metadata: Some(
+                                    storage::persistent_types::RequestMetadata::default(),
+                                ),
                             };
 
-                            if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
-                                if let Err(e) = storage_manager.storage().save_request(&collection_name, &persistent_request).await {
+                            if let Ok(storage_manager) =
+                                storage::StorageManager::with_default_config().await
+                            {
+                                if let Err(e) = storage_manager
+                                    .storage()
+                                    .save_request(&collection_name, &persistent_request)
+                                    .await
+                                {
                                     error!("Failed to save duplicated request: {}", e);
                                 }
                             }
@@ -1147,17 +1281,28 @@ impl BeamApp {
                         // Delete request file and save collection (non-blocking)
                         let collection = collection.clone();
                         tokio::spawn(async move {
-                            if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
+                            if let Ok(storage_manager) =
+                                storage::StorageManager::with_default_config().await
+                            {
                                 let storage = storage_manager.storage();
 
                                 // First delete the request file from disk
-                                if let Err(e) = storage.delete_request(&collection_name, &request_name).await {
-                                    error!("Failed to delete request file '{}': {}", request_name, e);
+                                if let Err(e) = storage
+                                    .delete_request(&collection_name, &request_name)
+                                    .await
+                                {
+                                    error!(
+                                        "Failed to delete request file '{}': {}",
+                                        request_name, e
+                                    );
                                 }
 
                                 // Then save the updated collection
                                 if let Err(e) = storage.save_collection(&collection).await {
-                                    error!("Failed to save collection after deleting request: {}", e);
+                                    error!(
+                                        "Failed to save collection after deleting request: {}",
+                                        e
+                                    );
                                 }
                             }
                         });
@@ -1178,17 +1323,15 @@ impl BeamApp {
                 Task::none()
             }
             // Storage operations
-            Message::InitializeStorage => {
-                Task::perform(
-                    async {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(_) => Ok(()),
-                            Err(e) => Err(e.to_string()),
-                        }
-                    },
-                    Message::StorageInitialized,
-                )
-            }
+            Message::InitializeStorage => Task::perform(
+                async {
+                    match storage::StorageManager::with_default_config().await {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e.to_string()),
+                    }
+                },
+                Message::StorageInitialized,
+            ),
             Message::StorageInitialized(result) => {
                 match result {
                     Ok(_) => {
@@ -1209,22 +1352,20 @@ impl BeamApp {
                 // This message is no longer needed with the simplified approach
                 Task::none()
             }
-            Message::LoadCollections => {
-                Task::perform(
-                    async {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().load_collections().await {
-                                    Ok(collections) => Ok(collections),
-                                    Err(e) => Err(e.to_string()),
-                                }
+            Message::LoadCollections => Task::perform(
+                async {
+                    match storage::StorageManager::with_default_config().await {
+                        Ok(storage_manager) => {
+                            match storage_manager.storage().load_collections().await {
+                                Ok(collections) => Ok(collections),
+                                Err(e) => Err(e.to_string()),
                             }
-                            Err(e) => Err(e.to_string()),
                         }
-                    },
-                    Message::CollectionsLoaded,
-                )
-            }
+                        Err(e) => Err(e.to_string()),
+                    }
+                },
+                Message::CollectionsLoaded,
+            ),
             Message::CollectionsLoaded(result) => {
                 match result {
                     Ok(collections) => {
@@ -1276,7 +1417,11 @@ impl BeamApp {
                         async move {
                             match storage::StorageManager::with_default_config().await {
                                 Ok(storage_manager) => {
-                                    match storage_manager.storage().save_collection(&collection).await {
+                                    match storage_manager
+                                        .storage()
+                                        .save_collection(&collection)
+                                        .await
+                                    {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -1301,22 +1446,20 @@ impl BeamApp {
                 }
                 Task::none()
             }
-            Message::LoadEnvironments => {
-                Task::perform(
-                    async {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().load_environments().await {
-                                    Ok(environments) => Ok(environments),
-                                    Err(e) => Err(e.to_string()),
-                                }
+            Message::LoadEnvironments => Task::perform(
+                async {
+                    match storage::StorageManager::with_default_config().await {
+                        Ok(storage_manager) => {
+                            match storage_manager.storage().load_environments().await {
+                                Ok(environments) => Ok(environments),
+                                Err(e) => Err(e.to_string()),
                             }
-                            Err(e) => Err(e.to_string()),
                         }
-                    },
-                    Message::EnvironmentsLoaded,
-                )
-            }
+                        Err(e) => Err(e.to_string()),
+                    }
+                },
+                Message::EnvironmentsLoaded,
+            ),
             Message::EnvironmentsLoaded(result) => {
                 match result {
                     Ok(environments) => {
@@ -1334,27 +1477,29 @@ impl BeamApp {
                     }
                 }
             }
-            Message::LoadActiveEnvironment => {
-                Task::perform(
-                    async {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().load_active_environment().await {
-                                    Ok(active_env) => Ok(active_env),
-                                    Err(e) => Err(e.to_string()),
-                                }
+            Message::LoadActiveEnvironment => Task::perform(
+                async {
+                    match storage::StorageManager::with_default_config().await {
+                        Ok(storage_manager) => {
+                            match storage_manager.storage().load_active_environment().await {
+                                Ok(active_env) => Ok(active_env),
+                                Err(e) => Err(e.to_string()),
                             }
-                            Err(e) => Err(e.to_string()),
                         }
-                    },
-                    Message::ActiveEnvironmentLoaded,
-                )
-            }
+                        Err(e) => Err(e.to_string()),
+                    }
+                },
+                Message::ActiveEnvironmentLoaded,
+            ),
             Message::ActiveEnvironmentLoaded(result) => {
                 match result {
                     Ok(Some(active_env_name)) => {
                         // Find the environment by name and set it as active
-                        if let Some(index) = self.environments.iter().position(|env| env.name == active_env_name) {
+                        if let Some(index) = self
+                            .environments
+                            .iter()
+                            .position(|env| env.name == active_env_name)
+                        {
                             self.active_environment = Some(index);
 
                             // Environment variables will be applied during URL resolution
@@ -1384,7 +1529,8 @@ impl BeamApp {
                                 let storage = storage_manager.storage();
 
                                 // Check if environments file exists
-                                let env_path = storage_manager.config().base_path.join("environments.toml");
+                                let env_path =
+                                    storage_manager.config().base_path.join("environments.toml");
                                 if !env_path.exists() {
                                     if let Err(e) = storage.save_environments(&environments).await {
                                         error!("Failed to save initial environments: {}", e);
@@ -1395,14 +1541,24 @@ impl BeamApp {
 
                                 // Check if collections exist and save them if they don't
                                 for collection in &collections {
-                                    let collection_path = storage_manager.config().base_path
+                                    let collection_path = storage_manager
+                                        .config()
+                                        .base_path
                                         .join("collections")
                                         .join(&collection.name);
                                     if !collection_path.exists() {
-                                        if let Err(e) = storage.save_collection_with_requests(collection).await {
-                                            error!("Failed to save initial collection '{}': {}", collection.name, e);
+                                        if let Err(e) =
+                                            storage.save_collection_with_requests(collection).await
+                                        {
+                                            error!(
+                                                "Failed to save initial collection '{}': {}",
+                                                collection.name, e
+                                            );
                                         } else {
-                                            info!("Initial collection '{}' saved successfully", collection.name);
+                                            info!(
+                                                "Initial collection '{}' saved successfully",
+                                                collection.name
+                                            );
                                         }
                                     }
                                 }
@@ -1421,7 +1577,11 @@ impl BeamApp {
                     async move {
                         match storage::StorageManager::with_default_config().await {
                             Ok(storage_manager) => {
-                                match storage_manager.storage().save_environments(&environments).await {
+                                match storage_manager
+                                    .storage()
+                                    .save_environments(&environments)
+                                    .await
+                                {
                                     Ok(_) => Ok(()),
                                     Err(e) => Err(e.to_string()),
                                 }
@@ -1448,8 +1608,14 @@ impl BeamApp {
             Message::SaveLastOpenedRequest(collection_index, request_index) => {
                 // Save the last opened request asynchronously without blocking the UI
                 tokio::spawn(async move {
-                    if let Ok(storage_manager) = storage::StorageManager::with_default_config().await {
-                        if let Err(e) = storage_manager.storage().save_last_opened_request(collection_index, request_index).await {
+                    if let Ok(storage_manager) =
+                        storage::StorageManager::with_default_config().await
+                    {
+                        if let Err(e) = storage_manager
+                            .storage()
+                            .save_last_opened_request(collection_index, request_index)
+                            .await
+                        {
                             error!("Failed to save last opened request: {}", e);
                         }
                     }
@@ -1464,22 +1630,20 @@ impl BeamApp {
                     |msg| msg,
                 )
             }
-            Message::LoadLastOpenedRequest => {
-                Task::perform(
-                    async {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().load_last_opened_request().await {
-                                    Ok(last_opened) => Ok(last_opened),
-                                    Err(e) => Err(e.to_string()),
-                                }
+            Message::LoadLastOpenedRequest => Task::perform(
+                async {
+                    match storage::StorageManager::with_default_config().await {
+                        Ok(storage_manager) => {
+                            match storage_manager.storage().load_last_opened_request().await {
+                                Ok(last_opened) => Ok(last_opened),
+                                Err(e) => Err(e.to_string()),
                             }
-                            Err(e) => Err(e.to_string()),
                         }
-                    },
-                    Message::LastOpenedRequestLoaded,
-                )
-            }
+                        Err(e) => Err(e.to_string()),
+                    }
+                },
+                Message::LastOpenedRequestLoaded,
+            ),
             Message::LastOpenedRequestSaved(result) => {
                 match result {
                     Ok(_) => {
@@ -1494,28 +1658,47 @@ impl BeamApp {
             Message::LastOpenedRequestLoaded(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
-                        info!("DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}", collection_index, request_index);
+                        info!(
+                            "DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}",
+                            collection_index, request_index
+                        );
                         // Restore the last opened request
                         self.last_opened_request = Some((collection_index, request_index));
 
                         // Automatically expand the collection containing the last opened request
                         if let Some(collection) = self.collections.get_mut(collection_index) {
                             collection.expanded = true;
-                            info!("DEBUG: Automatically expanded collection '{}' containing last opened request", collection.name);
+                            info!(
+                                "DEBUG: Automatically expanded collection '{}' containing last opened request",
+                                collection.name
+                            );
                         }
 
                         // Load the complete request configuration
                         let collections = self.collections.clone();
                         Task::perform(
                             async move {
-                                info!("DEBUG: Loading request by indices - collection_index: {}, request_index: {}", collection_index, request_index);
+                                info!(
+                                    "DEBUG: Loading request by indices - collection_index: {}, request_index: {}",
+                                    collection_index, request_index
+                                );
                                 match storage::StorageManager::with_default_config().await {
                                     Ok(storage_manager) => {
-                                        match storage_manager.storage().load_request_by_indices(&collections, collection_index, request_index).await {
+                                        match storage_manager
+                                            .storage()
+                                            .load_request_by_indices(
+                                                &collections,
+                                                collection_index,
+                                                request_index,
+                                            )
+                                            .await
+                                        {
                                             Ok(Some(persistent_request)) => {
                                                 // Convert PersistentRequest to RequestConfig
                                                 use storage::conversions::FromPersistent;
-                                                let request_config = RequestConfig::from_persistent(persistent_request);
+                                                let request_config = RequestConfig::from_persistent(
+                                                    persistent_request,
+                                                );
                                                 Ok(Some(request_config))
                                             }
                                             Ok(None) => Ok(None),
@@ -1543,12 +1726,16 @@ impl BeamApp {
             Message::RequestConfigLoaded(result) => {
                 match result {
                     Ok(Some(request_config)) => {
-                        info!("DEBUG: RequestConfigLoaded - method: {:?}, url: {}", request_config.method, request_config.url);
+                        info!(
+                            "DEBUG: RequestConfigLoaded - method: {:?}, url: {}",
+                            request_config.method, request_config.url
+                        );
                         // Update the current request with the loaded configuration
                         let current_request = request_config.clone();
                         info!("====1: ");
                         // Sync the request body content with the loaded body
-                        self.request_panel.set_body_content(current_request.body.clone());
+                        self.request_panel
+                            .set_body_content(current_request.body.clone());
                         info!("====2: ");
                         // Update the URL string with the loaded URL
                         self.url = current_request.url.clone();
@@ -1568,7 +1755,11 @@ impl BeamApp {
             }
 
             // Auto-save message handlers
-            Message::RequestFieldChanged { collection_index, request_index, field: _ } => {
+            Message::RequestFieldChanged {
+                collection_index,
+                request_index,
+                field: _,
+            } => {
                 // Update the debounce timer for this request
                 let key = (collection_index, request_index);
                 self.debounce_timers.insert(key, std::time::Instant::now());
@@ -1578,13 +1769,22 @@ impl BeamApp {
                 Task::perform(
                     async move {
                         tokio::time::sleep(delay).await;
-                        Message::SaveRequestDebounced { collection_index, request_index }
+                        Message::SaveRequestDebounced {
+                            collection_index,
+                            request_index,
+                        }
                     },
                     |msg| msg,
                 )
             }
-            Message::SaveRequestDebounced { collection_index, request_index } => {
-                info!("=== SaveRequestDebounced - collection_index: {}, request_index: {}", collection_index, request_index);
+            Message::SaveRequestDebounced {
+                collection_index,
+                request_index,
+            } => {
+                info!(
+                    "=== SaveRequestDebounced - collection_index: {}, request_index: {}",
+                    collection_index, request_index
+                );
                 let key = (collection_index, request_index);
 
                 // Check if this save is still valid (no newer changes)
@@ -1604,7 +1804,8 @@ impl BeamApp {
                                 let collection_name = collection.name.clone();
                                 info!("====5");
                                 let request_name = saved_request.name.clone();
-                                let serializable_request = self.current_request.to_serializable(request_name.clone());
+                                let serializable_request =
+                                    self.current_request.to_serializable(request_name.clone());
                                 info!("===start perform auto save request");
                                 Task::perform(
                                     async move {
@@ -1612,7 +1813,15 @@ impl BeamApp {
                                             Ok(storage_manager) => {
                                                 info!("===done perform auto save request");
 
-                                                match storage_manager.storage().save_serializable_request(&collection_name, &request_name, &serializable_request).await {
+                                                match storage_manager
+                                                    .storage()
+                                                    .save_serializable_request(
+                                                        &collection_name,
+                                                        &request_name,
+                                                        &serializable_request,
+                                                    )
+                                                    .await
+                                                {
                                                     Ok(_) => Ok(()),
                                                     Err(e) => Err(e.to_string()),
                                                 }
@@ -1648,11 +1857,11 @@ impl BeamApp {
                 }
                 Task::none()
             }
-
         }
     }
 
     fn view(&self) -> Element<'_, Message> {
+        info!("=== Rendering main view ===");
         let pane_grid = PaneGrid::new(&self.panes, |_id, pane, _is_maximized| {
             let content = match pane {
                 PaneContent::Collections => self.collections_view(),
@@ -1702,29 +1911,83 @@ impl BeamApp {
                     background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
                     ..Default::default()
                 })
-            ].into()
+            ]
+            .into()
         } else if self.show_rename_modal {
             // Create a custom overlay for the rename modal
             stack![
                 pane_grid,
                 // Semi-transparent backdrop with centered modal
-                container(
-                    container(self.rename_modal_view())
-                        .width(400)
-                        .height(200)
-                )
-                .center_x(Fill)
-                .center_y(Fill)
-                .width(Fill)
-                .height(Fill)
-                .style(|_theme| container::Style {
-                    background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
-                    ..Default::default()
-                })
-            ].into()
+                container(container(self.rename_modal_view()).width(400).height(200))
+                    .center_x(Fill)
+                    .center_y(Fill)
+                    .width(Fill)
+                    .height(Fill)
+                    .style(|_theme| container::Style {
+                        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                        ..Default::default()
+                    })
+            ]
+            .into()
         } else {
             pane_grid.into()
         }
+    }
+
+    fn update_response_content(content: &mut text_editor::Content, body: &str) {
+        // Try to format JSON if the content is not too large (limit to 100KB)
+        const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
+
+        let text_to_set = if body.len() <= MAX_JSON_FORMAT_SIZE {
+            // Try to parse and format as JSON
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
+                    formatted_json
+                } else {
+                    body.to_string()
+                }
+            } else {
+                body.to_string()
+            }
+        } else {
+            // If too large, return original content
+            body.to_string()
+        };
+
+        // Update the existing content
+        content.perform(text_editor::Action::SelectAll);
+        content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+            text_to_set.into(),
+        )));
+    }
+
+    /// Resolves variables in the format {{variable_name}} using the active environment
+    fn resolve_variables(&self, input: &str) -> String {
+        if let Some(active_env_index) = self.active_environment {
+            if let Some(active_env) = self.environments.get(active_env_index) {
+                let mut result = input.to_string();
+
+                // Use regex to find all {{variable_name}} patterns
+                use regex::Regex;
+                let re = Regex::new(r"\{\{([^}]+)\}\}").unwrap();
+
+                // Replace each variable with its value from the active environment
+                for captures in re.captures_iter(input) {
+                    if let Some(var_name) = captures.get(1) {
+                        let var_name = var_name.as_str().trim();
+                        if let Some(var_value) = active_env.get_variable(var_name) {
+                            let pattern = format!("{{{{{}}}}}", var_name);
+                            result = result.replace(&pattern, var_value);
+                        }
+                    }
+                }
+
+                return result;
+            }
+        }
+
+        // If no active environment or variable not found, return original string
+        input.to_string()
     }
 
     fn collections_view(&self) -> Element<'_, Message> {
@@ -1732,6 +1995,7 @@ impl BeamApp {
     }
 
     fn request_config_view(&self) -> Element<'_, Message> {
+        info!("=== Rendering request config view ===");
         request_panel(
             &self.current_request,
             &self.url,
@@ -1741,7 +2005,7 @@ impl BeamApp {
             self.active_environment,
             self.method_menu_open,
             self.send_button_hovered,
-            self.cancel_button_hovered
+            self.cancel_button_hovered,
         )
     }
 
@@ -1760,12 +2024,16 @@ impl BeamApp {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.2, 0.2))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.9, 0.2, 0.2,
+                            ))),
                             text_color: Color::WHITE,
                             ..base
                         },
                         _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.8, 0.0, 0.0))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.8, 0.0, 0.0,
+                            ))),
                             text_color: Color::WHITE,
                             ..base
                         },
@@ -1779,23 +2047,29 @@ impl BeamApp {
 
         // Environment selector
         if !self.environments.is_empty() {
-            let env_names: Vec<String> = self.environments.iter().map(|env| env.name.clone()).collect();
-            let selected_env = self.active_environment.and_then(|idx| env_names.get(idx).cloned());
+            let env_names: Vec<String> = self
+                .environments
+                .iter()
+                .map(|env| env.name.clone())
+                .collect();
+            let selected_env = self
+                .active_environment
+                .and_then(|idx| env_names.get(idx).cloned());
 
             let env_selector = column![
                 text("Active Environment"),
                 row![
-                    pick_list(
-                        env_names,
-                        selected_env,
-                        |selected| {
-                            if let Some(index) = self.environments.iter().position(|env| env.name == selected) {
-                                Message::EnvironmentSelected(index)
-                            } else {
-                                Message::EnvironmentSelected(0)
-                            }
+                    pick_list(env_names, selected_env, |selected| {
+                        if let Some(index) = self
+                            .environments
+                            .iter()
+                            .position(|env| env.name == selected)
+                        {
+                            Message::EnvironmentSelected(index)
+                        } else {
+                            Message::EnvironmentSelected(0)
                         }
-                    )
+                    })
                     .width(Length::FillPortion(2)),
                     space().width(10),
                     button(text("Add Environment"))
@@ -1804,7 +2078,9 @@ impl BeamApp {
                             let base = button::Style::default();
                             match status {
                                 button::Status::Hovered => button::Style {
-                                    background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.9, 0.9, 0.9,
+                                    ))),
                                     ..base
                                 },
                                 _ => base,
@@ -1835,14 +2111,19 @@ impl BeamApp {
                     content = content.push(variables_header);
 
                     // Variables list
-                    let variables: Vec<(String, String)> = active_env.variables.clone().into_iter().collect();
+                    let variables: Vec<(String, String)> =
+                        active_env.variables.clone().into_iter().collect();
                     for (var_index, (key, value)) in variables.iter().enumerate() {
                         let variable_row = row![
                             text_input("Variable name", key)
-                                .on_input(move |input| Message::VariableKeyChanged(active_idx, var_index, input))
+                                .on_input(move |input| Message::VariableKeyChanged(
+                                    active_idx, var_index, input
+                                ))
                                 .width(Length::FillPortion(1)),
                             text_input("Variable value", value)
-                                .on_input(move |input| Message::VariableValueChanged(active_idx, var_index, input))
+                                .on_input(move |input| Message::VariableValueChanged(
+                                    active_idx, var_index, input
+                                ))
                                 .width(Length::FillPortion(1)),
                             button(text("×"))
                                 .on_press(Message::RemoveVariable(active_idx, var_index))
@@ -1859,30 +2140,32 @@ impl BeamApp {
                         button(text("+ Add Variable").size(14))
                             .on_press(Message::AddVariable(active_idx))
                             .padding([8, 16])
-                            .style(|_theme, status| {
-                                match status {
-                                    button::Status::Hovered => button::Style {
-                                        background: Some(iced::Background::Color(Color::from_rgb(0.2, 0.5, 0.9))),
-                                        text_color: Color::WHITE,
-                                        border: iced::Border {
-                                            color: Color::from_rgb(0.1, 0.4, 0.8),
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..button::Style::default()
+                            .style(|_theme, status| match status {
+                                button::Status::Hovered => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.2, 0.5, 0.9,
+                                    ))),
+                                    text_color: Color::WHITE,
+                                    border: iced::Border {
+                                        color: Color::from_rgb(0.1, 0.4, 0.8),
+                                        width: 1.0,
+                                        radius: 4.0.into(),
                                     },
-                                    _ => button::Style {
-                                        background: Some(iced::Background::Color(Color::from_rgb(0.3, 0.6, 1.0))),
-                                        text_color: Color::WHITE,
-                                        border: iced::Border {
-                                            color: Color::from_rgb(0.2, 0.5, 0.9),
-                                            width: 1.0,
-                                            radius: 4.0.into(),
-                                        },
-                                        ..button::Style::default()
+                                    ..button::Style::default()
+                                },
+                                _ => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.3, 0.6, 1.0,
+                                    ))),
+                                    text_color: Color::WHITE,
+                                    border: iced::Border {
+                                        color: Color::from_rgb(0.2, 0.5, 0.9),
+                                        width: 1.0,
+                                        radius: 4.0.into(),
                                     },
-                                }
-                            })
+                                    ..button::Style::default()
+                                },
+                            }),
                     );
 
                     // Environment name editing
@@ -1890,17 +2173,24 @@ impl BeamApp {
                     content = content.push(text("Environment Name"));
                     content = content.push(
                         text_input("Environment name", &active_env.name)
-                            .on_input(move |input| Message::EnvironmentNameChanged(active_idx, input))
-                            .width(Fill)
+                            .on_input(move |input| {
+                                Message::EnvironmentNameChanged(active_idx, input)
+                            })
+                            .width(Fill),
                     );
 
                     // Environment description
                     content = content.push(space().height(10));
                     content = content.push(text("Description"));
                     content = content.push(
-                        text_input("Environment description", active_env.description.as_deref().unwrap_or(""))
-                            .on_input(move |input| Message::EnvironmentDescriptionChanged(active_idx, input))
-                            .width(Fill)
+                        text_input(
+                            "Environment description",
+                            active_env.description.as_deref().unwrap_or(""),
+                        )
+                        .on_input(move |input| {
+                            Message::EnvironmentDescriptionChanged(active_idx, input)
+                        })
+                        .width(Fill),
                     );
 
                     // Delete environment button (only if more than one environment exists)
@@ -1913,37 +2203,38 @@ impl BeamApp {
                                     let base = button::Style::default();
                                     match status {
                                         button::Status::Hovered => button::Style {
-                                            background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.2, 0.2))),
+                                            background: Some(iced::Background::Color(
+                                                Color::from_rgb(0.9, 0.2, 0.2),
+                                            )),
                                             text_color: Color::WHITE,
                                             ..base
                                         },
                                         _ => button::Style {
-                                            background: Some(iced::Background::Color(Color::from_rgb(0.8, 0.0, 0.0))),
+                                            background: Some(iced::Background::Color(
+                                                Color::from_rgb(0.8, 0.0, 0.0),
+                                            )),
                                             text_color: Color::WHITE,
                                             ..base
                                         },
                                     }
-                                })
+                                }),
                         );
                     }
                 }
             }
         } else {
             content = content.push(text("No environments available"));
-            content = content.push(
-                button(text("Add Environment"))
-                    .on_press(Message::AddEnvironment)
-            );
+            content =
+                content.push(button(text("Add Environment")).on_press(Message::AddEnvironment));
         }
 
         container(
             column![
                 header,
                 space().height(20),
-                scrollable(content.spacing(10))
-                    .height(Length::Fixed(580.0)) // Reduced height to account for header
+                scrollable(content.spacing(10)).height(Length::Fixed(580.0)) // Reduced height to account for header
             ]
-            .spacing(0)
+            .spacing(0),
         )
         .width(Length::Fixed(800.0))
         .padding(20)
@@ -1967,7 +2258,9 @@ impl BeamApp {
     fn rename_modal_view(&self) -> Element<'_, Message> {
         let (title, description) = match &self.rename_target {
             Some(RenameTarget::Folder(_)) => ("Rename Folder", "Enter a new name for the folder:"),
-            Some(RenameTarget::Request(_, _)) => ("Rename Request", "Enter a new name for the request:"),
+            Some(RenameTarget::Request(_, _)) => {
+                ("Rename Request", "Enter a new name for the request:")
+            }
             None => ("Rename", "Enter a new name:"),
         };
 
@@ -1980,12 +2273,16 @@ impl BeamApp {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.2, 0.2))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.9, 0.2, 0.2,
+                            ))),
                             text_color: Color::WHITE,
                             ..base
                         },
                         _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.8, 0.0, 0.0))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.8, 0.0, 0.0,
+                            ))),
                             text_color: Color::WHITE,
                             ..base
                         },
@@ -2008,18 +2305,22 @@ impl BeamApp {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.9, 0.9, 0.9,
+                            ))),
                             text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
                             ..base
                         },
                         _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.8, 0.8, 0.8))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.8, 0.8, 0.8,
+                            ))),
                             text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
                             ..base
                         },
                     }
                 }),
-                space().width(10),
+            space().width(10),
             button(text("Rename"))
                 .on_press(Message::ConfirmRename)
                 .padding(10)
@@ -2027,12 +2328,16 @@ impl BeamApp {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.0, 0.6, 0.0))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.0, 0.6, 0.0,
+                            ))),
                             text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
                             ..base
                         },
                         _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(0.0, 0.5, 0.0))),
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.0, 0.5, 0.0,
+                            ))),
                             text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
                             ..base
                         },
@@ -2051,7 +2356,7 @@ impl BeamApp {
                 space().height(20),
                 buttons
             ]
-            .spacing(0)
+            .spacing(0),
         )
         .width(Length::Fixed(400.0))
         .height(Length::Fixed(200.0))
@@ -2075,8 +2380,7 @@ impl BeamApp {
 
     fn subscription(&self) -> iced::Subscription<Message> {
         let timer_subscription = if self.response_panel.is_loading {
-            iced::time::every(std::time::Duration::from_millis(100))
-                .map(|_| Message::TimerTick)
+            iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::TimerTick)
         } else {
             iced::Subscription::none()
         };
@@ -2084,9 +2388,7 @@ impl BeamApp {
         let keyboard_subscription = iced::event::listen_with(|event, _status, _id| {
             match event {
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key,
-                    modifiers,
-                    ..
+                    key, modifiers, ..
                 }) => {
                     // // Debug logging for all key presses
                     // info!("DEBUG: Event-based Key pressed: {:?}, Modifiers: command={}, shift={}, ctrl={}, alt={}",
@@ -2114,7 +2416,7 @@ impl BeamApp {
                         }
                     }
                 }
-                _ => None
+                _ => None,
             }
         });
 

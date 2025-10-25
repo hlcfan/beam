@@ -54,8 +54,6 @@ impl TomlFileStorage {
         Ok(None)
     }
 
-
-
     /// Get the path for the last opened request file
     fn last_opened_request_path(&self) -> PathBuf {
         self.base_path.join("last_opened_request.toml")
