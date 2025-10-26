@@ -1,4 +1,5 @@
-use crate::types::{AuthType, Environment, HttpMethod, Message, RequestConfig, RequestTab};
+use crate::types::ResponseData;
+use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::{IconName, icon, url_input};
 use iced::widget::button::Status;
 use iced::widget::{
@@ -6,12 +7,82 @@ use iced::widget::{
     text_editor, text_input,
 };
 use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector};
+use std::time::Instant;
 use url_input::UrlInput;
+use log::info;
+
+// Action is returned from update function, to trigger a side effect, used in the main
+
+// Message is used within the component, to communicate a user action or event from the UI to the update function.
+
+#[derive(Debug)]
+pub enum Action {
+    UpdateCurrentRequest(RequestConfig),
+    // MonitorRequest(RequestConfig, Instant),
+    SendRequest(RequestConfig, Instant),
+    CancelRequest(),
+    UpdateActiveEnvironment(usize),
+    // The components needs to run a task
+    Run(iced::Task<Message>),
+    // The component does not require any additional actions
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    ClickSendRequest,
+    CancelRequest,
+    UrlInputChanged(String),
+    UrlInputUndo,
+    UrlInputRedo,
+    SetProcessingCmdZ(bool),
+    UrlInputFocused,
+    UrlInputUnfocused,
+    MethodChanged(HttpMethod),
+
+    SendButtonHovered(bool),
+    CancelButtonHovered(bool),
+
+    TabSelected(RequestTab),
+    HeaderKeyChanged(usize, String),
+    HeaderValueChanged(usize, String),
+    AddHeader,
+    RemoveHeader(usize),
+    ParamKeyChanged(usize, String),
+    ParamValueChanged(usize, String),
+    AddParam,
+    RemoveParam(usize),
+    BodyChanged(text_editor::Action),
+    AuthTypeChanged(AuthType),
+    BearerTokenChanged(String),
+    BasicUsernameChanged(String),
+    BasicPasswordChanged(String),
+    ApiKeyChanged(String),
+    ApiKeyHeaderChanged(String),
+
+    // Environment management
+    OpenEnvironmentPopup,
+    CloseEnvironmentPopup,
+    ToggleMethodMenu,
+    CloseMethodMenu,
+    DoNothing, // Used to prevent event propagation
+    EnvironmentSelected(usize),
+}
+
+// #[derive(Debug, Clone, PartialEq)]
+// pub enum RequestField {
+//     Url,
+//     Method,
+//     Body,
+//     Headers,
+//     Params,
+//     Auth,
+// }
 
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
     pub request_body_content: text_editor::Content,
-    pub config: RequestConfig,
+    pub current_request: RequestConfig,
     pub url: String,
     pub is_loading: bool,
     pub environments: Vec<Environment>,
@@ -25,7 +96,7 @@ impl Default for RequestPanel {
     fn default() -> Self {
         Self {
             request_body_content: text_editor::Content::new(),
-            config: RequestConfig {
+            current_request: RequestConfig {
                 method: HttpMethod::GET,
                 url: String::new(),
                 headers: vec![
@@ -42,6 +113,8 @@ impl Default for RequestPanel {
                 basic_password: String::new(),
                 api_key: String::new(),
                 api_key_header: "X-API-Key".to_string(),
+                collection_index: 0,
+                request_index: 0,
             },
             url: String::new(),
             is_loading: false,
@@ -59,28 +132,470 @@ impl RequestPanel {
         Self::default()
     }
 
-    pub fn update(&mut self, action: text_editor::Action) -> (bool, String) {
-        // Only trigger auto-save for actual content-changing actions
-        let should_save = match &action {
-            text_editor::Action::Edit(_) => true, // Only Edit actions change content
-            _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
-        };
+    pub fn update(&mut self, message: Message) -> Action {
+        match message {
+            Message::UrlInputChanged(url) => {
+                // Update the URL input widget value
+                // TODO: Call requestConfig update to update the value
+                // self.url_input.set_value(url.clone());
+                self.current_request.clone().url = url;
 
-        self.request_body_content.perform(action);
-        let body_text = self.request_body_content.text();
+                // return action here
+                // parent component will handle
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::UrlInputUndo => {
+                info!("DEBUG: UrlInputUndo message received");
+                // TODO: Implement undo functionality for UrlInput
+                Action::None
+            }
+            Message::UrlInputRedo => {
+                info!("DEBUG: UrlInputRedo message received");
+                // TODO: Implement redo functionality for UrlInput
+                Action::None
+            }
+            Message::UrlInputFocused => {
+                // TODO: Implement focus handling for UrlInput
+                Action::None
+            }
+            Message::UrlInputUnfocused => {
+                // TODO: Implement unfocus handling for UrlInput
+                Action::None
+            }
+            Message::SetProcessingCmdZ(processing) => {
+                // self.processing_cmd_z = processing;
+                Action::None
+            }
+            Message::MethodChanged(method) => {
+                self.current_request.clone().method = method;
+                self.method_menu_open = false; // Close menu after selection
 
-        (should_save, body_text)
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::ClickSendRequest => {
+                // TODO: Parent to check this action
+                // Action::MonitorRequest(self.current_request.clone(), std::time::Instant::now())
+                Action::SendRequest(self.current_request.clone(), std::time::Instant::now())
+            }
+            Message::CancelRequest => Action::CancelRequest(),
+            Message::SendButtonHovered(hovered) => {
+                self.send_button_hovered = hovered;
+                Action::None
+            }
+            Message::CancelButtonHovered(hovered) => {
+                self.cancel_button_hovered = hovered;
+                Action::None
+            }
+            Message::TabSelected(tab) => {
+                self.current_request.clone().selected_tab = tab;
+                Action::None
+            }
+
+            Message::HeaderKeyChanged(index, key) => {
+                if let Some(header) = self.current_request.clone().headers.get_mut(index) {
+                    header.0 = key;
+                }
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::HeaderValueChanged(index, value) => {
+                if let Some(header) = self.current_request.clone().headers.get_mut(index) {
+                    header.1 = value;
+                }
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::AddHeader => {
+                self.current_request.clone()
+                    .headers
+                    .push((String::new(), String::new()));
+                Action::None
+            }
+            Message::RemoveHeader(index) => {
+                if index < self.current_request.clone().headers.len() {
+                    self.current_request.clone().headers.remove(index);
+                }
+                Action::None
+            }
+            Message::ParamKeyChanged(index, key) => {
+                if let Some(param) = self.current_request.clone().params.get_mut(index) {
+                    param.0 = key;
+                }
+
+                Action::UpdateCurrentRequest(self.current_request.clone().clone())
+            }
+            Message::ParamValueChanged(index, value) => {
+                if let Some(param) = self.current_request.clone().params.get_mut(index) {
+                    param.1 = value;
+                }
+
+                Action::UpdateCurrentRequest(self.current_request.clone().clone())
+            }
+            Message::AddParam => {
+                self.current_request.clone()
+                    .params
+                    .push((String::new(), String::new()));
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::RemoveParam(index) => {
+                if index < self.current_request.clone().params.len() {
+                    self.current_request.clone().params.remove(index);
+                }
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::BodyChanged(action) => {
+                let (body_text, should_save) = self.handle_body_changed(action);
+                // Sync the String body with the text editor content
+                self.current_request.clone().body = body_text;
+
+                if should_save {
+                    Action::UpdateCurrentRequest(self.current_request.clone())
+                } else {
+                    Action::None
+                }
+            }
+            Message::AuthTypeChanged(auth_type) => {
+                self.current_request.clone().auth_type = auth_type;
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::BearerTokenChanged(token) => {
+                self.current_request.clone().bearer_token = token;
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::BasicUsernameChanged(username) => {
+                self.current_request.clone().basic_username = username;
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::BasicPasswordChanged(password) => {
+                self.current_request.clone().basic_password = password;
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::ApiKeyChanged(api_key) => {
+                self.current_request.clone().api_key = api_key;
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            Message::ApiKeyHeaderChanged(header) => {
+                self.current_request.clone().api_key_header = header;
+
+                Action::UpdateCurrentRequest(self.current_request.clone())
+            }
+            // Environment message handlers
+            Message::OpenEnvironmentPopup => {
+                // TODO
+                // self.show_environment_popup = true;
+                Action::None
+            }
+            Message::CloseEnvironmentPopup => {
+                // TODO
+                // self.show_environment_popup = false;
+                Action::None
+            }
+            Message::EnvironmentSelected(index) => {
+                if index < self.environments.len() {
+                    self.active_environment =Some( index);
+                    Action::UpdateActiveEnvironment(index)
+
+                    //     // Save the active environment to storage
+                    //     let environments = self.environments.clone();
+                    //     let active_env_name = self.environments[index].name.clone();
+                    //     Task::perform(
+                    //         async move {
+                    //             match storage::StorageManager::with_default_config().await {
+                    //                 Ok(storage_manager) => {
+                    //                     if let Err(e) = storage_manager
+                    //                         .storage()
+                    //                         .save_environments_with_active(
+                    //                             &environments,
+                    //                             Some(&active_env_name),
+                    //                         )
+                    //                         .await
+                    //                     {
+                    //                         error!("Failed to save active environment: {}", e);
+                    //                     }
+                    //                 }
+                    //                 Err(e) => error!("Failed to create storage manager: {}", e),
+                    //             }
+                    //             Message::DoNothing
+                    //         },
+                    //         |msg| msg,
+                    //     )
+                    // } else {
+                    //     Action::None
+                    // }
+                } else {
+                    Action::None
+                }
+            }
+            Message::ToggleMethodMenu => {
+                self.method_menu_open = !self.method_menu_open;
+                Action::None
+            }
+            Message::CloseMethodMenu => {
+                self.method_menu_open = false;
+                Action::None
+            }
+            Message::DoNothing => Action::None,
+        }
+
+        // // Only trigger auto-save for actual content-changing actions
+        // let should_save = match &action {
+        //     text_editor::Action::Edit(_) => true, // Only Edit actions change content
+        //     _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
+        // };
+
+        // self.request_body_content.perform(action);
+        // let body_text = self.request_body_content.text();
+
+        // (should_save, body_text)
     }
 
-    pub fn handle_body_changed(
-        &mut self,
-        action: text_editor::Action,
-        last_opened_request: Option<(usize, usize)>,
-    ) -> (String, iced::Task<crate::types::Message>) {
-        use crate::types::{Message, RequestField};
-        use iced::Task;
-        use log::info;
+    // config: &'a RequestConfig,
+    // url: &'a str,
+    // panel: &'a RequestPanel,
+    // is_loading: bool,
+    // self.environments: &'a [Environment],
+    // active_environment: Option<usize>,
+    // method_menu_open: bool,
+    // send_button_hovered: bool,
+    // cancel_button_hovered: bool,
+    pub fn view(&self) -> Element<'_, Message> {
+        // Environment pick_list for the URL row
+        let env_pick_list = {
+            // Create list of environment options including all self.environments plus "Configure"
+            let mut env_options: Vec<String> = self
+                .environments
+                .iter()
+                .map(|env| env.name.clone())
+                .collect();
+            env_options.push("Configure".to_string());
 
+            // Determine the selected value
+            let selected_env = if let Some(active_idx) = self.active_environment {
+                if let Some(env) = self.environments.get(active_idx) {
+                    Some(env.name.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            pick_list(env_options, selected_env, |selected| {
+                if selected == "Configure" {
+                    Message::OpenEnvironmentPopup
+                } else {
+                    // Find the index of the selected environment
+                    if let Some(index) = self
+                        .environments
+                        .iter()
+                        .position(|env| env.name == selected)
+                    {
+                        Message::EnvironmentSelected(index)
+                    } else {
+                        Message::DoNothing
+                    }
+                }
+            })
+            .width(150)
+            .placeholder("No Environment")
+        };
+
+        // Environment bar
+        let env_bar = row![
+            text("Environment:").size(14),
+            space().width(5),
+            env_pick_list,
+            space().width(Fill), // Push everything to the left
+        ]
+        .align_y(iced::Alignment::Center);
+
+        // Method label with dynamic width
+        let method_label = method_button(&self.current_request.method);
+
+        // Create send/cancel button based on loading state
+        let url_valid = !self.current_request.clone().url.trim().is_empty()
+            && (self.current_request.clone().url.starts_with("http://")
+                || self.current_request.clone().url.starts_with("https://")
+                || self.current_request.clone().url.contains("{{"));
+
+        let send_button = if self.is_loading {
+            // Show cancel icon when loading
+            let cancel_color = if self.cancel_button_hovered {
+                Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
+            } else {
+                Color::from_rgb(0.5, 0.5, 0.5) // Light gray default
+            };
+
+            mouse_area(
+                button(icon(IconName::Cancel).size(16).color(cancel_color))
+                    .padding(8)
+                    .on_press(Message::CancelRequest)
+                    .style(icon_button_style(true)),
+            )
+            .on_enter(Message::CancelButtonHovered(true))
+            .on_exit(Message::CancelButtonHovered(false))
+        } else {
+            // Show send icon when not loading
+            let send_color = if self.send_button_hovered {
+                Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
+            } else {
+                Color::from_rgb(0.5, 0.5, 0.5) // Light gray default
+            };
+
+            if url_valid {
+                mouse_area(
+                    button(icon(IconName::Send).size(16).color(send_color))
+                        .padding(8)
+                        .on_press(Message::ClickSendRequest)
+                        .style(icon_button_style(true)),
+                )
+                .on_enter(Message::SendButtonHovered(true))
+                .on_exit(Message::SendButtonHovered(false))
+            } else {
+                mouse_area(
+                    button(icon(IconName::Send).size(16).color(send_color))
+                        .padding(8)
+                        .style(icon_button_style(false)),
+                )
+                .on_enter(Message::SendButtonHovered(true))
+                .on_exit(Message::SendButtonHovered(false))
+            }
+        };
+
+        let base_input = container(row![
+            method_label,
+            UrlInput::new("Enter URL...", &self.url).on_input(Message::UrlInputChanged),
+            space().width(5),
+            send_button,
+        ])
+        .padding(2)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(Color::WHITE)),
+            border: Border {
+                color: Color::from_rgb(0.8, 0.8, 0.8),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            text_color: None,
+            shadow: Default::default(),
+            snap: true,
+        });
+
+        let connected_input = base_input;
+
+        let url_row = row![connected_input].align_y(iced::Alignment::Center);
+
+        let tabs = row![
+            tab_button(
+                "Body",
+                self.current_request.clone().selected_tab == RequestTab::Body,
+                RequestTab::Body
+            ),
+            tab_button(
+                "Params",
+                self.current_request.clone().selected_tab == RequestTab::Params,
+                RequestTab::Params
+            ),
+            tab_button(
+                "Headers",
+                self.current_request.clone().selected_tab == RequestTab::Headers,
+                RequestTab::Headers
+            ),
+            tab_button(
+                "Auth",
+                self.current_request.clone().selected_tab == RequestTab::Auth,
+                RequestTab::Auth
+            ),
+        ]
+        .spacing(5);
+
+        let tab_content = match self.current_request.selected_tab {
+            RequestTab::Body => body_tab(&self.request_body_content),
+            RequestTab::Params => params_tab(&self.current_request),
+            RequestTab::Headers => headers_tab(&self.current_request),
+            RequestTab::Auth => auth_tab(&self.current_request),
+            RequestTab::Environment => body_tab(&self.request_body_content), // Fallback to body tab if somehow Environment is selected
+        };
+
+        let content = column![
+            env_bar,
+            space().height(5),
+            url_row,
+            space().height(5),
+            tabs,
+            space().height(5),
+            tab_content
+        ]
+        .spacing(5)
+        .padding(15);
+
+        // Create left border
+        let left_border = container("")
+            .width(Length::Fixed(1.0))
+            .height(Fill)
+            .style(|_theme| container::Style {
+                background: Some(iced::Background::Color(iced::Color::from_rgb(
+                    0.9, 0.9, 0.9,
+                ))), // Gray
+                ..Default::default()
+            });
+
+        // Create right border
+        let right_border = container("")
+            .width(Length::Fixed(1.0))
+            .height(Fill)
+            .style(|_theme| container::Style {
+                background: Some(iced::Background::Color(iced::Color::from_rgb(
+                    0.9, 0.9, 0.9,
+                ))), // Gray
+                ..Default::default()
+            });
+        let main_content = row![
+            left_border,
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(0),
+            right_border
+        ];
+
+        let base_layout = if self.method_menu_open {
+            stack![
+                main_content,
+                // Transparent overlay to detect clicks outside the menu
+                button(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(Message::CloseMethodMenu)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(|_theme, _status| button::Style {
+                        background: Some(Background::Color(Color::TRANSPARENT)),
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        text_color: Color::TRANSPARENT,
+                        snap: true
+                    }),
+                // The actual dropdown menu
+                container(method_dropdown())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding::new(12.0).top(100.0)) // Left padding 12, top padding 100 to position dropdown
+            ]
+            .into()
+        } else {
+            main_content.into()
+        };
+
+        base_layout
+    }
+
+    pub fn handle_body_changed(&mut self, action: text_editor::Action) -> (String, bool) {
         info!("Body changed action: {:?}", action);
 
         // Only trigger auto-save for actual content-changing actions
@@ -94,27 +609,7 @@ impl RequestPanel {
         // Get the updated body text
         let body_text = self.request_body_content.text();
 
-        let task = if should_save {
-            // Emit auto-save message if we have a current request
-            if let Some((collection_index, request_index)) = last_opened_request {
-                Task::perform(
-                    async move {
-                        Message::RequestFieldChanged {
-                            collection_index,
-                            request_index,
-                            field: RequestField::Body,
-                        }
-                    },
-                    |msg| msg,
-                )
-            } else {
-                Task::none()
-            }
-        } else {
-            Task::none()
-        };
-
-        (body_text, task)
+        (body_text, should_save)
     }
 
     pub fn set_body_content(&mut self, body: String) {
@@ -133,239 +628,6 @@ impl RequestPanel {
     pub fn handle_body_action(&mut self, action: text_editor::Action) {
         self.request_body_content.perform(action);
     }
-}
-
-pub fn request_panel<'a>(
-    config: &'a RequestConfig,
-    url: &'a str,
-    panel: &'a RequestPanel,
-    is_loading: bool,
-    environments: &'a [Environment],
-    active_environment: Option<usize>,
-    method_menu_open: bool,
-    send_button_hovered: bool,
-    cancel_button_hovered: bool,
-) -> Element<'a, Message> {
-    // Environment pick_list for the URL row
-    let env_pick_list = {
-        // Create list of environment options including all environments plus "Configure"
-        let mut env_options: Vec<String> =
-            environments.iter().map(|env| env.name.clone()).collect();
-        env_options.push("Configure".to_string());
-
-        // Determine the selected value
-        let selected_env = if let Some(active_idx) = active_environment {
-            if let Some(env) = environments.get(active_idx) {
-                Some(env.name.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        pick_list(env_options, selected_env, |selected| {
-            if selected == "Configure" {
-                Message::OpenEnvironmentPopup
-            } else {
-                // Find the index of the selected environment
-                if let Some(index) = environments.iter().position(|env| env.name == selected) {
-                    Message::EnvironmentSelected(index)
-                } else {
-                    Message::DoNothing
-                }
-            }
-        })
-        .width(150)
-        .placeholder("No Environment")
-    };
-
-    // Environment bar
-    let env_bar = row![
-        text("Environment:").size(14),
-        space().width(5),
-        env_pick_list,
-        space().width(Fill), // Push everything to the left
-    ]
-    .align_y(iced::Alignment::Center);
-
-    // Method label with dynamic width
-    let method_label = method_button(&config.method);
-
-    // Create send/cancel button based on loading state
-    let url_valid = !config.url.trim().is_empty()
-        && (config.url.starts_with("http://")
-            || config.url.starts_with("https://")
-            || config.url.contains("{{"));
-
-    let send_button = if is_loading {
-        // Show cancel icon when loading
-        let cancel_color = if cancel_button_hovered {
-            Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
-        } else {
-            Color::from_rgb(0.5, 0.5, 0.5) // Light gray default
-        };
-
-        mouse_area(
-            button(icon(IconName::Cancel).size(16).color(cancel_color))
-                .padding(8)
-                .on_press(Message::CancelRequest)
-                .style(icon_button_style(true)),
-        )
-        .on_enter(Message::CancelButtonHovered(true))
-        .on_exit(Message::CancelButtonHovered(false))
-    } else {
-        // Show send icon when not loading
-        let send_color = if send_button_hovered {
-            Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
-        } else {
-            Color::from_rgb(0.5, 0.5, 0.5) // Light gray default
-        };
-
-        if url_valid {
-            mouse_area(
-                button(icon(IconName::Send).size(16).color(send_color))
-                    .padding(8)
-                    .on_press(Message::SendRequest)
-                    .style(icon_button_style(true)),
-            )
-            .on_enter(Message::SendButtonHovered(true))
-            .on_exit(Message::SendButtonHovered(false))
-        } else {
-            mouse_area(
-                button(icon(IconName::Send).size(16).color(send_color))
-                    .padding(8)
-                    .style(icon_button_style(false)),
-            )
-            .on_enter(Message::SendButtonHovered(true))
-            .on_exit(Message::SendButtonHovered(false))
-        }
-    };
-
-    let base_input = container(row![
-        method_label,
-        UrlInput::new("Enter URL...", url).on_input(Message::UrlInputChanged),
-        space().width(5),
-        send_button,
-    ])
-    .padding(2)
-    .style(|_theme| container::Style {
-        background: Some(Background::Color(Color::WHITE)),
-        border: Border {
-            color: Color::from_rgb(0.8, 0.8, 0.8),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        text_color: None,
-        shadow: Default::default(),
-        snap: true,
-    });
-
-    let connected_input = base_input;
-
-    let url_row = row![connected_input].align_y(iced::Alignment::Center);
-
-    let tabs = row![
-        tab_button(
-            "Body",
-            config.selected_tab == RequestTab::Body,
-            RequestTab::Body
-        ),
-        tab_button(
-            "Params",
-            config.selected_tab == RequestTab::Params,
-            RequestTab::Params
-        ),
-        tab_button(
-            "Headers",
-            config.selected_tab == RequestTab::Headers,
-            RequestTab::Headers
-        ),
-        tab_button(
-            "Auth",
-            config.selected_tab == RequestTab::Auth,
-            RequestTab::Auth
-        ),
-    ]
-    .spacing(5);
-
-    let tab_content = match config.selected_tab {
-        RequestTab::Body => body_tab(&panel.request_body_content),
-        RequestTab::Params => params_tab(config),
-        RequestTab::Headers => headers_tab(config),
-        RequestTab::Auth => auth_tab(config),
-        RequestTab::Environment => body_tab(&panel.request_body_content), // Fallback to body tab if somehow Environment is selected
-    };
-
-    let content = column![
-        env_bar,
-        space().height(5),
-        url_row,
-        space().height(5),
-        tabs,
-        space().height(5),
-        tab_content
-    ]
-    .spacing(5)
-    .padding(15);
-
-    // Create left border
-    let left_border = container("")
-        .width(Length::Fixed(1.0))
-        .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb(
-                0.9, 0.9, 0.9,
-            ))), // Gray
-            ..Default::default()
-        });
-
-    // Create right border
-    let right_border = container("")
-        .width(Length::Fixed(1.0))
-        .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgb(
-                0.9, 0.9, 0.9,
-            ))), // Gray
-            ..Default::default()
-        });
-    let main_content = row![
-        left_border,
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(0),
-        right_border
-    ];
-
-    let base_layout = if panel.method_menu_open {
-        stack![
-            main_content,
-            // Transparent overlay to detect clicks outside the menu
-            button(Space::new().width(Length::Fill).height(Length::Fill))
-                .on_press(Message::CloseMethodMenu)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(|_theme, _status| button::Style {
-                    background: Some(Background::Color(Color::TRANSPARENT)),
-                    border: Border::default(),
-                    shadow: Shadow::default(),
-                    text_color: Color::TRANSPARENT,
-                    snap: true
-                }),
-            // The actual dropdown menu
-            container(method_dropdown())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(iced::Padding::new(12.0).top(100.0)) // Left padding 12, top padding 100 to position dropdown
-        ]
-        .into()
-    } else {
-        main_content.into()
-    };
-
-    base_layout
 }
 
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {

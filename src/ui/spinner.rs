@@ -4,6 +4,10 @@ use iced::{Element, Length, Color, Point, Background};
 use std::f32::consts::PI;
 
 #[derive(Debug, Clone)]
+pub enum Message {
+}
+
+#[derive(Debug, Clone)]
 pub struct Spinner {
     rotation: f32,
 }
@@ -27,7 +31,7 @@ impl Spinner {
         }
     }
 
-    pub fn view(&self) -> Element<'_, crate::types::Message> {
+    pub fn view(&self) -> Element<'_, Message> {
         container(
             Canvas::new(self)
                 .width(Length::Fixed(20.0))
@@ -43,7 +47,7 @@ impl Spinner {
     }
 }
 
-impl canvas::Program<crate::types::Message> for Spinner {
+impl canvas::Program<Message> for Spinner {
     type State = ();
 
     fn draw(

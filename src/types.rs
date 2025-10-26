@@ -1,13 +1,9 @@
-use iced::widget::{text_editor, pane_grid};
-use iced::{Color};
-use iced::advanced::text::Highlighter;
-use crate::storage::StorageManager;
-use crate::ui::request::RequestPanel;
-use std::collections::HashMap;
-use std::time::Instant;
-use log::{info};
-use serde::{Serialize, Deserialize};
 use crate::storage::persistent_types::RequestMetadata;
+use iced::Color;
+use iced::advanced::text::Highlighter;
+use iced::widget::{pane_grid, text_editor};
+use log::info;
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -47,57 +43,6 @@ impl Highlighter for ResponseHighlighter {
     }
 }
 
-#[derive(Debug)]
-pub struct BeamApp {
-    pub panes: pane_grid::State<PaneContent>,
-    pub collections: Vec<RequestCollection>,
-    pub current_request: RequestConfig,
-    pub url: String,
-    pub response_panel: ResponsePanel,
-    pub request_panel: RequestPanel,
-    pub request_start_time: Option<std::time::Instant>,
-
-    // Environment management
-    pub environments: Vec<Environment>,
-    pub active_environment: Option<usize>,
-    pub show_environment_popup: bool,
-    pub method_menu_open: bool,
-
-    // Last opened request tracking
-    pub last_opened_request: Option<(usize, usize)>, // (collection_index, request_index)
-
-    // Auto-save debounce management
-    pub debounce_timers: HashMap<(usize, usize), Instant>, // (collection_index, request_index) -> last_change_time
-    pub debounce_delay_ms: u64, // configurable delay in milliseconds
-
-    // Rename modal state
-    pub show_rename_modal: bool,
-    pub rename_input: String,
-    pub rename_target: Option<RenameTarget>, // What is being renamed
-
-    // Double-click detection state
-    pub last_click_time: Option<std::time::Instant>,
-    pub last_click_target: Option<(usize, usize)>, // (collection_index, request_index)
-
-
-
-    // Storage
-    #[allow(dead_code)]
-    pub storage_manager: Option<StorageManager>,
-
-    // Hover states for buttons
-    pub send_button_hovered: bool,
-    pub cancel_button_hovered: bool,
-
-
-
-    // Flag to track recent undo operations
-    pub just_performed_undo: bool,
-
-    // Flag to track when Cmd+Z is being processed to prevent visual flicker
-    pub processing_cmd_z: bool,
-}
-
 #[derive(Debug, Clone)]
 pub struct RequestCollection {
     pub name: String,
@@ -122,6 +67,9 @@ pub struct RequestConfig {
     pub content_type: String,
     pub auth_type: AuthType,
     pub selected_tab: RequestTab,
+
+    pub collection_index: u32,
+    pub request_index: u32,
 
     // Authentication fields
     pub bearer_token: String,
@@ -150,6 +98,9 @@ pub struct SerializableRequestConfig {
     pub api_key: String,
     pub api_key_header: String,
 
+    pub collection_index: u32,
+    pub request_index: u32,
+
     // Metadata field (optional for backward compatibility)
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
@@ -172,6 +123,8 @@ impl Clone for RequestConfig {
             basic_password: self.basic_password.clone(),
             api_key: self.api_key.clone(),
             api_key_header: self.api_key_header.clone(),
+            collection_index: self.collection_index,
+            request_index: self.request_index,
         }
     }
 }
@@ -193,6 +146,8 @@ impl RequestConfig {
             basic_password: self.basic_password.clone(),
             api_key: self.api_key.clone(),
             api_key_header: self.api_key_header.clone(),
+            collection_index: self.collection_index,
+            request_index: self.request_index,
             metadata: Some(RequestMetadata::default()),
         }
     }
@@ -213,6 +168,8 @@ impl RequestConfig {
             basic_password: serializable.basic_password,
             api_key: serializable.api_key,
             api_key_header: serializable.api_key_header,
+            collection_index: serializable.collection_index,
+            request_index: serializable.request_index,
         }
     }
 }
@@ -289,143 +246,9 @@ pub enum AuthType {
     ApiKey,
 }
 
-#[derive(Debug, Clone)]
-pub enum PaneContent {
-    Collections,
-    RequestConfig,
-    Response,
-}
-
-#[derive(Debug, Clone)]
-pub enum Message {
-    PaneResized(pane_grid::ResizeEvent),
-    UrlChanged(String),
-    UrlInputChanged(String),
-    UrlInputUndo,
-    UrlInputRedo,
-    SetProcessingCmdZ(bool),
-    UrlInputFocused,
-    UrlInputUnfocused,
-    MethodChanged(HttpMethod),
-
-    SendRequest,
-    CancelRequest,
-    SendButtonHovered(bool),
-    CancelButtonHovered(bool),
-    RequestCompleted(Result<ResponseData, String>),
-    TimerTick,
-    CollectionToggled(usize),
-    RequestSelected(usize, usize),
-    TabSelected(RequestTab),
-    HeaderKeyChanged(usize, String),
-    HeaderValueChanged(usize, String),
-    AddHeader,
-    RemoveHeader(usize),
-    ParamKeyChanged(usize, String),
-    ParamValueChanged(usize, String),
-    AddParam,
-    RemoveParam(usize),
-    BodyChanged(text_editor::Action),
-    ResponsePanel(crate::ui::response::Action),
-    AuthTypeChanged(AuthType),
-    BearerTokenChanged(String),
-    BasicUsernameChanged(String),
-    BasicPasswordChanged(String),
-    ApiKeyChanged(String),
-    ApiKeyHeaderChanged(String),
-
-    // Environment management
-    OpenEnvironmentPopup,
-    CloseEnvironmentPopup,
-    KeyPressed(iced::keyboard::Key),
-    ToggleMethodMenu,
-    CloseMethodMenu,
-    DoNothing, // Used to prevent event propagation
-    EnvironmentSelected(usize),
-    AddEnvironment,
-    DeleteEnvironment(usize),
-    EnvironmentNameChanged(usize, String),
-    EnvironmentDescriptionChanged(usize, String),
-    VariableKeyChanged(usize, usize, String),
-    VariableValueChanged(usize, usize, String),
-    AddVariable(usize),
-    RemoveVariable(usize, usize),
-
-    AddHttpRequest(usize),
-    DeleteFolder(usize),
-    AddFolder(usize),
-    RenameFolder(usize),
-    // Request context menu actions
-    SendRequestFromMenu(usize, usize),
-    CopyRequestAsCurl(usize, usize),
-    RenameRequest(usize, usize),
-    DuplicateRequest(usize, usize),
-    DeleteRequest(usize, usize),
-
-    // Rename modal
-    #[allow(dead_code)]
-    ShowRenameModal(usize, usize), // (collection_index, request_index)
-
-    HideRenameModal,
-    RenameInputChanged(String),
-    ConfirmRename,
-
-    // URL tooltip for environment variables
-
-
-    // Storage operations
-    #[allow(dead_code)]
-    SaveCollection(usize),
-    LoadCollections,
-    #[allow(dead_code)]
-    SaveEnvironments,
-    LoadEnvironments,
-    LoadActiveEnvironment,
-    ActiveEnvironmentLoaded(Result<Option<String>, String>),
-    InitializeStorage,
-    StorageInitialized(Result<(), String>),
-    #[allow(dead_code)]
-    SetStorageManager,
-    CollectionsSaved(Result<(), String>),
-    CollectionsLoaded(Result<Vec<RequestCollection>, String>),
-    EnvironmentsSaved(Result<(), String>),
-    EnvironmentsLoaded(Result<Vec<Environment>, String>),
-    #[allow(dead_code)]
-    SaveInitialData,
-    SaveLastOpenedRequest(usize, usize), // (collection_index, request_index)
-    UpdateLastOpenedRequest(usize, usize), // (collection_index, request_index) - deferred state update
-    LoadLastOpenedRequest,
-    LastOpenedRequestSaved(Result<(), String>),
-    LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
-    RequestConfigLoaded(Result<Option<RequestConfig>, String>),
-
-    // Auto-save messages
-    #[allow(dead_code)]
-    RequestFieldChanged {
-        collection_index: usize,
-        request_index: usize,
-        field: RequestField,
-    },
-    SaveRequestDebounced {
-        collection_index: usize,
-        request_index: usize,
-    },
-    RequestSaved(Result<(), String>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RequestField {
-    Url,
-    Method,
-    Body,
-    Headers,
-    Params,
-    Auth,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum RenameTarget {
-    Folder(usize), // collection_index
+    Folder(usize),         // collection_index
     Request(usize, usize), // (collection_index, request_index)
 }
 

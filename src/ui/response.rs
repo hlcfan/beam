@@ -1,14 +1,27 @@
-use crate::types::{ResponseData, ResponseTab, Message, ResponsePanel};
-use iced::widget::{
-    button, column, container, row, text, scrollable, text_editor, space
-};
-use iced::{Element, Length, Color, Background, Border, Task};
-use iced::widget::container::Style;
-use iced::widget::button::Status;
+use crate::types::{ResponseData, ResponsePanel, ResponseTab};
 use iced::highlighter::{self};
-use log::{info};
+use iced::widget::button::Status;
+use iced::widget::container::Style;
+use iced::widget::{button, column, container, row, scrollable, space, text, text_editor};
+use iced::{Background, Border, Color, Element, Length};
+use log::info;
 
-fn response_text_editor_style(theme: &iced::Theme, _status: text_editor::Status) -> text_editor::Style {
+#[derive(Debug, Clone)]
+pub enum Action {
+    None,
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    ResponseBodyAction(text_editor::Action),
+    TabSelected(ResponseTab),
+    DoNothing, // Used to prevent event propagation
+}
+
+fn response_text_editor_style(
+    theme: &iced::Theme,
+    _status: text_editor::Status,
+) -> text_editor::Style {
     text_editor::Style {
         background: Background::Color(theme.palette().background),
         border: Border {
@@ -83,9 +96,13 @@ fn get_syntax_from_content_type(content_type: &str) -> &'static str {
     }
 }
 
-fn response_tab_button<'a>(label: &'a str, is_active: bool, tab: ResponseTab) -> Element<'a, Action> {
+fn response_tab_button<'a>(
+    label: &'a str,
+    is_active: bool,
+    tab: ResponseTab,
+) -> Element<'a, Message> {
     button(text(label))
-        .on_press(Action::TabSelected(tab))
+        .on_press(Message::TabSelected(tab))
         .style(move |_theme, status| {
             let base = button::Style::default();
             if is_active {
@@ -122,21 +139,23 @@ fn response_tab_button<'a>(label: &'a str, is_active: bool, tab: ResponseTab) ->
         .into()
 }
 
-fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option<ResponseData>) -> Element<'a, Action> {
+fn response_body_tab<'a>(
+    content: &'a text_editor::Content,
+    response: &'a Option<ResponseData>,
+) -> Element<'a, Message> {
     let mut body_column = column![];
 
     info!("===response body content");
     // For text responses, use the normal text editor with dynamic syntax highlighting
     // TODO: move the syntax to main file
     // let syntax_language = get_syntax_from_content_type(&response.content_type);
-    body_column = body_column
-      .push(
+    body_column = body_column.push(
         text_editor(content)
-        .highlight("json", highlighter::Theme::SolarizedDark)
-        .on_action(Action::ResponseBodyAction)
-        .height(Length::Fill)
-        .style(response_text_editor_style)
-      );
+            .highlight("json", highlighter::Theme::SolarizedDark)
+            .on_action(Message::ResponseBodyAction)
+            .height(Length::Fill)
+            .style(response_text_editor_style),
+    );
     info!("===response body updated");
 
     // Check if this is a binary response
@@ -227,25 +246,14 @@ fn response_body_tab<'a>(content: &'a text_editor::Content, response: &'a Option
     body_column.spacing(0.0).into()
 }
 
-fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Action> {
-    let mut content = column![
-        text("Response Headers").size(16),
-        space().height(10)
-    ];
+fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> {
+    let mut content = column![text("Response Headers").size(16), space().height(10)];
 
     for (key, value) in &response.headers {
         let header_row = row![
-            container(
-                text(key)
-                    .size(14)
-                    .color(Color::from_rgb(0.3, 0.3, 0.3))
-            )
-            .width(Length::FillPortion(1)),
-            container(
-                text(value)
-                    .size(14)
-            )
-            .width(Length::FillPortion(2))
+            container(text(key).size(14).color(Color::from_rgb(0.3, 0.3, 0.3)))
+                .width(Length::FillPortion(1)),
+            container(text(value).size(14)).width(Length::FillPortion(2))
         ]
         .spacing(20)
         .padding([5, 0]);
@@ -253,16 +261,7 @@ fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Action> {
         content = content.push(header_row);
     }
 
-    scrollable(content.spacing(5))
-        .height(Length::Fill)
-        .into()
-}
-
-#[derive(Debug, Clone)]
-pub enum Action {
-    ResponseBodyAction(text_editor::Action),
-    TabSelected(ResponseTab),
-    None,
+    scrollable(content.spacing(5)).height(Length::Fill).into()
 }
 
 impl ResponsePanel {
@@ -277,21 +276,21 @@ impl ResponsePanel {
         }
     }
 
-    pub fn update(&mut self, action: Action) -> Task<Message> {
-        match action {
-            Action::ResponseBodyAction(text_action) => {
+    pub fn update(&mut self, message: Message) -> Action {
+        match message {
+            Message::ResponseBodyAction(text_action) => {
                 // Filter actions to allow only read-only operations
                 // Allow: select, copy, scroll, move cursor
                 // Block: edit actions (insert, paste, delete, etc.)
                 match &text_action {
-                    text_editor::Action::Move(_) |
-                    text_editor::Action::Select(_) |
-                    text_editor::Action::SelectWord |
-                    text_editor::Action::SelectLine |
-                    text_editor::Action::SelectAll |
-                    text_editor::Action::Click(_) |
-                    text_editor::Action::Drag(_) |
-                    text_editor::Action::Scroll { .. } => {
+                    text_editor::Action::Move(_)
+                    | text_editor::Action::Select(_)
+                    | text_editor::Action::SelectWord
+                    | text_editor::Action::SelectLine
+                    | text_editor::Action::SelectAll
+                    | text_editor::Action::Click(_)
+                    | text_editor::Action::Drag(_)
+                    | text_editor::Action::Scroll { .. } => {
                         // Allow read-only actions
                         self.response_body_content.perform(text_action.clone());
                     }
@@ -300,26 +299,22 @@ impl ResponsePanel {
                         // Do nothing - this prevents editing
                     }
                 }
-                Task::none()
+                Action::None
             }
-            Action::TabSelected(tab) => {
+            Message::TabSelected(tab) => {
                 self.selected_tab = tab;
-                Task::none()
+                Action::None
             }
-            Action::None => Task::none(),
+            Message::DoNothing => Action::None,
         }
     }
 
-    pub fn render<'a>(&'a self) -> Element<'a, Action> {
+    pub fn view(&self) -> Element<'_, Message> {
         let mut status_row = vec![];
 
         // Add loading indicator if loading (on the left)
         if self.is_loading {
-            status_row.push(
-                container(self.spinner.view())
-                .padding([0, 3])
-                .into(),
-            );
+            status_row.push(container(self.spinner.view()).padding([0, 3]).into());
         }
 
         // Add response status or placeholder
@@ -337,11 +332,14 @@ impl ResponsePanel {
                     container(
                         text(format!("{} {}", resp.status, resp.status_text))
                             .color(status_color)
-                            .size(14)
+                            .size(14),
                     )
                     .style(move |_theme| Style {
                         background: Some(Background::Color(Color::from_rgba(
-                            status_color.r, status_color.g, status_color.b, 0.1
+                            status_color.r,
+                            status_color.g,
+                            status_color.b,
+                            0.1,
                         ))),
                         border: Border {
                             radius: 4.0.into(),
@@ -379,7 +377,7 @@ impl ResponsePanel {
                         container(
                             text("Ready to send request")
                                 .size(14)
-                                .color(Color::from_rgb(0.5, 0.5, 0.5))
+                                .color(Color::from_rgb(0.5, 0.5, 0.5)),
                         )
                         .padding([4, 8])
                         .into(),
@@ -396,31 +394,36 @@ impl ResponsePanel {
             }
         }
 
-        let status_info: Element<'_, Action> = Element::from(row(status_row)
-            .align_y(iced::Alignment::Center))
-            .map(|_| Action::None);
+        let status_info: Element<'_, Message> =
+            Element::from(row(status_row).align_y(iced::Alignment::Center)).map(|_| Message::DoNothing);
 
         let tabs = row![
-            response_tab_button("Body", self.selected_tab == ResponseTab::Body, ResponseTab::Body),
-            response_tab_button("Headers", self.selected_tab == ResponseTab::Headers, ResponseTab::Headers),
+            response_tab_button(
+                "Body",
+                self.selected_tab == ResponseTab::Body,
+                ResponseTab::Body
+            ),
+            response_tab_button(
+                "Headers",
+                self.selected_tab == ResponseTab::Headers,
+                ResponseTab::Headers
+            ),
         ]
         .spacing(5);
 
         let tab_content = match self.selected_tab {
             ResponseTab::Body => response_body_tab(&self.response_body_content, &self.response),
-            ResponseTab::Headers => {
-                match &self.response {
-                    Some(resp) => response_headers_tab(resp),
-                    None => container(
-                        text("No headers available")
-                            .size(14)
-                            .color(Color::from_rgb(0.5, 0.5, 0.5))
-                    )
-                    .padding(20)
-                    .center_x(Length::Fill)
-                    .into()
-                }
-            }
+            ResponseTab::Headers => match &self.response {
+                Some(resp) => response_headers_tab(resp),
+                None => container(
+                    text("No headers available")
+                        .size(14)
+                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                )
+                .padding(20)
+                .center_x(Length::Fill)
+                .into(),
+            },
         };
 
         column![

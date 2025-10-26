@@ -59,6 +59,8 @@ impl ToPersistent<PersistentRequest> for SavedRequest {
             basic_password: None,
             api_key: None,
             api_key_header: None,
+            collection_index: 0,
+            request_index: 0,
             metadata: Some(RequestMetadata::default()),
         }
     }
@@ -107,6 +109,8 @@ impl ToPersistent<PersistentRequest> for RequestConfig {
             basic_password: if self.basic_password.is_empty() { None } else { Some(self.basic_password.clone()) },
             api_key: if self.api_key.is_empty() { None } else { Some(self.api_key.clone()) },
             api_key_header: if self.api_key_header.is_empty() { None } else { Some(self.api_key_header.clone()) },
+            collection_index: self.collection_index,
+            request_index: self.request_index,
             metadata: Some(RequestMetadata::default()),
         }
     }
@@ -151,6 +155,8 @@ impl FromPersistent<PersistentRequest> for RequestConfig {
             basic_password: persistent.basic_password.unwrap_or_default(),
             api_key: persistent.api_key.unwrap_or_default(),
             api_key_header: persistent.api_key_header.unwrap_or_else(|| "X-API-Key".to_string()),
+            collection_index: persistent.collection_index,
+            request_index: persistent.collection_index,
         }
     }
 }

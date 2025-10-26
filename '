@@ -1666,7 +1666,6 @@ impl BeamApp {
                 Task::none()
             }
             Message::CloseEnvironmentPopup => Task::none(),
-            Message::DoNothing => Task::none(),
         }
     }
 
@@ -1880,10 +1879,9 @@ impl BeamApp {
                             .position(|env| env.name == selected)
                         {
                             // Message::EnvironmentSelected(index)
-                            Message::DoNothing
+                            // Message::
                         } else {
-                            // Message::EnvironmentSelected(0)
-                            Message::DoNothing
+                            Message::EnvironmentSelected(0)
                         }
                     })
                     .width(Length::FillPortion(2)),

@@ -18,6 +18,8 @@ pub struct PersistentRequest {
     pub basic_password: Option<String>,
     pub api_key: Option<String>,
     pub api_key_header: Option<String>,
+    pub collection_index: u32,
+    pub request_index: u32,
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
 }
