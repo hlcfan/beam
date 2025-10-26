@@ -368,24 +368,54 @@ impl BeamApp {
                             Task::none()
                         } else {
                             // Single click: select the request
-                            self.current_request.method = request.method.clone();
-                            self.current_request.url = request.url.clone();
-
-                            self.url = request.url.clone();
-
-                            // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
-                            Task::perform(
-                                async move {
-                                    // Small delay to allow UI to render first
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(10))
-                                        .await;
-                                    Message::UpdateLastOpenedRequest(
-                                        collection_index,
-                                        request_index,
-                                    )
-                                },
-                                |msg| msg,
-                            )
+                            // Load the full request configuration including body, headers, params, auth
+                            let collections = self.collections.clone();
+                            Task::batch([
+                                // Load the complete request configuration
+                                Task::perform(
+                                    async move {
+                                        match storage::StorageManager::with_default_config().await {
+                                            Ok(storage_manager) => {
+                                                match storage_manager
+                                                    .storage()
+                                                    .load_request_by_indices(
+                                                        &collections,
+                                                        collection_index,
+                                                        request_index,
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(Some(persistent_request)) => {
+                                                        // Convert PersistentRequest to RequestConfig
+                                                        use storage::conversions::FromPersistent;
+                                                        let request_config = RequestConfig::from_persistent(
+                                                            persistent_request,
+                                                        );
+                                                        Ok(Some(request_config))
+                                                    }
+                                                    Ok(None) => Ok(None),
+                                                    Err(e) => Err(e.to_string()),
+                                                }
+                                            }
+                                            Err(e) => Err(e.to_string()),
+                                        }
+                                    },
+                                    Message::RequestConfigLoaded,
+                                ),
+                                // Defer the last opened request update to prevent UI re-rendering that causes context menu delays
+                                Task::perform(
+                                    async move {
+                                        // Small delay to allow UI to render first
+                                        tokio::time::sleep(tokio::time::Duration::from_millis(10))
+                                            .await;
+                                        Message::UpdateLastOpenedRequest(
+                                            collection_index,
+                                            request_index,
+                                        )
+                                    },
+                                    |msg| msg,
+                                ),
+                            ])
                         }
                     } else {
                         Task::none()
