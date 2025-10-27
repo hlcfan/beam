@@ -1,7 +1,7 @@
 use crate::types::{HttpMethod, RequestConfig, ResponseData, AuthType};
 use std::time::Instant;
 use base64::{Engine as _, engine::general_purpose};
-use log::{info, trace, warn, Log};
+use log::{info};
 
 fn is_binary_content_type(content_type: &str) -> bool {
     let content_type_lower = content_type.to_lowercase();

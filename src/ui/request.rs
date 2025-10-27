@@ -1,4 +1,3 @@
-use crate::types::ResponseData;
 use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::{IconName, icon, url_input};
 use iced::widget::button::Status;
@@ -7,9 +6,9 @@ use iced::widget::{
     text_editor, text_input,
 };
 use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector};
+use log::info;
 use std::time::Instant;
 use url_input::UrlInput;
-use log::info;
 
 // Action is returned from update function, to trigger a side effect, used in the main
 
@@ -90,13 +89,16 @@ pub struct RequestPanel {
     pub method_menu_open: bool,
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
+    pub selected_tab: RequestTab,
 }
 
 impl Default for RequestPanel {
     fn default() -> Self {
         Self {
             request_body_content: text_editor::Content::new(),
+            selected_tab: RequestTab::Body,
             current_request: RequestConfig {
+                name: String::new(),
                 method: HttpMethod::GET,
                 url: String::new(),
                 headers: vec![
@@ -107,7 +109,6 @@ impl Default for RequestPanel {
                 body: String::new(),
                 content_type: "application/json".to_string(),
                 auth_type: AuthType::None,
-                selected_tab: RequestTab::Body,
                 bearer_token: String::new(),
                 basic_username: String::new(),
                 basic_password: String::new(),
@@ -115,6 +116,7 @@ impl Default for RequestPanel {
                 api_key_header: "X-API-Key".to_string(),
                 collection_index: 0,
                 request_index: 0,
+                metadata: None,
             },
             url: String::new(),
             is_loading: false,
@@ -187,7 +189,8 @@ impl RequestPanel {
                 Action::None
             }
             Message::TabSelected(tab) => {
-                self.current_request.clone().selected_tab = tab;
+                // TODO: handle selected tab on component level
+                // self.current_request.clone().selected_tab = tab;
                 Action::None
             }
 
@@ -206,7 +209,8 @@ impl RequestPanel {
                 Action::UpdateCurrentRequest(self.current_request.clone())
             }
             Message::AddHeader => {
-                self.current_request.clone()
+                self.current_request
+                    .clone()
                     .headers
                     .push((String::new(), String::new()));
                 Action::None
@@ -232,7 +236,8 @@ impl RequestPanel {
                 Action::UpdateCurrentRequest(self.current_request.clone().clone())
             }
             Message::AddParam => {
-                self.current_request.clone()
+                self.current_request
+                    .clone()
                     .params
                     .push((String::new(), String::new()));
 
@@ -299,7 +304,7 @@ impl RequestPanel {
             }
             Message::EnvironmentSelected(index) => {
                 if index < self.environments.len() {
-                    self.active_environment =Some( index);
+                    self.active_environment = Some(index);
                     Action::UpdateActiveEnvironment(index)
 
                     //     // Save the active environment to storage
@@ -495,28 +500,28 @@ impl RequestPanel {
         let tabs = row![
             tab_button(
                 "Body",
-                self.current_request.clone().selected_tab == RequestTab::Body,
+                self.selected_tab == RequestTab::Body,
                 RequestTab::Body
             ),
             tab_button(
                 "Params",
-                self.current_request.clone().selected_tab == RequestTab::Params,
+                self.selected_tab == RequestTab::Params,
                 RequestTab::Params
             ),
             tab_button(
                 "Headers",
-                self.current_request.clone().selected_tab == RequestTab::Headers,
+                self.selected_tab == RequestTab::Headers,
                 RequestTab::Headers
             ),
             tab_button(
                 "Auth",
-                self.current_request.clone().selected_tab == RequestTab::Auth,
+                self.selected_tab == RequestTab::Auth,
                 RequestTab::Auth
             ),
         ]
         .spacing(5);
 
-        let tab_content = match self.current_request.selected_tab {
+        let tab_content = match self.selected_tab {
             RequestTab::Body => body_tab(&self.request_body_content),
             RequestTab::Params => params_tab(&self.current_request),
             RequestTab::Headers => headers_tab(&self.current_request),

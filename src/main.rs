@@ -24,6 +24,7 @@ use log::{error, info};
 use serde_json;
 use std::collections::HashMap;
 use std::time::Instant;
+use storage::conversions::FromPersistent;
 
 #[derive(Debug, Clone)]
 pub enum PaneContent {
@@ -72,10 +73,8 @@ pub enum Message {
     LoadEnvironments,
     LoadActiveEnvironment,
     ActiveEnvironmentLoaded(Result<Option<String>, String>),
-    InitializeStorage,
-    StorageInitialized(Result<(), String>),
+    LoadConfigFiles,
     #[allow(dead_code)]
-    SetStorageManager,
     CollectionsSaved(Result<(), String>),
     CollectionsLoaded(Result<Vec<RequestCollection>, String>),
     EnvironmentsSaved(Result<(), String>),
@@ -159,7 +158,7 @@ pub fn main() -> iced::Result {
         || {
             (
                 BeamApp::default(),
-                Task::perform(async { Message::InitializeStorage }, |msg| msg),
+                Task::perform(async { Message::LoadConfigFiles }, |msg| msg),
             )
         },
         BeamApp::update,
@@ -197,6 +196,7 @@ impl Default for BeamApp {
             collections,
             url: String::new(),
             current_request: RequestConfig {
+                name: String::new(),
                 method: HttpMethod::GET,
                 url: String::new(),
                 headers: vec![
@@ -207,7 +207,6 @@ impl Default for BeamApp {
                 body: String::new(),
                 content_type: "application/json".to_string(),
                 auth_type: AuthType::None,
-                selected_tab: RequestTab::Body,
                 bearer_token: String::new(),
                 basic_username: String::new(),
                 basic_password: String::new(),
@@ -215,6 +214,7 @@ impl Default for BeamApp {
                 api_key_header: "X-API-Key".to_string(),
                 collection_index: 0,
                 request_index: 0,
+                metadata: None,
             },
             response_panel: ResponsePanel::new(),
             request_panel: RequestPanel::default(),
@@ -492,13 +492,12 @@ impl BeamApp {
                                                     .await
                                                 {
                                                     Ok(Some(persistent_request)) => {
-                                                        // Convert PersistentRequest to RequestConfig
-                                                        use storage::conversions::FromPersistent;
-                                                        let request_config =
-                                                            RequestConfig::from_persistent(
-                                                                persistent_request,
-                                                            );
-                                                        Ok(Some(request_config))
+                                                        // TODO: save request config
+                                                        // let request_config =
+                                                        //     RequestConfig::from_persistent(
+                                                        //         persistent_request,
+                                                        //     );
+                                                        Ok(None)
                                                     }
                                                     Ok(None) => Ok(None),
                                                     Err(e) => Err(e.to_string()),
@@ -1152,36 +1151,13 @@ impl BeamApp {
             //         Task::none()
             //     }
             // }
+
             // Storage operations
-            Message::InitializeStorage => Task::perform(
-                async {
-                    match storage::StorageManager::with_default_config().await {
-                        Ok(_) => Ok(()),
-                        Err(e) => Err(e.to_string()),
-                    }
-                },
-                Message::StorageInitialized,
-            ),
-            Message::StorageInitialized(result) => {
-                match result {
-                    Ok(_) => {
-                        // Storage initialized successfully, now load collections and environments first
-                        // Don't automatically save initial data - only create files when user explicitly saves
-                        Task::batch([
-                            Task::perform(async { Message::LoadCollections }, |msg| msg),
-                            Task::perform(async { Message::LoadEnvironments }, |msg| msg),
-                        ])
-                    }
-                    Err(e) => {
-                        error!("Failed to initialize storage: {}", e);
-                        Task::none()
-                    }
-                }
-            }
-            Message::SetStorageManager => {
-                // This message is no longer needed with the simplified approach
-                Task::none()
-            }
+            Message::LoadConfigFiles => Task::batch([
+                Task::perform(async { Message::LoadCollections }, |msg| msg),
+                Task::perform(async { Message::LoadLastOpenedRequest }, |msg| msg),
+                Task::perform(async { Message::LoadEnvironments }, |msg| msg),
+            ]),
             Message::LoadCollections => Task::perform(
                 async {
                     match storage::StorageManager::with_default_config().await {
@@ -1199,19 +1175,21 @@ impl BeamApp {
             Message::CollectionsLoaded(result) => {
                 match result {
                     Ok(collections) => {
+                        info!("===collections: {:?}", collections);
                         if !collections.is_empty() {
                             self.collections = collections;
                         } else {
+                            // TODO: add default request
                             // Create default folder and request when no collections exist
-                            let default_request = SavedRequest {
-                                name: "New Request".to_string(),
-                                method: HttpMethod::GET,
-                                url: "https://httpbin.org/get".to_string(),
-                            };
+                            // let default_request = RequestConfig {
+                            //     name: "New Request".to_string(),
+                            //     method: HttpMethod::GET,
+                            //     url: "https://httpbin.org/get".to_string(),
+                            // };
 
                             let default_collection = RequestCollection {
                                 name: "My Requests".to_string(),
-                                requests: vec![default_request],
+                                requests: vec![],
                                 expanded: true,
                             };
 
@@ -1222,16 +1200,19 @@ impl BeamApp {
                             self.current_request.url = "https://httpbin.org/get".to_string();
                             self.last_opened_request = Some((0, 0)); // First collection, first request
                         }
+
+                        Task::none()
+
                         // After collections are loaded, defer loading the last opened request to avoid blocking startup
                         // This allows the UI to be responsive immediately while the last request loads in the background
-                        Task::perform(
-                            async {
-                                // Add a small delay to allow the UI to render first
-                                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                                Message::LoadLastOpenedRequest
-                            },
-                            |msg| msg,
-                        )
+                        // Task::perform(
+                        //     async {
+                        //         // Add a small delay to allow the UI to render first
+                        //         // tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        //         Message::LoadLastOpenedRequest
+                        //     },
+                        //     |msg| msg,
+                        // )
                     }
                     Err(e) => {
                         error!("Failed to load collections: {}", e);
@@ -1523,15 +1504,7 @@ impl BeamApp {
                                             )
                                             .await
                                         {
-                                            Ok(Some(persistent_request)) => {
-                                                // Convert PersistentRequest to RequestConfig
-                                                use storage::conversions::FromPersistent;
-                                                let request_config = RequestConfig::from_persistent(
-                                                    persistent_request,
-                                                );
-                                                Ok(Some(request_config))
-                                            }
-                                            Ok(None) => Ok(None),
+                                            Ok(persistent_request) => Ok(persistent_request),
                                             Err(e) => Err(e.to_string()),
                                         }
                                     }
@@ -1612,33 +1585,34 @@ impl BeamApp {
                                 let collection_name = collection.name.clone();
                                 info!("====5");
                                 let request_name = saved_request.name.clone();
-                                let serializable_request =
-                                    self.current_request.to_serializable(request_name.clone());
-                                info!("===start perform auto save request");
-                                Task::perform(
-                                    async move {
-                                        match storage::StorageManager::with_default_config().await {
-                                            Ok(storage_manager) => {
-                                                info!("===done perform auto save request");
+                                // TODO: persistent request config
+                                // let serializable_request = self.current_request.to_serializable(request_name.clone());
+                                // info!("===start perform auto save request");
+                                // Task::perform(
+                                //     async move {
+                                //         match storage::StorageManager::with_default_config().await {
+                                //             Ok(storage_manager) => {
+                                //                 info!("===done perform auto save request");
 
-                                                match storage_manager
-                                                    .storage()
-                                                    .save_serializable_request(
-                                                        &collection_name,
-                                                        &request_name,
-                                                        &serializable_request,
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(_) => Ok(()),
-                                                    Err(e) => Err(e.to_string()),
-                                                }
-                                            }
-                                            Err(e) => Err(e.to_string()),
-                                        }
-                                    },
-                                    Message::RequestSaved,
-                                )
+                                //                 match storage_manager
+                                //                     .storage()
+                                //                     .save_serializable_request(
+                                //                         &collection_name,
+                                //                         &request_name,
+                                //                         &serializable_request,
+                                //                     )
+                                //                     .await
+                                //                 {
+                                //                     Ok(_) => Ok(()),
+                                //                     Err(e) => Err(e.to_string()),
+                                //                 }
+                                //             }
+                                //             Err(e) => Err(e.to_string()),
+                                //         }
+                                //     },
+                                //     Message::RequestSaved,
+                                // )
+                                Task::none()
                             } else {
                                 Task::none()
                             }

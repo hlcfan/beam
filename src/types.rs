@@ -1,7 +1,7 @@
 use crate::storage::persistent_types::RequestMetadata;
 use iced::Color;
 use iced::advanced::text::Highlighter;
-use iced::widget::{pane_grid, text_editor};
+use iced::widget::text_editor;
 use log::info;
 use serde::{Deserialize, Serialize};
 
@@ -46,19 +46,13 @@ impl Highlighter for ResponseHighlighter {
 #[derive(Debug, Clone)]
 pub struct RequestCollection {
     pub name: String,
-    pub requests: Vec<SavedRequest>,
+    pub requests: Vec<RequestConfig>,
     pub expanded: bool,
 }
 
-#[derive(Debug, Clone)]
-pub struct SavedRequest {
-    pub name: String,
-    pub method: HttpMethod,
-    pub url: String,
-}
-
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct RequestConfig {
+    pub name: String, // Add name field for identification
     pub method: HttpMethod,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -66,10 +60,6 @@ pub struct RequestConfig {
     pub body: String,
     pub content_type: String,
     pub auth_type: AuthType,
-    pub selected_tab: RequestTab,
-
-    pub collection_index: u32,
-    pub request_index: u32,
 
     // Authentication fields
     pub bearer_token: String,
@@ -77,29 +67,32 @@ pub struct RequestConfig {
     pub basic_password: String,
     pub api_key: String,
     pub api_key_header: String,
+
+    pub collection_index: u32,
+    pub request_index: u32,
+
+    #[serde(default)]
+    pub metadata: Option<RequestMetadata>,
 }
 
 /// Serializable version of RequestConfig for storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableRequestConfig {
-    pub name: String, // Add name field for identification
+    pub name: Option<String>, // Add name field for identification
     pub method: HttpMethod,
-    pub url: String,
+    pub url: Option<String>,
     pub headers: Vec<(String, String)>,
     pub params: Vec<(String, String)>,
-    pub body: String, // Store as string instead of text_editor::Content
-    pub content_type: String,
-    pub auth_type: AuthType,
+    pub body: Option<String>, // Store as string instead of text_editor::Content
+    pub content_type: Option<String>,
+    pub auth_type: Option<AuthType>,
 
     // Authentication fields
-    pub bearer_token: String,
-    pub basic_username: String,
-    pub basic_password: String,
-    pub api_key: String,
-    pub api_key_header: String,
-
-    pub collection_index: u32,
-    pub request_index: u32,
+    pub bearer_token: Option<String>,
+    pub basic_username: Option<String>,
+    pub basic_password: Option<String>,
+    pub api_key: Option<String>,
+    pub api_key_header: Option<String>,
 
     // Metadata field (optional for backward compatibility)
     #[serde(default)]
@@ -110,30 +103,7 @@ impl Clone for RequestConfig {
     fn clone(&self) -> Self {
         info!("====clone request config");
         Self {
-            method: self.method.clone(),
-            url: self.url.clone(),
-            headers: self.headers.clone(),
-            params: self.params.clone(),
-            body: self.body.clone(),
-            content_type: self.content_type.clone(),
-            auth_type: self.auth_type.clone(),
-            selected_tab: self.selected_tab.clone(),
-            bearer_token: self.bearer_token.clone(),
-            basic_username: self.basic_username.clone(),
-            basic_password: self.basic_password.clone(),
-            api_key: self.api_key.clone(),
-            api_key_header: self.api_key_header.clone(),
-            collection_index: self.collection_index,
-            request_index: self.request_index,
-        }
-    }
-}
-
-impl RequestConfig {
-    /// Convert to serializable format for storage
-    pub fn to_serializable(&self, name: String) -> SerializableRequestConfig {
-        SerializableRequestConfig {
-            name,
+            name: self.name.clone(),
             method: self.method.clone(),
             url: self.url.clone(),
             headers: self.headers.clone(),
@@ -148,31 +118,56 @@ impl RequestConfig {
             api_key_header: self.api_key_header.clone(),
             collection_index: self.collection_index,
             request_index: self.request_index,
+            // TODO: check this
             metadata: Some(RequestMetadata::default()),
         }
     }
-
-    /// Create from serializable format
-    pub fn from_serializable(serializable: SerializableRequestConfig) -> Self {
-        Self {
-            method: serializable.method,
-            url: serializable.url.clone(),
-            headers: serializable.headers,
-            params: serializable.params,
-            body: serializable.body,
-            content_type: serializable.content_type,
-            auth_type: serializable.auth_type,
-            selected_tab: RequestTab::Body, // Default tab
-            bearer_token: serializable.bearer_token,
-            basic_username: serializable.basic_username,
-            basic_password: serializable.basic_password,
-            api_key: serializable.api_key,
-            api_key_header: serializable.api_key_header,
-            collection_index: serializable.collection_index,
-            request_index: serializable.request_index,
-        }
-    }
 }
+
+// impl RequestConfig {
+/// Convert to serializable format for storage
+// pub fn to_serializable(&self, name: String) -> SerializableRequestConfig {
+//     SerializableRequestConfig {
+//         name,
+//         method: self.method.clone(),
+//         url: self.url.clone(),
+//         headers: self.headers.clone(),
+//         params: self.params.clone(),
+//         body: self.body.clone(),
+//         content_type: self.content_type.clone(),
+//         auth_type: self.auth_type.clone(),
+//         bearer_token: self.bearer_token.clone(),
+//         basic_username: self.basic_username.clone(),
+//         basic_password: self.basic_password.clone(),
+//         api_key: self.api_key.clone(),
+//         api_key_header: self.api_key_header.clone(),
+//         collection_index: self.collection_index,
+//         request_index: self.request_index,
+//         metadata: Some(RequestMetadata::default()),
+//     }
+// }
+
+/// Create from serializable format
+// pub fn from_serializable(serializable: SerializableRequestConfig) -> Self {
+//     Self {
+//         method: serializable.method,
+//         url: serializable.url.clone(),
+//         headers: serializable.headers,
+//         params: serializable.params,
+//         body: serializable.body,
+//         content_type: serializable.content_type,
+//         auth_type: serializable.auth_type,
+//         selected_tab: RequestTab::Body, // Default tab
+//         bearer_token: serializable.bearer_token,
+//         basic_username: serializable.basic_username,
+//         basic_password: serializable.basic_password,
+//         api_key: serializable.api_key,
+//         api_key_header: serializable.api_key_header,
+//         collection_index: serializable.collection_index,
+//         request_index: serializable.request_index,
+//     }
+// }
+// }
 
 #[derive(Debug, Clone)]
 pub struct Environment {
@@ -244,6 +239,12 @@ pub enum AuthType {
     Bearer,
     Basic,
     ApiKey,
+}
+
+impl Default for AuthType {
+    fn default() -> Self {
+        AuthType::None
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

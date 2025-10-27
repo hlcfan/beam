@@ -13,13 +13,17 @@ pub struct PersistentRequest {
     pub body: String,
     pub content_type: String,
     pub auth_type: String,
+
+    // Authentication fields
     pub bearer_token: Option<String>,
     pub basic_username: Option<String>,
     pub basic_password: Option<String>,
     pub api_key: Option<String>,
     pub api_key_header: Option<String>,
+
     pub collection_index: u32,
     pub request_index: u32,
+
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
 }

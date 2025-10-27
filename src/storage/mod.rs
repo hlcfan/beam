@@ -1,4 +1,4 @@
-use crate::types::{RequestCollection, Environment, SerializableRequestConfig};
+use crate::types::{RequestCollection, Environment, RequestConfig};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
@@ -33,7 +33,7 @@ pub trait CollectionStorage: Send + Sync {
     async fn save_request(&self, collection_name: &str, request: &PersistentRequest) -> Result<(), StorageError>;
 
     /// Save a serializable request config directly (optimized version)
-    async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &SerializableRequestConfig) -> Result<(), StorageError>;
+    async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;
 
     /// Delete a request from a collection
     async fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
@@ -60,7 +60,7 @@ pub trait CollectionStorage: Send + Sync {
     async fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError>;
 
     /// Load a specific request by collection and request indices
-    async fn load_request_by_indices(&self, collections: &[RequestCollection], collection_index: usize, request_index: usize) -> Result<Option<PersistentRequest>, StorageError>;
+    async fn load_request_by_indices(&self, collections: &[RequestCollection], collection_index: usize, request_index: usize) -> Result<Option<RequestConfig>, StorageError>;
 
     /// Initialize storage (create directories, etc.)
     async fn initialize_storage(&self) -> Result<(), StorageError>;
@@ -83,10 +83,12 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             storage_type: StorageType::TomlFiles,
+            // TODO: change the base path to ~/.config/.beam
             base_path: dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".beam"),
             auto_save: true,
+            // TODO: do we need this?
             backup_enabled: true,
             backup_interval_hours: 24,
         }

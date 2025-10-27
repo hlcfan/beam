@@ -2,11 +2,9 @@ use super::{
     CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentEnvironment,
     PersistentEnvironments, PersistentRequest, StorageError,
 };
-use crate::{
-    types::{Environment, RequestCollection, SerializableRequestConfig},
-    ui::request,
-};
-use log::{error, info};
+use crate::types::{Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
+use log::{info, error};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -82,102 +80,83 @@ impl TomlFileStorage {
     }
 
     /// Load a collection from disk
-    async fn load_collection_from_disk(
-        &self,
-        collection_name: &str,
-    ) -> Result<RequestCollection, StorageError> {
-        // Find collection directory by searching TOML metadata
-        let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)
-            .await?
-        {
-            Some(dir) => dir,
-            None => {
-                return Err(StorageError::CollectionNotFound(
-                    collection_name.to_string(),
-                ));
-            }
-        };
+    // async fn load_collection_from_disk(
+    //     &self,
+    //     collection: &CollectionMetadata,
+    // ) -> Result<RequestCollection, StorageError> {
+    //     info!(
+    //         "===Filename: {:?}, {:?}",
+    //         collection.name, self.collections_path
+    //     );
+    //     // First, collect all request files with their filenames
+    //     let mut request_files = Vec::new();
+    //     let mut entries = fs::read_dir(&self.collections_path).await?;
 
-        // Load collection metadata from the found directory
-        let metadata_path = collection_dir.join("collection.toml");
-        let metadata = if metadata_path.exists() {
-            let content = fs::read_to_string(&metadata_path).await?;
-            toml::from_str::<CollectionMetadata>(&content)
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?
-        } else {
-            CollectionMetadata::default()
-        };
+    //     while let Some(entry) = entries.next_entry().await? {
+    //         let path = entry.path();
+    //         if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
+    //             let filename = path
+    //                 .file_stem()
+    //                 .and_then(|s| s.to_str())
+    //                 .unwrap_or("unknown");
 
-        // First, collect all request files with their filenames
-        let mut request_files = Vec::new();
-        let mut entries = fs::read_dir(&collection_dir).await?;
+    //             // Skip collection metadata file
+    //             if filename == "collection" {
+    //                 continue;
+    //             }
 
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
-                let filename = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown");
+    //             request_files.push((filename.to_string(), path));
+    //         }
+    //     }
 
-                // Skip collection metadata file
-                if filename == "collection" {
-                    continue;
-                }
+    //     // Sort request files by numeric ID (filename without extension)
+    //     request_files.sort_by(|a, b| {
+    //         // Try to parse filenames as numbers (e.g., "0001" -> 1)
+    //         let num_a = a.0.parse::<u32>().unwrap_or(u32::MAX);
+    //         let num_b = b.0.parse::<u32>().unwrap_or(u32::MAX);
 
-                request_files.push((filename.to_string(), path));
-            }
-        }
+    //         match (num_a == u32::MAX, num_b == u32::MAX) {
+    //             (false, false) => num_a.cmp(&num_b), // Both are valid numbers
+    //             (false, true) => std::cmp::Ordering::Less, // a is number, b is not
+    //             (true, false) => std::cmp::Ordering::Greater, // a is not number, b is
+    //             (true, true) => a.0.cmp(&b.0),       // Both are not numbers, sort alphabetically
+    //         }
+    //     });
 
-        // Sort request files by numeric ID (filename without extension)
-        request_files.sort_by(|a, b| {
-            // Try to parse filenames as numbers (e.g., "0001" -> 1)
-            let num_a = a.0.parse::<u32>().unwrap_or(u32::MAX);
-            let num_b = b.0.parse::<u32>().unwrap_or(u32::MAX);
+    //     // Load requests in sorted order
+    //     let mut requests = Vec::new();
+    //     for (_filename, path) in request_files {
+    //         let content = fs::read_to_string(&path).await?;
+    //         let persistent_request: PersistentRequest = toml::from_str(&content)
+    //             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-            match (num_a == u32::MAX, num_b == u32::MAX) {
-                (false, false) => num_a.cmp(&num_b), // Both are valid numbers
-                (false, true) => std::cmp::Ordering::Less, // a is number, b is not
-                (true, false) => std::cmp::Ordering::Greater, // a is not number, b is
-                (true, true) => a.0.cmp(&b.0),       // Both are not numbers, sort alphabetically
-            }
-        });
+    //         // Convert to SavedRequest (simplified version)
+    //         let method = match persistent_request.method.to_uppercase().as_str() {
+    //             "GET" => crate::types::HttpMethod::GET,
+    //             "POST" => crate::types::HttpMethod::POST,
+    //             "PUT" => crate::types::HttpMethod::PUT,
+    //             "DELETE" => crate::types::HttpMethod::DELETE,
+    //             "PATCH" => crate::types::HttpMethod::PATCH,
+    //             "HEAD" => crate::types::HttpMethod::HEAD,
+    //             "OPTIONS" => crate::types::HttpMethod::OPTIONS,
+    //             _ => crate::types::HttpMethod::GET, // Default to GET for unknown methods
+    //         };
 
-        // Load requests in sorted order
-        let mut requests = Vec::new();
-        for (_filename, path) in request_files {
-            let content = fs::read_to_string(&path).await?;
-            let persistent_request: PersistentRequest = toml::from_str(&content)
-                .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+    //         let saved_request = crate::types::SavedRequest {
+    //             name: persistent_request.name.clone(), // Use the name directly from TOML content
+    //             method,
+    //             url: persistent_request.url.clone(),
+    //         };
 
-            // Convert to SavedRequest (simplified version)
-            let method = match persistent_request.method.to_uppercase().as_str() {
-                "GET" => crate::types::HttpMethod::GET,
-                "POST" => crate::types::HttpMethod::POST,
-                "PUT" => crate::types::HttpMethod::PUT,
-                "DELETE" => crate::types::HttpMethod::DELETE,
-                "PATCH" => crate::types::HttpMethod::PATCH,
-                "HEAD" => crate::types::HttpMethod::HEAD,
-                "OPTIONS" => crate::types::HttpMethod::OPTIONS,
-                _ => crate::types::HttpMethod::GET, // Default to GET for unknown methods
-            };
+    //         requests.push(saved_request);
+    //     }
 
-            let saved_request = crate::types::SavedRequest {
-                name: persistent_request.name.clone(), // Use the name directly from TOML content
-                method,
-                url: persistent_request.url.clone(),
-            };
-
-            requests.push(saved_request);
-        }
-
-        Ok(RequestCollection {
-            name: metadata.name.clone(),
-            requests,
-            expanded: metadata.expanded,
-        })
-    }
+    //     Ok(RequestCollection {
+    //         name: collection.name.clone(),
+    //         requests,
+    //         expanded: collection.expanded,
+    //     })
+    // }
 
     /// Save a collection to disk (metadata only)
     async fn save_collection_to_disk(
@@ -243,7 +222,7 @@ impl TomlFileStorage {
                 api_key: None,
                 api_key_header: None,
                 collection_index: 0,
-                request_index:  0,
+                request_index: 0,
                 metadata: Some(super::persistent_types::RequestMetadata::default()),
             };
 
@@ -517,50 +496,115 @@ impl CollectionStorage for TomlFileStorage {
 
         // First, collect all collection directories with their metadata
         let mut collection_data = Vec::new();
-        let mut entries = fs::read_dir(&self.collections_path).await?;
+        let mut collection_entries = fs::read_dir(&self.collections_path).await?;
 
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            if path.is_dir() {
-                let metadata_path = path.join("collection.toml");
-                if metadata_path.exists() {
+        let mut collecion_index = 0;
+        let mut request_index = 0;
+
+        while let Some(entry) = collection_entries.next_entry().await? {
+            let collection_path = entry.path();
+            if !collection_path.is_dir() {
+                continue;
+            }
+
+            let metadata_path = collection_path.join("collection.toml");
+            if !metadata_path.exists() {
+                continue;
+            }
+
+            // let folder_name = collection_path.file_name().and_then(|s| s.to_str());
+            let f_name = if let Some(folder_name) = collection_path.file_name().and_then(|s| s.to_str()) {
+                folder_name.to_string()
+            } else {
+              continue
+            };
+
+            let mut requests = Vec::new();
+
+            let mut request_files = fs::read_dir(&collection_path).await?;
+            while let Some(requst_file) = request_files.next_entry().await? {
+                let request_path = requst_file.path();
+                if request_path.is_dir() {
+                    continue;
+                }
+
+                if request_path.extension().map_or(false, |ext| ext != "toml") {
+                    continue;
+                }
+                info!("===request path: {:?}", request_path);
+                // TODO: any simple way to compare the file name?
+                if request_path.file_name() == Some(OsStr::new("collection.toml")) {
                     if let Ok(content) = fs::read_to_string(&metadata_path).await {
                         if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
-                            // Extract numeric folder name for sorting
-                            if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
-                                collection_data
-                                    .push((folder_name.to_string(), metadata.name.clone()));
-                            }
+
+                        }
+                    }
+                } else {
+                    // request toml files
+                    if let Ok(content) = fs::read_to_string(&request_path).await {
+                        match toml::from_str::<SerializableRequestConfig>(&content) {
+                          Ok(r) => {
+                            requests.push(RequestConfig{
+                              name: r.name.unwrap(),
+                              method: r.method,
+                              url: r.url.unwrap_or_default(),
+                              headers: r.headers,
+                              params: r.params,
+                              body: r.body.unwrap_or_default(),
+                              content_type: r.content_type.unwrap_or_default(),
+                              auth_type: r.auth_type.unwrap_or_default(),
+                              bearer_token: r.bearer_token.unwrap_or_default(),
+                              basic_username: r.basic_username.unwrap_or_default(),
+                              basic_password: r.basic_password.unwrap_or_default(),
+                              api_key: r.api_key.unwrap_or_default(),
+                              api_key_header: r.api_key_header.unwrap_or_default(),
+                              metadata: r.metadata,
+                              collection_index: collecion_index,
+                              request_index: request_index,
+                            });
+
+                            request_index+=1;
+                          }
+                          Err(e) => {
+                            error!("===fail to parse: {:?}",e);
+                          }
                         }
                     }
                 }
             }
+
+            collection_data.push(RequestCollection {
+                name: f_name,
+                requests: requests,
+                expanded: true,
+            });
+
+            collecion_index += 1;
+            request_index = 0;
+            // load collection requests
         }
 
         // Sort by numeric folder names
         collection_data.sort_by(|a, b| {
-            let num_a = a.0.parse::<u32>().unwrap_or(u32::MAX);
-            let num_b = b.0.parse::<u32>().unwrap_or(u32::MAX);
+            let num_a = a.name.parse::<u32>().unwrap_or(u32::MAX);
+            let num_b = b.name.parse::<u32>().unwrap_or(u32::MAX);
             num_a.cmp(&num_b)
         });
 
         // Load collections in sorted order using their actual names from metadata
-        let mut collections = Vec::new();
-        for (_folder_name, collection_name) in collection_data {
-            match self.load_collection_from_disk(&collection_name).await {
-                Ok(collection) => {
-                    collections.push(collection);
-                }
-                Err(e) => {
-                    error!(
-                        "Warning: Failed to load collection '{}': {}",
-                        collection_name, e
-                    );
-                }
-            }
-        }
+        // let mut collections = Vec::new();
+        // for (index, (_folder_name, collection)) in collection_data.iter().enumerate() {
+        //     match self.load_collection_from_disk(collection).await {
+        //         Ok(collection) => {
+        //             collections.push(collection);
+        //         }
+        //         Err(e) => {
+        //             error!("Warning: Failed to load collection, err: {}", e);
+        //         }
+        //     }
+        // }
 
-        Ok(collections)
+        Ok(collection_data)
     }
 
     async fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError> {
@@ -701,7 +745,7 @@ impl CollectionStorage for TomlFileStorage {
         &self,
         collection_name: &str,
         request_name: &str,
-        request_config: &SerializableRequestConfig,
+        request_config: &RequestConfig,
     ) -> Result<(), StorageError> {
         let collection_dir = match self
             .find_collection_directory_by_name(collection_name)
@@ -739,7 +783,7 @@ impl CollectionStorage for TomlFileStorage {
                 if let Ok(content) = fs::read_to_string(&path).await {
                     // Try to parse as SerializableRequestConfig first (new format)
                     if let Ok(existing_request) =
-                        toml::from_str::<SerializableRequestConfig>(&content)
+                        toml::from_str::<RequestConfig>(&content)
                     {
                         if existing_request.name == request_name {
                             existing_file_path = Some(path);
@@ -1021,7 +1065,7 @@ impl CollectionStorage for TomlFileStorage {
         collections: &[RequestCollection],
         collection_index: usize,
         request_index: usize,
-    ) -> Result<Option<PersistentRequest>, StorageError> {
+    ) -> Result<Option<RequestConfig>, StorageError> {
         eprintln!(
             "DEBUG: load_request_by_indices - collections.len(): {}, collection_index: {}, request_index: {}",
             collections.len(),
@@ -1125,7 +1169,7 @@ impl CollectionStorage for TomlFileStorage {
         }
 
         let content = fs::read_to_string(&request_path).await?;
-        let persistent_request: PersistentRequest = toml::from_str(&content)
+        let persistent_request: RequestConfig = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         eprintln!(
