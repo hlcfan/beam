@@ -5,6 +5,37 @@ use iced::widget::text_editor;
 use log::info;
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum HttpMethod {
+    GET,
+    POST,
+    PUT,
+    DELETE,
+    PATCH,
+    HEAD,
+    OPTIONS,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AuthType {
+    None,
+    Bearer,
+    Basic,
+    ApiKey,
+}
+
+impl Default for AuthType {
+    fn default() -> Self {
+        AuthType::None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RenameTarget {
+    Folder(usize),         // collection_index
+    Request(usize, usize), // (collection_index, request_index)
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ResponseHighlighter {
@@ -124,28 +155,28 @@ impl Clone for RequestConfig {
     }
 }
 
-// impl RequestConfig {
-/// Convert to serializable format for storage
-// pub fn to_serializable(&self, name: String) -> SerializableRequestConfig {
-//     SerializableRequestConfig {
-//         name,
-//         method: self.method.clone(),
-//         url: self.url.clone(),
-//         headers: self.headers.clone(),
-//         params: self.params.clone(),
-//         body: self.body.clone(),
-//         content_type: self.content_type.clone(),
-//         auth_type: self.auth_type.clone(),
-//         bearer_token: self.bearer_token.clone(),
-//         basic_username: self.basic_username.clone(),
-//         basic_password: self.basic_password.clone(),
-//         api_key: self.api_key.clone(),
-//         api_key_header: self.api_key_header.clone(),
-//         collection_index: self.collection_index,
-//         request_index: self.request_index,
-//         metadata: Some(RequestMetadata::default()),
-//     }
-// }
+impl Default for RequestConfig {
+  fn default() -> Self {
+    Self {
+      name: "New Request".to_string(),
+      method: HttpMethod::GET,
+      url: String::new(),
+      headers: Vec::new(),
+      params: Vec::new(),
+      body: String::new(),
+      content_type: String::new(),
+      auth_type: AuthType::None,
+      bearer_token: String::new(),
+      basic_username: String::new(),
+      basic_password: String::new(),
+      api_key: String::new(),
+      api_key_header: String::new(),
+      collection_index: 0,
+      request_index: 0,
+      metadata: Some(RequestMetadata::default()),
+    }
+  }
+}
 
 /// Create from serializable format
 // pub fn from_serializable(serializable: SerializableRequestConfig) -> Self {
@@ -220,37 +251,6 @@ pub struct ResponseData {
     pub is_binary: bool,
     pub size: usize,
     pub time: u64, // milliseconds
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum HttpMethod {
-    GET,
-    POST,
-    PUT,
-    DELETE,
-    PATCH,
-    HEAD,
-    OPTIONS,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum AuthType {
-    None,
-    Bearer,
-    Basic,
-    ApiKey,
-}
-
-impl Default for AuthType {
-    fn default() -> Self {
-        AuthType::None
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RenameTarget {
-    Folder(usize),         // collection_index
-    Request(usize, usize), // (collection_index, request_index)
 }
 
 impl std::fmt::Display for HttpMethod {

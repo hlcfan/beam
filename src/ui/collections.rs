@@ -1,13 +1,24 @@
-use crate::types::{HttpMethod, RequestCollection};
+use crate::types::{HttpMethod, RenameTarget, RequestCollection, RequestConfig};
 use crate::ui::{IconName, icon};
+use iced::Task;
 use iced::widget::button::Status;
 use iced::widget::container::Style;
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 use iced_aw::ContextMenu;
+use log::{error, info};
 
 #[derive(Debug, Clone)]
 pub enum Action {
+    UpdateCurrentCollection(RequestCollection),
+    LoadRequestConfig(usize, usize),
+    SaveRequestToCollection(RequestConfig),
+    SaveNewCollection(RequestCollection),
+    SendRequest(RequestConfig),
+    DuplicateRequest(RequestConfig),
+    DeleteRequest(usize, usize),
+    RenameRequest(usize, usize),
+    RenameCollection(usize),
     None,
 }
 
@@ -15,6 +26,12 @@ pub enum Action {
 pub enum Message {
     CollectionToggled(usize),
     RequestSelected(usize, usize),
+
+    ShowRenameModal(usize, usize), // (collection_index, request_index)
+    HideRenameModal,
+    RenameInputChanged(String),
+    ConfirmRename,
+
     AddHttpRequest(usize),
     DeleteFolder(usize),
     AddFolder(usize),
@@ -29,11 +46,30 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub struct CollectionPanel {}
+pub struct CollectionPanel {
+    pub collections: Vec<RequestCollection>,
+
+    // Double-click detection state
+    pub last_click_time: Option<std::time::Instant>,
+    pub last_click_target: Option<(usize, usize)>, // (collection_index, request_index)
+
+    // Rename modal state
+    pub show_rename_modal: bool,
+    pub rename_input: String,
+    pub rename_target: Option<RenameTarget>, // What is being renamed
+}
 
 impl CollectionPanel {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            collections: Vec::new(),
+            last_click_time: None,
+            last_click_target: None,
+
+            show_rename_modal: false,
+            rename_input: String::new(),
+            rename_target: None,
+        }
     }
 
     pub fn view<'a>(
@@ -392,7 +428,192 @@ impl CollectionPanel {
     }
 
     pub fn update(&mut self, message: Message) -> Action {
-      Action::None
+        match message {
+            Message::CollectionToggled(index) => {
+                if let Some(collection) = self.collections.get_mut(index) {
+                    collection.expanded = !collection.expanded;
+                    Action::UpdateCurrentCollection(collection.clone())
+                } else {
+                    Action::None
+                }
+            }
+            Message::RequestSelected(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        let now = std::time::Instant::now();
+                        let current_target = (collection_index, request_index);
+
+                        // Check for double-click (within 500ms and same target)
+                        let is_double_click = if let (Some(last_time), Some(last_target)) =
+                            (self.last_click_time, self.last_click_target)
+                        {
+                            last_target == current_target
+                                && now.duration_since(last_time).as_millis() < 500
+                        } else {
+                            false
+                        };
+
+                        // Update click tracking
+                        self.last_click_time = Some(now);
+                        self.last_click_target = Some(current_target);
+
+                        if is_double_click {
+                            // Double-click detected: show rename modal
+                            self.show_rename_modal = true;
+                            self.rename_target =
+                                Some(RenameTarget::Request(collection_index, request_index));
+                            self.rename_input = request.name.clone();
+
+                            Action::None
+                        } else {
+                            // Single click: select the request
+
+                            Action::LoadRequestConfig(collection_index, request_index)
+                        }
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            Message::AddHttpRequest(collection_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    let mut new_request = RequestConfig::default();
+                    new_request.collection_index = collection_index as u32;
+
+                    if let Some(collection) = self.collections.get_mut(collection_index) {
+                        let len = collection.requests.len();
+                        new_request.name = format!("New Request {}", collection.requests.len() + 1);
+                        new_request.request_index = len as u32;
+                    }
+
+                    Action::SaveRequestToCollection(new_request)
+                } else {
+                    Action::None
+                }
+            }
+            Message::DeleteFolder(collection_index) => {
+                if collection_index < self.collections.len() {
+                    self.collections.remove(collection_index);
+                }
+
+                // After deleting a folder, we don't need to save anything since the collection is removed
+                Action::None
+            }
+            Message::AddFolder(_collection_index) => {
+                let new_collection = RequestCollection {
+                    name: format!("New Collection {}", self.collections.len() + 1),
+                    requests: vec![],
+                    expanded: true,
+                };
+
+                Action::SaveNewCollection(new_collection)
+            }
+            Message::RenameFolder(collection_index) => {
+                // Show the rename modal for the folder
+                if let Some(collection) = self.collections.get(collection_index) {
+                    self.show_rename_modal = true;
+                    self.rename_input = collection.name.clone();
+                    self.rename_target = Some(RenameTarget::Folder(collection_index));
+                }
+                Action::None
+            }
+            Message::SendRequestFromMenu(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        return Action::SendRequest(request.clone());
+                    }
+                }
+
+                Action::None
+            }
+            Message::CopyRequestAsCurl(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        let curl_command = crate::http::generate_curl_command(request);
+                        // TODO: In a real app, you'd copy to clipboard here
+                        info!("Curl command: {}", curl_command);
+                    }
+                }
+                Action::None
+            }
+            Message::RenameRequest(collection_index, request_index) => {
+                // Show the rename modal with the current request name
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        self.show_rename_modal = true;
+                        self.rename_input = request.name.clone();
+                        self.rename_target =
+                            Some(RenameTarget::Request(collection_index, request_index));
+                    }
+                }
+                Action::None
+            }
+            Message::DuplicateRequest(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get_mut(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index).cloned() {
+                        let mut new_request = request;
+                        new_request.name = format!("{} (Copy)", new_request.name);
+                        new_request.collection_index = collection_index as u32;
+                        new_request.request_index = request_index as u32;
+
+                        Action::DuplicateRequest(new_request)
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            Message::DeleteRequest(collection_index, request_index) => {
+                Action::DeleteRequest(collection_index, request_index)
+            }
+            Message::ShowRenameModal(collection_index, request_index) => {
+                if let Some(collection) = self.collections.get(collection_index) {
+                    if let Some(request) = collection.requests.get(request_index) {
+                        self.show_rename_modal = true;
+                        self.rename_input = request.name.clone();
+                        self.rename_target =
+                            Some(RenameTarget::Request(collection_index, request_index));
+                    }
+                }
+                Action::None
+            }
+            Message::HideRenameModal => {
+                self.show_rename_modal = false;
+                self.rename_input.clear();
+                self.rename_target = None;
+                Action::None
+            }
+            Message::RenameInputChanged(new_name) => {
+                self.rename_input = new_name;
+                Action::None
+            }
+            Message::ConfirmRename => {
+                if let Some(rename_target) = &self.rename_target {
+                    let new_name = self.rename_input.trim().to_string();
+
+                    // Validate the new name
+                    if new_name.is_empty() {
+                        // TODO: Show error message
+                        return Action::None;
+                    }
+
+                    match rename_target {
+                        // TODO: check why the indices are pointers
+                        RenameTarget::Request(collection_index, request_index) => {
+                            return Action::RenameRequest(*collection_index, *request_index);
+                        }
+                        RenameTarget::Folder(collection_index) => {
+                            return Action::RenameCollection(*collection_index);
+                        }
+                    }
+                }
+
+                Action::None
+            }
+        }
     }
 }
 
