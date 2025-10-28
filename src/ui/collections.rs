@@ -11,7 +11,7 @@ use log::{error, info};
 #[derive(Debug, Clone)]
 pub enum Action {
     UpdateCurrentCollection(RequestCollection),
-    LoadRequestConfig(usize, usize),
+    SelectRequestConfig(usize, usize),
     SaveRequestToCollection(RequestConfig),
     SaveNewCollection(RequestCollection),
     SendRequest(RequestConfig),
@@ -460,7 +460,6 @@ impl CollectionPanel {
                         self.last_click_target = Some(current_target);
 
                         if is_double_click {
-                            info!("===select request2");
                             self.show_rename_modal = true;
                             self.rename_target =
                                 Some(RenameTarget::Request(collection_index, request_index));
@@ -468,15 +467,13 @@ impl CollectionPanel {
 
                             Action::None
                         } else {
-                            info!("===select request3");
-                            return Action::LoadRequestConfig(collection_index, request_index);
+                            // info!("===select request3");
+                            return Action::SelectRequestConfig(collection_index, request_index);
                         }
                     } else {
-                        info!("===select request4");
                         Action::None
                     }
                 } else {
-                    info!("===select request5");
                     Action::None
                 }
             }

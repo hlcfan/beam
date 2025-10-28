@@ -600,6 +600,10 @@ impl RequestPanel {
         base_layout
     }
 
+    pub fn set_url(&mut self, url: String) {
+      self.url = url;
+    }
+
     pub fn handle_body_changed(&mut self, action: text_editor::Action) -> (String, bool) {
         info!("Body changed action: {:?}", action);
 

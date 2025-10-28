@@ -76,13 +76,11 @@ pub enum Message {
     EnvironmentsLoaded(Result<Vec<Environment>, String>),
     #[allow(dead_code)]
     SaveInitialData,
-    SaveLastOpenedRequest(usize, usize), // (collection_index, request_index)
     UpdateLastOpenedRequest(usize, usize), // (collection_index, request_index) - deferred state update
     LoadLastOpenedRequest,
-    LastOpenedRequestSaved(Result<(), String>),
+    // LastOpenedRequestSaved(Result<(), String>),
     LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
-    RequestConfigLoaded(Result<Option<RequestConfig>, String>),
-
+    // RequestConfigLoaded(Result<Option<RequestConfig>, String>),
     SaveRequestDebounced {
         collection_index: usize,
         request_index: usize,
@@ -327,7 +325,10 @@ impl BeamApp {
                 }
             }
             Message::CollectionPanel(view_message) => {
-                match self.collection_panel.update(view_message, &self.collections) {
+                match self
+                    .collection_panel
+                    .update(view_message, &self.collections)
+                {
                     collections::Action::UpdateCurrentCollection(collection) => Task::perform(
                         async move {
                             match storage::StorageManager::with_default_config().await {
@@ -346,43 +347,41 @@ impl BeamApp {
                         },
                         Message::CollectionsSaved,
                     ),
-                    collections::Action::LoadRequestConfig(collection_index, request_index) => {
-                        // Load the full request configuration including body, headers, params, auth
-                        // let collections = self.collections.clone();
-                        // return Task::perform(send_request(config), Message::RequestCompleted);
-                        // Message::RequestConfigLoaded(Ok(request_config))
-                        // Task::perform(
-                        //     async move {
-                        //         let request_config =
-                        //             self.collections[collection_index].requests[request_index];
-                        //     },
-                        //     Message::RequestConfigLoaded,
-                        // )
+                    collections::Action::SelectRequestConfig(collection_index, request_index) => {
+                        if let Some(collection) = self.collections.get(collection_index) {
+                            if let Some(request_config) = collection.requests.get(request_index) {
+                                // let request_config = collection.requests.get(request_index).unwrap_or_default();
+                                self.request_panel.set_url(request_config.url.to_string());
 
-                        // TODO: load request config to current_request
-                        let request_config =
-                            self.collections[collection_index].requests[request_index].clone();
-                        self.current_request = request_config.clone();
+                                self.request_panel
+                                    .set_body_content(request_config.body.to_string());
+                                // Environment variables applied to URL input are handled during rendering
+                                info!("===request load successed");
 
-                        info!("====1: ");
-                        // Sync the request body content with the loaded body
-                        self.request_panel.set_body_content(request_config.body);
-                        info!("====2: ");
-                        // Update the URL string with the loaded URL
-                        self.url = request_config.url;
-                        info!("====3: ");
-                        // Environment variables applied to URL input are handled during rendering
-                        info!("===request load successed");
+                                // Update the last opened request state and save to storage
+                                // directly here to avoid one more render
+                                self.last_opened_request = Some((collection_index, request_index));
+                                // Save the last opened request asynchronously without blocking the UI
+                                tokio::spawn(async move {
+                                    if let Ok(storage_manager) =
+                                        storage::StorageManager::with_default_config().await
+                                    {
+                                        if let Err(e) = storage_manager
+                                            .storage()
+                                            .save_last_opened_request(
+                                                collection_index,
+                                                request_index,
+                                            )
+                                            .await
+                                        {
+                                            error!("Failed to save last opened request: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                        }
 
-                        Task::perform(
-                            async move {
-                                Message::SaveLastOpenedRequest(
-                                    request_config.collection_index as usize,
-                                    request_config.request_index as usize,
-                                )
-                            },
-                            |msg| msg,
-                        )
+                        Task::none()
                     }
                     collections::Action::SaveRequestToCollection(request_config) => {
                         if let Some(collection) = self
@@ -572,11 +571,11 @@ impl BeamApp {
                         Task::none()
                     }
                     collections::Action::DeleteCollection(collection_index) => {
-                      // TODO
-                      // if collection_index < collections.len() {
-                      //     collections.remove(collection_index);
-                      // }
-                      Task::none()
+                        // TODO
+                        // if collection_index < collections.len() {
+                        //     collections.remove(collection_index);
+                        // }
+                        Task::none()
                     }
                     collections::Action::None => Task::none(),
                 }
@@ -1147,9 +1146,9 @@ impl BeamApp {
                 }
                 Task::none()
             }
-
-            // Last opened request handlers
-            Message::SaveLastOpenedRequest(collection_index, request_index) => {
+            Message::UpdateLastOpenedRequest(collection_index, request_index) => {
+                // Update the last opened request state and save to storage
+                self.last_opened_request = Some((collection_index, request_index));
                 // Save the last opened request asynchronously without blocking the UI
                 tokio::spawn(async move {
                     if let Ok(storage_manager) =
@@ -1164,15 +1163,8 @@ impl BeamApp {
                         }
                     }
                 });
+
                 Task::none()
-            }
-            Message::UpdateLastOpenedRequest(collection_index, request_index) => {
-                // Update the last opened request state and save to storage
-                self.last_opened_request = Some((collection_index, request_index));
-                Task::perform(
-                    async move { Message::SaveLastOpenedRequest(collection_index, request_index) },
-                    |msg| msg,
-                )
             }
             Message::LoadLastOpenedRequest => Task::perform(
                 async {
@@ -1188,17 +1180,17 @@ impl BeamApp {
                 },
                 Message::LastOpenedRequestLoaded,
             ),
-            Message::LastOpenedRequestSaved(result) => {
-                match result {
-                    Ok(_) => {
-                        // Successfully saved last opened request
-                    }
-                    Err(e) => {
-                        error!("Failed to save last opened request: {}", e);
-                    }
-                }
-                Task::none()
-            }
+            // Message::LastOpenedRequestSaved(result) => {
+            //     match result {
+            //         Ok(_) => {
+            //             // Successfully saved last opened request
+            //         }
+            //         Err(e) => {
+            //             error!("Failed to save last opened request: {}", e);
+            //         }
+            //     }
+            //     Task::none()
+            // }
             Message::LastOpenedRequestLoaded(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
@@ -1206,8 +1198,10 @@ impl BeamApp {
                             "DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}",
                             collection_index, request_index
                         );
+
                         // Restore the last opened request
                         self.last_opened_request = Some((collection_index, request_index));
+                        // update the current request, no need to
 
                         // Automatically expand the collection containing the last opened request
                         if let Some(collection) = self.collections.get_mut(collection_index) {
@@ -1217,35 +1211,7 @@ impl BeamApp {
                                 collection.name
                             );
                         }
-
-                        // Load the complete request configuration
-                        let collections = self.collections.clone();
-                        Task::perform(
-                            async move {
-                                info!(
-                                    "DEBUG: Loading request by indices - collection_index: {}, request_index: {}",
-                                    collection_index, request_index
-                                );
-                                match storage::StorageManager::with_default_config().await {
-                                    Ok(storage_manager) => {
-                                        match storage_manager
-                                            .storage()
-                                            .load_request_by_indices(
-                                                &collections,
-                                                collection_index,
-                                                request_index,
-                                            )
-                                            .await
-                                        {
-                                            Ok(persistent_request) => Ok(persistent_request),
-                                            Err(e) => Err(e.to_string()),
-                                        }
-                                    }
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            },
-                            Message::RequestConfigLoaded,
-                        )
+                        Task::none()
                     }
                     Ok(None) => {
                         // No last opened request found
@@ -1259,47 +1225,47 @@ impl BeamApp {
                     }
                 }
             }
-            Message::RequestConfigLoaded(result) => {
-                match result {
-                    Ok(Some(request_config)) => {
-                        info!(
-                            "DEBUG: RequestConfigLoaded - method: {:?}, url: {}",
-                            request_config.method, request_config.url
-                        );
-                        // Update the current request with the loaded configuration
-                        let current_request = request_config.clone();
-                        info!("====1: ");
-                        // Sync the request body content with the loaded body
-                        self.request_panel
-                            .set_body_content(current_request.body.clone());
-                        info!("====2: ");
-                        // Update the URL string with the loaded URL
-                        self.url = current_request.url.clone();
-                        info!("====3: ");
-                        // Environment variables applied to URL input are handled during rendering
-                        self.current_request = current_request;
-                        info!("===request load successed");
+            // Message::RequestConfigLoaded(result) => {
+            //     match result {
+            //         Ok(Some(request_config)) => {
+            //             info!(
+            //                 "DEBUG: RequestConfigLoaded - method: {:?}, url: {}",
+            //                 request_config.method, request_config.url
+            //             );
+            //             // Update the current request with the loaded configuration
+            //             let current_request = request_config.clone();
+            //             info!("====1: ");
+            //             // Sync the request body content with the loaded body
+            //             self.request_panel
+            //                 .set_body_content(current_request.body.clone());
+            //             info!("====2: ");
+            //             // Update the URL string with the loaded URL
+            //             self.url = current_request.url.clone();
+            //             info!("====3: ");
+            //             // Environment variables applied to URL input are handled during rendering
+            //             self.current_request = current_request;
+            //             info!("===request load successed");
 
-                        return Task::perform(
-                            async move {
-                                Message::SaveLastOpenedRequest(
-                                    request_config.collection_index as usize,
-                                    request_config.request_index as usize,
-                                )
-                            },
-                            |msg| msg,
-                        );
-                    }
-                    Ok(None) => {
-                        error!("No request configuration found for the last opened request");
-                    }
-                    Err(e) => {
-                        error!("Failed to load request configuration: {}", e);
-                    }
-                }
+            //             return Task::perform(
+            //                 async move {
+            //                     Message::UpdateLastOpenedRequest(
+            //                         request_config.collection_index as usize,
+            //                         request_config.request_index as usize,
+            //                     )
+            //                 },
+            //                 |msg| msg,
+            //             );
+            //         }
+            //         Ok(None) => {
+            //             error!("No request configuration found for the last opened request");
+            //         }
+            //         Err(e) => {
+            //             error!("Failed to load request configuration: {}", e);
+            //         }
+            //     }
 
-                Task::none()
-            }
+            //     Task::none()
+            // }
             // Auto-save message handlers
             Message::SaveRequestDebounced {
                 collection_index,
