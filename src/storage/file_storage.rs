@@ -207,26 +207,26 @@ impl TomlFileStorage {
 
         // Then save each request as a separate file
         for request in &collection.requests {
-            let persistent_request = PersistentRequest {
-                name: request.name.clone(),
-                method: request.method.to_string(),
-                url: request.url.clone(),
-                headers: Vec::new(),
-                params: Vec::new(),
-                body: String::new(),
-                content_type: "application/json".to_string(),
-                auth_type: "None".to_string(),
-                bearer_token: None,
-                basic_username: None,
-                basic_password: None,
-                api_key: None,
-                api_key_header: None,
-                collection_index: 0,
-                request_index: 0,
-                metadata: Some(super::persistent_types::RequestMetadata::default()),
-            };
+            // let persistent_request = PersistentRequest {
+            //     name: request.name.clone(),
+            //     method: request.method.to_string(),
+            //     url: request.url.clone(),
+            //     headers: Vec::new(),
+            //     params: Vec::new(),
+            //     body: String::new(),
+            //     content_type: "application/json".to_string(),
+            //     auth_type: "None".to_string(),
+            //     bearer_token: None,
+            //     basic_username: None,
+            //     basic_password: None,
+            //     api_key: None,
+            //     api_key_header: None,
+            //     collection_index: 0,
+            //     request_index: 0,
+            //     metadata: Some(super::persistent_types::RequestMetadata::default()),
+            // };
 
-            self.save_request(&collection.name, &persistent_request)
+            self.save_request(&collection.name, &request)
                 .await?;
         }
 
@@ -680,7 +680,7 @@ impl CollectionStorage for TomlFileStorage {
     async fn save_request(
         &self,
         collection_name: &str,
-        request: &PersistentRequest,
+        request: &RequestConfig,
     ) -> Result<(), StorageError> {
         let collection_dir = match self
             .find_collection_directory_by_name(collection_name)

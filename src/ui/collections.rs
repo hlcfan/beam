@@ -17,8 +17,8 @@ pub enum Action {
     SendRequest(RequestConfig),
     DuplicateRequest(RequestConfig),
     DeleteRequest(usize, usize),
-    RenameRequest(usize, usize),
-    RenameCollection(usize),
+    RenameRequest(usize, usize, String),
+    RenameCollection(usize, String),
     None,
 }
 
@@ -28,10 +28,9 @@ pub enum Message {
     RequestSelected(usize, usize),
 
     ShowRenameModal(usize, usize), // (collection_index, request_index)
-    HideRenameModal,
-    RenameInputChanged(String),
-    ConfirmRename,
-
+    // HideRenameModal,
+    // RenameInputChanged(String),
+    // ConfirmRename,
     AddHttpRequest(usize),
     DeleteFolder(usize),
     AddFolder(usize),
@@ -72,14 +71,15 @@ impl CollectionPanel {
         }
     }
 
-    pub fn view<'a>(
-        &self,
-        collections: &'a [RequestCollection],
+    pub fn view(
+        &mut self,
+        collections: &[RequestCollection],
         last_opened_request: Option<(usize, usize)>,
-    ) -> Element<'a, Message> {
+    ) -> Element<'_, Message> {
+        self.collections = collections.to_vec();
         let mut content = column![];
 
-        for (collection_index, collection) in collections.iter().enumerate() {
+        for (collection_index, collection) in self.collections.iter().enumerate() {
             let collection_header = button(
                 row![
                     icon(if collection.expanded {
@@ -438,6 +438,8 @@ impl CollectionPanel {
                 }
             }
             Message::RequestSelected(collection_index, request_index) => {
+                info!("===select request1: {:?}", collection_index);
+                info!("===collections: {:?}", self.collections);
                 if let Some(collection) = self.collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
                         let now = std::time::Instant::now();
@@ -458,7 +460,7 @@ impl CollectionPanel {
                         self.last_click_target = Some(current_target);
 
                         if is_double_click {
-                            // Double-click detected: show rename modal
+                            info!("===select request2");
                             self.show_rename_modal = true;
                             self.rename_target =
                                 Some(RenameTarget::Request(collection_index, request_index));
@@ -466,14 +468,15 @@ impl CollectionPanel {
 
                             Action::None
                         } else {
-                            // Single click: select the request
-
-                            Action::LoadRequestConfig(collection_index, request_index)
+                            info!("===select request3");
+                            return Action::LoadRequestConfig(collection_index, request_index);
                         }
                     } else {
+                        info!("===select request4");
                         Action::None
                     }
                 } else {
+                    info!("===select request5");
                     Action::None
                 }
             }
@@ -548,6 +551,7 @@ impl CollectionPanel {
                             Some(RenameTarget::Request(collection_index, request_index));
                     }
                 }
+
                 Action::None
             }
             Message::DuplicateRequest(collection_index, request_index) => {
@@ -578,39 +582,6 @@ impl CollectionPanel {
                             Some(RenameTarget::Request(collection_index, request_index));
                     }
                 }
-                Action::None
-            }
-            Message::HideRenameModal => {
-                self.show_rename_modal = false;
-                self.rename_input.clear();
-                self.rename_target = None;
-                Action::None
-            }
-            Message::RenameInputChanged(new_name) => {
-                self.rename_input = new_name;
-                Action::None
-            }
-            Message::ConfirmRename => {
-                if let Some(rename_target) = &self.rename_target {
-                    let new_name = self.rename_input.trim().to_string();
-
-                    // Validate the new name
-                    if new_name.is_empty() {
-                        // TODO: Show error message
-                        return Action::None;
-                    }
-
-                    match rename_target {
-                        // TODO: check why the indices are pointers
-                        RenameTarget::Request(collection_index, request_index) => {
-                            return Action::RenameRequest(*collection_index, *request_index);
-                        }
-                        RenameTarget::Folder(collection_index) => {
-                            return Action::RenameCollection(*collection_index);
-                        }
-                    }
-                }
-
                 Action::None
             }
         }

@@ -30,7 +30,7 @@ pub trait CollectionStorage: Send + Sync {
     async fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError>;
 
     /// Save a request within a collection
-    async fn save_request(&self, collection_name: &str, request: &PersistentRequest) -> Result<(), StorageError>;
+    async fn save_request(&self, collection_name: &str, request: &RequestConfig) -> Result<(), StorageError>;
 
     /// Save a serializable request config directly (optimized version)
     async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;
