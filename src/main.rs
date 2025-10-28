@@ -327,7 +327,7 @@ impl BeamApp {
                 }
             }
             Message::CollectionPanel(view_message) => {
-                match self.collection_panel.update(view_message) {
+                match self.collection_panel.update(view_message, &self.collections) {
                     collections::Action::UpdateCurrentCollection(collection) => Task::perform(
                         async move {
                             match storage::StorageManager::with_default_config().await {
@@ -570,6 +570,13 @@ impl BeamApp {
                         }
 
                         Task::none()
+                    }
+                    collections::Action::DeleteCollection(collection_index) => {
+                      // TODO
+                      // if collection_index < collections.len() {
+                      //     collections.remove(collection_index);
+                      // }
+                      Task::none()
                     }
                     collections::Action::None => Task::none(),
                 }
@@ -927,7 +934,6 @@ impl BeamApp {
             Message::CollectionsLoaded(result) => {
                 match result {
                     Ok(collections) => {
-                        // info!("===collections: {:?}", collections);
                         if !collections.is_empty() {
                             self.collections = collections;
                         } else {
@@ -1633,7 +1639,6 @@ impl BeamApp {
 
     fn collections_view(&self) -> Element<'_, Message> {
         // collections_panel(&self.collections, self.last_opened_request)
-        info!("===collections from main: {:?}", self.collections);
         self.collection_panel
             .view(&self.collections, self.last_opened_request)
             .map(Message::CollectionPanel)

@@ -19,6 +19,7 @@ pub enum Action {
     DeleteRequest(usize, usize),
     RenameRequest(usize, usize, String),
     RenameCollection(usize, String),
+    DeleteCollection(usize),
     None,
 }
 
@@ -71,15 +72,15 @@ impl CollectionPanel {
         }
     }
 
-    pub fn view(
-        &mut self,
-        collections: &[RequestCollection],
+    pub fn view<'a>(
+        &'a self,
+        collections: &'a [RequestCollection],
         last_opened_request: Option<(usize, usize)>,
     ) -> Element<'_, Message> {
-        self.collections = collections.to_vec();
+        // collections = collections.to_vec();
         let mut content = column![];
 
-        for (collection_index, collection) in self.collections.iter().enumerate() {
+        for (collection_index, collection) in collections.iter().enumerate() {
             let collection_header = button(
                 row![
                     icon(if collection.expanded {
@@ -427,11 +428,11 @@ impl CollectionPanel {
             .into()
     }
 
-    pub fn update(&mut self, message: Message) -> Action {
+    pub fn update(&mut self, message: Message, collections: &[RequestCollection]) -> Action {
         match message {
             Message::CollectionToggled(index) => {
-                if let Some(collection) = self.collections.get_mut(index) {
-                    collection.expanded = !collection.expanded;
+                if let Some(collection) = collections.get(index) {
+                    // collection.expanded = !collection.expanded;
                     Action::UpdateCurrentCollection(collection.clone())
                 } else {
                     Action::None
@@ -439,8 +440,7 @@ impl CollectionPanel {
             }
             Message::RequestSelected(collection_index, request_index) => {
                 info!("===select request1: {:?}", collection_index);
-                info!("===collections: {:?}", self.collections);
-                if let Some(collection) = self.collections.get(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
                         let now = std::time::Instant::now();
                         let current_target = (collection_index, request_index);
@@ -481,15 +481,13 @@ impl CollectionPanel {
                 }
             }
             Message::AddHttpRequest(collection_index) => {
-                if let Some(collection) = self.collections.get_mut(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     let mut new_request = RequestConfig::default();
-                    new_request.collection_index = collection_index as u32;
 
-                    if let Some(collection) = self.collections.get_mut(collection_index) {
-                        let len = collection.requests.len();
-                        new_request.name = format!("New Request {}", collection.requests.len() + 1);
-                        new_request.request_index = len as u32;
-                    }
+                    new_request.collection_index = collection_index as u32;
+                    let len = collection.requests.len();
+                    new_request.name = format!("New Request {}", collection.requests.len() + 1);
+                    new_request.request_index = len as u32;
 
                     Action::SaveRequestToCollection(new_request)
                 } else {
@@ -497,16 +495,11 @@ impl CollectionPanel {
                 }
             }
             Message::DeleteFolder(collection_index) => {
-                if collection_index < self.collections.len() {
-                    self.collections.remove(collection_index);
-                }
-
-                // After deleting a folder, we don't need to save anything since the collection is removed
-                Action::None
+                Action::DeleteCollection(collection_index)
             }
             Message::AddFolder(_collection_index) => {
                 let new_collection = RequestCollection {
-                    name: format!("New Collection {}", self.collections.len() + 1),
+                    name: format!("New Collection {}", collections.len() + 1),
                     requests: vec![],
                     expanded: true,
                 };
@@ -515,7 +508,7 @@ impl CollectionPanel {
             }
             Message::RenameFolder(collection_index) => {
                 // Show the rename modal for the folder
-                if let Some(collection) = self.collections.get(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     self.show_rename_modal = true;
                     self.rename_input = collection.name.clone();
                     self.rename_target = Some(RenameTarget::Folder(collection_index));
@@ -523,7 +516,7 @@ impl CollectionPanel {
                 Action::None
             }
             Message::SendRequestFromMenu(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
                         return Action::SendRequest(request.clone());
                     }
@@ -532,7 +525,7 @@ impl CollectionPanel {
                 Action::None
             }
             Message::CopyRequestAsCurl(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
                         let curl_command = crate::http::generate_curl_command(request);
                         // TODO: In a real app, you'd copy to clipboard here
@@ -543,7 +536,7 @@ impl CollectionPanel {
             }
             Message::RenameRequest(collection_index, request_index) => {
                 // Show the rename modal with the current request name
-                if let Some(collection) = self.collections.get(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.show_rename_modal = true;
                         self.rename_input = request.name.clone();
@@ -555,7 +548,7 @@ impl CollectionPanel {
                 Action::None
             }
             Message::DuplicateRequest(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get_mut(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index).cloned() {
                         let mut new_request = request;
                         new_request.name = format!("{} (Copy)", new_request.name);
@@ -574,7 +567,7 @@ impl CollectionPanel {
                 Action::DeleteRequest(collection_index, request_index)
             }
             Message::ShowRenameModal(collection_index, request_index) => {
-                if let Some(collection) = self.collections.get(collection_index) {
+                if let Some(collection) = collections.get(collection_index) {
                     if let Some(request) = collection.requests.get(request_index) {
                         self.show_rename_modal = true;
                         self.rename_input = request.name.clone();
