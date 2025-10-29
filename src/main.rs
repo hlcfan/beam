@@ -97,6 +97,7 @@ pub struct BeamApp {
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
     pub url: String,
+    pub request_body_content: text_editor::Content,
     pub collection_panel: CollectionPanel,
     pub response_panel: ResponsePanel,
     pub request_panel: RequestPanel,
@@ -202,6 +203,7 @@ impl Default for BeamApp {
                 request_index: 0,
                 metadata: None,
             },
+            request_body_content: text_editor::Content::new(),
             response_panel: ResponsePanel::new(),
             request_panel: RequestPanel::default(),
             collection_panel: CollectionPanel::new(),
@@ -318,6 +320,22 @@ impl BeamApp {
                         // TODO: update the selected environment
                         Task::none()
                     }
+                    request::Action::EditRequestBody(action) => {
+                        info!("Body changed action: {:?}", action);
+
+                        // Only trigger auto-save for actual content-changing actions
+                        // Don't save for navigation actions like clicking, selecting, scrolling
+                        let should_save = match &action {
+                            text_editor::Action::Edit(_) => true, // Only Edit actions change content
+                            _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
+                        };
+
+                        if should_save {
+                            self.request_body_content.perform(action);
+                        }
+
+                        Task::none()
+                    }
                     request::Action::None => Task::none(),
                 }
             }
@@ -364,8 +382,9 @@ impl BeamApp {
                                 // self.request_panel
                                 //     .set_body_content(request_config.body.to_string());
                                 self.current_request = request_config.clone();
+                                self.request_body_content = text_editor::Content::with_text(&self.current_request.body);
                                 // Environment variables applied to URL input are handled during rendering
-                                info!("===request load successed");
+                                info!("===select request load successed");
 
                                 // Update the last opened request state and save to storage
                                 // directly here to avoid one more render
@@ -1232,8 +1251,9 @@ impl BeamApp {
                                 // self.request_panel
                                 //     .set_body_content(request_config.body.to_string());
                                 // Environment variables applied to URL input are handled during rendering
-                                info!("===request load successed");
+                                info!("===load last request successed");
                                 self.current_request = request_config.clone();
+                                self.request_body_content = text_editor::Content::with_text(&self.current_request.body);
 
                                 // Update the last opened request state and save to storage
                                 // directly here to avoid one more render
@@ -1664,6 +1684,7 @@ impl BeamApp {
         self.request_panel
             .view(
                 &self.current_request,
+                &self.request_body_content,
                 self.response_panel.is_loading,
                 &self.environments,
                 self.active_environment,

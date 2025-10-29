@@ -125,11 +125,6 @@ where
               width: 0.0,
               radius: 4.0.into(),
             },
-            // border: Border {
-            //     color: Color::from_rgb(0.8, 0.8, 0.8),
-            //     width: 1.0,
-            //     radius: 4.0.into(),
-            // },
             _phantom: PhantomData,
         }
     }

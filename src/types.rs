@@ -232,8 +232,8 @@ pub enum RequestTab {
     Params,
     Headers,
     Auth,
-    #[allow(dead_code)]
-    Environment,
+    // #[allow(dead_code)]
+    // Environment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

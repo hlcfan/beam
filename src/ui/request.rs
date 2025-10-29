@@ -1,5 +1,5 @@
 use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::{icon, request, url_input, IconName};
+use crate::ui::{IconName, icon, url_input};
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
@@ -23,6 +23,7 @@ pub enum Action {
     UpdateActiveEnvironment(usize),
     // The components needs to run a task
     Run(iced::Task<Message>),
+    EditRequestBody(text_editor::Action),
     // The component does not require any additional actions
     None,
 }
@@ -80,7 +81,6 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
-    pub request_body_content: text_editor::Content,
     pub environments: Vec<Environment>,
     pub active_environment: Option<usize>,
     pub method_menu_open: bool,
@@ -92,7 +92,7 @@ pub struct RequestPanel {
 impl Default for RequestPanel {
     fn default() -> Self {
         Self {
-            request_body_content: text_editor::Content::new(),
+            // request_body_content: text_editor::Content::new(),
             selected_tab: RequestTab::Body,
             // current_request: RequestConfig {
             //     name: String::new(),
@@ -242,17 +242,7 @@ impl RequestPanel {
 
                 Action::UpdateCurrentRequest(current_request.clone())
             }
-            Message::BodyChanged(action) => {
-                let (body_text, should_save) = self.handle_body_changed(action);
-                // Sync the String body with the text editor content
-                current_request.clone().body = body_text;
-
-                if should_save {
-                    Action::UpdateCurrentRequest(current_request.clone())
-                } else {
-                    Action::None
-                }
-            }
+            Message::BodyChanged(action) => Action::EditRequestBody(action),
             Message::AuthTypeChanged(auth_type) => {
                 current_request.clone().auth_type = auth_type;
 
@@ -356,6 +346,7 @@ impl RequestPanel {
     pub fn view<'a>(
         &'a self,
         current_request: &'a RequestConfig,
+        request_body_content: &'a text_editor::Content,
         is_loading: bool,
         environments: &'a [Environment],
         active_environment: Option<usize>,
@@ -506,12 +497,13 @@ impl RequestPanel {
         ]
         .spacing(5);
 
+        // let request_body_content = text_editor::Content::with_text(current_request.body.as_str());
         let tab_content = match self.selected_tab {
-            RequestTab::Body => body_tab(&self.request_body_content),
+            RequestTab::Body => body_tab(&request_body_content),
             RequestTab::Params => params_tab(&current_request),
             RequestTab::Headers => headers_tab(&current_request),
             RequestTab::Auth => auth_tab(&current_request),
-            RequestTab::Environment => body_tab(&self.request_body_content), // Fallback to body tab if somehow Environment is selected
+            // RequestTab::Environment => body_tab(&request_body_content), // Fallback to body tab if somehow Environment is selected
         };
 
         let content = column![
@@ -589,39 +581,22 @@ impl RequestPanel {
     //     self.url = url;
     // }
 
-    pub fn handle_body_changed(&mut self, action: text_editor::Action) -> (String, bool) {
-        info!("Body changed action: {:?}", action);
+    // pub fn set_body_content(&mut self, body: String) {
+    //     self.request_body_content
+    //         .perform(text_editor::Action::SelectAll);
+    //     self.request_body_content
+    //         .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+    //             body.into(),
+    //         )));
+    // }
 
-        // Only trigger auto-save for actual content-changing actions
-        // Don't save for navigation actions like clicking, selecting, scrolling
-        let should_save = match &action {
-            text_editor::Action::Edit(_) => true, // Only Edit actions change content
-            _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
-        };
+    // pub fn get_body_text(&self) -> String {
+    //     self.request_body_content.text()
+    // }
 
-        self.request_body_content.perform(action);
-        // Get the updated body text
-        let body_text = self.request_body_content.text();
-
-        (body_text, should_save)
-    }
-
-    pub fn set_body_content(&mut self, body: String) {
-        self.request_body_content
-            .perform(text_editor::Action::SelectAll);
-        self.request_body_content
-            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                body.into(),
-            )));
-    }
-
-    pub fn get_body_text(&self) -> String {
-        self.request_body_content.text()
-    }
-
-    pub fn handle_body_action(&mut self, action: text_editor::Action) {
-        self.request_body_content.perform(action);
-    }
+    // pub fn handle_body_action(&mut self, action: text_editor::Action) {
+    //     self.request_body_content.perform(action);
+    // }
 }
 
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
@@ -663,8 +638,10 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
         .into()
 }
 
-fn body_tab<'a>(request_body_content: &'a text_editor::Content) -> Element<'a, Message> {
-    let text_editor_widget = text_editor(request_body_content)
+fn body_tab<'a>(request_body: &'a text_editor::Content) -> Element<'a, Message> {
+    // let content = text_editor::Content::with_text(&request_body.clone());
+    // let content = text_editor::Content::with_text(request_body.as_str());
+    let text_editor_widget = text_editor(request_body)
         .on_action(Message::BodyChanged)
         .style(
             |theme: &Theme, _status: text_editor::Status| text_editor::Style {
