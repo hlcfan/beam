@@ -3,7 +3,7 @@ use super::{
     PersistentEnvironments, PersistentRequest, StorageError,
 };
 use crate::types::{Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
-use log::{info, error};
+use log::{error, info};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -227,8 +227,7 @@ impl TomlFileStorage {
             //     metadata: Some(super::persistent_types::RequestMetadata::default()),
             // };
 
-            self.save_request(&collection.name, &request)
-                .await?;
+            self.save_request(&collection.name, &request).await?;
         }
 
         Ok(())
@@ -514,11 +513,14 @@ impl CollectionStorage for TomlFileStorage {
             }
 
             // let folder_name = collection_path.file_name().and_then(|s| s.to_str());
-            let f_name = if let Some(folder_name) = collection_path.file_name().and_then(|s| s.to_str()) {
-                folder_name.to_string()
-            } else {
-              continue
-            };
+            let folder_name =
+                if let Some(folder_name) = collection_path.file_name().and_then(|s| s.to_str()) {
+                    folder_name.to_string()
+                } else {
+                    continue;
+                };
+
+            let mut collection_name: String = String::new();
 
             let mut requests = Vec::new();
 
@@ -532,50 +534,52 @@ impl CollectionStorage for TomlFileStorage {
                 if request_path.extension().map_or(false, |ext| ext != "toml") {
                     continue;
                 }
+
                 info!("===request path: {:?}", request_path);
                 // TODO: any simple way to compare the file name?
                 if request_path.file_name() == Some(OsStr::new("collection.toml")) {
                     if let Ok(content) = fs::read_to_string(&metadata_path).await {
                         if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
-
+                            collection_name = metadata.name;
                         }
                     }
                 } else {
                     // request toml files
                     if let Ok(content) = fs::read_to_string(&request_path).await {
                         match toml::from_str::<SerializableRequestConfig>(&content) {
-                          Ok(r) => {
-                            requests.push(RequestConfig{
-                              name: r.name.unwrap(),
-                              method: r.method,
-                              url: r.url.unwrap_or_default(),
-                              headers: r.headers,
-                              params: r.params,
-                              body: r.body.unwrap_or_default(),
-                              content_type: r.content_type.unwrap_or_default(),
-                              auth_type: r.auth_type.unwrap_or_default(),
-                              bearer_token: r.bearer_token.unwrap_or_default(),
-                              basic_username: r.basic_username.unwrap_or_default(),
-                              basic_password: r.basic_password.unwrap_or_default(),
-                              api_key: r.api_key.unwrap_or_default(),
-                              api_key_header: r.api_key_header.unwrap_or_default(),
-                              metadata: r.metadata,
-                              collection_index: collecion_index,
-                              request_index: request_index,
-                            });
+                            Ok(r) => {
+                                requests.push(RequestConfig {
+                                    name: r.name.unwrap(),
+                                    method: r.method,
+                                    url: r.url.unwrap_or_default(),
+                                    headers: r.headers,
+                                    params: r.params,
+                                    body: r.body.unwrap_or_default(),
+                                    content_type: r.content_type.unwrap_or_default(),
+                                    auth_type: r.auth_type.unwrap_or_default(),
+                                    bearer_token: r.bearer_token.unwrap_or_default(),
+                                    basic_username: r.basic_username.unwrap_or_default(),
+                                    basic_password: r.basic_password.unwrap_or_default(),
+                                    api_key: r.api_key.unwrap_or_default(),
+                                    api_key_header: r.api_key_header.unwrap_or_default(),
+                                    metadata: r.metadata,
+                                    collection_index: collecion_index,
+                                    request_index: request_index,
+                                });
 
-                            request_index+=1;
-                          }
-                          Err(e) => {
-                            error!("===fail to parse: {:?}",e);
-                          }
+                                request_index += 1;
+                            }
+                            Err(e) => {
+                                error!("===fail to parse: {:?}", e);
+                            }
                         }
                     }
                 }
             }
 
-            collection_data.push(RequestCollection {
-                name: f_name,
+            collection_data.push( RequestCollection {
+                folder_name: folder_name,
+                name: collection_name,
                 requests: requests,
                 expanded: false,
             });
@@ -586,8 +590,8 @@ impl CollectionStorage for TomlFileStorage {
 
         // Sort by numeric folder names
         collection_data.sort_by(|a, b| {
-            let num_a = a.name.parse::<u32>().unwrap_or(u32::MAX);
-            let num_b = b.name.parse::<u32>().unwrap_or(u32::MAX);
+            let num_a = a.folder_name.parse::<u32>().unwrap_or(u32::MAX);
+            let num_b = b.folder_name.parse::<u32>().unwrap_or(u32::MAX);
             num_a.cmp(&num_b)
         });
 
@@ -782,9 +786,7 @@ impl CollectionStorage for TomlFileStorage {
                 // Read the file content and check if it matches this request
                 if let Ok(content) = fs::read_to_string(&path).await {
                     // Try to parse as SerializableRequestConfig first (new format)
-                    if let Ok(existing_request) =
-                        toml::from_str::<RequestConfig>(&content)
-                    {
+                    if let Ok(existing_request) = toml::from_str::<RequestConfig>(&content) {
                         if existing_request.name == request_name {
                             existing_file_path = Some(path);
                             break;

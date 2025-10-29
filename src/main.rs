@@ -369,6 +369,7 @@ impl BeamApp {
                                 // directly here to avoid one more render
                                 self.last_opened_request = Some((collection_index, request_index));
                                 // Save the last opened request asynchronously without blocking the UI
+                                // TODO; don't save last open request if no index change
                                 tokio::spawn(async move {
                                     if let Ok(storage_manager) =
                                         storage::StorageManager::with_default_config().await
@@ -973,6 +974,7 @@ impl BeamApp {
                             // };
 
                             let default_collection = RequestCollection {
+                                folder_name: format!("{:0>4}", 1),
                                 name: "My Requests".to_string(),
                                 requests: vec![],
                                 expanded: true,

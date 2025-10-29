@@ -484,8 +484,9 @@ impl CollectionPanel {
                 }
             }
             Message::DeleteFolder(collection_index) => Action::DeleteCollection(collection_index),
-            Message::AddFolder(_collection_index) => {
+            Message::AddFolder(collection_index) => {
                 let new_collection = RequestCollection {
+                    folder_name: format!("{:0>4}", collection_index),
                     name: format!("New Collection {}", collections.len() + 1),
                     requests: vec![],
                     expanded: true,
