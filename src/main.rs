@@ -329,24 +329,31 @@ impl BeamApp {
                     .collection_panel
                     .update(view_message, &self.collections)
                 {
-                    collections::Action::UpdateCurrentCollection(collection) => Task::perform(
-                        async move {
-                            match storage::StorageManager::with_default_config().await {
-                                Ok(storage_manager) => {
+                    collections::Action::ToggleCollection(collection_index) => {
+                        if let Some(collection) = self.collections.get_mut(collection_index) {
+                            collection.expanded = !collection.expanded;
+
+                            let col = collection.clone();
+
+                            tokio::spawn(async move {
+                                match storage::StorageManager::with_default_config().await {
+                                  Ok(storage_manager) => {
                                     match storage_manager
-                                        .storage()
-                                        .save_collection(&collection)
-                                        .await
-                                    {
+                                      .storage()
+                                      .save_collection(&col)
+                                      .await
+                                      {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
-                                    }
+                                      }
+                                  }
+                                  Err(e) => Err(e.to_string()),
                                 }
-                                Err(e) => Err(e.to_string()),
-                            }
-                        },
-                        Message::CollectionsSaved,
-                    ),
+                            });
+                        }
+
+                        Task::none()
+                    }
                     collections::Action::SelectRequestConfig(collection_index, request_index) => {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
@@ -935,6 +942,26 @@ impl BeamApp {
                     Ok(collections) => {
                         if !collections.is_empty() {
                             self.collections = collections;
+
+                            // Load lsast opened request after collections are loaded
+                            return Task::perform(
+                                async {
+                                    match storage::StorageManager::with_default_config().await {
+                                        Ok(storage_manager) => {
+                                            match storage_manager
+                                                .storage()
+                                                .load_last_opened_request()
+                                                .await
+                                            {
+                                                Ok(last_opened) => Ok(last_opened),
+                                                Err(e) => Err(e.to_string()),
+                                            }
+                                        }
+                                        Err(e) => Err(e.to_string()),
+                                    }
+                                },
+                                Message::LastOpenedRequestLoaded,
+                            );
                         } else {
                             // TODO: add default request
                             // maybe move this to the load_collections func
@@ -1180,17 +1207,6 @@ impl BeamApp {
                 },
                 Message::LastOpenedRequestLoaded,
             ),
-            // Message::LastOpenedRequestSaved(result) => {
-            //     match result {
-            //         Ok(_) => {
-            //             // Successfully saved last opened request
-            //         }
-            //         Err(e) => {
-            //             error!("Failed to save last opened request: {}", e);
-            //         }
-            //     }
-            //     Task::none()
-            // }
             Message::LastOpenedRequestLoaded(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
@@ -1201,16 +1217,48 @@ impl BeamApp {
 
                         // Restore the last opened request
                         self.last_opened_request = Some((collection_index, request_index));
-                        // update the current request, no need to
 
-                        // Automatically expand the collection containing the last opened request
                         if let Some(collection) = self.collections.get_mut(collection_index) {
                             collection.expanded = true;
                             info!(
                                 "DEBUG: Automatically expanded collection '{}' containing last opened request",
                                 collection.name
                             );
+
+                            if let Some(request_config) = collection.requests.get(request_index) {
+                                // let request_config = collection.requests.get(request_index).unwrap_or_default();
+                                self.request_panel.set_url(request_config.url.to_string());
+
+                                self.request_panel
+                                    .set_body_content(request_config.body.to_string());
+                                // Environment variables applied to URL input are handled during rendering
+                                info!("===request load successed");
+
+                                // Update the last opened request state and save to storage
+                                // directly here to avoid one more render
+                                self.last_opened_request = Some((collection_index, request_index));
+                                // Save the last opened request asynchronously without blocking the UI
+                                tokio::spawn(async move {
+                                    if let Ok(storage_manager) =
+                                        storage::StorageManager::with_default_config().await
+                                    {
+                                        if let Err(e) = storage_manager
+                                            .storage()
+                                            .save_last_opened_request(
+                                                collection_index,
+                                                request_index,
+                                            )
+                                            .await
+                                        {
+                                            error!("Failed to save last opened request: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                        } else {
+                            error!("===no collections");
                         }
+
                         Task::none()
                     }
                     Ok(None) => {

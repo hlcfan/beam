@@ -10,7 +10,7 @@ use log::{error, info};
 
 #[derive(Debug, Clone)]
 pub enum Action {
-    UpdateCurrentCollection(RequestCollection),
+    ToggleCollection(usize),
     SelectRequestConfig(usize, usize),
     SaveRequestToCollection(RequestConfig),
     SaveNewCollection(RequestCollection),
@@ -77,7 +77,6 @@ impl CollectionPanel {
         collections: &'a [RequestCollection],
         last_opened_request: Option<(usize, usize)>,
     ) -> Element<'_, Message> {
-        // collections = collections.to_vec();
         let mut content = column![];
 
         for (collection_index, collection) in collections.iter().enumerate() {
@@ -430,14 +429,7 @@ impl CollectionPanel {
 
     pub fn update(&mut self, message: Message, collections: &[RequestCollection]) -> Action {
         match message {
-            Message::CollectionToggled(index) => {
-                if let Some(collection) = collections.get(index) {
-                    // collection.expanded = !collection.expanded;
-                    Action::UpdateCurrentCollection(collection.clone())
-                } else {
-                    Action::None
-                }
-            }
+            Message::CollectionToggled(index) => Action::ToggleCollection(index),
             Message::RequestSelected(collection_index, request_index) => {
                 info!("===select request1: {:?}", collection_index);
                 if let Some(collection) = collections.get(collection_index) {
@@ -491,9 +483,7 @@ impl CollectionPanel {
                     Action::None
                 }
             }
-            Message::DeleteFolder(collection_index) => {
-                Action::DeleteCollection(collection_index)
-            }
+            Message::DeleteFolder(collection_index) => Action::DeleteCollection(collection_index),
             Message::AddFolder(_collection_index) => {
                 let new_collection = RequestCollection {
                     name: format!("New Collection {}", collections.len() + 1),

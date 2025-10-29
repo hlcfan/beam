@@ -164,6 +164,7 @@ impl TomlFileStorage {
         collection: &RequestCollection,
     ) -> Result<(), StorageError> {
         // Try to find existing collection directory by name first
+        info!("===collection: {:?}", collection);
         let collection_dir = match self
             .find_collection_directory_by_name(&collection.name)
             .await?
@@ -576,12 +577,11 @@ impl CollectionStorage for TomlFileStorage {
             collection_data.push(RequestCollection {
                 name: f_name,
                 requests: requests,
-                expanded: true,
+                expanded: false,
             });
 
             collecion_index += 1;
             request_index = 0;
-            // load collection requests
         }
 
         // Sort by numeric folder names

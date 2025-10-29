@@ -77,6 +77,7 @@ impl Highlighter for ResponseHighlighter {
 #[derive(Debug, Clone)]
 pub struct RequestCollection {
     pub name: String,
+    pub folder_name: String,
     pub requests: Vec<RequestConfig>,
     pub expanded: bool,
 }
