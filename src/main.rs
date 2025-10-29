@@ -77,9 +77,10 @@ pub enum Message {
     #[allow(dead_code)]
     SaveInitialData,
     UpdateLastOpenedRequest(usize, usize), // (collection_index, request_index) - deferred state update
-    LoadLastOpenedRequest,
+    LoadLastOpenedRequest(Result<Option<(usize, usize)>, String>),
+    // LoadLastOpenedRequest(usize, usize),
     // LastOpenedRequestSaved(Result<(), String>),
-    LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
+    // LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
     // RequestConfigLoaded(Result<Option<RequestConfig>, String>),
     SaveRequestDebounced {
         collection_index: usize,
@@ -242,7 +243,10 @@ impl BeamApp {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::RequestPanel(view_message) => {
-                match self.request_panel.update(view_message) {
+                match self
+                    .request_panel
+                    .update(view_message, &self.current_request)
+                {
                     // To handle the actions from request panel component
                     request::Action::SendRequest(request_config, now) => {
                         // Save now
@@ -337,17 +341,14 @@ impl BeamApp {
 
                             tokio::spawn(async move {
                                 match storage::StorageManager::with_default_config().await {
-                                  Ok(storage_manager) => {
-                                    match storage_manager
-                                      .storage()
-                                      .save_collection(&col)
-                                      .await
-                                      {
-                                        Ok(_) => Ok(()),
-                                        Err(e) => Err(e.to_string()),
-                                      }
-                                  }
-                                  Err(e) => Err(e.to_string()),
+                                    Ok(storage_manager) => {
+                                        match storage_manager.storage().save_collection(&col).await
+                                        {
+                                            Ok(_) => Ok(()),
+                                            Err(e) => Err(e.to_string()),
+                                        }
+                                    }
+                                    Err(e) => Err(e.to_string()),
                                 }
                             });
                         }
@@ -358,10 +359,11 @@ impl BeamApp {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 // let request_config = collection.requests.get(request_index).unwrap_or_default();
-                                self.request_panel.set_url(request_config.url.to_string());
+                                // self.request_panel.set_url(request_config.url.to_string());
 
-                                self.request_panel
-                                    .set_body_content(request_config.body.to_string());
+                                // self.request_panel
+                                //     .set_body_content(request_config.body.to_string());
+                                self.current_request = request_config.clone();
                                 // Environment variables applied to URL input are handled during rendering
                                 info!("===request load successed");
 
@@ -921,7 +923,6 @@ impl BeamApp {
             // Storage operations
             Message::LoadConfigFiles => Task::batch([
                 Task::perform(async { Message::LoadCollections }, |msg| msg),
-                Task::perform(async { Message::LoadLastOpenedRequest }, |msg| msg),
                 Task::perform(async { Message::LoadEnvironments }, |msg| msg),
             ]),
             Message::LoadCollections => Task::perform(
@@ -961,7 +962,7 @@ impl BeamApp {
                                         Err(e) => Err(e.to_string()),
                                     }
                                 },
-                                Message::LastOpenedRequestLoaded,
+                                Message::LoadLastOpenedRequest,
                             );
                         } else {
                             // TODO: add default request
@@ -1195,30 +1196,27 @@ impl BeamApp {
 
                 Task::none()
             }
-            Message::LoadLastOpenedRequest => Task::perform(
-                async {
-                    match storage::StorageManager::with_default_config().await {
-                        Ok(storage_manager) => {
-                            match storage_manager.storage().load_last_opened_request().await {
-                                Ok(last_opened) => Ok(last_opened),
-                                Err(e) => Err(e.to_string()),
-                            }
-                        }
-                        Err(e) => Err(e.to_string()),
-                    }
-                },
-                Message::LastOpenedRequestLoaded,
-            ),
-            Message::LastOpenedRequestLoaded(result) => {
+            // Message::LoadLastOpenedRequest => Task::perform(
+            //     async {
+            //         match storage::StorageManager::with_default_config().await {
+            //             Ok(storage_manager) => {
+            //                 match storage_manager.storage().load_last_opened_request().await {
+            //                     Ok(last_opened) => Ok(last_opened),
+            //                     Err(e) => Err(e.to_string()),
+            //                 }
+            //             }
+            //             Err(e) => Err(e.to_string()),
+            //         }
+            //     },
+            //     Message::LastOpenedRequestLoaded,
+            // ),
+            Message::LoadLastOpenedRequest(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
                         info!(
                             "DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}",
                             collection_index, request_index
                         );
-
-                        // Restore the last opened request
-                        self.last_opened_request = Some((collection_index, request_index));
 
                         if let Some(collection) = self.collections.get_mut(collection_index) {
                             collection.expanded = true;
@@ -1229,12 +1227,13 @@ impl BeamApp {
 
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 // let request_config = collection.requests.get(request_index).unwrap_or_default();
-                                self.request_panel.set_url(request_config.url.to_string());
+                                // self.request_panel.set_url(request_config.url.to_string());
 
-                                self.request_panel
-                                    .set_body_content(request_config.body.to_string());
+                                // self.request_panel
+                                //     .set_body_content(request_config.body.to_string());
                                 // Environment variables applied to URL input are handled during rendering
                                 info!("===request load successed");
+                                self.current_request = request_config.clone();
 
                                 // Update the last opened request state and save to storage
                                 // directly here to avoid one more render
@@ -1662,18 +1661,14 @@ impl BeamApp {
 
     fn request_config_view(&self) -> Element<'_, Message> {
         info!("=== Rendering request config view ===");
-        self.request_panel.view().map(Message::RequestPanel)
-        // request_panel(
-        //     &self.current_request,
-        //     &self.url,
-        //     &self.request_panel,
-        //     self.response_panel.is_loading,
-        //     &self.environments,
-        //     self.active_environment,
-        //     self.method_menu_open,
-        //     self.send_button_hovered,
-        //     self.cancel_button_hovered,
-        // )
+        self.request_panel
+            .view(
+                &self.current_request,
+                self.response_panel.is_loading,
+                &self.environments,
+                self.active_environment,
+            )
+            .map(Message::RequestPanel)
     }
 
     fn response_view(&self) -> Element<'_, Message> {

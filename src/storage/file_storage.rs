@@ -535,7 +535,7 @@ impl CollectionStorage for TomlFileStorage {
                     continue;
                 }
 
-                info!("===request path: {:?}", request_path);
+                // info!("===request path: {:?}", request_path);
                 // TODO: any simple way to compare the file name?
                 if request_path.file_name() == Some(OsStr::new("collection.toml")) {
                     if let Ok(content) = fs::read_to_string(&metadata_path).await {

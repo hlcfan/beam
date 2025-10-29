@@ -1,5 +1,5 @@
 use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::{IconName, icon, url_input};
+use crate::ui::{icon, request, url_input, IconName};
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
@@ -81,9 +81,6 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
     pub request_body_content: text_editor::Content,
-    pub current_request: RequestConfig,
-    pub url: String,
-    pub is_loading: bool,
     pub environments: Vec<Environment>,
     pub active_environment: Option<usize>,
     pub method_menu_open: bool,
@@ -97,29 +94,27 @@ impl Default for RequestPanel {
         Self {
             request_body_content: text_editor::Content::new(),
             selected_tab: RequestTab::Body,
-            current_request: RequestConfig {
-                name: String::new(),
-                method: HttpMethod::GET,
-                url: String::new(),
-                headers: vec![
-                    ("Content-Type".to_string(), "application/json".to_string()),
-                    ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
-                ],
-                params: vec![],
-                body: String::new(),
-                content_type: "application/json".to_string(),
-                auth_type: AuthType::None,
-                bearer_token: String::new(),
-                basic_username: String::new(),
-                basic_password: String::new(),
-                api_key: String::new(),
-                api_key_header: "X-API-Key".to_string(),
-                collection_index: 0,
-                request_index: 0,
-                metadata: None,
-            },
-            url: String::new(),
-            is_loading: false,
+            // current_request: RequestConfig {
+            //     name: String::new(),
+            //     method: HttpMethod::GET,
+            //     url: String::new(),
+            //     headers: vec![
+            //         ("Content-Type".to_string(), "application/json".to_string()),
+            //         ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
+            //     ],
+            //     params: vec![],
+            //     body: String::new(),
+            //     content_type: "application/json".to_string(),
+            //     auth_type: AuthType::None,
+            //     bearer_token: String::new(),
+            //     basic_username: String::new(),
+            //     basic_password: String::new(),
+            //     api_key: String::new(),
+            //     api_key_header: "X-API-Key".to_string(),
+            //     collection_index: 0,
+            //     request_index: 0,
+            //     metadata: None,
+            // },
             environments: Vec::new(),
             active_environment: None,
             method_menu_open: false,
@@ -134,17 +129,13 @@ impl RequestPanel {
         Self::default()
     }
 
-    pub fn update(&mut self, message: Message) -> Action {
+    pub fn update(&mut self, message: Message, current_request: &RequestConfig) -> Action {
         match message {
             Message::UrlInputChanged(url) => {
-                // Update the URL input widget value
-                // TODO: Call requestConfig update to update the value
-                // self.url_input.set_value(url.clone());
-                self.current_request.clone().url = url;
+                let mut request = current_request.clone();
+                request.url = url;
 
-                // return action here
-                // parent component will handle
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::UrlInputUndo => {
                 info!("DEBUG: UrlInputUndo message received");
@@ -169,15 +160,16 @@ impl RequestPanel {
                 Action::None
             }
             Message::MethodChanged(method) => {
-                self.current_request.clone().method = method;
+                let mut request = current_request.clone();
+                request.method = method;
                 self.method_menu_open = false; // Close menu after selection
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::ClickSendRequest => {
                 // TODO: Parent to check this action
-                // Action::MonitorRequest(self.current_request.clone(), std::time::Instant::now())
-                Action::SendRequest(self.current_request.clone(), std::time::Instant::now())
+                // Action::MonitorRequest(current_request.clone(), std::time::Instant::now())
+                Action::SendRequest(current_request.clone(), std::time::Instant::now())
             }
             Message::CancelRequest => Action::CancelRequest(),
             Message::SendButtonHovered(hovered) => {
@@ -190,106 +182,106 @@ impl RequestPanel {
             }
             Message::TabSelected(tab) => {
                 // TODO: handle selected tab on component level
-                // self.current_request.clone().selected_tab = tab;
+                // current_request.clone().selected_tab = tab;
                 Action::None
             }
 
             Message::HeaderKeyChanged(index, key) => {
-                if let Some(header) = self.current_request.clone().headers.get_mut(index) {
+                if let Some(header) = current_request.clone().headers.get_mut(index) {
                     header.0 = key;
                 }
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::HeaderValueChanged(index, value) => {
-                if let Some(header) = self.current_request.clone().headers.get_mut(index) {
+                if let Some(header) = current_request.clone().headers.get_mut(index) {
                     header.1 = value;
                 }
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::AddHeader => {
-                self.current_request
+                current_request
                     .clone()
                     .headers
                     .push((String::new(), String::new()));
                 Action::None
             }
             Message::RemoveHeader(index) => {
-                if index < self.current_request.clone().headers.len() {
-                    self.current_request.clone().headers.remove(index);
+                if index < current_request.clone().headers.len() {
+                    current_request.clone().headers.remove(index);
                 }
                 Action::None
             }
             Message::ParamKeyChanged(index, key) => {
-                if let Some(param) = self.current_request.clone().params.get_mut(index) {
+                if let Some(param) = current_request.clone().params.get_mut(index) {
                     param.0 = key;
                 }
 
-                Action::UpdateCurrentRequest(self.current_request.clone().clone())
+                Action::UpdateCurrentRequest(current_request.clone().clone())
             }
             Message::ParamValueChanged(index, value) => {
-                if let Some(param) = self.current_request.clone().params.get_mut(index) {
+                if let Some(param) = current_request.clone().params.get_mut(index) {
                     param.1 = value;
                 }
 
-                Action::UpdateCurrentRequest(self.current_request.clone().clone())
+                Action::UpdateCurrentRequest(current_request.clone().clone())
             }
             Message::AddParam => {
-                self.current_request
+                current_request
                     .clone()
                     .params
                     .push((String::new(), String::new()));
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::RemoveParam(index) => {
-                if index < self.current_request.clone().params.len() {
-                    self.current_request.clone().params.remove(index);
+                if index < current_request.clone().params.len() {
+                    current_request.clone().params.remove(index);
                 }
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::BodyChanged(action) => {
                 let (body_text, should_save) = self.handle_body_changed(action);
                 // Sync the String body with the text editor content
-                self.current_request.clone().body = body_text;
+                current_request.clone().body = body_text;
 
                 if should_save {
-                    Action::UpdateCurrentRequest(self.current_request.clone())
+                    Action::UpdateCurrentRequest(current_request.clone())
                 } else {
                     Action::None
                 }
             }
             Message::AuthTypeChanged(auth_type) => {
-                self.current_request.clone().auth_type = auth_type;
+                current_request.clone().auth_type = auth_type;
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::BearerTokenChanged(token) => {
-                self.current_request.clone().bearer_token = token;
+                current_request.clone().bearer_token = token;
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::BasicUsernameChanged(username) => {
-                self.current_request.clone().basic_username = username;
+                current_request.clone().basic_username = username;
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::BasicPasswordChanged(password) => {
-                self.current_request.clone().basic_password = password;
+                current_request.clone().basic_password = password;
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::ApiKeyChanged(api_key) => {
-                self.current_request.clone().api_key = api_key;
+                current_request.clone().api_key = api_key;
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             Message::ApiKeyHeaderChanged(header) => {
-                self.current_request.clone().api_key_header = header;
+                current_request.clone().api_key_header = header;
 
-                Action::UpdateCurrentRequest(self.current_request.clone())
+                Action::UpdateCurrentRequest(current_request.clone())
             }
             // Environment message handlers
             Message::OpenEnvironmentPopup => {
@@ -361,29 +353,23 @@ impl RequestPanel {
         // (should_save, body_text)
     }
 
-    // config: &'a RequestConfig,
-    // url: &'a str,
-    // panel: &'a RequestPanel,
-    // is_loading: bool,
-    // self.environments: &'a [Environment],
-    // active_environment: Option<usize>,
-    // method_menu_open: bool,
-    // send_button_hovered: bool,
-    // cancel_button_hovered: bool,
-    pub fn view(&self) -> Element<'_, Message> {
+    pub fn view<'a>(
+        &'a self,
+        current_request: &'a RequestConfig,
+        is_loading: bool,
+        environments: &'a [Environment],
+        active_environment: Option<usize>,
+    ) -> Element<'_, Message> {
         // Environment pick_list for the URL row
         let env_pick_list = {
             // Create list of environment options including all self.environments plus "Configure"
-            let mut env_options: Vec<String> = self
-                .environments
-                .iter()
-                .map(|env| env.name.clone())
-                .collect();
+            let mut env_options: Vec<String> =
+                environments.iter().map(|env| env.name.clone()).collect();
             env_options.push("Configure".to_string());
 
             // Determine the selected value
-            let selected_env = if let Some(active_idx) = self.active_environment {
-                if let Some(env) = self.environments.get(active_idx) {
+            let selected_env = if let Some(active_idx) = active_environment {
+                if let Some(env) = environments.get(active_idx) {
                     Some(env.name.clone())
                 } else {
                     None
@@ -422,15 +408,14 @@ impl RequestPanel {
         .align_y(iced::Alignment::Center);
 
         // Method label with dynamic width
-        let method_label = method_button(&self.current_request.method);
+        let method_label = method_button(&current_request.method);
 
         // Create send/cancel button based on loading state
-        let url_valid = !self.current_request.clone().url.trim().is_empty()
-            && (self.current_request.clone().url.starts_with("http://")
-                || self.current_request.clone().url.starts_with("https://")
-                || self.current_request.clone().url.contains("{{"));
+        let url = current_request.url.clone();
+        let url_valid = !url.trim().is_empty()
+            && (url.starts_with("http://") || url.starts_with("https://") || url.contains("{{"));
 
-        let send_button = if self.is_loading {
+        let send_button = if is_loading {
             // Show cancel icon when loading
             let cancel_color = if self.cancel_button_hovered {
                 Color::from_rgb(0.3, 0.3, 0.3) // Darker gray on hover
@@ -476,7 +461,7 @@ impl RequestPanel {
 
         let base_input = container(row![
             method_label,
-            UrlInput::new("Enter URL...", &self.url).on_input(Message::UrlInputChanged),
+            UrlInput::new("Enter URL...", &url).on_input(Message::UrlInputChanged),
             space().width(5),
             send_button,
         ])
@@ -523,9 +508,9 @@ impl RequestPanel {
 
         let tab_content = match self.selected_tab {
             RequestTab::Body => body_tab(&self.request_body_content),
-            RequestTab::Params => params_tab(&self.current_request),
-            RequestTab::Headers => headers_tab(&self.current_request),
-            RequestTab::Auth => auth_tab(&self.current_request),
+            RequestTab::Params => params_tab(&current_request),
+            RequestTab::Headers => headers_tab(&current_request),
+            RequestTab::Auth => auth_tab(&current_request),
             RequestTab::Environment => body_tab(&self.request_body_content), // Fallback to body tab if somehow Environment is selected
         };
 
@@ -600,9 +585,9 @@ impl RequestPanel {
         base_layout
     }
 
-    pub fn set_url(&mut self, url: String) {
-      self.url = url;
-    }
+    // pub fn set_url(&mut self, url: String) {
+    //     self.url = url;
+    // }
 
     pub fn handle_body_changed(&mut self, action: text_editor::Action) -> (String, bool) {
         info!("Body changed action: {:?}", action);

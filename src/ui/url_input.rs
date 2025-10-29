@@ -121,10 +121,15 @@ where
             history_index: 0,
             environment_variables: HashMap::new(),
             border: Border {
-                color: Color::from_rgb(0.8, 0.8, 0.8),
-                width: 1.0,
-                radius: 4.0.into(),
+              color: Color::TRANSPARENT,
+              width: 0.0,
+              radius: 4.0.into(),
             },
+            // border: Border {
+            //     color: Color::from_rgb(0.8, 0.8, 0.8),
+            //     width: 1.0,
+            //     radius: 4.0.into(),
+            // },
             _phantom: PhantomData,
         }
     }
@@ -155,9 +160,9 @@ where
             history_index: 0,
             environment_variables: HashMap::new(),
             border: Border {
-                color: Color::from_rgb(0.8, 0.8, 0.8),
-                width: 1.0,
-                radius: 4.0.into(),
+              color: Color::TRANSPARENT,
+              width: 0.0,
+              radius: 4.0.into(),
             },
             _phantom: PhantomData,
         }
@@ -204,7 +209,7 @@ where
 
             text_input::Style {
                 background: Background::Color(palette.background),
-                border: border.clone(),
+                border: border,
                 icon: palette.text,
                 placeholder: palette.text,
                 value: palette.text,
