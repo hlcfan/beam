@@ -5,7 +5,7 @@ pub mod icon;
 pub mod spinner;
 pub mod url_input;
 
-pub use collections::*;
-pub use icon::*;
+pub use icon::{IconName, icon};
 pub use request::*;
-pub use spinner::*;
+pub use spinner::Spinner;
+pub use collections::CollectionPanel;

@@ -132,6 +132,7 @@ impl RequestPanel {
     pub fn update(&mut self, message: Message, current_request: &RequestConfig) -> Action {
         match message {
             Message::UrlInputChanged(url) => {
+                info!("===URL updated to: {:?}", url);
                 let mut request = current_request.clone();
                 request.url = url;
 
@@ -450,6 +451,7 @@ impl RequestPanel {
             }
         };
 
+        info!("====URL: {:?}", url);
         let base_input = container(row![
             method_label,
             UrlInput::new("Enter URL...", &url).on_input(Message::UrlInputChanged),

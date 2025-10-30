@@ -1,4 +1,5 @@
 use crate::types::{ResponseData, ResponsePanel, ResponseTab};
+use crate::ui::Spinner;
 use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
@@ -272,7 +273,7 @@ impl ResponsePanel {
             selected_tab: ResponseTab::Body,
             is_loading: false,
             current_elapsed_time: 0,
-            spinner: crate::ui::Spinner::new(),
+            spinner: Spinner::new(),
         }
     }
 

@@ -14,6 +14,7 @@ use ui::RequestPanel;
 use crate::ui::collections;
 use crate::ui::request;
 
+use chrono::Local;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
     button, column, container, pick_list, row, scrollable, space, stack, text, text_editor,
@@ -113,7 +114,7 @@ pub struct BeamApp {
     pub last_opened_request: Option<(usize, usize)>, // (collection_index, request_index)
 
     // Auto-save debounce management
-    pub debounce_timers: HashMap<(usize, usize), Instant>, // (collection_index, request_index) -> last_change_time
+    pub last_request_change_time: chrono::DateTime<Local>, // (collection_index, request_index) -> last_change_time
     pub debounce_delay_ms: u64,                            // configurable delay in milliseconds
 
     // Rename modal state
@@ -219,7 +220,7 @@ impl Default for BeamApp {
             last_opened_request: None,
 
             // Auto-save debounce management
-            debounce_timers: HashMap::new(),
+            last_request_change_time: Local::now(),
             debounce_delay_ms: 500, // 500ms default delay
 
             // Rename modal state
@@ -295,44 +296,48 @@ impl BeamApp {
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
-                        // TODO: update the current request, write to file
-                        // Update the debounce timer for this request
                         let collection_index = request_config.collection_index as usize;
-                        let request_index = request_config.request_index as usize;
-                        let key = (collection_index, request_index);
-                        self.debounce_timers.insert(key, std::time::Instant::now());
 
-                        // Schedule a debounced save
-                        let delay = std::time::Duration::from_millis(self.debounce_delay_ms);
-                        Task::perform(
-                            async move {
-                                // TODO: do we need to sleep here?
-                                tokio::time::sleep(delay).await;
-                                Message::SaveRequestDebounced {
-                                    collection_index,
-                                    request_index,
-                                }
-                            },
-                            |msg| msg,
-                        )
+                        let now = Local::now();
+                        self.current_request = request_config;
+
+                        let elapsed = Local::now() - self.last_request_change_time;
+                        self.last_request_change_time = now.clone();
+                        if elapsed.num_milliseconds() >= 500 {
+                            if let Some(collection) = self.collections.get(collection_index) {
+                                let col = collection.clone();
+                                let req = self.current_request.clone();
+
+                                tokio::spawn(async move {
+                                    match storage::StorageManager::with_default_config().await {
+                                        Ok(storage_manager) => {
+                                            info!("===request auto saved");
+
+                                            match storage_manager
+                                                .storage()
+                                                .save_serializable_request(
+                                                    &col.folder_name, &req.name, &req,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => Ok(()),
+                                                    Err(e) => Err(e.to_string()),
+                                                }
+                                        }
+                                        Err(e) => Err(e.to_string()),
+                                    }
+                                });
+                            }
+                        }
+
+                        Task::none()
                     }
                     request::Action::UpdateActiveEnvironment(index) => {
                         // TODO: update the selected environment
                         Task::none()
                     }
                     request::Action::EditRequestBody(action) => {
-                        info!("Body changed action: {:?}", action);
-
-                        // Only trigger auto-save for actual content-changing actions
-                        // Don't save for navigation actions like clicking, selecting, scrolling
-                        let should_save = match &action {
-                            text_editor::Action::Edit(_) => true, // Only Edit actions change content
-                            _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
-                        };
-
-                        if should_save {
-                            self.request_body_content.perform(action);
-                        }
+                        self.request_body_content.perform(action);
 
                         Task::none()
                     }
@@ -382,7 +387,8 @@ impl BeamApp {
                                 // self.request_panel
                                 //     .set_body_content(request_config.body.to_string());
                                 self.current_request = request_config.clone();
-                                self.request_body_content = text_editor::Content::with_text(&self.current_request.body);
+                                self.request_body_content =
+                                    text_editor::Content::with_text(&self.current_request.body);
                                 // Environment variables applied to URL input are handled during rendering
                                 info!("===select request load successed");
 
@@ -1253,7 +1259,8 @@ impl BeamApp {
                                 // Environment variables applied to URL input are handled during rendering
                                 info!("===load last request successed");
                                 self.current_request = request_config.clone();
-                                self.request_body_content = text_editor::Content::with_text(&self.current_request.body);
+                                self.request_body_content =
+                                    text_editor::Content::with_text(&self.current_request.body);
 
                                 // Update the last opened request state and save to storage
                                 // directly here to avoid one more render
@@ -1347,64 +1354,65 @@ impl BeamApp {
                 let key = (collection_index, request_index);
 
                 // Check if this save is still valid (no newer changes)
-                if let Some(last_change_time) = self.debounce_timers.get(&key) {
-                    info!("====1");
-                    let elapsed = last_change_time.elapsed();
-                    if elapsed >= std::time::Duration::from_millis(self.debounce_delay_ms) {
-                        // Remove the timer entry and save the request
-                        self.debounce_timers.remove(&key);
-                        info!("====2");
+                // if let Some(last_change_time) = self.debounce_timers.get(&key) {
+                //     info!("====1");
+                //     let elapsed = last_change_time.elapsed();
+                //     if elapsed >= std::time::Duration::from_millis(self.debounce_delay_ms) {
+                //         // Remove the timer entry and save the request
+                //         self.debounce_timers.remove(&key);
+                //         info!("====2");
 
-                        // Get collection name and request name for saving
-                        if let Some(collection) = self.collections.get(collection_index) {
-                            info!("====3");
-                            if let Some(saved_request) = collection.requests.get(request_index) {
-                                info!("====4");
-                                let collection_name = collection.name.clone();
-                                info!("====5");
-                                let request_name = saved_request.name.clone();
-                                // TODO: persistent request config
-                                // let serializable_request = self.current_request.to_serializable(request_name.clone());
-                                // info!("===start perform auto save request");
-                                // Task::perform(
-                                //     async move {
-                                //         match storage::StorageManager::with_default_config().await {
-                                //             Ok(storage_manager) => {
-                                //                 info!("===done perform auto save request");
+                //         // Get collection name and request name for saving
+                //         if let Some(collection) = self.collections.get(collection_index) {
+                //             info!("====3");
+                //             if let Some(saved_request) = collection.requests.get(request_index) {
+                //                 info!("====4");
+                //                 let collection_name = collection.name.clone();
+                //                 info!("====5");
+                //                 let request_name = saved_request.name.clone();
+                //                 // TODO: persistent request config
+                //                 // let serializable_request = self.current_request.to_serializable(request_name.clone());
+                //                 // info!("===start perform auto save request");
+                //                 // Task::perform(
+                //                 //     async move {
+                //                 //         match storage::StorageManager::with_default_config().await {
+                //                 //             Ok(storage_manager) => {
+                //                 //                 info!("===done perform auto save request");
 
-                                //                 match storage_manager
-                                //                     .storage()
-                                //                     .save_serializable_request(
-                                //                         &collection_name,
-                                //                         &request_name,
-                                //                         &serializable_request,
-                                //                     )
-                                //                     .await
-                                //                 {
-                                //                     Ok(_) => Ok(()),
-                                //                     Err(e) => Err(e.to_string()),
-                                //                 }
-                                //             }
-                                //             Err(e) => Err(e.to_string()),
-                                //         }
-                                //     },
-                                //     Message::RequestSaved,
-                                // )
-                                Task::none()
-                            } else {
-                                Task::none()
-                            }
-                        } else {
-                            Task::none()
-                        }
-                    } else {
-                        // Too early, ignore this save request
-                        Task::none()
-                    }
-                } else {
-                    // No timer entry, ignore
-                    Task::none()
-                }
+                //                 //                 match storage_manager
+                //                 //                     .storage()
+                //                 //                     .save_serializable_request(
+                //                 //                         &collection_name,
+                //                 //                         &request_name,
+                //                 //                         &serializable_request,
+                //                 //                     )
+                //                 //                     .await
+                //                 //                 {
+                //                 //                     Ok(_) => Ok(()),
+                //                 //                     Err(e) => Err(e.to_string()),
+                //                 //                 }
+                //                 //             }
+                //                 //             Err(e) => Err(e.to_string()),
+                //                 //         }
+                //                 //     },
+                //                 //     Message::RequestSaved,
+                //                 // )
+                //                 Task::none()
+                //             } else {
+                //                 Task::none()
+                //             }
+                //         } else {
+                //             Task::none()
+                //         }
+                //     } else {
+                //         // Too early, ignore this save request
+                //         Task::none()
+                //     }
+                // } else {
+                // No timer entry, ignore
+                //     Task::none()
+                // }
+                Task::none()
             }
             Message::RequestSaved(result) => {
                 match result {

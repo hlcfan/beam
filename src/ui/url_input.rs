@@ -121,43 +121,9 @@ where
             history_index: 0,
             environment_variables: HashMap::new(),
             border: Border {
-              color: Color::TRANSPARENT,
-              width: 0.0,
-              radius: 4.0.into(),
-            },
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<Message> Default for UrlInput<Message>
-where
-    Message: Clone,
-{
-    fn default() -> Self {
-        Self {
-            value: String::new(),
-            placeholder: String::new(),
-            is_secure: false,
-            width: Length::Fill,
-            height: Length::Shrink,
-            padding: Padding::new(8.0),
-            size: 14.0,
-            font: None,
-            syntax_highlighting: SyntaxHighlighting::default(),
-            max_history: 100,
-            grouping_threshold_ms: 500,
-            on_input: None,
-            on_submit: None,
-            on_paste: None,
-            id: None,
-            history: Vec::new(),
-            history_index: 0,
-            environment_variables: HashMap::new(),
-            border: Border {
-              color: Color::TRANSPARENT,
-              width: 0.0,
-              radius: 4.0.into(),
+                color: Color::TRANSPARENT,
+                width: 0.0,
+                radius: 4.0.into(),
             },
             _phantom: PhantomData,
         }
@@ -170,13 +136,7 @@ where
 {
     fn from(input: UrlInput<Message>) -> Self {
         // Implement the entire view logic here, taking ownership of input
-        let mut text_input_widget = if input.is_secure {
-            text_input(&input.placeholder, &input.value).secure(true)
-        } else {
-            text_input(&input.placeholder, &input.value)
-        };
-
-        text_input_widget = text_input_widget
+        let mut text_input_widget = text_input(&input.placeholder, &input.value)
             .width(input.width)
             .size(input.size)
             .padding(input.padding);
@@ -189,22 +149,20 @@ where
             text_input_widget = text_input_widget.font(font);
         }
 
-        if let Some(callback) = input.on_input {
-            text_input_widget = text_input_widget.on_input(callback);
+        if let Some(on_input) = input.on_input {
+            text_input_widget = text_input_widget.on_input(on_input);
         }
 
-        if let Some(ref message) = input.on_submit {
-            text_input_widget = text_input_widget.on_submit(message.clone());
+        if let Some(on_submit) = input.on_submit {
+            text_input_widget = text_input_widget.on_submit(on_submit);
         }
 
-        // Create the base input with custom styling
-        let border = input.border.clone();
-        let styled_input = text_input_widget.style(move |theme: &Theme, status| {
+        let styled_input = text_input_widget.style(move |theme: &Theme, _status| {
             let palette = theme.palette();
 
             text_input::Style {
                 background: Background::Color(palette.background),
-                border: border,
+                border: input.border,
                 icon: palette.text,
                 placeholder: palette.text,
                 value: palette.text,
@@ -212,16 +170,7 @@ where
             }
         });
 
-        // Create the final element with syntax highlighting if enabled
-        if input.syntax_highlighting.enabled && !input.value.is_empty() {
-            stack![
-                styled_input,
-                // input.create_syntax_overlay() // Can't call this since we consumed input
-            ]
-            .into()
-        } else {
-            styled_input.into()
-        }
+        styled_input.into()
     }
 }
 
@@ -236,11 +185,6 @@ where
 
     pub fn value(mut self, value: String) -> Self {
         self.value = value;
-        self
-    }
-
-    pub fn secure(mut self, secure: bool) -> Self {
-        self.is_secure = secure;
         self
     }
 
@@ -281,11 +225,6 @@ where
 
     pub fn on_paste(mut self, callback: fn(String) -> Message) -> Self {
         self.on_paste = Some(callback);
-        self
-    }
-
-    pub fn syntax_highlighting(mut self, highlighting: SyntaxHighlighting) -> Self {
-        self.syntax_highlighting = highlighting;
         self
     }
 
@@ -337,185 +276,172 @@ where
         self.value = value;
     }
 
-    fn parse_text_segments(&self) -> Vec<TextSegment> {
-        let mut segments = Vec::new();
-        let text = &self.value;
+    // fn parse_text_segments(&self) -> Vec<TextSegment> {
+    //     let mut segments = Vec::new();
+    //     let text = &self.value;
 
-        if !self.syntax_highlighting.enabled {
-            segments.push(TextSegment {
-                text: text.clone(),
-                segment_type: SegmentType::Normal,
-                start: 0,
-                end: text.len(),
-            });
-            return segments;
-        }
+    //     // Parse variables like {{variable_name}}
+    //     let variable_regex = Regex::new(r"\{\{[^}]+\}\}").unwrap();
+    //     let mut last_end = 0;
 
-        // Parse variables like {{variable_name}}
-        let variable_regex = Regex::new(r"\{\{[^}]+\}\}").unwrap();
-        let mut last_end = 0;
+    //     for mat in variable_regex.find_iter(text) {
+    //         // Add normal text before the variable
+    //         if mat.start() > last_end {
+    //             let normal_text = &text[last_end..mat.start()];
+    //             segments.push(TextSegment {
+    //                 text: normal_text.to_string(),
+    //                 segment_type: SegmentType::Normal,
+    //                 start: last_end,
+    //                 end: mat.start(),
+    //             });
+    //         }
 
-        for mat in variable_regex.find_iter(text) {
-            // Add normal text before the variable
-            if mat.start() > last_end {
-                let normal_text = &text[last_end..mat.start()];
-                segments.push(TextSegment {
-                    text: normal_text.to_string(),
-                    segment_type: SegmentType::Normal,
-                    start: last_end,
-                    end: mat.start(),
-                });
-            }
+    //         // Add the variable
+    //         segments.push(TextSegment {
+    //             text: mat.as_str().to_string(),
+    //             segment_type: SegmentType::Variable,
+    //             start: mat.start(),
+    //             end: mat.end(),
+    //         });
 
-            // Add the variable
-            segments.push(TextSegment {
-                text: mat.as_str().to_string(),
-                segment_type: SegmentType::Variable,
-                start: mat.start(),
-                end: mat.end(),
-            });
+    //         last_end = mat.end();
+    //     }
 
-            last_end = mat.end();
-        }
+    //     // Add remaining normal text
+    //     if last_end < text.len() {
+    //         let normal_text = &text[last_end..];
+    //         segments.push(TextSegment {
+    //             text: normal_text.to_string(),
+    //             segment_type: SegmentType::Normal,
+    //             start: last_end,
+    //             end: text.len(),
+    //         });
+    //     }
 
-        // Add remaining normal text
-        if last_end < text.len() {
-            let normal_text = &text[last_end..];
-            segments.push(TextSegment {
-                text: normal_text.to_string(),
-                segment_type: SegmentType::Normal,
-                start: last_end,
-                end: text.len(),
-            });
-        }
+    //     segments
+    // }
 
-        segments
-    }
+    // fn create_syntax_overlay(&self) -> Element<Message> {
+    //     let segments = self.parse_text_segments();
 
-    fn create_syntax_overlay(&self) -> Element<Message> {
-        let segments = self.parse_text_segments();
+    //     if segments.is_empty() || !self.syntax_highlighting.enabled {
+    //         return container(Space::new()).into();
+    //     }
 
-        if segments.is_empty() || !self.syntax_highlighting.enabled {
-            return container(Space::new()).into();
-        }
+    //     let mut row_elements: Vec<Element<Message>> = Vec::new();
 
-        let mut row_elements: Vec<Element<Message>> = Vec::new();
+    //     for segment in segments.iter() {
+    //         let color = match segment.segment_type {
+    //             SegmentType::Variable => self.syntax_highlighting.variable_color,
+    //             SegmentType::String => self.syntax_highlighting.string_color,
+    //             SegmentType::Number => self.syntax_highlighting.number_color,
+    //             SegmentType::Keyword => self.syntax_highlighting.keyword_color,
+    //             SegmentType::Normal => Color::TRANSPARENT, // Let the underlying text show through
+    //         };
 
-        for segment in segments.iter() {
-            let color = match segment.segment_type {
-                SegmentType::Variable => self.syntax_highlighting.variable_color,
-                SegmentType::String => self.syntax_highlighting.string_color,
-                SegmentType::Number => self.syntax_highlighting.number_color,
-                SegmentType::Keyword => self.syntax_highlighting.keyword_color,
-                SegmentType::Normal => Color::TRANSPARENT, // Let the underlying text show through
-            };
+    //         let segment_text = segment.text.clone(); // Clone to avoid lifetime issues
 
-            let segment_text = segment.text.clone(); // Clone to avoid lifetime issues
+    //         if segment.segment_type != SegmentType::Normal {
+    //             let mut text_element = text(segment_text.clone()).size(self.size).color(color);
 
-            if segment.segment_type != SegmentType::Normal {
-                let mut text_element = text(segment_text.clone()).size(self.size).color(color);
+    //             // Apply the same font as the text input if specified
+    //             if let Some(font) = self.font {
+    //                 text_element = text_element.font(font);
+    //             }
 
-                // Apply the same font as the text input if specified
-                if let Some(font) = self.font {
-                    text_element = text_element.font(font);
-                }
+    //             // Add tooltip for variable segments
+    //             if segment.segment_type == SegmentType::Variable {
+    //                 // Extract variable name (remove {{ and }})
+    //                 let variable_name = segment_text
+    //                     .trim_start_matches("{{")
+    //                     .trim_end_matches("}}")
+    //                     .trim();
 
-                // Add tooltip for variable segments
-                if segment.segment_type == SegmentType::Variable {
-                    // Extract variable name (remove {{ and }})
-                    let variable_name = segment_text
-                        .trim_start_matches("{{")
-                        .trim_end_matches("}}")
-                        .trim();
+    //                 // Get actual value from environment variables or show "undefined"
+    //                 let variable_value = self
+    //                     .environment_variables
+    //                     .get(variable_name)
+    //                     .map(|v| v.as_str())
+    //                     .unwrap_or("undefined");
 
-                    // Get actual value from environment variables or show "undefined"
-                    let variable_value = self
-                        .environment_variables
-                        .get(variable_name)
-                        .map(|v| v.as_str())
-                        .unwrap_or("undefined");
+    //                 let tooltip_content =
+    //                     container(text(variable_value).size(14).color(Color::WHITE))
+    //                         .padding(8)
+    //                         .style(|_theme: &Theme| container::Style {
+    //                             background: Some(Background::Color(Color::from_rgb(0.2, 0.2, 0.2))),
+    //                             border: Border {
+    //                                 color: Color::from_rgb(0.6, 0.6, 0.6),
+    //                                 width: 1.0,
+    //                                 radius: 4.0.into(),
+    //                             },
+    //                             shadow: Shadow {
+    //                                 color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
+    //                                 offset: Vector::new(0.0, 2.0),
+    //                                 blur_radius: 4.0,
+    //                             },
+    //                             text_color: Some(Color::WHITE),
+    //                             snap: false,
+    //                         });
 
-                    let tooltip_content =
-                        container(text(variable_value).size(14).color(Color::WHITE))
-                            .padding(8)
-                            .style(|_theme: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgb(0.2, 0.2, 0.2))),
-                                border: Border {
-                                    color: Color::from_rgb(0.6, 0.6, 0.6),
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                shadow: Shadow {
-                                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-                                    offset: Vector::new(0.0, 2.0),
-                                    blur_radius: 4.0,
-                                },
-                                text_color: Some(Color::WHITE),
-                                snap: false,
-                            });
+    //                 row_elements.push(
+    //                     tooltip(text_element, tooltip_content, tooltip::Position::Top).into(),
+    //                 );
+    //             }
+    //         } else {
+    //             // For normal text, add transparent space to maintain positioning
+    //             let mut transparent_text =
+    //                 text(segment_text).size(self.size).color(Color::TRANSPARENT);
 
-                    row_elements.push(
-                        tooltip(text_element, tooltip_content, tooltip::Position::Top).into(),
-                    );
-                }
-            } else {
-                // For normal text, add transparent space to maintain positioning
-                let mut transparent_text =
-                    text(segment_text).size(self.size).color(Color::TRANSPARENT);
+    //             // Apply the same font as the text input if specified
+    //             if let Some(font) = self.font {
+    //                 transparent_text = transparent_text.font(font);
+    //             }
 
-                // Apply the same font as the text input if specified
-                if let Some(font) = self.font {
-                    transparent_text = transparent_text.font(font);
-                }
+    //             row_elements.push(transparent_text.into());
+    //         }
+    //     }
 
-                row_elements.push(transparent_text.into());
-            }
-        }
-
-        if row_elements.is_empty() {
-            container(Space::new()).into()
-        } else {
-            // Create the overlay wrapped in a mouse_area that ignores all events
-            mouse_area(
-                container(row(row_elements).align_y(Alignment::Center)).padding(self.padding),
-            )
-            .into()
-        }
-    }
-
-
+    //     if row_elements.is_empty() {
+    //         container(Space::new()).into()
+    //     } else {
+    //         // Create the overlay wrapped in a mouse_area that ignores all events
+    //         mouse_area(
+    //             container(row(row_elements).align_y(Alignment::Center)).padding(self.padding),
+    //         )
+    //         .into()
+    //     }
+    // }
 }
 
-/// Wrapper for CustomTextInput with callback support
-pub struct UrlInputWithCallback<Message, F>
-where
-    Message: Clone,
-{
-    input: UrlInput<Message>,
-    _phantom: PhantomData<F>,
-}
+// /// Wrapper for CustomTextInput with callback support
+// pub struct UrlInputWithCallback<Message, F>
+// where
+//     Message: Clone,
+// {
+//     input: UrlInput<Message>,
+//     _phantom: PhantomData<F>,
+// }
 
-impl<Message, F> UrlInputWithCallback<Message, F>
-where
-    F: Fn(String) -> Message + 'static,
-    Message: Clone,
-{
-    pub fn new(placeholder: &str, value: &str, callback: F) -> Self {
-        // Convert the closure to a function pointer
-        // This is a limitation - we can only use function pointers, not closures
-        let input = UrlInput::new(placeholder, value);
+// impl<Message, F> UrlInputWithCallback<Message, F>
+// where
+//     F: Fn(String) -> Message + 'static,
+//     Message: Clone,
+// {
+//     pub fn new(placeholder: &str, value: &str, callback: F) -> Self {
+//         // Convert the closure to a function pointer
+//         // This is a limitation - we can only use function pointers, not closures
+//         let input = UrlInput::new(placeholder, value);
 
-        Self {
-            input,
-            _phantom: PhantomData,
-        }
-    }
+//         Self {
+//             input,
+//             _phantom: PhantomData,
+//         }
+//     }
 
-    pub fn view<'a>(&'a self) -> Element<'static, Message>
-    where
-        Message: 'static
-    {
-        self.input.clone().into()
-    }
-}
-
+//     pub fn view<'a>(&'a self) -> Element<'static, Message>
+//     where
+//         Message: 'static,
+//     {
+//         self.input.clone().into()
+//     }
+// }
