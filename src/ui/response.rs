@@ -4,7 +4,7 @@ use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
 use iced::widget::{button, column, container, row, scrollable, space, text, text_editor};
-use iced::{Background, Border, Color, Element, Length};
+use iced::{Background, Border, Color, Element, Length, Theme};
 use log::info;
 
 #[derive(Debug, Clone)]
@@ -209,7 +209,8 @@ impl ResponsePanel {
                     // Show loading status when no response exists yet
                     column![
                         row![
-                            container(self.spinner.view().map(|_| Message::DoNothing)).padding([0, 3]),
+                            container(self.spinner.view().map(|_| Message::DoNothing))
+                                .padding([0, 3]),
                             space().width(20),
                             text(format!("Time: {}ms", elapsed_time))
                                 .size(12)
@@ -289,107 +290,87 @@ fn response_body_tab<'a>(
     content: &'a text_editor::Content,
     response: &'a Option<ResponseData>,
 ) -> Element<'a, Message> {
-    let mut body_column = column![];
-
     info!("===response body content");
     // For text responses, use the normal text editor with dynamic syntax highlighting
     // TODO: move the syntax to main file
     // let syntax_language = get_syntax_from_content_type(&response.content_type);
-    body_column = body_column.push(
-        text_editor(content)
-            .highlight("json", highlighter::Theme::SolarizedDark)
-            .on_action(Message::ResponseBodyAction)
-            .height(Length::Fill)
-            .style(response_text_editor_style),
-    );
     info!("===response body updated");
 
+    let resp = response.as_ref().unwrap();
     // Check if this is a binary response
-    // if let Some(resp) = response {
-    //     if resp.is_binary {
-    //         // For binary responses, show metadata instead of content
-    //         let binary_info = column![
-    //             container(
-    //                 text("Binary Response")
-    //                     .size(16)
-    //                     .color(Color::from_rgb(0.0, 0.5, 1.0))
-    //             )
-    //             .style(|_theme| Style {
-    //                 background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
-    //                 border: Border {
-    //                     radius: 4.0.into(),
-    //                     ..Border::default()
-    //                 },
-    //                 ..Style::default()
-    //             })
-    //             .padding([8, 12]),
+    if resp.is_binary {
+        // For binary responses, show metadata instead of content
+        let binary_info = column![
+            container(
+                text("Binary Response")
+                    .size(16)
+                    .color(Color::from_rgb(0.0, 0.5, 1.0))
+            )
+            .style(|_theme| Style {
+                background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
+                border: Border {
+                    radius: 4.0.into(),
+                    ..Border::default()
+                },
+                ..Style::default()
+            })
+            .padding([8, 12]),
+            space().height(10),
+            text(format!("Content-Type: {}", resp.content_type))
+                .size(14)
+                .color(Color::from_rgb(0.3, 0.3, 0.3)),
+            text(format!("Size: {}", format_bytes(resp.size)))
+                .size(14)
+                .color(Color::from_rgb(0.3, 0.3, 0.3)),
+            space().height(15),
+            text("Preview (first 100 bytes as hex):")
+                .size(14)
+                .color(Color::from_rgb(0.3, 0.3, 0.3)),
+            space().height(5),
+            scrollable(
+                container(
+                    text(&resp.body)
+                        .size(12)
+                        .color(Color::from_rgb(0.5, 0.5, 0.5))
+                )
+                .style(|_theme| Style {
+                    background: Some(Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
+                    border: Border {
+                        radius: 4.0.into(),
+                        width: 1.0,
+                        color: Color::from_rgb(0.9, 0.9, 0.9),
+                    },
+                    ..Style::default()
+                })
+                .padding(10)
+            )
+            .height(Length::Fill)
+        ]
+        .spacing(5);
 
-    //             space().height(10),
-
-    //             text(format!("Content-Type: {}", resp.content_type))
-    //                 .size(14)
-    //                 .color(Color::from_rgb(0.3, 0.3, 0.3)),
-
-    //             text(format!("Size: {}", format_bytes(resp.size)))
-    //                 .size(14)
-    //                 .color(Color::from_rgb(0.3, 0.3, 0.3)),
-
-    //             space().height(15),
-
-    //             text("Preview (first 100 bytes as hex):")
-    //                 .size(14)
-    //                 .color(Color::from_rgb(0.3, 0.3, 0.3)),
-
-    //             space().height(5),
-
-    //             scrollable(
-    //                 container(
-    //                     text(&resp.body)
-    //                         .size(12)
-    //                         .color(Color::from_rgb(0.5, 0.5, 0.5))
-    //                 )
-    //                 .style(|_theme| Style {
-    //                     background: Some(Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
-    //                     border: Border {
-    //                         radius: 4.0.into(),
-    //                         width: 1.0,
-    //                         color: Color::from_rgb(0.9, 0.9, 0.9),
-    //                     },
-    //                     ..Style::default()
-    //                 })
-    //                 .padding(10)
-    //             )
-    //             .height(Length::Fill)
-    //         ]
-    //         .spacing(5);
-
-    //         body_column = body_column.push(binary_info);
-    //     } else {
-    //     }
-    // } else {
-    //     // No response yet, show empty text editor
-    //     body_column = body_column
-    //         .push(
-    //             text_editor(content)
-    //                 .on_action(Message::ResponseBodyAction)
-    //                 .height(Length::Fill)
-    //                 .style(|theme: &iced::Theme, _status: text_editor::Status| {
-    //                     text_editor::Style {
-    //                         background: Background::Color(theme.palette().background),
-    //                         border: Border {
-    //                             color: Color::from_rgb(0.9, 0.9, 0.9),
-    //                             width: 1.0,
-    //                             radius: 4.0.into(),
-    //                         },
-    //                         placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-    //                         value: theme.palette().text,
-    //                         selection: theme.palette().primary,
-    //                     }
-    //                 })
-    //         );
-    // }
-
-    body_column.spacing(0.0).into()
+        // body_column = body_column.push(binary_info);
+        scrollable(binary_info).height(Length::Fill).into()
+    } else {
+        // body_column = body_column.push(
+        let body_column = text_editor(content)
+            .highlight("json", highlighter::Theme::SolarizedDark)
+            .on_action(Message::ResponseBodyAction)
+            .style(
+                |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                    background: Background::Color(theme.palette().background),
+                    border: Border {
+                        color: Color::from_rgb(0.9, 0.9, 0.9),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                    value: theme.palette().text,
+                    selection: theme.palette().primary,
+                },
+            );
+        // )
+        scrollable(body_column).height(Length::Fill).into()
+    }
 }
 
 fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> {
