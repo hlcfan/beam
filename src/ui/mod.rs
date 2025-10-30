@@ -9,3 +9,4 @@ pub use icon::{IconName, icon};
 pub use request::*;
 pub use spinner::Spinner;
 pub use collections::CollectionPanel;
+pub use response::ResponsePanel;

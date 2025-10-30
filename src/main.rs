@@ -4,15 +4,16 @@ mod storage;
 mod types;
 mod ui;
 
-use crate::ui::response;
 use beam::storage::StorageManager;
 use http::*;
 use types::*;
 use ui::CollectionPanel;
 use ui::RequestPanel;
+use ui::ResponsePanel;
 
 use crate::ui::collections;
 use crate::ui::request;
+use crate::ui::response;
 
 use chrono::Local;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
@@ -97,7 +98,9 @@ pub struct BeamApp {
     pub panes: pane_grid::State<PaneContent>,
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
-    pub url: String,
+    pub is_loading: bool,
+    pub response: Option<ResponseData>,
+    pub current_elapsed_time: u64,
     pub request_body_content: text_editor::Content,
     pub collection_panel: CollectionPanel,
     pub response_panel: ResponsePanel,
@@ -182,7 +185,9 @@ impl Default for BeamApp {
         Self {
             panes,
             collections,
-            url: String::new(),
+            is_loading: false,
+            current_elapsed_time: 0,
+            response: None,
             current_request: RequestConfig {
                 name: String::new(),
                 method: HttpMethod::GET,
@@ -251,12 +256,14 @@ impl BeamApp {
                     .update(view_message, &self.current_request)
                 {
                     // To handle the actions from request panel component
-                    request::Action::SendRequest(request_config, now) => {
+                    request::Action::SendRequest(request_start_time) => {
                         // Save now
                         // self.response_panel.set_loading(true);
                         // self.request_start_time = Some();
                         // self.response_panel.set_elapsed_time(0);
                         info!("DEBUG: SendRequest message received");
+                        self.is_loading = true;
+                        self.request_start_time = Some(request_start_time);
 
                         // Create a copy of the config with resolved variables
                         let mut config = self.current_request.clone();
@@ -264,22 +271,27 @@ impl BeamApp {
                         info!("resolve varaibles");
                         // Resolve variables in URL
                         config.url = self.resolve_variables(&config.url);
+
                         info!("DEBUG: Resolved URL: {}", config.url);
+
                         // Resolve variables in headers
                         for (key, value) in &mut config.headers {
                             *key = self.resolve_variables(key);
                             *value = self.resolve_variables(value);
                         }
                         info!("DEBUG: Resolved Headers");
+
                         // Resolve variables in params
                         for (key, value) in &mut config.params {
                             *key = self.resolve_variables(key);
                             *value = self.resolve_variables(value);
                         }
                         info!("DEBUG: Resolved Params");
+
                         // Resolve variables in body
                         config.body = self.resolve_variables(&config.body);
                         info!("DEBUG: Resolved Body");
+
                         // Resolve variables in authentication fields
                         config.bearer_token = self.resolve_variables(&config.bearer_token);
                         config.basic_username = self.resolve_variables(&config.basic_username);
@@ -287,11 +299,12 @@ impl BeamApp {
                         config.api_key = self.resolve_variables(&config.api_key);
                         config.api_key_header = self.resolve_variables(&config.api_key_header);
                         info!("DEBUG: Sending request with config");
+
                         Task::perform(send_request(config), Message::RequestCompleted)
                     }
                     request::Action::CancelRequest() => {
                         // TODO: cancel request
-                        self.response_panel.set_loading(false);
+                        self.is_loading = false;
                         Task::none()
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
@@ -316,13 +329,15 @@ impl BeamApp {
                                             match storage_manager
                                                 .storage()
                                                 .save_serializable_request(
-                                                    &col.folder_name, &req.name, &req,
+                                                    &col.folder_name,
+                                                    &req.name,
+                                                    &req,
                                                 )
                                                 .await
-                                                {
-                                                    Ok(_) => Ok(()),
-                                                    Err(e) => Err(e.to_string()),
-                                                }
+                                            {
+                                                Ok(_) => Ok(()),
+                                                Err(e) => Err(e.to_string()),
+                                            }
                                         }
                                         Err(e) => Err(e.to_string()),
                                     }
@@ -620,8 +635,7 @@ impl BeamApp {
                 Task::none()
             }
             Message::RequestCompleted(result) => {
-                info!("===request completed");
-                self.response_panel.set_loading(false);
+                self.is_loading = false;
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
@@ -630,14 +644,14 @@ impl BeamApp {
                             &response.body,
                         );
                         info!("===response updated");
-                        self.response_panel.set_response(Some(response));
+                        self.response = Some(response);
                     }
                     Err(error) => {
                         Self::update_response_content(
                             self.response_panel.get_response_body_content_mut(),
                             &error,
                         );
-                        self.response_panel.set_response(Some(ResponseData {
+                        self.response = Some(ResponseData {
                             status: 0,
                             status_text: "Error".to_string(),
                             headers: vec![],
@@ -646,11 +660,10 @@ impl BeamApp {
                             is_binary: false,
                             size: 0,
                             time: 0,
-                        }));
+                        });
                     }
                 }
 
-                info!("===response all done");
                 Task::none()
             }
             Message::KeyPressed(key) => {
@@ -675,13 +688,13 @@ impl BeamApp {
             }
             Message::TimerTick => {
                 if let Some(start_time) = self.request_start_time {
-                    self.response_panel
-                        .set_elapsed_time(start_time.elapsed().as_millis() as u64);
+                    self.current_elapsed_time = start_time.elapsed().as_millis() as u64;
                 }
-                // Update spinner animation
-                if self.response_panel.is_loading {
+
+                if self.is_loading {
                     self.response_panel.update_spinner();
                 }
+
                 Task::none()
             }
             Message::AddEnvironment => {
@@ -1693,7 +1706,7 @@ impl BeamApp {
             .view(
                 &self.current_request,
                 &self.request_body_content,
-                self.response_panel.is_loading,
+                self.is_loading,
                 &self.environments,
                 self.active_environment,
             )
@@ -1701,7 +1714,10 @@ impl BeamApp {
     }
 
     fn response_view(&self) -> Element<'_, Message> {
-        self.response_panel.view().map(Message::ResponsePanel)
+        // &self.response_body_content,
+        self.response_panel
+            .view(&self.response, self.is_loading, self.current_elapsed_time)
+            .map(Message::ResponsePanel)
     }
 
     fn environment_popup_view(&self) -> Element<'_, Message> {
@@ -2072,7 +2088,7 @@ impl BeamApp {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        let timer_subscription = if self.response_panel.is_loading {
+        let timer_subscription = if self.is_loading {
             iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::TimerTick)
         } else {
             iced::Subscription::none()

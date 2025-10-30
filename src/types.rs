@@ -1,7 +1,6 @@
 use crate::storage::persistent_types::RequestMetadata;
 use iced::Color;
 use iced::advanced::text::Highlighter;
-use iced::widget::text_editor;
 use log::info;
 use serde::{Deserialize, Serialize};
 
@@ -279,12 +278,3 @@ impl std::fmt::Display for AuthType {
     }
 }
 
-#[derive(Debug)]
-pub struct ResponsePanel {
-    pub response: Option<ResponseData>,
-    pub response_body_content: text_editor::Content,
-    pub selected_tab: ResponseTab,
-    pub is_loading: bool,
-    pub current_elapsed_time: u64,
-    pub spinner: crate::ui::Spinner,
-}

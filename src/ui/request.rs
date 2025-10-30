@@ -18,7 +18,7 @@ use url_input::UrlInput;
 pub enum Action {
     UpdateCurrentRequest(RequestConfig),
     // MonitorRequest(RequestConfig, Instant),
-    SendRequest(RequestConfig, Instant),
+    SendRequest(Instant),
     CancelRequest(),
     UpdateActiveEnvironment(usize),
     // The components needs to run a task
@@ -170,7 +170,7 @@ impl RequestPanel {
             Message::ClickSendRequest => {
                 // TODO: Parent to check this action
                 // Action::MonitorRequest(current_request.clone(), std::time::Instant::now())
-                Action::SendRequest(current_request.clone(), std::time::Instant::now())
+                Action::SendRequest(std::time::Instant::now())
             }
             Message::CancelRequest => Action::CancelRequest(),
             Message::SendButtonHovered(hovered) => {
@@ -578,27 +578,6 @@ impl RequestPanel {
 
         base_layout
     }
-
-    // pub fn set_url(&mut self, url: String) {
-    //     self.url = url;
-    // }
-
-    // pub fn set_body_content(&mut self, body: String) {
-    //     self.request_body_content
-    //         .perform(text_editor::Action::SelectAll);
-    //     self.request_body_content
-    //         .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-    //             body.into(),
-    //         )));
-    // }
-
-    // pub fn get_body_text(&self) -> String {
-    //     self.request_body_content.text()
-    // }
-
-    // pub fn handle_body_action(&mut self, action: text_editor::Action) {
-    //     self.request_body_content.perform(action);
-    // }
 }
 
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
@@ -641,8 +620,6 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
 }
 
 fn body_tab<'a>(request_body: &'a text_editor::Content) -> Element<'a, Message> {
-    // let content = text_editor::Content::with_text(&request_body.clone());
-    // let content = text_editor::Content::with_text(request_body.as_str());
     let text_editor_widget = text_editor(request_body)
         .on_action(Message::BodyChanged)
         .style(
