@@ -41,6 +41,11 @@ impl Spinner {
         .height(Length::Fixed(20.0))
         .style(|_theme| container::Style {
             background: Some(Background::Color(Color::TRANSPARENT)),
+            // border: Border {
+            //     color: Color::from_rgb(0.8, 0.8, 0.8),
+            //     width: 1.0,
+            //     radius: 4.0.into(),
+            // },
             ..Default::default()
         })
         .into()
@@ -85,7 +90,7 @@ impl canvas::Program<Message> for Spinner {
 
             // Create gradient effect - segments fade from opaque to transparent
             let opacity = 1.0 - (i as f32 / num_segments as f32);
-            let color = Color::from_rgba(0.5, 0.5, 0.5, opacity);
+            let color = Color::from_rgba(0.49, 0.44, 0.133, opacity);
 
             // Draw the line segment
             let line_path = Path::line(start_point, end_point);

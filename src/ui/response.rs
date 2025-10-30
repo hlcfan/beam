@@ -123,84 +123,106 @@ impl ResponsePanel {
                 };
                 status_row.push(
                     text(time_text)
-                        .size(12)
+                        .size(14)
                         .color(Color::from_rgb(0.5, 0.5, 0.5))
                         .into(),
                 );
                 status_row.push(space().width(20).into());
                 status_row.push(
                     text(format!("Size: {}", format_bytes(resp.size)))
-                        .size(12)
+                        .size(14)
                         .color(Color::from_rgb(0.5, 0.5, 0.5))
                         .into(),
                 );
-            }
-            None => {
-                if !is_loading {
-                    status_row.push(
-                        container(
-                            text("Ready to send request")
+
+                let status_info: Element<'_, Message> =
+                    Element::from(row(status_row).align_y(iced::Alignment::Center))
+                        .map(|_| Message::DoNothing);
+
+                let tabs = row![
+                    response_tab_button(
+                        "Body",
+                        self.selected_tab == ResponseTab::Body,
+                        ResponseTab::Body
+                    ),
+                    response_tab_button(
+                        "Headers",
+                        self.selected_tab == ResponseTab::Headers,
+                        ResponseTab::Headers
+                    ),
+                ]
+                .spacing(5);
+
+                let tab_content = match self.selected_tab {
+                    ResponseTab::Body => response_body_tab(&self.response_body_content, &response),
+                    ResponseTab::Headers => match response {
+                        Some(resp) => response_headers_tab(&resp),
+                        None => container(
+                            text("No headers available")
                                 .size(14)
                                 .color(Color::from_rgb(0.5, 0.5, 0.5)),
                         )
-                        .padding([4, 0])
+                        .padding(20)
+                        .center_x(Length::Fill)
                         .into(),
-                    );
+                    },
+                };
+
+                column![
+                    status_info,
+                    space().height(0.5),
+                    tabs,
+                    space().height(0.5),
+                    tab_content
+                ]
+                .spacing(10)
+                .padding(15)
+                .into()
+            }
+            None => {
+                if !is_loading {
+                    container(column![
+                        space().height(100),
+                        container(
+                            text("No response yet")
+                                .size(16)
+                                .color(Color::from_rgb(0.5, 0.5, 0.5))
+                        )
+                        .center_x(Length::Fill)
+                        .width(Length::Fill),
+                        container(
+                            text("Send a request to see the response here")
+                                .size(14)
+                                .color(Color::from_rgb(0.7, 0.7, 0.7))
+                        )
+                        .center_x(Length::Fill)
+                        .width(Length::Fill),
+                        space().height(100),
+                    ])
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
                 } else {
-                    status_row.push(space().width(20).into());
-                    status_row.push(
-                        text(format!("Time: {}ms", elapsed_time))
-                            .size(12)
-                            .color(Color::from_rgb(0.5, 0.5, 0.5))
-                            .into(),
-                    );
+                    // container(row![]).into()
+                    // Show loading status when no response exists yet
+                    column![
+                        row![
+                            container(self.spinner.view().map(|_| Message::DoNothing)).padding([0, 3]),
+                            space().width(20),
+                            text(format!("Time: {}ms", elapsed_time))
+                                .size(12)
+                                .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                        ]
+                        .align_y(iced::Alignment::Center),
+                    ]
+                    .spacing(10)
+                    .padding(10)
+                    .into()
                 }
             }
         }
-
-        let status_info: Element<'_, Message> =
-            Element::from(row(status_row).align_y(iced::Alignment::Center))
-                .map(|_| Message::DoNothing);
-
-        let tabs = row![
-            response_tab_button(
-                "Body",
-                self.selected_tab == ResponseTab::Body,
-                ResponseTab::Body
-            ),
-            response_tab_button(
-                "Headers",
-                self.selected_tab == ResponseTab::Headers,
-                ResponseTab::Headers
-            ),
-        ]
-        .spacing(5);
-
-        let tab_content = match self.selected_tab {
-            ResponseTab::Body => response_body_tab(&self.response_body_content, &response),
-            ResponseTab::Headers => match response {
-                Some(resp) => response_headers_tab(&resp),
-                None => container(
-                    text("No headers available")
-                        .size(14)
-                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
-                )
-                .padding(20)
-                .center_x(Length::Fill)
-                .into(),
-            },
-        };
-
-        column![
-            status_info,
-            space().height(2),
-            tabs,
-            space().height(2),
-            tab_content
-        ]
-        .spacing(10)
-        .padding(15)
-        .into()
     }
 
     pub fn set_selected_tab(&mut self, tab: ResponseTab) {
