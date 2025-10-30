@@ -1,5 +1,5 @@
 use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::{IconName, icon, url_input};
+use crate::ui::{IconName, icon, request, url_input};
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
@@ -81,8 +81,8 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
-    pub environments: Vec<Environment>,
-    pub active_environment: Option<usize>,
+    // pub environments: Vec<Environment>,
+    // pub active_environment: Option<usize>,
     pub method_menu_open: bool,
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
@@ -115,8 +115,8 @@ impl Default for RequestPanel {
             //     request_index: 0,
             //     metadata: None,
             // },
-            environments: Vec::new(),
-            active_environment: None,
+            // environments: Vec::new(),
+            // active_environment: None,
             method_menu_open: false,
             send_button_hovered: false,
             cancel_button_hovered: false,
@@ -129,7 +129,12 @@ impl RequestPanel {
         Self::default()
     }
 
-    pub fn update(&mut self, message: Message, current_request: &RequestConfig) -> Action {
+    pub fn update<'a>(
+        &mut self,
+        message: Message,
+        current_request: &RequestConfig,
+        environments: &'a Vec<Environment>,
+    ) -> Action {
         match message {
             Message::UrlInputChanged(url) => {
                 info!("===URL updated to: {:?}", url);
@@ -179,100 +184,119 @@ impl RequestPanel {
             }
             Message::CancelButtonHovered(hovered) => {
                 self.cancel_button_hovered = hovered;
+
                 Action::None
             }
             Message::TabSelected(tab) => {
-                // TODO: handle selected tab on component level
-                // current_request.clone().selected_tab = tab;
+                self.selected_tab = tab;
+
                 Action::None
             }
-
             Message::HeaderKeyChanged(index, key) => {
-                if let Some(header) = current_request.clone().headers.get_mut(index) {
+                let mut request = current_request.clone();
+
+                if let Some(header) = request.headers.get_mut(index) {
                     header.0 = key;
                 }
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::HeaderValueChanged(index, value) => {
-                if let Some(header) = current_request.clone().headers.get_mut(index) {
+                let mut request = current_request.clone();
+
+                if let Some(header) = request.headers.get_mut(index) {
                     header.1 = value;
                 }
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::AddHeader => {
-                current_request
-                    .clone()
-                    .headers
-                    .push((String::new(), String::new()));
-                Action::None
+                let mut request = current_request.clone();
+
+                request.headers.push((String::new(), String::new()));
+
+                Action::UpdateCurrentRequest(request)
             }
             Message::RemoveHeader(index) => {
-                if index < current_request.clone().headers.len() {
-                    current_request.clone().headers.remove(index);
+                let mut request = current_request.clone();
+
+                if index < request.clone().headers.len() {
+                    request.headers.remove(index);
                 }
-                Action::None
+
+                Action::UpdateCurrentRequest(request)
             }
             Message::ParamKeyChanged(index, key) => {
-                if let Some(param) = current_request.clone().params.get_mut(index) {
+                let mut request = current_request.clone();
+
+                if let Some(param) = request.params.get_mut(index) {
                     param.0 = key;
                 }
 
-                Action::UpdateCurrentRequest(current_request.clone().clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::ParamValueChanged(index, value) => {
-                if let Some(param) = current_request.clone().params.get_mut(index) {
+                let mut request = current_request.clone();
+
+                if let Some(param) = request.params.get_mut(index) {
                     param.1 = value;
                 }
 
-                Action::UpdateCurrentRequest(current_request.clone().clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::AddParam => {
-                current_request
-                    .clone()
-                    .params
-                    .push((String::new(), String::new()));
+                let mut request = current_request.clone();
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                request.params.push((String::new(), String::new()));
+
+                Action::UpdateCurrentRequest(request)
             }
             Message::RemoveParam(index) => {
-                if index < current_request.clone().params.len() {
-                    current_request.clone().params.remove(index);
+                let mut request = current_request.clone();
+
+                if index < request.clone().params.len() {
+                    request.params.remove(index);
                 }
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::BodyChanged(action) => Action::EditRequestBody(action),
             Message::AuthTypeChanged(auth_type) => {
-                current_request.clone().auth_type = auth_type;
+                let mut request = current_request.clone();
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                request.auth_type = auth_type;
+
+                Action::UpdateCurrentRequest(request)
             }
             Message::BearerTokenChanged(token) => {
-                current_request.clone().bearer_token = token;
+                let mut request = current_request.clone();
+                request.bearer_token = token;
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::BasicUsernameChanged(username) => {
-                current_request.clone().basic_username = username;
+                let mut request = current_request.clone();
+                request.basic_username = username;
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::BasicPasswordChanged(password) => {
-                current_request.clone().basic_password = password;
+                let mut request = current_request.clone();
+                request.basic_password = password;
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::ApiKeyChanged(api_key) => {
-                current_request.clone().api_key = api_key;
+                let mut request = current_request.clone();
+                request.api_key = api_key;
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             Message::ApiKeyHeaderChanged(header) => {
-                current_request.clone().api_key_header = header;
+                let mut request = current_request.clone();
+                request.api_key_header = header;
 
-                Action::UpdateCurrentRequest(current_request.clone())
+                Action::UpdateCurrentRequest(request)
             }
             // Environment message handlers
             Message::OpenEnvironmentPopup => {
@@ -286,37 +310,8 @@ impl RequestPanel {
                 Action::None
             }
             Message::EnvironmentSelected(index) => {
-                if index < self.environments.len() {
-                    self.active_environment = Some(index);
+                if index < environments.len() {
                     Action::UpdateActiveEnvironment(index)
-
-                    //     // Save the active environment to storage
-                    //     let environments = self.environments.clone();
-                    //     let active_env_name = self.environments[index].name.clone();
-                    //     Task::perform(
-                    //         async move {
-                    //             match storage::StorageManager::with_default_config().await {
-                    //                 Ok(storage_manager) => {
-                    //                     if let Err(e) = storage_manager
-                    //                         .storage()
-                    //                         .save_environments_with_active(
-                    //                             &environments,
-                    //                             Some(&active_env_name),
-                    //                         )
-                    //                         .await
-                    //                     {
-                    //                         error!("Failed to save active environment: {}", e);
-                    //                     }
-                    //                 }
-                    //                 Err(e) => error!("Failed to create storage manager: {}", e),
-                    //             }
-                    //             Message::DoNothing
-                    //         },
-                    //         |msg| msg,
-                    //     )
-                    // } else {
-                    //     Action::None
-                    // }
                 } else {
                     Action::None
                 }
@@ -375,11 +370,7 @@ impl RequestPanel {
                     Message::OpenEnvironmentPopup
                 } else {
                     // Find the index of the selected environment
-                    if let Some(index) = self
-                        .environments
-                        .iter()
-                        .position(|env| env.name == selected)
-                    {
+                    if let Some(index) = environments.iter().position(|env| env.name == selected) {
                         Message::EnvironmentSelected(index)
                     } else {
                         Message::DoNothing

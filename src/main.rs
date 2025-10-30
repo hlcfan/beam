@@ -24,7 +24,6 @@ use iced::widget::{
 use iced::{Color, Element, Fill, Length, Size, Task, Theme, Vector};
 use log::{error, info};
 use serde_json;
-use std::collections::HashMap;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -251,10 +250,11 @@ impl BeamApp {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::RequestPanel(view_message) => {
-                match self
-                    .request_panel
-                    .update(view_message, &self.current_request)
-                {
+                match self.request_panel.update(
+                    view_message,
+                    &self.current_request,
+                    &self.environments,
+                ) {
                     // To handle the actions from request panel component
                     request::Action::SendRequest(request_start_time) => {
                         // Save now
@@ -348,7 +348,28 @@ impl BeamApp {
                         Task::none()
                     }
                     request::Action::UpdateActiveEnvironment(index) => {
-                        // TODO: update the selected environment
+                        self.active_environment = Some(index);
+                        let environments = self.environments.clone();
+                        let active_env_name = environments[index].name.clone();
+
+                        tokio::spawn(async move {
+                            match storage::StorageManager::with_default_config().await {
+                                Ok(storage_manager) => {
+                                    if let Err(e) = storage_manager
+                                        .storage()
+                                        .save_environments_with_active(
+                                            &environments,
+                                            Some(&active_env_name),
+                                        )
+                                        .await
+                                    {
+                                        error!("Failed to save active environment: {}", e);
+                                    }
+                                }
+                                Err(e) => error!("Failed to create storage manager: {}", e),
+                            }
+                        });
+
                         Task::none()
                     }
                     request::Action::EditRequestBody(action) => {
@@ -475,7 +496,7 @@ impl BeamApp {
 
                         Task::none()
                     }
-                    collections::Action::SendRequest(new_collection) => {
+                    collections::Action::SendRequest(_new_collection) => {
                         info!("DEBUG: SendRequest message received");
                         // TODO: trigger send request
                         // self.current_request.method = request.method.clone();

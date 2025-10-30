@@ -70,7 +70,7 @@ impl ResponsePanel {
 
     pub fn view<'a>(
         &'a self,
-        response:  &'a Option<ResponseData>,
+        response: &'a Option<ResponseData>,
         is_loading: bool,
         elapsed_time: u64,
     ) -> Element<'_, Message> {
@@ -143,7 +143,7 @@ impl ResponsePanel {
                                 .size(14)
                                 .color(Color::from_rgb(0.5, 0.5, 0.5)),
                         )
-                        .padding([4, 8])
+                        .padding([4, 0])
                         .into(),
                     );
                 } else {
@@ -388,7 +388,6 @@ fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> 
     scrollable(content.spacing(5)).height(Length::Fill).into()
 }
 
-
 fn response_text_editor_style(
     theme: &iced::Theme,
     _status: text_editor::Status,
@@ -466,4 +465,3 @@ fn get_syntax_from_content_type(content_type: &str) -> &'static str {
         "json"
     }
 }
-
