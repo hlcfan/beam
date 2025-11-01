@@ -247,61 +247,6 @@ impl Default for BeamApp {
 }
 
 impl BeamApp {
-    fn initialize_debouncer(&mut self) {
-        let (debounce_tx, mut debounce_rx) = mpsc::channel::<RequestConfig>(10);
-        self.debounce_tx = Some(debounce_tx);
-
-        // Start the debouncer task
-        tokio::spawn(async move {
-            let duration = Duration::from_millis(500);
-            let mut last_request: Option<RequestConfig> = None;
-
-            loop {
-                match tokio::time::timeout(duration, debounce_rx.recv()).await {
-                    Ok(Some(request_config)) => {
-                        // Received a new request, store it and continue waiting
-                        last_request = Some(request_config);
-                        info!("Debouncer received request update");
-                    }
-                    Ok(None) => {
-                        // Channel closed, save any pending request and exit
-                        if let Some(request) = last_request {
-                            Self::save_request(request).await;
-                        }
-                        info!("Debounce channel closed");
-                        break;
-                    }
-                    Err(_) => {
-                        // Timeout occurred, save the last request if any
-                        if let Some(request) = last_request.take() {
-                            info!("Debounce save request");
-                            Self::save_request(request).await;
-                        }
-                    }
-                }
-            }
-        });
-    }
-
-    async fn save_request(request_config: RequestConfig) {
-        match storage::StorageManager::with_default_config().await {
-            Ok(storage_manager) => {
-                info!("===request auto saved (debounced)");
-
-                if let Err(e) = storage_manager
-                    .storage()
-                    .save_request_by_path(&request_config)
-                    .await
-                {
-                    error!("Failed to save request: {}", e);
-                }
-            }
-            Err(e) => {
-                error!("Failed to create storage manager: {}", e);
-            }
-        }
-    }
-
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::RequestPanel(view_message) => {
@@ -2186,5 +2131,60 @@ impl BeamApp {
         });
 
         iced::Subscription::batch([timer_subscription, keyboard_subscription])
+    }
+
+        fn initialize_debouncer(&mut self) {
+        let (debounce_tx, mut debounce_rx) = mpsc::channel::<RequestConfig>(10);
+        self.debounce_tx = Some(debounce_tx);
+
+        // Start the debouncer task
+        tokio::spawn(async move {
+            let duration = Duration::from_millis(500);
+            let mut last_request: Option<RequestConfig> = None;
+
+            loop {
+                match tokio::time::timeout(duration, debounce_rx.recv()).await {
+                    Ok(Some(request_config)) => {
+                        // Received a new request, store it and continue waiting
+                        last_request = Some(request_config);
+                        info!("Debouncer received request update");
+                    }
+                    Ok(None) => {
+                        // Channel closed, save any pending request and exit
+                        if let Some(request) = last_request {
+                            Self::save_request(request).await;
+                        }
+                        info!("Debounce channel closed");
+                        break;
+                    }
+                    Err(_) => {
+                        // Timeout occurred, save the last request if any
+                        if let Some(request) = last_request.take() {
+                            info!("Debounce save request");
+                            Self::save_request(request).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async fn save_request(request_config: RequestConfig) {
+        match storage::StorageManager::with_default_config().await {
+            Ok(storage_manager) => {
+                info!("===request auto saved (debounced)");
+
+                if let Err(e) = storage_manager
+                    .storage()
+                    .save_request_by_path(&request_config)
+                    .await
+                {
+                    error!("Failed to save request: {}", e);
+                }
+            }
+            Err(e) => {
+                error!("Failed to create storage manager: {}", e);
+            }
+        }
     }
 }
