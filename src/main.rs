@@ -24,7 +24,8 @@ use iced::widget::{
 use iced::{Color, Element, Fill, Length, Size, Task, Theme, Vector};
 use log::{error, info};
 use serde_json;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub enum PaneContent {
@@ -115,9 +116,8 @@ pub struct BeamApp {
     // Last opened request tracking
     pub last_opened_request: Option<(usize, usize)>, // (collection_index, request_index)
 
-    // Auto-save debounce management
-    pub last_request_change_time: chrono::DateTime<Local>, // (collection_index, request_index) -> last_change_time
-    pub debounce_delay_ms: u64,                            // configurable delay in milliseconds
+    // Debounce channel for request saving
+    pub debounce_tx: Option<mpsc::Sender<RequestConfig>>,
 
     // Rename modal state
     pub show_rename_modal: bool,
@@ -224,9 +224,8 @@ impl Default for BeamApp {
             // Last opened request tracking
             last_opened_request: None,
 
-            // Auto-save debounce management
-            last_request_change_time: Local::now(),
-            debounce_delay_ms: 500, // 500ms default delay
+            // Debounce channel will be initialized later
+            debounce_tx: None,
 
             // Rename modal state
             show_rename_modal: false,
@@ -248,6 +247,61 @@ impl Default for BeamApp {
 }
 
 impl BeamApp {
+    fn initialize_debouncer(&mut self) {
+        let (debounce_tx, mut debounce_rx) = mpsc::channel::<RequestConfig>(10);
+        self.debounce_tx = Some(debounce_tx);
+
+        // Start the debouncer task
+        tokio::spawn(async move {
+            let duration = Duration::from_millis(500);
+            let mut last_request: Option<RequestConfig> = None;
+
+            loop {
+                match tokio::time::timeout(duration, debounce_rx.recv()).await {
+                    Ok(Some(request_config)) => {
+                        // Received a new request, store it and continue waiting
+                        last_request = Some(request_config);
+                        info!("Debouncer received request update");
+                    }
+                    Ok(None) => {
+                        // Channel closed, save any pending request and exit
+                        if let Some(request) = last_request {
+                            Self::save_request(request).await;
+                        }
+                        info!("Debounce channel closed");
+                        break;
+                    }
+                    Err(_) => {
+                        // Timeout occurred, save the last request if any
+                        if let Some(request) = last_request.take() {
+                            info!("Debounce save request");
+                            Self::save_request(request).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    async fn save_request(request_config: RequestConfig) {
+        match storage::StorageManager::with_default_config().await {
+            Ok(storage_manager) => {
+                info!("===request auto saved (debounced)");
+
+                if let Err(e) = storage_manager
+                    .storage()
+                    .save_request_by_path(&request_config)
+                    .await
+                {
+                    error!("Failed to save request: {}", e);
+                }
+            }
+            Err(e) => {
+                error!("Failed to create storage manager: {}", e);
+            }
+        }
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::RequestPanel(view_message) => {
@@ -310,37 +364,14 @@ impl BeamApp {
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
-                        let now = Local::now();
-                        self.current_request = request_config;
+                        self.current_request = request_config.clone();
 
-                        let elapsed = Local::now() - self.last_request_change_time;
-                        self.last_request_change_time = now.clone();
-                        if elapsed.num_milliseconds() >= 500 {
-                            let req = self.current_request.clone();
-
-                            tokio::spawn(async move {
-                                match storage::StorageManager::with_default_config().await {
-                                    Ok(storage_manager) => {
-                                        info!("===request auto saved");
-
-                                        match storage_manager
-                                            .storage()
-                                            .save_request_by_path(&req)
-                                            .await
-                                        {
-                                            Ok(_) => Ok(()),
-                                            Err(e) => {
-                                                error!("Failed to save request: {}", e);
-                                                Err(e.to_string())
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to create storage manager: {}", e);
-                                        Err(e.to_string())
-                                    }
-                                }
-                            });
+                        // Send to debounce channel if available
+                        if let Some(tx) = &self.debounce_tx {
+                            if let Err(_) = tx.try_send(request_config) {
+                                // Channel is full or closed, ignore for now
+                                info!("Debounce channel is full or closed");
+                            }
                         }
 
                         Task::none()
@@ -978,10 +1009,15 @@ impl BeamApp {
                 }
             }
             // Storage operations
-            Message::LoadConfigFiles => Task::batch([
-                Task::perform(async { Message::LoadCollections }, |msg| msg),
-                Task::perform(async { Message::LoadEnvironments }, |msg| msg),
-            ]),
+            Message::LoadConfigFiles => {
+                // Initialize the debouncer for request update
+                self.initialize_debouncer();
+
+                Task::batch([
+                    Task::perform(async { Message::LoadCollections }, |msg| msg),
+                    Task::perform(async { Message::LoadEnvironments }, |msg| msg),
+                ])
+            }
             Message::LoadCollections => Task::perform(
                 async {
                     match storage::StorageManager::with_default_config().await {
