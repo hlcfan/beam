@@ -53,7 +53,7 @@ pub enum Message {
     RemoveVariable(usize, usize),
 
     CloseEnvironmentPopup,
-
+    EnvironmentSelected(usize),
     KeyPressed(iced::keyboard::Key),
     RequestCompleted(Result<ResponseData, String>),
 
@@ -348,6 +348,11 @@ impl BeamApp {
                     }
                     request::Action::EditRequestBody(action) => {
                         self.request_body_content.perform(action);
+
+                        Task::none()
+                    }
+                    request::Action::OpenEnvironmentPopup => {
+                        self.show_environment_popup = true;
 
                         Task::none()
                     }
@@ -658,6 +663,11 @@ impl BeamApp {
                         });
                     }
                 }
+
+                Task::none()
+            }
+            Message::EnvironmentSelected(index) => {
+                self.active_environment = Some(index);
 
                 Task::none()
             }
@@ -1438,7 +1448,11 @@ impl BeamApp {
                 }
                 Task::none()
             }
-            Message::CloseEnvironmentPopup => Task::none(),
+            Message::CloseEnvironmentPopup => {
+                self.show_environment_popup = false;
+
+                Task::none()
+            }
             Message::HideRenameModal => {
                 self.show_rename_modal = false;
                 self.rename_input.clear();
@@ -1772,11 +1786,9 @@ impl BeamApp {
                             .iter()
                             .position(|env| env.name == selected)
                         {
-                            // Message::EnvironmentSelected(index)
-                            Message::DoNothing
+                            Message::EnvironmentSelected(index)
                         } else {
-                            // Message::EnvironmentSelected(0)
-                            Message::DoNothing
+                            Message::EnvironmentSelected(0)
                         }
                     })
                     .width(Length::FillPortion(2)),
@@ -2133,7 +2145,7 @@ impl BeamApp {
         iced::Subscription::batch([timer_subscription, keyboard_subscription])
     }
 
-        fn initialize_debouncer(&mut self) {
+    fn initialize_debouncer(&mut self) {
         let (debounce_tx, mut debounce_rx) = mpsc::channel::<RequestConfig>(10);
         self.debounce_tx = Some(debounce_tx);
 

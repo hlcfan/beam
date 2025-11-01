@@ -1,5 +1,5 @@
 use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::{IconName, icon, request, url_input};
+use crate::ui::{IconName, icon, url_input};
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
@@ -24,6 +24,7 @@ pub enum Action {
     // The components needs to run a task
     Run(iced::Task<Message>),
     EditRequestBody(text_editor::Action),
+    OpenEnvironmentPopup,
     // The component does not require any additional actions
     None,
 }
@@ -62,7 +63,6 @@ pub enum Message {
 
     // Environment management
     OpenEnvironmentPopup,
-    CloseEnvironmentPopup,
     ToggleMethodMenu,
     CloseMethodMenu,
     DoNothing, // Used to prevent event propagation
@@ -300,14 +300,7 @@ impl RequestPanel {
             }
             // Environment message handlers
             Message::OpenEnvironmentPopup => {
-                // TODO
-                // self.show_environment_popup = true;
-                Action::None
-            }
-            Message::CloseEnvironmentPopup => {
-                // TODO
-                // self.show_environment_popup = false;
-                Action::None
+                Action::OpenEnvironmentPopup
             }
             Message::EnvironmentSelected(index) => {
                 if index < environments.len() {
