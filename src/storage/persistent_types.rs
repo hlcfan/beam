@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use chrono::{Utc};
 
 /// Persistent version of a request that can be serialized
@@ -86,7 +86,7 @@ impl Default for CollectionMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistentEnvironment {
     pub name: String,
-    pub variables: HashMap<String, String>,
+    pub variables: BTreeMap<String, String>,
     pub description: Option<String>,
     pub metadata: EnvironmentMetadata,
 }

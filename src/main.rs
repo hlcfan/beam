@@ -47,10 +47,10 @@ pub enum Message {
     DeleteEnvironment(usize),
     EnvironmentNameChanged(usize, String),
     EnvironmentDescriptionChanged(usize, String),
-    VariableKeyChanged(usize, usize, String),
-    VariableValueChanged(usize, usize, String),
+    VariableKeyChanged(usize, String, String), // (env_index, old_key, new_key)
+    VariableValueChanged(usize, String, String), // (env_index, key, new_value)
     AddVariable(usize),
-    RemoveVariable(usize, usize),
+    RemoveVariable(usize, String), // (env_index, key)
 
     CloseEnvironmentPopup,
     EnvironmentSelected(usize),
@@ -826,13 +826,10 @@ impl BeamApp {
                     Task::none()
                 }
             }
-            Message::VariableKeyChanged(env_index, var_index, key) => {
+            Message::VariableKeyChanged(env_index, old_key, new_key) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    let variables: Vec<(String, String)> =
-                        env.variables.clone().into_iter().collect();
-                    if let Some((old_key, value)) = variables.get(var_index) {
-                        env.variables.remove(old_key);
-                        env.variables.insert(key, value.clone());
+                    if let Some(value) = env.variables.remove(&old_key) {
+                        env.variables.insert(new_key, value);
                     }
 
                     // If this is the active environment, URL updates will reflect on next render
@@ -861,13 +858,9 @@ impl BeamApp {
                     Task::none()
                 }
             }
-            Message::VariableValueChanged(env_index, var_index, value) => {
+            Message::VariableValueChanged(env_index, key, value) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    let variables: Vec<(String, String)> =
-                        env.variables.clone().into_iter().collect();
-                    if let Some((key, _)) = variables.get(var_index) {
-                        env.variables.insert(key.clone(), value);
-                    }
+                    env.variables.insert(key, value);
 
                     // Environment variables will be applied during URL resolution
                     // No direct field updates needed as url_input component was removed
@@ -928,13 +921,9 @@ impl BeamApp {
                     Task::none()
                 }
             }
-            Message::RemoveVariable(env_index, var_index) => {
+            Message::RemoveVariable(env_index, key) => {
                 if let Some(env) = self.environments.get_mut(env_index) {
-                    let variables: Vec<(String, String)> =
-                        env.variables.clone().into_iter().collect();
-                    if let Some((key, _)) = variables.get(var_index) {
-                        env.variables.remove(key);
-                    }
+                    env.variables.remove(&key);
 
                     // Environment variables will be applied during URL resolution
                     // No direct field updates needed as url_input component was removed
@@ -1832,22 +1821,23 @@ impl BeamApp {
                     content = content.push(variables_header);
 
                     // Variables list
-                    let variables: Vec<(String, String)> =
-                        active_env.variables.clone().into_iter().collect();
-                    for (var_index, (key, value)) in variables.iter().enumerate() {
+                    for (key, value) in active_env.variables.iter() {
+                        let key_clone = key.clone();
+                        let key_clone2 = key.clone();
+                        let key_clone3 = key.clone();
                         let variable_row = row![
                             text_input("Variable name", key)
                                 .on_input(move |input| Message::VariableKeyChanged(
-                                    active_idx, var_index, input
+                                    active_idx, key_clone.clone(), input
                                 ))
                                 .width(Length::FillPortion(1)),
                             text_input("Variable value", value)
                                 .on_input(move |input| Message::VariableValueChanged(
-                                    active_idx, var_index, input
+                                    active_idx, key_clone2.clone(), input
                                 ))
                                 .width(Length::FillPortion(1)),
                             button(text("×"))
-                                .on_press(Message::RemoveVariable(active_idx, var_index))
+                                .on_press(Message::RemoveVariable(active_idx, key_clone3))
                                 .width(50)
                         ]
                         .spacing(10)

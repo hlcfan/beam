@@ -207,7 +207,7 @@ impl Default for RequestConfig {
 #[derive(Debug, Clone)]
 pub struct Environment {
     pub name: String,
-    pub variables: std::collections::HashMap<String, String>,
+    pub variables: std::collections::BTreeMap<String, String>,
     pub description: Option<String>,
 }
 
@@ -215,7 +215,7 @@ impl Environment {
     pub fn new(name: String) -> Self {
         Self {
             name,
-            variables: std::collections::HashMap::new(),
+            variables: std::collections::BTreeMap::new(),
             description: None,
         }
     }
