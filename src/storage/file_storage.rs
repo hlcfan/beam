@@ -1,5 +1,5 @@
 use super::{
-    CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentEnvironment,
+    CollectionMetadata, CollectionStorage, EnvironmentsMetadata,
     PersistentEnvironments, PersistentRequest, StorageError,
 };
 use crate::types::{Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
@@ -962,26 +962,20 @@ impl CollectionStorage for TomlFileStorage {
         Ok(())
     }
 
-    async fn load_environments(&self) -> Result<Vec<Environment>, StorageError> {
+    async fn load_environments(&self) -> Result<PersistentEnvironments, StorageError> {
         if !self.environments_path.exists() {
-            return Ok(Vec::new());
+            return Ok(PersistentEnvironments {
+                environments: Vec::new(),
+                active_environment: None,
+                metadata: EnvironmentsMetadata::default(),
+            });
         }
 
         let content = fs::read_to_string(&self.environments_path).await?;
         let persistent_envs: PersistentEnvironments = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        let environments = persistent_envs
-            .environments
-            .into_iter()
-            .map(|env| Environment {
-                name: env.name,
-                variables: env.variables,
-                description: env.description,
-            })
-            .collect();
-
-        Ok(environments)
+        Ok(persistent_envs)
     }
 
     async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
@@ -996,18 +990,8 @@ impl CollectionStorage for TomlFileStorage {
         // Create base directory only when saving
         fs::create_dir_all(&self.base_path).await?;
 
-        let persistent_envs: Vec<PersistentEnvironment> = environments
-            .iter()
-            .map(|env| PersistentEnvironment {
-                name: env.name.clone(),
-                variables: env.variables.clone(),
-                description: env.description.clone(),
-                metadata: super::persistent_types::EnvironmentMetadata::default(),
-            })
-            .collect();
-
         let persistent_data = PersistentEnvironments {
-            environments: persistent_envs,
+            environments: environments.to_vec(),
             active_environment: active_environment.map(|s| s.to_string()),
             metadata: EnvironmentsMetadata::default(),
         };

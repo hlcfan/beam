@@ -204,7 +204,7 @@ impl Default for RequestConfig {
 // }
 // }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Environment {
     pub name: String,
     pub variables: std::collections::BTreeMap<String, String>,

@@ -1,5 +1,5 @@
 use super::persistent_types::*;
-use crate::types::{RequestCollection, Environment, RequestConfig};
+use crate::types::{RequestCollection, RequestConfig};
 
 /// Trait for converting UI types to persistent types
 pub trait ToPersistent<T> {
@@ -163,27 +163,7 @@ impl ToPersistent<PersistentRequest> for RequestConfig {
 //     }
 // }
 
-// Environment conversions
-impl ToPersistent<PersistentEnvironment> for Environment {
-    fn to_persistent(&self) -> PersistentEnvironment {
-        PersistentEnvironment {
-            name: self.name.clone(),
-            variables: self.variables.clone(),
-            description: self.description.clone(),
-            metadata: EnvironmentMetadata::default(),
-        }
-    }
-}
 
-impl FromPersistent<PersistentEnvironment> for Environment {
-    fn from_persistent(persistent: PersistentEnvironment) -> Self {
-        Self {
-            name: persistent.name,
-            variables: persistent.variables,
-            description: persistent.description,
-        }
-    }
-}
 
 // Helper function to convert a RequestConfig with a name to PersistentRequest
 // impl RequestConfig {

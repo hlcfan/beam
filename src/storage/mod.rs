@@ -45,7 +45,7 @@ pub trait CollectionStorage: Send + Sync {
     async fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError>;
 
     /// Load environments from storage
-    async fn load_environments(&self) -> Result<Vec<Environment>, StorageError>;
+    async fn load_environments(&self) -> Result<PersistentEnvironments, StorageError>;
 
     /// Save environments to storage
     async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError>;

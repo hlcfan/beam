@@ -75,7 +75,7 @@ pub enum Message {
     CollectionsSaved(Result<(), String>),
     CollectionsLoaded(Result<Vec<RequestCollection>, String>),
     EnvironmentsSaved(Result<(), String>),
-    EnvironmentsLoaded(Result<Vec<Environment>, String>),
+    EnvironmentsLoadedComplete(crate::storage::PersistentEnvironments),
     #[allow(dead_code)]
     SaveInitialData,
     UpdateLastOpenedRequest(usize, usize), // (collection_index, request_index) - deferred state update
@@ -1056,36 +1056,53 @@ impl BeamApp {
                 }
                 Task::none()
             }
-            Message::LoadEnvironments => Task::perform(
-                async {
-                    match storage::StorageManager::with_default_config().await {
-                        Ok(storage_manager) => {
-                            match storage_manager.storage().load_environments().await {
-                                Ok(environments) => Ok(environments),
-                                Err(e) => Err(e.to_string()),
+            Message::LoadEnvironments => {
+                Task::perform(
+                    async {
+                        match storage::StorageManager::with_default_config().await {
+                            Ok(storage_manager) => {
+                                match storage_manager.storage().load_environments().await {
+                                    Ok(persistent_envs) => {
+                                        persistent_envs
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to load environments: {}", e);
+                                        crate::storage::PersistentEnvironments {
+                                            environments: Vec::new(),
+                                            active_environment: None,
+                                            metadata: crate::storage::EnvironmentsMetadata::default(),
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to create storage manager: {}", e);
+                                crate::storage::PersistentEnvironments {
+                                    environments: Vec::new(),
+                                    active_environment: None,
+                                    metadata: crate::storage::EnvironmentsMetadata::default(),
+                                }
                             }
                         }
-                        Err(e) => Err(e.to_string()),
-                    }
-                },
-                Message::EnvironmentsLoaded,
-            ),
-            Message::EnvironmentsLoaded(result) => {
-                match result {
-                    Ok(environments) => {
-                        if !environments.is_empty() {
-                            self.environments = environments;
-                            // After loading environments, load the active environment
-                            Task::perform(async { Message::LoadActiveEnvironment }, |msg| msg)
-                        } else {
-                            Task::none()
-                        }
-                    }
-                    Err(e) => {
-                        error!("Failed to load environments: {}", e);
-                        Task::none()
+                    },
+                    Message::EnvironmentsLoadedComplete
+                )
+            }
+            Message::EnvironmentsLoadedComplete(persistent_envs) => {
+                // Update environments
+                self.environments = persistent_envs.environments;
+
+                // Update active environment if specified
+                if let Some(active_env_name) = persistent_envs.active_environment {
+                    if let Some(index) = self.environments
+                        .iter()
+                        .position(|env| env.name == active_env_name)
+                    {
+                        self.active_environment = Some(index);
                     }
                 }
+
+                Task::none()
             }
             Message::LoadActiveEnvironment => Task::perform(
                 async {

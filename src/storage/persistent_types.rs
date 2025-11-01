@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use chrono::{Utc};
+use crate::types::Environment;
 
 /// Persistent version of a request that can be serialized
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,36 +82,12 @@ impl Default for CollectionMetadata {
     }
 }
 
-/// Persistent version of environment
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersistentEnvironment {
-    pub name: String,
-    pub variables: BTreeMap<String, String>,
-    pub description: Option<String>,
-    pub metadata: EnvironmentMetadata,
-}
 
-/// Metadata for an environment
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvironmentMetadata {
-    pub created_at: String,
-    pub modified_at: String,
-}
-
-impl Default for EnvironmentMetadata {
-    fn default() -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
-        Self {
-            created_at: now.clone(),
-            modified_at: now,
-        }
-    }
-}
 
 /// Root structure for environments file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistentEnvironments {
-    pub environments: Vec<PersistentEnvironment>,
+    pub environments: Vec<Environment>,
     pub active_environment: Option<String>,
     pub metadata: EnvironmentsMetadata,
 }
