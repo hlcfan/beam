@@ -35,6 +35,9 @@ pub trait CollectionStorage: Send + Sync {
     /// Save a serializable request config directly (optimized version)
     async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;
 
+    /// Save a request directly to a file path (simplified version)
+    async fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError>;
+
     /// Delete a request from a collection
     async fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
 

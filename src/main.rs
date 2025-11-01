@@ -189,6 +189,7 @@ impl Default for BeamApp {
             response: None,
             current_request: RequestConfig {
                 name: String::new(),
+                path: std::path::PathBuf::new(),
                 method: HttpMethod::GET,
                 url: String::new(),
                 headers: vec![
@@ -309,40 +310,37 @@ impl BeamApp {
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
-                        let collection_index = request_config.collection_index as usize;
-
                         let now = Local::now();
                         self.current_request = request_config;
 
                         let elapsed = Local::now() - self.last_request_change_time;
                         self.last_request_change_time = now.clone();
                         if elapsed.num_milliseconds() >= 500 {
-                            if let Some(collection) = self.collections.get(collection_index) {
-                                let col = collection.clone();
-                                let req = self.current_request.clone();
+                            let req = self.current_request.clone();
 
-                                tokio::spawn(async move {
-                                    match storage::StorageManager::with_default_config().await {
-                                        Ok(storage_manager) => {
-                                            info!("===request auto saved");
+                            tokio::spawn(async move {
+                                match storage::StorageManager::with_default_config().await {
+                                    Ok(storage_manager) => {
+                                        info!("===request auto saved");
 
-                                            match storage_manager
-                                                .storage()
-                                                .save_serializable_request(
-                                                    &col.folder_name,
-                                                    &req.name,
-                                                    &req,
-                                                )
-                                                .await
-                                            {
-                                                Ok(_) => Ok(()),
-                                                Err(e) => Err(e.to_string()),
+                                        match storage_manager
+                                            .storage()
+                                            .save_request_by_path(&req)
+                                            .await
+                                        {
+                                            Ok(_) => Ok(()),
+                                            Err(e) => {
+                                                error!("Failed to save request: {}", e);
+                                                Err(e.to_string())
                                             }
                                         }
-                                        Err(e) => Err(e.to_string()),
                                     }
-                                });
-                            }
+                                    Err(e) => {
+                                        error!("Failed to create storage manager: {}", e);
+                                        Err(e.to_string())
+                                    }
+                                }
+                            });
                         }
 
                         Task::none()

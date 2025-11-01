@@ -3,6 +3,7 @@ use super::{
     PersistentEnvironments, PersistentRequest, StorageError,
 };
 use crate::types::{Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
+use iced::wgpu::TextureUsages;
 use log::{error, info};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -550,6 +551,7 @@ impl CollectionStorage for TomlFileStorage {
                             Ok(r) => {
                                 requests.push(RequestConfig {
                                     name: r.name.unwrap(),
+                                    path: request_path.clone(),
                                     method: r.method,
                                     url: r.url.unwrap_or_default(),
                                     headers: r.headers,
@@ -817,6 +819,23 @@ impl CollectionStorage for TomlFileStorage {
 
         fs::write(&request_path, request_content).await?;
 
+        Ok(())
+    }
+
+    async fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError> {
+        // Check if the path is empty (new request without a file path)
+        if request_config.path.as_os_str().is_empty() {
+            return Err(StorageError::InvalidFormat("Request path is empty".to_string()));
+        }
+
+        // Serialize the request config to TOML
+        let request_content = toml::to_string_pretty(request_config)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        // Write directly to the specified path
+        fs::write(&request_config.path, request_content).await?;
+
+        info!("===request saved to path: {:?}", request_config.path);
         Ok(())
     }
 

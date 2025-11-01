@@ -3,6 +3,7 @@ use iced::Color;
 use iced::advanced::text::Highlighter;
 use log::info;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HttpMethod {
@@ -83,7 +84,8 @@ pub struct RequestCollection {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RequestConfig {
-    pub name: String, // Add name field for identification
+    pub name: String,
+    pub path: PathBuf,
     pub method: HttpMethod,
     pub url: String,
     pub headers: Vec<(String, String)>,
@@ -135,6 +137,7 @@ impl Clone for RequestConfig {
         info!("====clone request config");
         Self {
             name: self.name.clone(),
+            path: self.path.clone(),
             method: self.method.clone(),
             url: self.url.clone(),
             headers: self.headers.clone(),
@@ -156,26 +159,27 @@ impl Clone for RequestConfig {
 }
 
 impl Default for RequestConfig {
-  fn default() -> Self {
-    Self {
-      name: "New Request".to_string(),
-      method: HttpMethod::GET,
-      url: String::new(),
-      headers: Vec::new(),
-      params: Vec::new(),
-      body: String::new(),
-      content_type: String::new(),
-      auth_type: AuthType::None,
-      bearer_token: String::new(),
-      basic_username: String::new(),
-      basic_password: String::new(),
-      api_key: String::new(),
-      api_key_header: String::new(),
-      collection_index: 0,
-      request_index: 0,
-      metadata: Some(RequestMetadata::default()),
+    fn default() -> Self {
+        Self {
+            name: "New Request".to_string(),
+            path: PathBuf::new(),
+            method: HttpMethod::GET,
+            url: String::new(),
+            headers: Vec::new(),
+            params: Vec::new(),
+            body: String::new(),
+            content_type: String::new(),
+            auth_type: AuthType::None,
+            bearer_token: String::new(),
+            basic_username: String::new(),
+            basic_password: String::new(),
+            api_key: String::new(),
+            api_key_header: String::new(),
+            collection_index: 0,
+            request_index: 0,
+            metadata: Some(RequestMetadata::default()),
+        }
     }
-  }
 }
 
 /// Create from serializable format
@@ -277,4 +281,3 @@ impl std::fmt::Display for AuthType {
         }
     }
 }
-
