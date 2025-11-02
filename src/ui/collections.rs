@@ -7,6 +7,7 @@ use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 use iced_aw::ContextMenu;
 use log::{error, info};
+use std::time::Instant;
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -14,7 +15,7 @@ pub enum Action {
     SelectRequestConfig(usize, usize),
     SaveRequestToCollection(RequestConfig),
     SaveNewCollection(RequestCollection),
-    SendRequest(RequestConfig),
+    SendRequest(usize, usize, Instant),
     DuplicateRequest(usize, usize),
     DeleteRequest(usize, usize),
     RenameRequest(usize, usize),
@@ -498,13 +499,7 @@ impl CollectionPanel {
                 Action::RenameCollection(collection_index)
             }
             Message::SendRequestFromMenu(collection_index, request_index) => {
-                if let Some(collection) = collections.get(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index) {
-                        return Action::SendRequest(request.clone());
-                    }
-                }
-
-                Action::None
+              Action::SendRequest(collection_index, request_index, Instant::now())
             }
             Message::CopyRequestAsCurl(collection_index, request_index) => {
                 if let Some(collection) = collections.get(collection_index) {

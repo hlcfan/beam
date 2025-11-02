@@ -262,50 +262,9 @@ impl BeamApp {
                 ) {
                     // To handle the actions from request panel component
                     request::Action::SendRequest(request_start_time) => {
-                        // Save now
-                        // self.response_panel.set_loading(true);
-                        // self.request_start_time = Some();
-                        // self.response_panel.set_elapsed_time(0);
                         info!("DEBUG: SendRequest message received");
-                        self.is_loading = true;
-                        self.request_start_time = Some(request_start_time);
-
-                        // Create a copy of the config with resolved variables
-                        let mut config = self.current_request.clone();
-
-                        info!("resolve varaibles");
-                        // Resolve variables in URL
-                        config.url = self.resolve_variables(&config.url);
-
-                        info!("DEBUG: Resolved URL: {}", config.url);
-
-                        // Resolve variables in headers
-                        for (key, value) in &mut config.headers {
-                            *key = self.resolve_variables(key);
-                            *value = self.resolve_variables(value);
-                        }
-                        info!("DEBUG: Resolved Headers");
-
-                        // Resolve variables in params
-                        for (key, value) in &mut config.params {
-                            *key = self.resolve_variables(key);
-                            *value = self.resolve_variables(value);
-                        }
-                        info!("DEBUG: Resolved Params");
-
-                        // Resolve variables in body
-                        config.body = self.resolve_variables(&config.body);
-                        info!("DEBUG: Resolved Body");
-
-                        // Resolve variables in authentication fields
-                        config.bearer_token = self.resolve_variables(&config.bearer_token);
-                        config.basic_username = self.resolve_variables(&config.basic_username);
-                        config.basic_password = self.resolve_variables(&config.basic_password);
-                        config.api_key = self.resolve_variables(&config.api_key);
-                        config.api_key_header = self.resolve_variables(&config.api_key_header);
-                        info!("DEBUG: Sending request with config");
-
-                        Task::perform(send_request(config), Message::RequestCompleted)
+                        let resolved_config = self.resolve_request_config_variables(&self.current_request);
+                        self.handle_send_request(resolved_config, request_start_time)
                     }
                     request::Action::CancelRequest() => {
                         // TODO: cancel request
@@ -480,17 +439,15 @@ impl BeamApp {
 
                         Task::none()
                     }
-                    collections::Action::SendRequest(_new_collection) => {
+                    collections::Action::SendRequest(collection_index, request_index, request_start_time) => {
                         info!("DEBUG: SendRequest message received");
-                        // TODO: trigger send request
-                        // self.current_request.method = request.method.clone();
-                        // self.current_request.url = request.url.clone();
-                        // self.response_panel.set_loading(true);
-                        // self.request_start_time = Some(std::time::Instant::now());
-                        // self.response_panel.set_elapsed_time(0);
-                        // let config = self.current_request.clone();
+                        if let Some(collection) = self.collections.get(collection_index) {
+                            if let Some(request) = collection.requests.get(request_index) {
+                                let resolved_config = self.resolve_request_config_variables(request);
+                                return self.handle_send_request(resolved_config, request_start_time);
+                            }
+                        }
 
-                        // return Task::perform(send_request(config), Message::RequestCompleted);
                         Task::none()
                     }
                     collections::Action::DuplicateRequest(collection_index, request_index) => {
@@ -510,7 +467,9 @@ impl BeamApp {
 
                                 let mut max_number = 0;
                                 if let Some(last_request) = collection.requests.last() {
-                                    if let Some(filename_str) = last_request.path.file_stem().and_then(|s| s.to_str()) {
+                                    if let Some(filename_str) =
+                                        last_request.path.file_stem().and_then(|s| s.to_str())
+                                    {
                                         if let Ok(number) = filename_str.parse::<u32>() {
                                             max_number = number;
                                         }
@@ -538,9 +497,13 @@ impl BeamApp {
 
                                     // Use the storage method to delete the file
                                     tokio::spawn(async move {
-                                        if let Ok(storage_manager) = StorageManager::with_default_config().await {
+                                        if let Ok(storage_manager) =
+                                            StorageManager::with_default_config().await
+                                        {
                                             let storage = storage_manager.storage();
-                                            if let Err(e) = storage.delete_request_by_path(&request_path).await {
+                                            if let Err(e) =
+                                                storage.delete_request_by_path(&request_path).await
+                                            {
                                                 error!("Failed to delete request file: {}", e);
                                             }
                                         }
@@ -1725,6 +1688,52 @@ impl BeamApp {
 
         // If no active environment or variable not found, return original string
         input.to_string()
+    }
+
+    /// Resolves all variables in a RequestConfig and returns a new resolved config
+    fn resolve_request_config_variables(&self, config: &RequestConfig) -> RequestConfig {
+        let mut resolved_config = config.clone();
+        
+        info!("resolve variables");
+        // Resolve variables in URL
+        resolved_config.url = self.resolve_variables(&resolved_config.url);
+        info!("DEBUG: Resolved URL: {}", resolved_config.url);
+
+        // Resolve variables in headers
+        for (key, value) in &mut resolved_config.headers {
+            *key = self.resolve_variables(key);
+            *value = self.resolve_variables(value);
+        }
+        info!("DEBUG: Resolved Headers");
+
+        // Resolve variables in params
+        for (key, value) in &mut resolved_config.params {
+            *key = self.resolve_variables(key);
+            *value = self.resolve_variables(value);
+        }
+        info!("DEBUG: Resolved Params");
+
+        // Resolve variables in body
+        resolved_config.body = self.resolve_variables(&resolved_config.body);
+        info!("DEBUG: Resolved Body");
+
+        // Resolve variables in authentication fields
+        resolved_config.bearer_token = self.resolve_variables(&resolved_config.bearer_token);
+        resolved_config.basic_username = self.resolve_variables(&resolved_config.basic_username);
+        resolved_config.basic_password = self.resolve_variables(&resolved_config.basic_password);
+        resolved_config.api_key = self.resolve_variables(&resolved_config.api_key);
+        resolved_config.api_key_header = self.resolve_variables(&resolved_config.api_key_header);
+
+        resolved_config
+    }
+
+    /// Handles sending a request with the provided resolved config
+    fn handle_send_request(&mut self, config: RequestConfig, request_start_time: Instant) -> Task<Message> {
+        self.is_loading = true;
+        self.request_start_time = Some(request_start_time);
+        
+        info!("DEBUG: Sending request with config");
+        Task::perform(send_request(config), Message::RequestCompleted)
     }
 
     fn update_response_content(content: &mut text_editor::Content, body: &str) {
