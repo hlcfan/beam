@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use beam::storage::StorageManager;
 use http::*;
+use rquickjs::prelude::Opt;
 use types::*;
 use ui::CollectionPanel;
 use ui::RequestPanel;
@@ -262,8 +263,9 @@ impl BeamApp {
                 ) {
                     // To handle the actions from request panel component
                     request::Action::SendRequest(request_start_time) => {
-                        info!("DEBUG: SendRequest message received");
-                        let resolved_config = self.resolve_request_config_variables(&self.current_request);
+                        let resolved_config =
+                            self.resolve_request_config_variables(&self.current_request);
+
                         self.handle_send_request(resolved_config, request_start_time)
                     }
                     request::Action::CancelRequest() => {
@@ -398,9 +400,8 @@ impl BeamApp {
                         Task::none()
                     }
                     collections::Action::SaveRequestToCollection(request_config) => {
-                        if let Some(collection) = self
-                            .collections
-                            .get_mut(request_config.collection_index as usize)
+                        if let Some(collection) =
+                            self.collections.get_mut(request_config.collection_index)
                         {
                             collection.requests.push(request_config);
                         }
@@ -439,12 +440,17 @@ impl BeamApp {
 
                         Task::none()
                     }
-                    collections::Action::SendRequest(collection_index, request_index, request_start_time) => {
-                        info!("DEBUG: SendRequest message received");
+                    collections::Action::SendRequest(
+                        collection_index,
+                        request_index,
+                        request_start_time,
+                    ) => {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request) = collection.requests.get(request_index) {
-                                let resolved_config = self.resolve_request_config_variables(request);
-                                return self.handle_send_request(resolved_config, request_start_time);
+                                let resolved_config =
+                                    self.resolve_request_config_variables(request);
+                                return self
+                                    .handle_send_request(resolved_config, request_start_time);
                             }
                         }
 
@@ -1693,7 +1699,7 @@ impl BeamApp {
     /// Resolves all variables in a RequestConfig and returns a new resolved config
     fn resolve_request_config_variables(&self, config: &RequestConfig) -> RequestConfig {
         let mut resolved_config = config.clone();
-        
+
         info!("resolve variables");
         // Resolve variables in URL
         resolved_config.url = self.resolve_variables(&resolved_config.url);
@@ -1728,10 +1734,21 @@ impl BeamApp {
     }
 
     /// Handles sending a request with the provided resolved config
-    fn handle_send_request(&mut self, config: RequestConfig, request_start_time: Instant) -> Task<Message> {
+    fn handle_send_request(
+        &mut self,
+        config: RequestConfig,
+        request_start_time: Instant,
+    ) -> Task<Message> {
         self.is_loading = true;
         self.request_start_time = Some(request_start_time);
-        
+
+        if let Some((collection_index, request_index)) = self.last_opened_request {
+            if collection_index != config.collection_index || request_index != config.request_index
+            {
+                self.last_opened_request = Some((config.collection_index, config.request_index));
+            }
+        }
+
         info!("DEBUG: Sending request with config");
         Task::perform(send_request(config), Message::RequestCompleted)
     }

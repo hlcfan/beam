@@ -609,6 +609,14 @@ impl CollectionStorage for TomlFileStorage {
             num_a.cmp(&num_b)
         });
 
+        // Update collection_index and request_index after sorting
+        for (collection_idx, collection) in collection_data.iter_mut().enumerate() {
+            for (request_idx, request) in collection.requests.iter_mut().enumerate() {
+                request.collection_index = collection_idx;
+                request.request_index = request_idx;
+            }
+        }
+
         // Load collections in sorted order using their actual names from metadata
         // let mut collections = Vec::new();
         // for (index, (_folder_name, collection)) in collection_data.iter().enumerate() {

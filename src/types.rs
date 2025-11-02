@@ -101,12 +101,12 @@ pub struct RequestConfig {
     pub api_key: String,
     pub api_key_header: String,
 
-    pub collection_index: u32,
-    pub request_index: u32,
+    pub collection_index: usize,
+    pub request_index: usize,
 
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
-    
+
     #[serde(default)]
     pub post_request_script: Option<String>,
 }
@@ -133,7 +133,7 @@ pub struct SerializableRequestConfig {
     // Metadata field (optional for backward compatibility)
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
-    
+
     // Post-request script (optional for backward compatibility)
     #[serde(default)]
     pub post_request_script: Option<String>,
