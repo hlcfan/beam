@@ -41,6 +41,9 @@ pub trait CollectionStorage: Send + Sync {
     /// Delete a request from a collection
     async fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
 
+    /// Delete a request by its file path directly (more efficient when path is known)
+    async fn delete_request_by_path(&self, request_path: &std::path::Path) -> Result<(), StorageError>;
+
     /// Rename a request within a collection
     async fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError>;
 

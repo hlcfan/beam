@@ -507,9 +507,18 @@ impl BeamApp {
                                 if let Some(parent) = curr_request_path.as_path().parent() {
                                     path.push(parent);
                                 }
-                                path.push(format!("{:0>4}.toml", collection.requests.len() + 1));
-                                let mut request_to_persist = new_request.clone();
-                                request_to_persist.path = path;
+
+                                let mut max_number = 0;
+                                if let Some(last_request) = collection.requests.last() {
+                                    if let Some(filename_str) = last_request.path.file_stem().and_then(|s| s.to_str()) {
+                                        if let Ok(number) = filename_str.parse::<u32>() {
+                                            max_number = number;
+                                        }
+                                    }
+                                }
+                                path.push(format!("{:04}.toml", max_number + 1));
+                                new_request.path = path.clone();
+                                let request_to_persist = new_request.clone();
                                 collection.requests.push(new_request);
 
                                 tokio::spawn(async move {
@@ -527,9 +536,13 @@ impl BeamApp {
                                     let request_path = request.path.clone();
                                     collection.requests.remove(request_index);
 
+                                    // Use the storage method to delete the file
                                     tokio::spawn(async move {
-                                        if let Err(e) = fs::remove_file(request_path) {
-                                            error!("Failed to delete request file: {}", e);
+                                        if let Ok(storage_manager) = StorageManager::with_default_config().await {
+                                            let storage = storage_manager.storage();
+                                            if let Err(e) = storage.delete_request_by_path(&request_path).await {
+                                                error!("Failed to delete request file: {}", e);
+                                            }
                                         }
                                     });
 

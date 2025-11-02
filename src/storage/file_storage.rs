@@ -907,6 +907,12 @@ impl CollectionStorage for TomlFileStorage {
         }
     }
 
+    /// Delete a request by its file path directly (more efficient when path is known)
+    async fn delete_request_by_path(&self, request_path: &Path) -> Result<(), StorageError> {
+        fs::remove_file(request_path).await?;
+        Ok(())
+    }
+
     async fn rename_request(
         &self,
         collection_name: &str,
