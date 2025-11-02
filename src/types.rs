@@ -110,7 +110,6 @@ pub struct RequestConfig {
     #[serde(default)]
     pub post_request_script: Option<String>,
 
-    // Store the last response for this request
     #[serde(default)]
     pub last_response: Option<ResponseData>,
 }

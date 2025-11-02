@@ -83,10 +83,6 @@ pub enum Message {
     SaveInitialData,
     UpdateLastOpenedRequest(usize, usize), // (collection_index, request_index) - deferred state update
     LoadLastOpenedRequest(Result<Option<(usize, usize)>, String>),
-    // LoadLastOpenedRequest(usize, usize),
-    // LastOpenedRequestSaved(Result<(), String>),
-    // LastOpenedRequestLoaded(Result<Option<(usize, usize)>, String>),
-    // RequestConfigLoaded(Result<Option<RequestConfig>, String>),
     SaveRequestDebounced {
         collection_index: usize,
         request_index: usize,
@@ -606,9 +602,6 @@ impl BeamApp {
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        // Store the response in the current request
-                        self.current_request.last_response = Some(response.clone());
-
                         let formatted_body = Self::format_response_content(&response.body);
                         self.response_body_content
                             .perform(text_editor::Action::SelectAll);
@@ -626,8 +619,14 @@ impl BeamApp {
                                 .requests
                                 .get_mut(self.current_request.request_index)
                             {
-                                // TODO: save current request, move this to save_request func
                                 request.last_response = Some(response.clone());
+                                self.current_request = request.clone();
+
+                                let request_to_persist = request.clone();
+
+                                tokio::spawn(async move {
+                                    Self::save_request(request_to_persist).await;
+                                });
                             }
                         }
 
@@ -1086,17 +1085,6 @@ impl BeamApp {
                         }
 
                         Task::none()
-
-                        // After collections are loaded, defer loading the last opened request to avoid blocking startup
-                        // This allows the UI to be responsive immediately while the last request loads in the background
-                        // Task::perform(
-                        //     async {
-                        //         // Add a small delay to allow the UI to render first
-                        //         // tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                        //         Message::LoadLastOpenedRequest
-                        //     },
-                        //     |msg| msg,
-                        // )
                     }
                     Err(e) => {
                         error!("Failed to load collections: {}", e);
@@ -1306,20 +1294,6 @@ impl BeamApp {
 
                 Task::none()
             }
-            // Message::LoadLastOpenedRequest => Task::perform(
-            //     async {
-            //         match storage::StorageManager::with_default_config().await {
-            //             Ok(storage_manager) => {
-            //                 match storage_manager.storage().load_last_opened_request().await {
-            //                     Ok(last_opened) => Ok(last_opened),
-            //                     Err(e) => Err(e.to_string()),
-            //                 }
-            //             }
-            //             Err(e) => Err(e.to_string()),
-            //         }
-            //     },
-            //     Message::LastOpenedRequestLoaded,
-            // ),
             Message::LoadLastOpenedRequest(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
@@ -1327,30 +1301,41 @@ impl BeamApp {
                             collection.expanded = true;
 
                             if let Some(request_config) = collection.requests.get(request_index) {
+                                self.last_opened_request = Some((collection_index, request_index));
+
                                 self.current_request = request_config.clone();
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
 
+                                if let Some(resp) = &self.current_request.last_response {
+                                    // TODO: move the response body content update in a new message
+                                    let formatted_resp =
+                                        Self::format_response_content(resp.body.as_str());
+
+                                    self.response_body_content =
+                                        text_editor::Content::with_text(formatted_resp.as_str());
+                                    // text_editor::Content::with_text(&resp.body);
+                                }
+
                                 // Update the last opened request state and save to storage
                                 // directly here to avoid one more render
-                                self.last_opened_request = Some((collection_index, request_index));
                                 // Save the last opened request asynchronously without blocking the UI
-                                tokio::spawn(async move {
-                                    if let Ok(storage_manager) =
-                                        storage::StorageManager::with_default_config().await
-                                    {
-                                        if let Err(e) = storage_manager
-                                            .storage()
-                                            .save_last_opened_request(
-                                                collection_index,
-                                                request_index,
-                                            )
-                                            .await
-                                        {
-                                            error!("Failed to save last opened request: {}", e);
-                                        }
-                                    }
-                                });
+                                // tokio::spawn(async move {
+                                //     if let Ok(storage_manager) =
+                                //         storage::StorageManager::with_default_config().await
+                                //     {
+                                //         if let Err(e) = storage_manager
+                                //             .storage()
+                                //             .save_last_opened_request(
+                                //                 collection_index,
+                                //                 request_index,
+                                //             )
+                                //             .await
+                                //         {
+                                //             error!("Failed to save last opened request: {}", e);
+                                //         }
+                                //     }
+                                // });
                             }
                         } else {
                             error!("===no collections");
