@@ -15,7 +15,7 @@ pub enum Action {
     SaveRequestToCollection(RequestConfig),
     SaveNewCollection(RequestCollection),
     SendRequest(RequestConfig),
-    DuplicateRequest(RequestConfig),
+    DuplicateRequest(usize, usize),
     DeleteRequest(usize, usize),
     RenameRequest(usize, usize),
     RenameCollection(usize),
@@ -520,20 +520,7 @@ impl CollectionPanel {
                 Action::RenameRequest(collection_index, request_index)
             }
             Message::DuplicateRequest(collection_index, request_index) => {
-                if let Some(collection) = collections.get(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index).cloned() {
-                        let mut new_request = request;
-                        new_request.name = format!("{} (Copy)", new_request.name);
-                        new_request.collection_index = collection_index as u32;
-                        new_request.request_index = request_index as u32;
-
-                        Action::DuplicateRequest(new_request)
-                    } else {
-                        Action::None
-                    }
-                } else {
-                    Action::None
-                }
+              Action::DuplicateRequest(collection_index, request_index)
             }
             Message::DeleteRequest(collection_index, request_index) => {
                 Action::DeleteRequest(collection_index, request_index)

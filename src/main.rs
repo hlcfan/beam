@@ -4,6 +4,7 @@ mod script;
 mod storage;
 mod types;
 mod ui;
+use std::path::PathBuf;
 
 use beam::storage::StorageManager;
 use http::*;
@@ -491,29 +492,29 @@ impl BeamApp {
                         // return Task::perform(send_request(config), Message::RequestCompleted);
                         Task::none()
                     }
-                    collections::Action::DuplicateRequest(new_request) => {
-                        if let Some(collection) = self
-                            .collections
-                            .get_mut(new_request.collection_index as usize)
-                        {
-                            // TODO: to avoid clone here?
-                            collection.requests.push(new_request.clone());
+                    collections::Action::DuplicateRequest(collection_index, request_index) => {
+                        if let Some(collection) = self.collections.get_mut(collection_index) {
+                            if let Some(request) = collection.requests.get(request_index) {
+                                let mut new_request = request.clone();
 
-                            let collection_name = collection.name.clone();
-                            tokio::spawn(async move {
-                                if let Ok(storage_manager) =
-                                    storage::StorageManager::with_default_config().await
-                                {
-                                    // TODO: how to save the new request efficiently?
-                                    if let Err(e) = storage_manager
-                                        .storage()
-                                        .save_request(&collection_name, &new_request)
-                                        .await
-                                    {
-                                        error!("Failed to save duplicated request: {}", e);
-                                    }
+                                new_request.name = format!("{} (Copy)", new_request.name);
+                                new_request.collection_index = collection_index as u32;
+                                new_request.request_index = request_index as u32;
+
+                                let mut path = PathBuf::new();
+                                let curr_request_path = PathBuf::from(&request.path);
+                                if let Some(parent) = curr_request_path.as_path().parent() {
+                                    path.push(parent);
                                 }
-                            });
+                                path.push(format!("{:0>4}.toml", collection.requests.len()+1));
+                                let mut request_to_persist = new_request.clone();
+                                request_to_persist.path = path;
+                                collection.requests.push(new_request);
+
+                                tokio::spawn(async move {
+                                    Self::save_request(request_to_persist).await;
+                                });
+                            }
                         }
 
                         Task::none()
@@ -2118,7 +2119,7 @@ impl BeamApp {
                         }
                     }),
             ]
-            .align_y(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center),
         )
         .width(Fill)
         .align_x(iced::Alignment::End);
