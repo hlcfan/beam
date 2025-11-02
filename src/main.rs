@@ -16,7 +16,7 @@ use crate::ui::collections;
 use crate::ui::request;
 use crate::ui::response;
 
-use chrono::Local;
+use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
     button, column, container, pick_list, row, scrollable, space, stack, text, text_editor,
@@ -565,11 +565,7 @@ impl BeamApp {
                             Task::none()
                         }
                     }
-                    collections::Action::RenameRequest(
-                        collection_index,
-                        request_index,
-                        new_name,
-                    ) => {
+                    collections::Action::RenameRequest(collection_index, request_index) => {
                         // Show the rename modal with the current request name
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request) = collection.requests.get(request_index) {
@@ -582,44 +578,40 @@ impl BeamApp {
 
                         Task::none()
                     }
-                    collections::Action::RenameCollection(collection_index, new_name) => {
-                        // Check for duplicate folder names
-                        if self
-                            .collections
-                            .iter()
-                            .enumerate()
-                            .any(|(i, col)| i != collection_index && col.name == new_name)
-                        {
-                            // TODO: Show error message for duplicate name
-                            return Task::none();
+                    collections::Action::RenameCollection(collection_index) => {
+                        // Show the rename modal for the folder
+                        if let Some(collection) = self.collections.get(collection_index) {
+                            self.show_rename_modal = true;
+                            self.rename_input = collection.name.clone();
+                            self.rename_target = Some(RenameTarget::Folder(collection_index));
                         }
 
                         // Update the folder name
-                        if let Some(collection) = self.collections.get_mut(collection_index) {
-                            let old_name = collection.name.clone();
-                            collection.name = new_name.clone();
+                        // if let Some(collection) = self.collections.get_mut(collection_index) {
+                        //     let old_name = collection.name.clone();
+                        //     collection.name = new_name.clone();
 
-                            // Hide the modal
-                            self.show_rename_modal = false;
-                            self.rename_input.clear();
-                            self.rename_target = None;
+                        //     // Hide the modal
+                        //     self.show_rename_modal = false;
+                        //     self.rename_input.clear();
+                        //     self.rename_target = None;
 
-                            // Rename the collection folder (non-blocking)
-                            tokio::spawn(async move {
-                                if let Ok(storage_manager) =
-                                    storage::StorageManager::with_default_config().await
-                                {
-                                    let storage = storage_manager.storage();
-                                    if let Err(e) =
-                                        storage.rename_collection(&old_name, &new_name).await
-                                    {
-                                        error!("Failed to rename collection folder: {}", e);
-                                    }
-                                }
-                            });
+                        //     // Rename the collection folder (non-blocking)
+                        //     tokio::spawn(async move {
+                        //         if let Ok(storage_manager) =
+                        //             storage::StorageManager::with_default_config().await
+                        //         {
+                        //             let storage = storage_manager.storage();
+                        //             if let Err(e) =
+                        //                 storage.rename_collection(&old_name, &new_name).await
+                        //             {
+                        //                 error!("Failed to rename collection folder: {}", e);
+                        //             }
+                        //         }
+                        //     });
 
-                            return Task::none();
-                        }
+                        //     return Task::none();
+                        // }
 
                         Task::none()
                     }
@@ -648,17 +640,18 @@ impl BeamApp {
                         );
                         info!("===response updated");
                         self.response = Some(response.clone());
-                        
+
                         // Execute post-request script if available
                         if let Some(script) = &self.current_request.post_request_script {
                             if !script.trim().is_empty() {
                                 let script_clone = script.clone();
                                 let request_config = self.current_request.clone();
-                                let active_env = self.active_environment
+                                let active_env = self
+                                    .active_environment
                                     .and_then(|idx| self.environments.get(idx))
                                     .cloned()
                                     .unwrap_or_else(|| Environment::new("Default".to_string()));
-                                
+
                                 return Task::perform(
                                     async move {
                                         crate::script::execute_post_request_script(
@@ -668,7 +661,7 @@ impl BeamApp {
                                             &active_env,
                                         )
                                     },
-                                    Message::PostScriptCompleted
+                                    Message::PostScriptCompleted,
                                 );
                             }
                         }
@@ -695,7 +688,7 @@ impl BeamApp {
             }
             Message::PostScriptCompleted(script_result) => {
                 info!("Post-request script completed: {:?}", script_result);
-                
+
                 // Apply environment variable changes
                 if let Some(active_env_idx) = self.active_environment {
                     if let Some(active_env) = self.environments.get_mut(active_env_idx) {
@@ -704,17 +697,25 @@ impl BeamApp {
                         }
                     }
                 }
-                
+
                 // TODO: Display script execution results in UI
                 // For now, just log the results
                 for test_result in &script_result.test_results {
-                    info!("Test '{}': {}", test_result.name, if test_result.passed { "PASSED" } else { "FAILED" });
+                    info!(
+                        "Test '{}': {}",
+                        test_result.name,
+                        if test_result.passed {
+                            "PASSED"
+                        } else {
+                            "FAILED"
+                        }
+                    );
                 }
-                
+
                 for console_msg in &script_result.console_output {
                     info!("Console: {}", console_msg);
                 }
-                
+
                 Task::none()
             }
             Message::EnvironmentSelected(index) => {
@@ -1107,45 +1108,42 @@ impl BeamApp {
                 }
                 Task::none()
             }
-            Message::LoadEnvironments => {
-                Task::perform(
-                    async {
-                        match storage::StorageManager::with_default_config().await {
-                            Ok(storage_manager) => {
-                                match storage_manager.storage().load_environments().await {
-                                    Ok(persistent_envs) => {
-                                        persistent_envs
+            Message::LoadEnvironments => Task::perform(
+                async {
+                    match storage::StorageManager::with_default_config().await {
+                        Ok(storage_manager) => {
+                            match storage_manager.storage().load_environments().await {
+                                Ok(persistent_envs) => persistent_envs,
+                                Err(e) => {
+                                    error!("Failed to load environments: {}", e);
+                                    crate::storage::PersistentEnvironments {
+                                        environments: Vec::new(),
+                                        active_environment: None,
+                                        metadata: crate::storage::EnvironmentsMetadata::default(),
                                     }
-                                    Err(e) => {
-                                        error!("Failed to load environments: {}", e);
-                                        crate::storage::PersistentEnvironments {
-                                            environments: Vec::new(),
-                                            active_environment: None,
-                                            metadata: crate::storage::EnvironmentsMetadata::default(),
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed to create storage manager: {}", e);
-                                crate::storage::PersistentEnvironments {
-                                    environments: Vec::new(),
-                                    active_environment: None,
-                                    metadata: crate::storage::EnvironmentsMetadata::default(),
                                 }
                             }
                         }
-                    },
-                    Message::EnvironmentsLoadedComplete
-                )
-            }
+                        Err(e) => {
+                            error!("Failed to create storage manager: {}", e);
+                            crate::storage::PersistentEnvironments {
+                                environments: Vec::new(),
+                                active_environment: None,
+                                metadata: crate::storage::EnvironmentsMetadata::default(),
+                            }
+                        }
+                    }
+                },
+                Message::EnvironmentsLoadedComplete,
+            ),
             Message::EnvironmentsLoadedComplete(persistent_envs) => {
                 // Update environments
                 self.environments = persistent_envs.environments;
 
                 // Update active environment if specified
                 if let Some(active_env_name) = persistent_envs.active_environment {
-                    if let Some(index) = self.environments
+                    if let Some(index) = self
+                        .environments
                         .iter()
                         .position(|env| env.name == active_env_name)
                     {
@@ -1698,7 +1696,7 @@ impl BeamApp {
                     .width(Fill)
                     .height(Fill)
                     .style(|_theme| container::Style {
-                        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                        background: Some(Color::from_rgba(0.25, 0.25, 0.25, 0.7).into()),
                         ..Default::default()
                     })
             ]
@@ -1896,12 +1894,16 @@ impl BeamApp {
                         let variable_row = row![
                             text_input("Variable name", key)
                                 .on_input(move |input| Message::VariableKeyChanged(
-                                    active_idx, key_clone.clone(), input
+                                    active_idx,
+                                    key_clone.clone(),
+                                    input
                                 ))
                                 .width(Length::FillPortion(1)),
                             text_input("Variable value", value)
                                 .on_input(move |input| Message::VariableValueChanged(
-                                    active_idx, key_clone2.clone(), input
+                                    active_idx,
+                                    key_clone2.clone(),
+                                    input
                                 ))
                                 .width(Length::FillPortion(1)),
                             button(text("×"))
@@ -2043,32 +2045,8 @@ impl BeamApp {
             None => ("Rename", "Enter a new name:"),
         };
 
-        let header = row![
-            text(title).size(18),
-            space().width(Fill),
-            button(text("×"))
-                .on_press(Message::HideRenameModal)
-                .style(|_theme: &Theme, status| {
-                    let base = button::Style::default();
-                    match status {
-                        button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.9, 0.2, 0.2,
-                            ))),
-                            text_color: Color::WHITE,
-                            ..base
-                        },
-                        _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.8, 0.0, 0.0,
-                            ))),
-                            text_color: Color::WHITE,
-                            ..base
-                        },
-                    }
-                })
-        ]
-        .align_y(iced::Alignment::Center);
+        let header =
+            row![text(title).size(18), space().width(Fill),].align_y(iced::Alignment::Center);
 
         let input_field = text_input("Enter new name...", &self.rename_input)
             .on_input(Message::RenameInputChanged)
@@ -2084,61 +2062,74 @@ impl BeamApp {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.9, 0.9, 0.9,
-                            ))),
-                            text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
+                            background: Some(iced::Background::Color(color!(0xe4e4e7))),
+                            border: iced::Border {
+                                color: color!(0xa1a1aa),
+                                width: 0.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: color!(0x18181b),
+                            snap: true,
                             ..base
                         },
                         _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.8, 0.8, 0.8,
-                            ))),
-                            text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
+                            background: Some(iced::Background::Color(Color::WHITE)),
+                            border: iced::Border {
+                                color: color!(0xe4e4e7),
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: color!(0x3f3f46),
+                            snap: true,
                             ..base
                         },
                     }
                 }),
             space().width(10),
-            button(text("Rename"))
+            button(text("Rename").size(16))
                 .on_press(Message::ConfirmRename)
                 .padding(10)
                 .style(|_theme: &Theme, status| {
                     let base = button::Style::default();
                     match status {
                         button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.0, 0.6, 0.0,
-                            ))),
-                            text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
+                            background: Some(iced::Background::Color(color!(0x4f46e5))),
+                            border: iced::Border {
+                                color: color!(0x818cf8),
+                                width: 0.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: Color::WHITE,
+                            snap: true,
                             ..base
                         },
                         _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.0, 0.5, 0.0,
-                            ))),
-                            text_color: Color::from_rgb(1.0, 0.0, 0.0), // Red text
+                            background: Some(iced::Background::Color(color!(0x818cf8))),
+                            border: iced::Border {
+                                color: color!(0xc7d2fe),
+                                width: 0.0,
+                                radius: 8.0.into(),
+                            },
+                            text_color: Color::WHITE,
+                            snap: true,
                             ..base
                         },
                     }
-                })
+                }),
         ]
         .align_y(iced::Alignment::Center);
 
-        container(
-            column![
-                header,
-                space().height(20),
-                text(description).size(14),
-                space().height(10),
-                input_field,
-                space().height(20),
-                buttons
-            ]
-            .spacing(0),
-        )
-        .width(Length::Fixed(400.0))
-        .height(Length::Fixed(200.0))
+        container(column![
+            header,
+            space().height(10),
+            text(description).size(14),
+            space().height(10),
+            input_field,
+            space().height(10),
+            buttons,
+        ])
+        // .width(Length::Fixed(400.0))
+        // .height(Length::Fixed(200))
         .padding(20)
         .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(Color::WHITE)),
@@ -2152,6 +2143,7 @@ impl BeamApp {
                 offset: Vector::new(0.0, 4.0),
                 blur_radius: 10.0,
             },
+            snap: true,
             ..Default::default()
         })
         .into()

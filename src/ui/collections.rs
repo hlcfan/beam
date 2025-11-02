@@ -1,5 +1,5 @@
 use crate::types::{HttpMethod, RenameTarget, RequestCollection, RequestConfig};
-use crate::ui::{IconName, icon};
+use crate::ui::{icon, request, IconName};
 use iced::Task;
 use iced::widget::button::Status;
 use iced::widget::container::Style;
@@ -17,8 +17,8 @@ pub enum Action {
     SendRequest(RequestConfig),
     DuplicateRequest(RequestConfig),
     DeleteRequest(usize, usize),
-    RenameRequest(usize, usize, String),
-    RenameCollection(usize, String),
+    RenameRequest(usize, usize),
+    RenameCollection(usize),
     DeleteCollection(usize),
     None,
 }
@@ -495,13 +495,7 @@ impl CollectionPanel {
                 Action::SaveNewCollection(new_collection)
             }
             Message::RenameFolder(collection_index) => {
-                // Show the rename modal for the folder
-                if let Some(collection) = collections.get(collection_index) {
-                    self.show_rename_modal = true;
-                    self.rename_input = collection.name.clone();
-                    self.rename_target = Some(RenameTarget::Folder(collection_index));
-                }
-                Action::None
+                Action::RenameCollection(collection_index)
             }
             Message::SendRequestFromMenu(collection_index, request_index) => {
                 if let Some(collection) = collections.get(collection_index) {
@@ -523,17 +517,7 @@ impl CollectionPanel {
                 Action::None
             }
             Message::RenameRequest(collection_index, request_index) => {
-                // Show the rename modal with the current request name
-                if let Some(collection) = collections.get(collection_index) {
-                    if let Some(request) = collection.requests.get(request_index) {
-                        self.show_rename_modal = true;
-                        self.rename_input = request.name.clone();
-                        self.rename_target =
-                            Some(RenameTarget::Request(collection_index, request_index));
-                    }
-                }
-
-                Action::None
+                Action::RenameRequest(collection_index, request_index)
             }
             Message::DuplicateRequest(collection_index, request_index) => {
                 if let Some(collection) = collections.get(collection_index) {
