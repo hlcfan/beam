@@ -4,6 +4,7 @@ mod script;
 mod storage;
 mod types;
 mod ui;
+use std::fs;
 use std::path::PathBuf;
 
 use beam::storage::StorageManager;
@@ -506,7 +507,7 @@ impl BeamApp {
                                 if let Some(parent) = curr_request_path.as_path().parent() {
                                     path.push(parent);
                                 }
-                                path.push(format!("{:0>4}.toml", collection.requests.len()+1));
+                                path.push(format!("{:0>4}.toml", collection.requests.len() + 1));
                                 let mut request_to_persist = new_request.clone();
                                 request_to_persist.path = path;
                                 collection.requests.push(new_request);
@@ -522,43 +523,20 @@ impl BeamApp {
                     collections::Action::DeleteRequest(collection_index, request_index) => {
                         if let Some(collection) = self.collections.get_mut(collection_index) {
                             if request_index < collection.requests.len() {
-                                // Get the request name before removing it
-                                let request_name = collection.requests[request_index].name.clone();
-                                let collection_name = collection.name.clone();
+                                if let Some(request) = collection.requests.get(request_index) {
+                                    let request_path = request.path.clone();
+                                    collection.requests.remove(request_index);
 
-                                // Remove from in-memory collection
-                                // collection.requests.remove(request_index);
-
-                                // Delete request file and save collection (non-blocking)
-                                let collection = collection.clone();
-                                tokio::spawn(async move {
-                                    if let Ok(storage_manager) =
-                                        storage::StorageManager::with_default_config().await
-                                    {
-                                        let storage = storage_manager.storage();
-
-                                        // First delete the request file from disk
-                                        // TODO: can delete by request index
-                                        if let Err(e) = storage
-                                            .delete_request(&collection_name, &request_name)
-                                            .await
-                                        {
-                                            error!(
-                                                "Failed to delete request file '{}': {}",
-                                                request_name, e
-                                            );
+                                    tokio::spawn(async move {
+                                        if let Err(e) = fs::remove_file(request_path) {
+                                            error!("Failed to delete request file: {}", e);
                                         }
+                                    });
 
-                                        // Then save the updated collection
-                                        if let Err(e) = storage.save_collection(&collection).await {
-                                            error!(
-                                                "Failed to save collection after deleting request: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                });
-                                Task::none()
+                                    Task::none()
+                                } else {
+                                    Task::none()
+                                }
                             } else {
                                 Task::none()
                             }
