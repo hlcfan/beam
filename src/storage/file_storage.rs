@@ -580,6 +580,17 @@ impl CollectionStorage for TomlFileStorage {
                 }
             }
 
+            // Sort requests by file name alphanumerically
+            requests.sort_by(|a, b| {
+                let file_name_a = a.path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                let file_name_b = b.path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("");
+                file_name_a.cmp(file_name_b)
+            });
+
             collection_data.push( RequestCollection {
                 folder_name: folder_name,
                 name: collection_name,
