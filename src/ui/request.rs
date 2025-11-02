@@ -480,6 +480,11 @@ impl RequestPanel {
                 self.selected_tab == RequestTab::Auth,
                 RequestTab::Auth
             ),
+            tab_button(
+                "Post-Script",
+                self.selected_tab == RequestTab::PostScript,
+                RequestTab::PostScript
+            ),
         ]
         .spacing(5);
 
@@ -489,6 +494,7 @@ impl RequestPanel {
             RequestTab::Params => params_tab(&current_request),
             RequestTab::Headers => headers_tab(&current_request),
             RequestTab::Auth => auth_tab(&current_request),
+            RequestTab::PostScript => post_script_tab(&current_request),
             // RequestTab::Environment => body_tab(&request_body_content), // Fallback to body tab if somehow Environment is selected
         };
 
@@ -887,4 +893,45 @@ fn method_dropdown() -> Element<'static, Message> {
             snap: true,
         })
         .into()
+}
+
+fn post_script_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
+    let script_content = config.post_request_script.as_deref().unwrap_or("// No script defined");
+    
+    let help_text = text("Post-request scripts run after receiving a response. Use 'pm' object to access response data and environment variables.")
+        .size(12)
+        .color(Color::from_rgb(0.6, 0.6, 0.6));
+    
+    let example_text = text("Example: pm.environment.set('token', pm.response.json().access_token);")
+        .size(11)
+        .color(Color::from_rgb(0.5, 0.5, 0.5));
+    
+    let script_display = container(
+        scrollable(
+            text(script_content)
+                .size(14)
+        )
+    )
+    .height(Length::Fill)
+    .padding(10)
+    .style(|theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+        border: Border {
+            color: Color::from_rgb(0.8, 0.8, 0.8),
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    });
+    
+    column![
+        help_text,
+        space().height(5),
+        example_text,
+        space().height(10),
+        script_display,
+    ]
+    .spacing(5)
+    .padding(10)
+    .into()
 }

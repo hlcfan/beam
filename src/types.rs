@@ -106,6 +106,9 @@ pub struct RequestConfig {
 
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
+    
+    #[serde(default)]
+    pub post_request_script: Option<String>,
 }
 
 /// Serializable version of RequestConfig for storage
@@ -130,6 +133,10 @@ pub struct SerializableRequestConfig {
     // Metadata field (optional for backward compatibility)
     #[serde(default)]
     pub metadata: Option<RequestMetadata>,
+    
+    // Post-request script (optional for backward compatibility)
+    #[serde(default)]
+    pub post_request_script: Option<String>,
 }
 
 impl Clone for RequestConfig {
@@ -154,6 +161,7 @@ impl Clone for RequestConfig {
             request_index: self.request_index,
             // TODO: check this
             metadata: Some(RequestMetadata::default()),
+            post_request_script: self.post_request_script.clone(),
         }
     }
 }
@@ -178,6 +186,7 @@ impl Default for RequestConfig {
             collection_index: 0,
             request_index: 0,
             metadata: Some(RequestMetadata::default()),
+            post_request_script: None,
         }
     }
 }
@@ -235,6 +244,7 @@ pub enum RequestTab {
     Params,
     Headers,
     Auth,
+    PostScript,
     // #[allow(dead_code)]
     // Environment,
 }

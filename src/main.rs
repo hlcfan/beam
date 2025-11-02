@@ -1,5 +1,6 @@
 mod http;
 mod icons;
+mod script;
 mod storage;
 mod types;
 mod ui;
@@ -56,6 +57,7 @@ pub enum Message {
     EnvironmentSelected(usize),
     KeyPressed(iced::keyboard::Key),
     RequestCompleted(Result<ResponseData, String>),
+    PostScriptCompleted(crate::script::ScriptExecutionResult),
 
     HideRenameModal,
     RenameInputChanged(String),
@@ -208,6 +210,7 @@ impl Default for BeamApp {
                 collection_index: 0,
                 request_index: 0,
                 metadata: None,
+                post_request_script: None,
             },
             request_body_content: text_editor::Content::new(),
             response_panel: ResponsePanel::new(),
@@ -644,7 +647,31 @@ impl BeamApp {
                             &response.body,
                         );
                         info!("===response updated");
-                        self.response = Some(response);
+                        self.response = Some(response.clone());
+                        
+                        // Execute post-request script if available
+                        if let Some(script) = &self.current_request.post_request_script {
+                            if !script.trim().is_empty() {
+                                let script_clone = script.clone();
+                                let request_config = self.current_request.clone();
+                                let active_env = self.active_environment
+                                    .and_then(|idx| self.environments.get(idx))
+                                    .cloned()
+                                    .unwrap_or_else(|| Environment::new("Default".to_string()));
+                                
+                                return Task::perform(
+                                    async move {
+                                        crate::script::execute_post_request_script(
+                                            &script_clone,
+                                            request_config,
+                                            response,
+                                            &active_env,
+                                        )
+                                    },
+                                    Message::PostScriptCompleted
+                                );
+                            }
+                        }
                     }
                     Err(error) => {
                         Self::update_response_content(
@@ -664,6 +691,30 @@ impl BeamApp {
                     }
                 }
 
+                Task::none()
+            }
+            Message::PostScriptCompleted(script_result) => {
+                info!("Post-request script completed: {:?}", script_result);
+                
+                // Apply environment variable changes
+                if let Some(active_env_idx) = self.active_environment {
+                    if let Some(active_env) = self.environments.get_mut(active_env_idx) {
+                        for (key, value) in script_result.environment_changes {
+                            active_env.variables.insert(key, value);
+                        }
+                    }
+                }
+                
+                // TODO: Display script execution results in UI
+                // For now, just log the results
+                for test_result in &script_result.test_results {
+                    info!("Test '{}': {}", test_result.name, if test_result.passed { "PASSED" } else { "FAILED" });
+                }
+                
+                for console_msg in &script_result.console_output {
+                    info!("Console: {}", console_msg);
+                }
+                
                 Task::none()
             }
             Message::EnvironmentSelected(index) => {

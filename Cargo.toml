@@ -30,6 +30,7 @@ rust-embed = "8.5"
 blurhash = "0.2.3"
 log = "0.4"
 env_logger = "0.10"
+rquickjs = "0.6"
 
 [patch.crates-io]
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }

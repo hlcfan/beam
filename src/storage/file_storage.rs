@@ -567,6 +567,7 @@ impl CollectionStorage for TomlFileStorage {
                                     metadata: r.metadata,
                                     collection_index: collecion_index,
                                     request_index: request_index,
+                                    post_request_script: r.post_request_script,
                                 });
 
                                 request_index += 1;
