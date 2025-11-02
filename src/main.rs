@@ -2054,70 +2054,74 @@ impl BeamApp {
             .padding(10)
             .size(16);
 
-        let buttons = row![
-            button(text("Cancel").size(16))
-                .on_press(Message::HideRenameModal)
-                .padding(10)
-                .style(|_theme: &Theme, status| {
-                    let base = button::Style::default();
-                    match status {
-                        button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(color!(0xe4e4e7))),
-                            border: iced::Border {
-                                color: color!(0xa1a1aa),
-                                width: 0.0,
-                                radius: 8.0.into(),
+        let buttons = container(
+            row![
+                button(text("Cancel").size(16))
+                    .on_press(Message::HideRenameModal)
+                    .padding(10)
+                    .style(|_theme: &Theme, status| {
+                        let base = button::Style::default();
+                        match status {
+                            button::Status::Hovered => button::Style {
+                                background: Some(iced::Background::Color(color!(0xe4e4e7))),
+                                border: iced::Border {
+                                    color: color!(0xa1a1aa),
+                                    width: 0.0,
+                                    radius: 8.0.into(),
+                                },
+                                text_color: color!(0x18181b),
+                                snap: true,
+                                ..base
                             },
-                            text_color: color!(0x18181b),
-                            snap: true,
-                            ..base
-                        },
-                        _ => button::Style {
-                            background: Some(iced::Background::Color(Color::WHITE)),
-                            border: iced::Border {
-                                color: color!(0xe4e4e7),
-                                width: 1.0,
-                                radius: 8.0.into(),
+                            _ => button::Style {
+                                background: Some(iced::Background::Color(Color::WHITE)),
+                                border: iced::Border {
+                                    color: color!(0xe4e4e7),
+                                    width: 1.0,
+                                    radius: 8.0.into(),
+                                },
+                                text_color: color!(0x3f3f46),
+                                snap: true,
+                                ..base
                             },
-                            text_color: color!(0x3f3f46),
-                            snap: true,
-                            ..base
-                        },
-                    }
-                }),
-            space().width(10),
-            button(text("Rename").size(16))
-                .on_press(Message::ConfirmRename)
-                .padding(10)
-                .style(|_theme: &Theme, status| {
-                    let base = button::Style::default();
-                    match status {
-                        button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(color!(0x4f46e5))),
-                            border: iced::Border {
-                                color: color!(0x818cf8),
-                                width: 0.0,
-                                radius: 8.0.into(),
+                        }
+                    }),
+                space().width(10),
+                button(text("Rename").size(16))
+                    .on_press(Message::ConfirmRename)
+                    .padding(10)
+                    .style(|_theme: &Theme, status| {
+                        let base = button::Style::default();
+                        match status {
+                            button::Status::Hovered => button::Style {
+                                background: Some(iced::Background::Color(color!(0x4f46e5))),
+                                border: iced::Border {
+                                    color: color!(0x818cf8),
+                                    width: 0.0,
+                                    radius: 8.0.into(),
+                                },
+                                text_color: Color::WHITE,
+                                snap: true,
+                                ..base
                             },
-                            text_color: Color::WHITE,
-                            snap: true,
-                            ..base
-                        },
-                        _ => button::Style {
-                            background: Some(iced::Background::Color(color!(0x818cf8))),
-                            border: iced::Border {
-                                color: color!(0xc7d2fe),
-                                width: 0.0,
-                                radius: 8.0.into(),
+                            _ => button::Style {
+                                background: Some(iced::Background::Color(color!(0x818cf8))),
+                                border: iced::Border {
+                                    color: color!(0xc7d2fe),
+                                    width: 0.0,
+                                    radius: 8.0.into(),
+                                },
+                                text_color: Color::WHITE,
+                                snap: true,
+                                ..base
                             },
-                            text_color: Color::WHITE,
-                            snap: true,
-                            ..base
-                        },
-                    }
-                }),
-        ]
-        .align_y(iced::Alignment::Center);
+                        }
+                    }),
+            ]
+            .align_y(iced::Alignment::Center)
+        )
+        .width(Fill)
+        .align_x(iced::Alignment::End);
 
         container(column![
             header,
@@ -2128,8 +2132,6 @@ impl BeamApp {
             space().height(10),
             buttons,
         ])
-        // .width(Length::Fixed(400.0))
-        // .height(Length::Fixed(200))
         .padding(20)
         .style(|_theme: &Theme| container::Style {
             background: Some(iced::Background::Color(Color::WHITE)),
