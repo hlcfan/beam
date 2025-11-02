@@ -1,12 +1,11 @@
 use crate::types::{HttpMethod, RenameTarget, RequestCollection, RequestConfig};
-use crate::ui::{icon, request, IconName};
-use iced::Task;
+use crate::ui::{IconName, icon};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
 use iced_aw::ContextMenu;
-use log::{error, info};
+use log::info;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -474,10 +473,10 @@ impl CollectionPanel {
                 if let Some(collection) = collections.get(collection_index) {
                     let mut new_request = RequestConfig::default();
 
-                    new_request.collection_index = collection_index as u32;
+                    new_request.collection_index = collection_index;
                     let len = collection.requests.len();
                     new_request.name = format!("New Request {}", collection.requests.len() + 1);
-                    new_request.request_index = len as u32;
+                    new_request.request_index = len;
 
                     Action::SaveRequestToCollection(new_request)
                 } else {
@@ -495,11 +494,9 @@ impl CollectionPanel {
 
                 Action::SaveNewCollection(new_collection)
             }
-            Message::RenameFolder(collection_index) => {
-                Action::RenameCollection(collection_index)
-            }
+            Message::RenameFolder(collection_index) => Action::RenameCollection(collection_index),
             Message::SendRequestFromMenu(collection_index, request_index) => {
-              Action::SendRequest(collection_index, request_index, Instant::now())
+                Action::SendRequest(collection_index, request_index, Instant::now())
             }
             Message::CopyRequestAsCurl(collection_index, request_index) => {
                 if let Some(collection) = collections.get(collection_index) {
@@ -515,7 +512,7 @@ impl CollectionPanel {
                 Action::RenameRequest(collection_index, request_index)
             }
             Message::DuplicateRequest(collection_index, request_index) => {
-              Action::DuplicateRequest(collection_index, request_index)
+                Action::DuplicateRequest(collection_index, request_index)
             }
             Message::DeleteRequest(collection_index, request_index) => {
                 Action::DeleteRequest(collection_index, request_index)

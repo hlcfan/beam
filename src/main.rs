@@ -462,8 +462,8 @@ impl BeamApp {
                                 let mut new_request = request.clone();
 
                                 new_request.name = format!("{} (Copy)", new_request.name);
-                                new_request.collection_index = collection_index as u32;
-                                new_request.request_index = request_index as u32;
+                                new_request.collection_index = collection_index;
+                                new_request.request_index = request_index;
 
                                 let mut path = PathBuf::new();
                                 let curr_request_path = PathBuf::from(&request.path);
