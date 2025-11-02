@@ -435,7 +435,6 @@ impl RequestPanel {
             }
         };
 
-        info!("====URL: {:?}", url);
         let base_input = container(row![
             method_label,
             UrlInput::new("Enter URL...", &url).on_input(Message::UrlInputChanged),
@@ -897,15 +896,15 @@ fn method_dropdown() -> Element<'static, Message> {
 
 fn post_script_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     let script_content = config.post_request_script.as_deref().unwrap_or("// No script defined");
-    
+
     let help_text = text("Post-request scripts run after receiving a response. Use 'pm' object to access response data and environment variables.")
         .size(12)
         .color(Color::from_rgb(0.6, 0.6, 0.6));
-    
+
     let example_text = text("Example: pm.environment.set('token', pm.response.json().access_token);")
         .size(11)
         .color(Color::from_rgb(0.5, 0.5, 0.5));
-    
+
     let script_display = container(
         scrollable(
             text(script_content)
@@ -923,7 +922,7 @@ fn post_script_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         },
         ..Default::default()
     });
-    
+
     column![
         help_text,
         space().height(5),

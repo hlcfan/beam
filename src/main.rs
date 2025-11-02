@@ -314,6 +314,15 @@ impl BeamApp {
                     }
                     request::Action::EditRequestBody(action) => {
                         self.request_body_content.perform(action);
+                        self.current_request.body = self.request_body_content.text();
+
+                        let request_to_persist = self.current_request.clone();
+
+                        if let Some(tx) = &self.debounce_tx {
+                            if let Err(_) = tx.try_send(request_to_persist) {
+                                info!("Debounce channel is full or closed");
+                            }
+                        }
 
                         Task::none()
                     }
@@ -1277,26 +1286,10 @@ impl BeamApp {
             Message::LoadLastOpenedRequest(result) => {
                 match result {
                     Ok(Some((collection_index, request_index))) => {
-                        info!(
-                            "DEBUG: LastOpenedRequestLoaded - collection_index: {}, request_index: {}",
-                            collection_index, request_index
-                        );
-
                         if let Some(collection) = self.collections.get_mut(collection_index) {
                             collection.expanded = true;
-                            info!(
-                                "DEBUG: Automatically expanded collection '{}' containing last opened request",
-                                collection.name
-                            );
 
                             if let Some(request_config) = collection.requests.get(request_index) {
-                                // let request_config = collection.requests.get(request_index).unwrap_or_default();
-                                // self.request_panel.set_url(request_config.url.to_string());
-
-                                // self.request_panel
-                                //     .set_body_content(request_config.body.to_string());
-                                // Environment variables applied to URL input are handled during rendering
-                                info!("===load last request successed");
                                 self.current_request = request_config.clone();
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
