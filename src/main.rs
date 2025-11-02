@@ -4,12 +4,11 @@ mod script;
 mod storage;
 mod types;
 mod ui;
-use std::fs;
 use std::path::PathBuf;
 
 use beam::storage::StorageManager;
 use http::*;
-use rquickjs::prelude::Opt;
+use std::sync::Arc;
 use types::*;
 use ui::CollectionPanel;
 use ui::RequestPanel;
@@ -27,7 +26,6 @@ use iced::widget::{
 };
 use iced::{Color, Element, Fill, Length, Size, Task, Theme, Vector};
 use log::{error, info};
-use serde_json;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
@@ -104,9 +102,9 @@ pub struct BeamApp {
     pub collections: Vec<RequestCollection>,
     pub current_request: RequestConfig,
     pub is_loading: bool,
-    pub response: Option<ResponseData>,
     pub current_elapsed_time: u64,
     pub request_body_content: text_editor::Content,
+    pub response_body_content: text_editor::Content,
     pub collection_panel: CollectionPanel,
     pub response_panel: ResponsePanel,
     pub request_panel: RequestPanel,
@@ -191,7 +189,6 @@ impl Default for BeamApp {
             collections,
             is_loading: false,
             current_elapsed_time: 0,
-            response: None,
             current_request: RequestConfig {
                 name: String::new(),
                 path: std::path::PathBuf::new(),
@@ -214,8 +211,10 @@ impl Default for BeamApp {
                 request_index: 0,
                 metadata: None,
                 post_request_script: None,
+                last_response: None,
             },
             request_body_content: text_editor::Content::new(),
+            response_body_content: text_editor::Content::new(),
             response_panel: ResponsePanel::new(),
             request_panel: RequestPanel::default(),
             collection_panel: CollectionPanel::new(),
@@ -336,8 +335,11 @@ impl BeamApp {
             }
             Message::ResponsePanel(view_message) => {
                 match self.response_panel.update(view_message) {
-                    // To handle the actions from request panel component
-                    // Message::ResponsePanel(action) => self.response_panel.update(action),
+                    response::Action::ResponseBodyAction(action) => {
+                        self.response_body_content.perform(action);
+
+                        Task::none()
+                    }
                     response::Action::None => Task::none(),
                 }
             }
@@ -604,12 +606,30 @@ impl BeamApp {
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        Self::update_response_content(
-                            self.response_panel.get_response_body_content_mut(),
-                            &response.body,
-                        );
-                        info!("===response updated");
-                        self.response = Some(response.clone());
+                        // Store the response in the current request
+                        self.current_request.last_response = Some(response.clone());
+
+                        let formatted_body = Self::format_response_content(&response.body);
+                        self.response_body_content
+                            .perform(text_editor::Action::SelectAll);
+                        self.response_body_content
+                            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                                Arc::new(formatted_body),
+                            )));
+
+                        // Update the request in the collections as well
+                        if let Some(collection) = self
+                            .collections
+                            .get_mut(self.current_request.collection_index)
+                        {
+                            if let Some(request) = collection
+                                .requests
+                                .get_mut(self.current_request.request_index)
+                            {
+                                // TODO: save current request, move this to save_request func
+                                request.last_response = Some(response.clone());
+                            }
+                        }
 
                         // Execute post-request script if available
                         if let Some(script) = &self.current_request.post_request_script {
@@ -637,11 +657,12 @@ impl BeamApp {
                         }
                     }
                     Err(error) => {
-                        Self::update_response_content(
-                            self.response_panel.get_response_body_content_mut(),
-                            &error,
-                        );
-                        self.response = Some(ResponseData {
+                        // TODO:
+                        // Self::update_response_content(
+                        //     self.response_panel.get_response_body_content_mut(),
+                        //     &error,
+                        // );
+                        let error_response = ResponseData {
                             status: 0,
                             status_text: "Error".to_string(),
                             headers: vec![],
@@ -650,7 +671,23 @@ impl BeamApp {
                             is_binary: false,
                             size: 0,
                             time: 0,
-                        });
+                        };
+
+                        // Store the error response in the current request
+                        self.current_request.last_response = Some(error_response.clone());
+
+                        // Update the request in the collections as well
+                        if let Some(collection) = self
+                            .collections
+                            .get_mut(self.current_request.collection_index)
+                        {
+                            if let Some(request) = collection
+                                .requests
+                                .get_mut(self.current_request.request_index)
+                            {
+                                request.last_response = Some(error_response);
+                            }
+                        }
                     }
                 }
 
@@ -1660,6 +1697,26 @@ impl BeamApp {
         }
     }
 
+    fn format_response_content(body: &str) -> String {
+        // Try to format JSON if the content is not too large (limit to 100KB)
+        const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
+
+        if body.len() <= MAX_JSON_FORMAT_SIZE {
+            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
+                if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
+                    formatted_json
+                } else {
+                    body.to_string()
+                }
+            } else {
+                body.to_string()
+            }
+        } else {
+            // If too large, return original content
+            body.to_string()
+        }
+    }
+
     /// Resolves variables in the format {{variable_name}} using the active environment
     fn resolve_variables(&self, input: &str) -> String {
         if let Some(active_env_index) = self.active_environment {
@@ -1742,37 +1799,8 @@ impl BeamApp {
             }
         }
 
-        info!("DEBUG: Sending request with config");
         Task::perform(send_request(config), Message::RequestCompleted)
     }
-
-    fn update_response_content(content: &mut text_editor::Content, body: &str) {
-        // Try to format JSON if the content is not too large (limit to 100KB)
-        const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
-
-        let text_to_set = if body.len() <= MAX_JSON_FORMAT_SIZE {
-            // Try to parse and format as JSON
-            if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
-                if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
-                    formatted_json
-                } else {
-                    body.to_string()
-                }
-            } else {
-                body.to_string()
-            }
-        } else {
-            // If too large, return original content
-            body.to_string()
-        };
-
-        // Update the existing content
-        content.perform(text_editor::Action::SelectAll);
-        content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-            text_to_set.into(),
-        )));
-    }
-
     fn collections_view(&self) -> Element<'_, Message> {
         // collections_panel(&self.collections, self.last_opened_request)
         self.collection_panel
@@ -1794,9 +1822,13 @@ impl BeamApp {
     }
 
     fn response_view(&self) -> Element<'_, Message> {
-        // &self.response_body_content,
         self.response_panel
-            .view(&self.response, self.is_loading, self.current_elapsed_time)
+            .view(
+                &self.current_request.last_response,
+                &self.response_body_content,
+                self.is_loading,
+                self.current_elapsed_time,
+            )
             .map(Message::ResponsePanel)
     }
 

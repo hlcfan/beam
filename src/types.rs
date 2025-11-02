@@ -109,6 +109,10 @@ pub struct RequestConfig {
 
     #[serde(default)]
     pub post_request_script: Option<String>,
+
+    // Store the last response for this request
+    #[serde(default)]
+    pub last_response: Option<ResponseData>,
 }
 
 /// Serializable version of RequestConfig for storage
@@ -137,6 +141,10 @@ pub struct SerializableRequestConfig {
     // Post-request script (optional for backward compatibility)
     #[serde(default)]
     pub post_request_script: Option<String>,
+
+    // Last response (optional for backward compatibility)
+    #[serde(default)]
+    pub last_response: Option<ResponseData>,
 }
 
 impl Clone for RequestConfig {
@@ -162,6 +170,7 @@ impl Clone for RequestConfig {
             // TODO: check this
             metadata: Some(RequestMetadata::default()),
             post_request_script: self.post_request_script.clone(),
+            last_response: self.last_response.clone(),
         }
     }
 }
@@ -187,6 +196,7 @@ impl Default for RequestConfig {
             request_index: 0,
             metadata: Some(RequestMetadata::default()),
             post_request_script: None,
+            last_response: None,
         }
     }
 }
@@ -255,7 +265,7 @@ pub enum ResponseTab {
     Headers,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseData {
     pub status: u16,
     pub status_text: String,

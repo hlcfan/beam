@@ -9,6 +9,7 @@ use log::info;
 
 #[derive(Debug, Clone)]
 pub enum Action {
+    ResponseBodyAction(text_editor::Action),
     None,
 }
 
@@ -21,7 +22,6 @@ pub enum Message {
 
 #[derive(Debug)]
 pub struct ResponsePanel {
-    pub response_body_content: text_editor::Content,
     pub selected_tab: ResponseTab,
     pub spinner: Spinner,
 }
@@ -29,7 +29,6 @@ pub struct ResponsePanel {
 impl ResponsePanel {
     pub fn new() -> Self {
         Self {
-            response_body_content: text_editor::Content::new(),
             selected_tab: ResponseTab::Body,
             spinner: Spinner::new(),
         }
@@ -51,7 +50,8 @@ impl ResponsePanel {
                     | text_editor::Action::Drag(_)
                     | text_editor::Action::Scroll { .. } => {
                         // Allow read-only actions
-                        self.response_body_content.perform(text_action.clone());
+                        // response_body_content.perform(text_action.clone());
+                        return Action::ResponseBodyAction(text_action);
                     }
                     text_editor::Action::Edit(_) => {
                         // Block all edit actions (insert, paste, delete, etc.)
@@ -71,6 +71,7 @@ impl ResponsePanel {
     pub fn view<'a>(
         &'a self,
         response: &'a Option<ResponseData>,
+        response_body_content: &'a text_editor::Content,
         is_loading: bool,
         elapsed_time: u64,
     ) -> Element<'_, Message> {
@@ -154,7 +155,7 @@ impl ResponsePanel {
                 .spacing(5);
 
                 let tab_content = match self.selected_tab {
-                    ResponseTab::Body => response_body_tab(&self.response_body_content, &response),
+                    ResponseTab::Body => response_body_tab(resp, response_body_content),
                     ResponseTab::Headers => match response {
                         Some(resp) => response_headers_tab(&resp),
                         None => container(
@@ -233,14 +234,6 @@ impl ResponsePanel {
     pub fn update_spinner(&mut self) {
         self.spinner.update();
     }
-
-    pub fn get_response_body_content(&self) -> &text_editor::Content {
-        &self.response_body_content
-    }
-
-    pub fn get_response_body_content_mut(&mut self) -> &mut text_editor::Content {
-        &mut self.response_body_content
-    }
 }
 
 fn response_tab_button<'a>(
@@ -287,16 +280,15 @@ fn response_tab_button<'a>(
 }
 
 fn response_body_tab<'a>(
+    resp: &'a ResponseData,
     content: &'a text_editor::Content,
-    response: &'a Option<ResponseData>,
 ) -> Element<'a, Message> {
     info!("===response body content");
     // For text responses, use the normal text editor with dynamic syntax highlighting
     // TODO: move the syntax to main file
-    // let syntax_language = get_syntax_from_content_type(&response.content_type);
     info!("===response body updated");
 
-    let resp = response.as_ref().unwrap();
+    // let resp = response.as_ref().unwrap();
     // Check if this is a binary response
     if resp.is_binary {
         // For binary responses, show metadata instead of content
@@ -329,7 +321,7 @@ fn response_body_tab<'a>(
             space().height(5),
             scrollable(
                 container(
-                    text(&resp.body)
+                    text(resp.body.as_str())
                         .size(12)
                         .color(Color::from_rgb(0.5, 0.5, 0.5))
                 )
@@ -348,12 +340,11 @@ fn response_body_tab<'a>(
         ]
         .spacing(5);
 
-        // body_column = body_column.push(binary_info);
         scrollable(binary_info).height(Length::Fill).into()
     } else {
-        // body_column = body_column.push(
+        let syntax_language = get_syntax_from_content_type(&resp.content_type);
         let body_column = text_editor(content)
-            .highlight("json", highlighter::Theme::SolarizedDark)
+            .highlight(syntax_language, highlighter::Theme::SolarizedDark)
             .on_action(Message::ResponseBodyAction)
             .style(
                 |theme: &Theme, _status: text_editor::Status| text_editor::Style {
@@ -368,7 +359,7 @@ fn response_body_tab<'a>(
                     selection: theme.palette().primary,
                 },
             );
-        // )
+
         scrollable(body_column).height(Length::Fill).into()
     }
 }
