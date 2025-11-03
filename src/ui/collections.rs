@@ -76,7 +76,7 @@ impl CollectionPanel {
         &'a self,
         collections: &'a [RequestCollection],
         last_opened_request: Option<(usize, usize)>,
-    ) -> Element<'_, Message> {
+    ) -> Element<'a, Message> {
         let mut content = column![];
 
         for (collection_index, collection) in collections.iter().enumerate() {

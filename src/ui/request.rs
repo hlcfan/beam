@@ -339,7 +339,7 @@ impl RequestPanel {
         is_loading: bool,
         environments: &'a [Environment],
         active_environment: Option<usize>,
-    ) -> Element<'_, Message> {
+    ) -> Element<'a, Message> {
         // Environment pick_list for the URL row
         let env_pick_list = {
             // Create list of environment options including all self.environments plus "Configure"

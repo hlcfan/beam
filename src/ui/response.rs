@@ -74,7 +74,7 @@ impl ResponsePanel {
         response_body_content: &'a text_editor::Content,
         is_loading: bool,
         elapsed_time: u64,
-    ) -> Element<'_, Message> {
+    ) -> Element<'a, Message> {
         let mut status_row = vec![];
 
         // Add loading indicator if loading (on the left)
@@ -380,23 +380,6 @@ fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> 
     }
 
     scrollable(content.spacing(5)).height(Length::Fill).into()
-}
-
-fn response_text_editor_style(
-    theme: &iced::Theme,
-    _status: text_editor::Status,
-) -> text_editor::Style {
-    text_editor::Style {
-        background: Background::Color(theme.palette().background),
-        border: Border {
-            color: Color::from_rgb(0.9, 0.9, 0.9),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-        value: theme.palette().text,
-        selection: Color::from_rgba(0.0, 0.5, 1.0, 0.2), // Light blue selection with 20% opacity
-    }
 }
 
 fn format_bytes(bytes: usize) -> String {
