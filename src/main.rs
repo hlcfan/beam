@@ -256,7 +256,6 @@ impl BeamApp {
                     &self.current_request,
                     &self.environments,
                 ) {
-                    // To handle the actions from request panel component
                     request::Action::SendRequest(request_start_time) => {
                         let resolved_config =
                             self.resolve_request_config_variables(&self.current_request);
@@ -271,6 +270,18 @@ impl BeamApp {
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
                         self.current_request = request_config.clone();
+
+                        if let Some(collection) = self
+                            .collections
+                            .get_mut(self.current_request.collection_index)
+                        {
+                            if let Some(request) = collection
+                                .requests
+                                .get_mut(self.current_request.request_index)
+                            {
+                                *request = self.current_request.clone();
+                            }
+                        }
 
                         // Send to debounce channel if available
                         if let Some(tx) = &self.debounce_tx {
@@ -310,6 +321,18 @@ impl BeamApp {
                     request::Action::EditRequestBody(action) => {
                         self.request_body_content.perform(action);
                         self.current_request.body = self.request_body_content.text();
+
+                        if let Some(collection) = self
+                            .collections
+                            .get_mut(self.current_request.collection_index)
+                        {
+                            if let Some(request) = collection
+                                .requests
+                                .get_mut(self.current_request.request_index)
+                            {
+                                *request = self.current_request.clone();
+                            }
+                        }
 
                         let request_to_persist = self.current_request.clone();
 
@@ -1309,12 +1332,12 @@ impl BeamApp {
 
                                 if let Some(resp) = &self.current_request.last_response {
                                     // TODO: move the response body content update in a new message
+                                    // so it doesn't block the UI loading
                                     let formatted_resp =
                                         Self::format_response_content(resp.body.as_str());
 
                                     self.response_body_content =
                                         text_editor::Content::with_text(formatted_resp.as_str());
-                                    // text_editor::Content::with_text(&resp.body);
                                 }
 
                                 // Update the last opened request state and save to storage
@@ -1794,7 +1817,6 @@ impl BeamApp {
     }
 
     fn request_config_view(&self) -> Element<'_, Message> {
-        info!("=== Rendering request config view ===");
         self.request_panel
             .view(
                 &self.current_request,
