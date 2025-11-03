@@ -400,6 +400,13 @@ impl BeamApp {
                                 self.current_request = request_config.clone();
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
+                                if let Some(resp) = &self.current_request.last_response {
+                                    let formatted_resp =
+                                        Self::format_response_content(resp.body.as_str());
+
+                                    self.response_body_content =
+                                        text_editor::Content::with_text(formatted_resp.as_str());
+                                }
                                 // Environment variables applied to URL input are handled during rendering
                                 info!("===select request load successed");
 
