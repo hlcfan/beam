@@ -3,7 +3,7 @@ use crate::ui::Spinner;
 use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
-use iced::widget::{button, column, container, row, scrollable, space, text, text_editor};
+use iced::widget::{button, column, container, row, scrollable, space, text, text_editor, text_input};
 use iced::{Background, Border, Color, Element, Length, Theme};
 use log::info;
 
@@ -344,7 +344,7 @@ fn response_body_tab<'a>(
     } else {
         let syntax_language = get_syntax_from_content_type(&resp.content_type);
         let body_column = text_editor(content)
-            .highlight(syntax_language, highlighter::Theme::SolarizedDark)
+            .highlight(syntax_language, highlighter::Theme::Base16Mocha)
             .on_action(Message::ResponseBodyAction)
             .style(
                 |theme: &Theme, _status: text_editor::Status| text_editor::Style {
@@ -365,13 +365,38 @@ fn response_body_tab<'a>(
 }
 
 fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> {
-    let mut content = column![text("Response Headers").size(16), space().height(10)];
+    let mut content = column![];
 
     for (key, value) in &response.headers {
         let header_row = row![
-            container(text(key).size(14).color(Color::from_rgb(0.3, 0.3, 0.3)))
-                .width(Length::FillPortion(1)),
-            container(text(value).size(14)).width(Length::FillPortion(2))
+            container(
+                text_input("", key)
+                    .size(14)
+                    .style(|theme: &Theme, _status| text_input::Style {
+                        background: Background::Color(Color::TRANSPARENT),
+                        border: Border::default(),
+                        icon: Color::TRANSPARENT,
+                        placeholder: Color::from_rgb(0.3, 0.3, 0.3),
+                        value: Color::from_rgb(0.3, 0.3, 0.3),
+                        selection: theme.palette().primary,
+                    })
+                    .on_input(|_| Message::DoNothing) // Read-only behavior
+            )
+            .width(Length::FillPortion(1)),
+            container(
+                text_input("", value)
+                    .size(14)
+                    .style(|theme: &Theme, _status| text_input::Style {
+                        background: Background::Color(Color::TRANSPARENT),
+                        border: Border::default(),
+                        icon: Color::TRANSPARENT,
+                        placeholder: Color::from_rgb(0.0, 0.0, 0.0),
+                        value: Color::from_rgb(0.0, 0.0, 0.0),
+                        selection: theme.palette().primary,
+                    })
+                    .on_input(|_| Message::DoNothing) // Read-only behavior
+            )
+            .width(Length::FillPortion(2))
         ]
         .spacing(20)
         .padding([5, 0]);
