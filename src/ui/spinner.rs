@@ -90,7 +90,7 @@ impl canvas::Program<Message> for Spinner {
 
             // Create gradient effect - segments fade from opaque to transparent
             let opacity = 1.0 - (i as f32 / num_segments as f32);
-            let color = Color::from_rgba(0.49, 0.44, 0.133, opacity);
+            let color = Color::from_rgba(0.49, 0.44, 0.133, opacity); // indiego-900
 
             // Draw the line segment
             let line_path = Path::line(start_point, end_point);
