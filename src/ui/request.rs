@@ -370,7 +370,7 @@ impl RequestPanel {
                     }
                 }
             })
-            .width(150)
+            .width(Length::Fill)
             .placeholder("No Environment")
         };
 
@@ -379,9 +379,9 @@ impl RequestPanel {
             text("Environment:").size(14),
             space().width(5),
             env_pick_list,
-            space().width(Fill), // Push everything to the left
         ]
-        .align_y(iced::Alignment::Center);
+        .align_y(iced::Alignment::Center)
+        .width(Length::Fill);
 
         // Method label with dynamic width
         let method_label = method_button(&current_request.method);
