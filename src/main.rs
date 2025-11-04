@@ -154,6 +154,7 @@ pub fn main() -> iced::Result {
         BeamApp::view,
     )
     .title(|_: &BeamApp| "Beam".to_string())
+    // .theme(BeamApp::theme)
     .subscription(BeamApp::subscription)
     .window_size(Size::new(1200.0, 800.0))
     .run()
@@ -2307,5 +2308,27 @@ impl BeamApp {
                 error!("Failed to create storage manager: {}", e);
             }
         }
+    }
+
+    fn theme(&self) -> Theme {
+        // Catppuccin Mocha color palette
+        let base = Color::from_rgb(0.118, 0.118, 0.180);        // #1e1e2e
+        let text = Color::from_rgb(0.804, 0.839, 0.957);        // #cdd6f4
+        let primary = Color::from_rgb(0.537, 0.706, 0.980);     // #89b4fa (blue)
+        let success = Color::from_rgb(0.651, 0.890, 0.631);     // #a6e3a1 (green)
+        let danger = Color::from_rgb(0.953, 0.545, 0.659);      // #f38ba8 (red)
+        let warning = Color::from_rgb(0.980, 0.706, 0.529);     // #fab387 (peach)
+
+        Theme::custom(
+            "Catppuccin Mocha".to_string(),
+            iced::theme::Palette {
+                background: base,
+                text,
+                primary,
+                success,
+                danger,
+                warning,
+            },
+        )
     }
 }
