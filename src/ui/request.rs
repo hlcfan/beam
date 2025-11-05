@@ -5,7 +5,7 @@ use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
     text_editor, text_input,
 };
-use iced::{Background, Border, Color, Element, Fill, Length, Shadow, Theme, Vector};
+use iced::{Background, Border, Color, Element, Fill, Length, Padding, Shadow, Theme, Vector};
 use log::info;
 use std::time::Instant;
 use url_input::UrlInput;
@@ -299,9 +299,7 @@ impl RequestPanel {
                 Action::UpdateCurrentRequest(request)
             }
             // Environment message handlers
-            Message::OpenEnvironmentPopup => {
-                Action::OpenEnvironmentPopup
-            }
+            Message::OpenEnvironmentPopup => Action::OpenEnvironmentPopup,
             Message::EnvironmentSelected(index) => {
                 if index < environments.len() {
                     Action::UpdateActiveEnvironment(index)
@@ -438,10 +436,11 @@ impl RequestPanel {
         let base_input = container(row![
             method_label,
             UrlInput::new("Enter URL...", &url).on_input(Message::UrlInputChanged),
-            space().width(5),
+            space().width(1),
             send_button,
         ])
         .padding(2)
+        .align_y(iced::alignment::Vertical::Center)
         .style(|_theme| container::Style {
             background: Some(Background::Color(Color::WHITE)),
             border: Border {
@@ -808,14 +807,15 @@ fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 fn method_button(method: &HttpMethod) -> Element<'_, Message> {
     button(text(method.to_string()))
         .on_press(Message::ToggleMethodMenu)
+        .padding(Padding::from(7))
         .width(Length::Fixed(match method {
-            HttpMethod::GET => 50.0,
-            HttpMethod::PUT => 50.0,
-            HttpMethod::POST => 60.0,
-            HttpMethod::HEAD => 60.0,
-            HttpMethod::PATCH => 75.0,
-            HttpMethod::DELETE => 80.0,
-            HttpMethod::OPTIONS => 90.0,
+            HttpMethod::GET => 40.0,
+            HttpMethod::PUT => 40.0,
+            HttpMethod::POST => 50.0,
+            HttpMethod::HEAD => 50.0,
+            HttpMethod::PATCH => 65.0,
+            HttpMethod::DELETE => 65.0,
+            HttpMethod::OPTIONS => 80.0,
         }))
         .style(|theme: &Theme, _status: Status| button::Style {
             background: Some(Background::Color(theme.palette().background)),
@@ -895,33 +895,32 @@ fn method_dropdown() -> Element<'static, Message> {
 }
 
 fn post_script_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
-    let script_content = config.post_request_script.as_deref().unwrap_or("// No script defined");
+    let script_content = config
+        .post_request_script
+        .as_deref()
+        .unwrap_or("// No script defined");
 
     let help_text = text("Post-request scripts run after receiving a response. Use 'pm' object to access response data and environment variables.")
         .size(12)
         .color(Color::from_rgb(0.6, 0.6, 0.6));
 
-    let example_text = text("Example: pm.environment.set('token', pm.response.json().access_token);")
-        .size(11)
-        .color(Color::from_rgb(0.5, 0.5, 0.5));
+    let example_text =
+        text("Example: pm.environment.set('token', pm.response.json().access_token);")
+            .size(11)
+            .color(Color::from_rgb(0.5, 0.5, 0.5));
 
-    let script_display = container(
-        scrollable(
-            text(script_content)
-                .size(14)
-        )
-    )
-    .height(Length::Fill)
-    .padding(10)
-    .style(|theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
-        border: Border {
-            color: Color::from_rgb(0.8, 0.8, 0.8),
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        ..Default::default()
-    });
+    let script_display = container(scrollable(text(script_content).size(14)))
+        .height(Length::Fill)
+        .padding(10)
+        .style(|theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+            border: Border {
+                color: Color::from_rgb(0.8, 0.8, 0.8),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        });
 
     column![
         help_text,
