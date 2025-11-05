@@ -560,7 +560,7 @@ fn method_badge<'a>(method: &'a HttpMethod) -> Element<'a, Message> {
 
     container(text(method_text).size(10).color(text_color))
         .width(Length::Fixed(32.0))
-        .align_x(iced::alignment::Horizontal::Right)
+        .align_x(iced::alignment::Horizontal::Center)
         .style(move |_theme| Style {
             background: Some(Background::Color(color)),
             border: Border {

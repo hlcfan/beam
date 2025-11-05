@@ -17,6 +17,7 @@ use ui::ResponsePanel;
 use crate::ui::collections;
 use crate::ui::request;
 use crate::ui::response;
+use crate::ui::{icon, IconName};
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
@@ -1849,30 +1850,46 @@ impl BeamApp {
 
     fn environment_popup_view(&self) -> Element<'_, Message> {
         // Fixed header with title and close button
+        let close_button = button(
+            container(
+                icon(IconName::Close)
+                    .size(16)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5))
+            )
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .width(Length::Fill)
+            .height(Length::Fill)
+        )
+        .on_press(Message::CloseEnvironmentPopup)
+        .width(32)
+        .height(32)
+        .style(|_theme: &Theme, status| {
+            let base = button::Style::default();
+            match status {
+                button::Status::Hovered => button::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                    ..base
+                },
+                _ => button::Style {
+                    background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                    ..base
+                },
+            }
+        });
+
         let header = row![
             text("Environment Manager").size(20),
             space().width(Fill),
-            button(text("×"))
-                .on_press(Message::CloseEnvironmentPopup)
-                .style(|_theme: &Theme, status| {
-                    let base = button::Style::default();
-                    match status {
-                        button::Status::Hovered => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.9, 0.2, 0.2,
-                            ))),
-                            text_color: Color::WHITE,
-                            ..base
-                        },
-                        _ => button::Style {
-                            background: Some(iced::Background::Color(Color::from_rgb(
-                                0.8, 0.0, 0.0,
-                            ))),
-                            text_color: Color::WHITE,
-                            ..base
-                        },
-                    }
-                })
+            close_button
         ]
         .align_y(iced::Alignment::Center);
 
@@ -1906,18 +1923,36 @@ impl BeamApp {
                     })
                     .width(Length::FillPortion(2)),
                     space().width(10),
-                    button(text("Add Environment"))
+                    button(text("+ Add Environment").size(14))
                         .on_press(Message::AddEnvironment)
+                        .padding([8, 16])
                         .style(|_theme, status| {
                             let base = button::Style::default();
                             match status {
                                 button::Status::Hovered => button::Style {
                                     background: Some(iced::Background::Color(Color::from_rgb(
-                                        0.9, 0.9, 0.9,
+                                        0.2, 0.5, 0.9,
                                     ))),
+                                    text_color: Color::WHITE,
+                                    border: iced::Border {
+                                        color: Color::from_rgb(0.1, 0.4, 0.8),
+                                        width: 1.0,
+                                        radius: 6.0.into(),
+                                    },
                                     ..base
                                 },
-                                _ => base,
+                                _ => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.3, 0.6, 1.0,
+                                    ))),
+                                    text_color: Color::WHITE,
+                                    border: iced::Border {
+                                        color: Color::from_rgb(0.2, 0.5, 0.9),
+                                        width: 1.0,
+                                        radius: 6.0.into(),
+                                    },
+                                    ..base
+                                },
                             }
                         })
                         .width(Length::FillPortion(1)),
@@ -1949,6 +1984,41 @@ impl BeamApp {
                         let key_clone = key.clone();
                         let key_clone2 = key.clone();
                         let key_clone3 = key.clone();
+                        let delete_var_button = button(
+                            container(
+                                icon(IconName::Close)
+                                    .size(14)
+                                    .color(Color::from_rgb(0.6, 0.6, 0.6))
+                            )
+                            .align_x(iced::alignment::Horizontal::Center)
+                            .align_y(iced::alignment::Vertical::Center)
+                            // .width(Length::Fill)
+                            .height(Length::Fill)
+                        )
+                        .on_press(Message::RemoveVariable(active_idx, key_clone3))
+                        .width(32)
+                        .style(|_theme: &Theme, status| {
+                            let base = button::Style::default();
+                            match status {
+                                button::Status::Hovered => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(0.95, 0.85, 0.85))),
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..base
+                                },
+                                _ => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(0.97, 0.97, 0.97))),
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..base
+                                },
+                            }
+                        });
+
                         let variable_row = row![
                             text_input("Variable name", key)
                                 .on_input(move |input| Message::VariableKeyChanged(
@@ -1964,9 +2034,7 @@ impl BeamApp {
                                     input
                                 ))
                                 .width(Length::FillPortion(1)),
-                            button(text("×"))
-                                .on_press(Message::RemoveVariable(active_idx, key_clone3))
-                                .width(50)
+                            delete_var_button
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center);
@@ -2036,23 +2104,34 @@ impl BeamApp {
                     if self.environments.len() > 1 {
                         content = content.push(space().height(15));
                         content = content.push(
-                            button(text("Delete Environment"))
+                            button(text("Delete Environment").size(14))
                                 .on_press(Message::DeleteEnvironment(active_idx))
+                                .padding([8, 16])
                                 .style(|_theme, status| {
                                     let base = button::Style::default();
                                     match status {
                                         button::Status::Hovered => button::Style {
                                             background: Some(iced::Background::Color(
-                                                Color::from_rgb(0.9, 0.2, 0.2),
+                                                Color::from_rgb(0.95, 0.3, 0.3),
                                             )),
                                             text_color: Color::WHITE,
+                                            border: iced::Border {
+                                                color: Color::from_rgb(0.85, 0.2, 0.2),
+                                                width: 1.0,
+                                                radius: 6.0.into(),
+                                            },
                                             ..base
                                         },
                                         _ => button::Style {
                                             background: Some(iced::Background::Color(
-                                                Color::from_rgb(0.8, 0.0, 0.0),
+                                                Color::from_rgb(0.98, 0.95, 0.95),
                                             )),
-                                            text_color: Color::WHITE,
+                                            text_color: Color::from_rgb(0.8, 0.3, 0.3),
+                                            border: iced::Border {
+                                                color: Color::from_rgb(0.9, 0.7, 0.7),
+                                                width: 1.0,
+                                                radius: 6.0.into(),
+                                            },
                                             ..base
                                         },
                                     }
@@ -2062,9 +2141,42 @@ impl BeamApp {
                 }
             }
         } else {
-            content = content.push(text("No environments available"));
-            content =
-                content.push(button(text("Add Environment")).on_press(Message::AddEnvironment));
+            content = content.push(text("No environments available").size(14));
+            content = content.push(space().height(10));
+            content = content.push(
+                button(text("+ Add Environment").size(14))
+                    .on_press(Message::AddEnvironment)
+                    .padding([8, 16])
+                    .style(|_theme, status| {
+                        let base = button::Style::default();
+                        match status {
+                            button::Status::Hovered => button::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.2, 0.5, 0.9,
+                                ))),
+                                text_color: Color::WHITE,
+                                border: iced::Border {
+                                    color: Color::from_rgb(0.1, 0.4, 0.8),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                ..base
+                            },
+                            _ => button::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.3, 0.6, 1.0,
+                                ))),
+                                text_color: Color::WHITE,
+                                border: iced::Border {
+                                    color: Color::from_rgb(0.2, 0.5, 0.9),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                ..base
+                            },
+                        }
+                    }),
+            );
         }
 
         container(

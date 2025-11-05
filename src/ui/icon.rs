@@ -9,6 +9,8 @@ pub enum IconName {
     Send,
     ChevronDown,
     ChevronRight,
+    Close,
+    Add,
 }
 
 impl IconName {
@@ -19,6 +21,8 @@ impl IconName {
             IconName::Send => "send.svg",
             IconName::ChevronDown => "chevron-down.svg",
             IconName::ChevronRight => "chevron-right.svg",
+            IconName::Close => "close.svg",
+            IconName::Add => "add.svg",
         }
     }
 }
