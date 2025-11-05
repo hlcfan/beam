@@ -1677,13 +1677,12 @@ impl BeamApp {
             // Create a custom overlay using stack
             stack![
                 pane_grid,
-                // Semi-transparent backdrop that blocks all interactions
                 mouse_area(
                     container(
                         mouse_area(container(self.environment_popup_view())
                             .width(800)
                             .height(650))
-                            .on_press(Message::DoNothing) // Prevent clicks from passing through the modal
+                            .on_press(Message::DoNothing)
                     )
                     .center_x(Fill)
                     .center_y(Fill)
@@ -1694,7 +1693,7 @@ impl BeamApp {
                         ..Default::default()
                     })
                 )
-                .on_press(Message::CloseEnvironmentPopup) // Click outside to close
+                .on_press(Message::DoNothing)
             ]
             .into()
         } else if self.show_rename_modal {
