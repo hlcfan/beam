@@ -22,8 +22,8 @@ use crate::ui::{icon, IconName};
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
-    button, column, container, pick_list, row, scrollable, space, stack, text, text_editor,
-    text_input,
+    button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
+    text_editor, text_input,
 };
 use iced::{Color, Element, Fill, Length, Size, Task, Theme, Vector};
 use log::{error, info};
@@ -1677,20 +1677,24 @@ impl BeamApp {
             // Create a custom overlay using stack
             stack![
                 pane_grid,
-                // Semi-transparent backdrop with centered popup
-                container(
-                    container(self.environment_popup_view())
-                        .width(800)
-                        .height(650)
+                // Semi-transparent backdrop that blocks all interactions
+                mouse_area(
+                    container(
+                        mouse_area(container(self.environment_popup_view())
+                            .width(800)
+                            .height(650))
+                            .on_press(Message::DoNothing) // Prevent clicks from passing through the modal
+                    )
+                    .center_x(Fill)
+                    .center_y(Fill)
+                    .width(Fill)
+                    .height(Fill)
+                    .style(|_theme| container::Style {
+                        background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
+                        ..Default::default()
+                    })
                 )
-                .center_x(Fill)
-                .center_y(Fill)
-                .width(Fill)
-                .height(Fill)
-                .style(|_theme| container::Style {
-                    background: Some(Color::from_rgba(0.0, 0.0, 0.0, 0.5).into()),
-                    ..Default::default()
-                })
+                .on_press(Message::CloseEnvironmentPopup) // Click outside to close
             ]
             .into()
         } else if self.show_rename_modal {
