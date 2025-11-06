@@ -2,7 +2,7 @@ use super::{
     CollectionMetadata, CollectionStorage, EnvironmentsMetadata,
     PersistentEnvironments, PersistentRequest, StorageError,
 };
-use crate::types::{Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
+use crate::types::{BodyFormat, Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
 use iced::wgpu::TextureUsages;
 use log::{error, info};
 use std::ffi::OsStr;
@@ -559,6 +559,7 @@ impl CollectionStorage for TomlFileStorage {
                                     body: r.body.unwrap_or_default(),
                                     content_type: r.content_type.unwrap_or_default(),
                                     auth_type: r.auth_type.unwrap_or_default(),
+                                    body_format: BodyFormat::default(), // Default to JSON for backward compatibility
                                     bearer_token: r.bearer_token.unwrap_or_default(),
                                     basic_username: r.basic_username.unwrap_or_default(),
                                     basic_password: r.basic_password.unwrap_or_default(),

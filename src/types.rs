@@ -93,6 +93,9 @@ pub struct RequestConfig {
     pub body: String,
     pub content_type: String,
     pub auth_type: AuthType,
+    
+    #[serde(default)]
+    pub body_format: BodyFormat,
 
     // Authentication fields
     pub bearer_token: String,
@@ -159,6 +162,7 @@ impl Clone for RequestConfig {
             body: self.body.clone(),
             content_type: self.content_type.clone(),
             auth_type: self.auth_type.clone(),
+            body_format: self.body_format,
             bearer_token: self.bearer_token.clone(),
             basic_username: self.basic_username.clone(),
             basic_password: self.basic_password.clone(),
@@ -186,6 +190,7 @@ impl Default for RequestConfig {
             body: String::new(),
             content_type: String::new(),
             auth_type: AuthType::None,
+            body_format: BodyFormat::default(),
             bearer_token: String::new(),
             basic_username: String::new(),
             basic_password: String::new(),
@@ -256,6 +261,33 @@ pub enum RequestTab {
     PostScript,
     // #[allow(dead_code)]
     // Environment,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum BodyFormat {
+    None,
+    Json,
+    Xml,
+    GraphQL,
+    Text,
+}
+
+impl Default for BodyFormat {
+    fn default() -> Self {
+        BodyFormat::Json
+    }
+}
+
+impl std::fmt::Display for BodyFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BodyFormat::None => write!(f, "None"),
+            BodyFormat::Json => write!(f, "JSON"),
+            BodyFormat::Xml => write!(f, "XML"),
+            BodyFormat::GraphQL => write!(f, "GraphQL"),
+            BodyFormat::Text => write!(f, "Text"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

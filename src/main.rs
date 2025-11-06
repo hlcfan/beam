@@ -200,6 +200,7 @@ impl Default for BeamApp {
                 body: String::new(),
                 content_type: "application/json".to_string(),
                 auth_type: AuthType::None,
+                body_format: BodyFormat::default(), // Default to JSON
                 bearer_token: String::new(),
                 basic_username: String::new(),
                 basic_password: String::new(),

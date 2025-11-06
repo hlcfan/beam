@@ -1,4 +1,4 @@
-use crate::types::{AuthType, Environment, HttpMethod, RequestConfig, RequestTab};
+use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::{IconName, icon, url_input};
 use iced::widget::button::Status;
 use iced::widget::{
@@ -54,6 +54,7 @@ pub enum Message {
     AddParam,
     RemoveParam(usize),
     BodyChanged(text_editor::Action),
+    BodyFormatChanged(BodyFormat),
     AuthTypeChanged(AuthType),
     BearerTokenChanged(String),
     BasicUsernameChanged(String),
@@ -65,6 +66,8 @@ pub enum Message {
     OpenEnvironmentPopup,
     ToggleMethodMenu,
     CloseMethodMenu,
+    ToggleBodyFormatMenu,
+    CloseBodyFormatMenu,
     DoNothing, // Used to prevent event propagation
     EnvironmentSelected(usize),
 }
@@ -84,6 +87,7 @@ pub struct RequestPanel {
     // pub environments: Vec<Environment>,
     // pub active_environment: Option<usize>,
     pub method_menu_open: bool,
+    pub body_format_menu_open: bool,
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
     pub selected_tab: RequestTab,
@@ -118,6 +122,7 @@ impl Default for RequestPanel {
             // environments: Vec::new(),
             // active_environment: None,
             method_menu_open: false,
+            body_format_menu_open: false,
             send_button_hovered: false,
             cancel_button_hovered: false,
         }
@@ -261,6 +266,16 @@ impl RequestPanel {
                 Action::UpdateCurrentRequest(request)
             }
             Message::BodyChanged(action) => Action::EditRequestBody(action),
+            Message::BodyFormatChanged(format) => {
+                let mut request = current_request.clone();
+                request.body_format = format;
+                // Dismiss the dropdown after selecting a format
+                self.body_format_menu_open = false;
+                // Keep focus on Body tab when changing format
+                self.selected_tab = RequestTab::Body;
+
+                Action::UpdateCurrentRequest(request)
+            }
             Message::AuthTypeChanged(auth_type) => {
                 let mut request = current_request.clone();
 
@@ -313,6 +328,15 @@ impl RequestPanel {
             }
             Message::CloseMethodMenu => {
                 self.method_menu_open = false;
+                Action::None
+            }
+            Message::ToggleBodyFormatMenu => {
+                self.body_format_menu_open = !self.body_format_menu_open;
+                self.selected_tab = RequestTab::Body; // Always select Body tab when toggling dropdown
+                Action::None
+            }
+            Message::CloseBodyFormatMenu => {
+                self.body_format_menu_open = false;
                 Action::None
             }
             Message::DoNothing => Action::None,
@@ -457,12 +481,14 @@ impl RequestPanel {
 
         let url_row = row![connected_input].align_y(iced::Alignment::Center);
 
+        // Body tab with format dropdown - now the dropdown button itself handles tab selection
+        let body_tab_button = row![
+            body_format_button(&current_request.body_format, self.selected_tab == RequestTab::Body),
+        ]
+        .align_y(iced::Alignment::Center);
+
         let tabs = row![
-            tab_button(
-                "Body",
-                self.selected_tab == RequestTab::Body,
-                RequestTab::Body
-            ),
+            body_tab_button,
             tab_button(
                 "Params",
                 self.selected_tab == RequestTab::Params,
@@ -488,12 +514,12 @@ impl RequestPanel {
 
         // let request_body_content = text_editor::Content::with_text(current_request.body.as_str());
         let tab_content = match self.selected_tab {
-            RequestTab::Body => body_tab(&request_body_content),
+            RequestTab::Body => body_tab(&request_body_content, current_request.body_format),
             RequestTab::Params => params_tab(&current_request),
             RequestTab::Headers => headers_tab(&current_request),
             RequestTab::Auth => auth_tab(&current_request),
             RequestTab::PostScript => post_script_tab(&current_request),
-            // RequestTab::Environment => body_tab(&request_body_content), // Fallback to body tab if somehow Environment is selected
+            // RequestTab::Environment => body_tab(&request_body_content); // Fallback to body tab if somehow Environment is selected
         };
 
         let content = column![
@@ -538,12 +564,30 @@ impl RequestPanel {
             right_border
         ];
 
-        let base_layout = if self.method_menu_open {
+        let base_layout = if self.method_menu_open || self.body_format_menu_open {
+            let overlay_message = if self.method_menu_open {
+                Message::CloseMethodMenu
+            } else {
+                Message::CloseBodyFormatMenu
+            };
+
+            let dropdown_content = if self.method_menu_open {
+                method_dropdown()
+            } else {
+                body_format_dropdown()
+            };
+
+            let dropdown_padding = if self.method_menu_open {
+                iced::Padding::new(12.0).top(100.0)
+            } else {
+                iced::Padding::new(12.0).top(150.0) // Position body format dropdown lower
+            };
+
             stack![
                 main_content,
                 // Transparent overlay to detect clicks outside the menu
                 button(Space::new().width(Length::Fill).height(Length::Fill))
-                    .on_press(Message::CloseMethodMenu)
+                    .on_press(overlay_message)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .style(|_theme, _status| button::Style {
@@ -554,10 +598,10 @@ impl RequestPanel {
                         snap: true
                     }),
                 // The actual dropdown menu
-                container(method_dropdown())
+                container(dropdown_content)
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .padding(iced::Padding::new(12.0).top(100.0)) // Left padding 12, top padding 100 to position dropdown
+                    .padding(dropdown_padding)
             ]
             .into()
         } else {
@@ -607,24 +651,154 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
         .into()
 }
 
-fn body_tab<'a>(request_body: &'a text_editor::Content) -> Element<'a, Message> {
-    let text_editor_widget = text_editor(request_body)
-        .on_action(Message::BodyChanged)
-        .style(
-            |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                background: Background::Color(theme.palette().background),
-                border: Border {
-                    color: Color::from_rgb(0.9, 0.9, 0.9),
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                value: theme.palette().text,
-                selection: theme.palette().primary,
-            },
-        );
+fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat) -> Element<'a, Message> {
+    match body_format {
+        BodyFormat::None => {
+            container(
+                text("No body")
+                    .size(14)
+                    .color(Color::from_rgb(0.6, 0.6, 0.6))
+            )
+            .center_x(Fill)
+            .center_y(Fill)
+            .width(Fill)
+            .height(Fill)
+            .into()
+        }
+        BodyFormat::Json => {
+            let text_editor_widget = text_editor(request_body)
+                .on_action(Message::BodyChanged)
+                .placeholder("Enter JSON body...")
+                .style(
+                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                        background: Background::Color(theme.palette().background),
+                        border: Border {
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                        value: theme.palette().text,
+                        selection: theme.palette().primary,
+                    },
+                );
 
-    scrollable(text_editor_widget).height(Length::Fill).into()
+            let format_info = row![
+                text("JSON Format")
+                    .size(12)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                Space::new().width(Length::Fill),
+                button(text("Format"))
+                    .on_press(Message::DoNothing) // TODO: Add JSON formatting
+                    .style(|_theme, _status| button::Style {
+                        background: Some(Background::Color(Color::TRANSPARENT)),
+                        border: Border {
+                            color: Color::from_rgb(0.8, 0.8, 0.8),
+                            width: 1.0,
+                            radius: 3.0.into(),
+                        },
+                        ..Default::default()
+                    })
+            ]
+            .spacing(10)
+            .padding(5);
+
+            column![
+                format_info,
+                scrollable(text_editor_widget).height(Length::Fill)
+            ]
+            .spacing(5)
+            .into()
+        }
+        BodyFormat::Xml => {
+            let text_editor_widget = text_editor(request_body)
+                .on_action(Message::BodyChanged)
+                .placeholder("Enter XML body...")
+                .style(
+                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                        background: Background::Color(theme.palette().background),
+                        border: Border {
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                        value: theme.palette().text,
+                        selection: theme.palette().primary,
+                    },
+                );
+
+            let format_info = text("XML Format")
+                .size(12)
+                .color(Color::from_rgb(0.5, 0.5, 0.5));
+
+            column![
+                format_info,
+                scrollable(text_editor_widget).height(Length::Fill)
+            ]
+            .spacing(5)
+            .into()
+        }
+        BodyFormat::Text => {
+            let text_editor_widget = text_editor(request_body)
+                .on_action(Message::BodyChanged)
+                .placeholder("Enter text body...")
+                .style(
+                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                        background: Background::Color(theme.palette().background),
+                        border: Border {
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                        value: theme.palette().text,
+                        selection: theme.palette().primary,
+                    },
+                );
+
+            let format_info = text("Plain Text")
+                .size(12)
+                .color(Color::from_rgb(0.5, 0.5, 0.5));
+
+            column![
+                format_info,
+                scrollable(text_editor_widget).height(Length::Fill)
+            ]
+            .spacing(5)
+            .into()
+        }
+        BodyFormat::GraphQL => {
+            // Fallback for existing GraphQL requests - treat as plain text
+            let text_editor_widget = text_editor(request_body)
+                .on_action(Message::BodyChanged)
+                .placeholder("GraphQL format no longer supported - edit as text...")
+                .style(
+                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                        background: Background::Color(theme.palette().background),
+                        border: Border {
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        placeholder: Color::from_rgb(0.8, 0.6, 0.6),
+                        value: theme.palette().text,
+                        selection: theme.palette().primary,
+                    },
+                );
+
+            let format_info = text("GraphQL (deprecated - use Text format)")
+                .size(12)
+                .color(Color::from_rgb(0.8, 0.5, 0.5));
+
+            column![
+                format_info,
+                scrollable(text_editor_widget).height(Length::Fill)
+            ]
+            .spacing(5)
+            .into()
+        }
+    }
 }
 
 fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
@@ -746,6 +920,25 @@ fn icon_button_style(is_interactive: bool) -> impl Fn(&Theme, Status) -> button:
     }
 }
 
+fn dropdown_item_style() -> impl Fn(&Theme, Status) -> button::Style {
+    |_theme: &Theme, status: Status| match status {
+        Status::Hovered => button::Style {
+            background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))), // Light gray on hover
+            text_color: Color::BLACK,
+            border: Border::default(),
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        _ => button::Style {
+            background: Some(Background::Color(Color::WHITE)), // White default
+            text_color: Color::BLACK,
+            border: Border::default(),
+            shadow: Shadow::default(),
+            snap: true,
+        },
+    }
+}
+
 fn auth_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
     let auth_type_picker = column![
         text("Authentication Type"),
@@ -831,26 +1024,48 @@ fn method_button(method: &HttpMethod) -> Element<'_, Message> {
         .into()
 }
 
-fn method_dropdown() -> Element<'static, Message> {
-    let button_style = |_theme: &Theme, status: Status| {
-        match status {
-            Status::Hovered => button::Style {
-                background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))), // Light gray on hover
-                text_color: Color::BLACK,
-                border: Border::default(),
-                shadow: Shadow::default(),
-                snap: true,
-            },
-            _ => button::Style {
-                background: Some(Background::Color(Color::WHITE)), // White default
-                text_color: Color::BLACK,
-                border: Border::default(),
-                shadow: Shadow::default(),
-                snap: true,
-            },
-        }
-    };
+fn body_format_button(format: &BodyFormat, is_active: bool) -> Element<'_, Message> {
+    button(text(format.to_string()))
+        .on_press(Message::ToggleBodyFormatMenu) // This will show the dropdown
+        // .padding(Padding::from(7))
+        // .width(Length::Fixed(80.0))
+        .style(move |_theme, status| {
+            let base = button::Style::default();
+            if is_active {
+                button::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.0, 0.5, 1.0))), // Active blue color
+                    text_color: Color::WHITE,
+                    border: Border {
+                        radius: 4.0.into(),
+                        ..Border::default()
+                    },
+                    ..base
+                }
+            } else {
+                match status {
+                    Status::Hovered => button::Style {
+                        background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                        border: Border {
+                            radius: 4.0.into(),
+                            ..Border::default()
+                        },
+                        ..base
+                    },
+                    _ => button::Style {
+                        background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+                        border: Border {
+                            radius: 4.0.into(),
+                            ..Border::default()
+                        },
+                        ..base
+                    },
+                }
+            }
+        })
+        .into()
+}
 
+fn method_dropdown() -> Element<'static, Message> {
     // Array of all HTTP methods
     let methods = [
         HttpMethod::GET,
@@ -869,12 +1084,53 @@ fn method_dropdown() -> Element<'static, Message> {
             button(text(method.to_string()))
                 .on_press(Message::MethodChanged(method.clone()))
                 .width(Length::Fixed(90.0))
-                .style(button_style)
+                .style(dropdown_item_style())
                 .into()
         })
         .collect();
 
     container(column(method_buttons))
+        .padding(4)
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::WHITE)),
+            border: Border {
+                color: Color::from_rgb(0.9, 0.9, 0.9),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            text_color: None,
+            shadow: Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.1),
+                offset: Vector::new(0.0, 2.0),
+                blur_radius: 4.0,
+            },
+            snap: true,
+        })
+        .into()
+}
+
+fn body_format_dropdown() -> Element<'static, Message> {
+    // Array of all body formats
+    let formats = [
+        BodyFormat::None,
+        BodyFormat::Json,
+        BodyFormat::Xml,
+        BodyFormat::Text,
+    ];
+
+    // Create buttons for each format using a loop
+    let format_buttons: Vec<Element<'static, Message>> = formats
+        .iter()
+        .map(|format| {
+            button(text(format.to_string()))
+                .on_press(Message::BodyFormatChanged(format.clone()))
+                .width(Length::Fixed(90.0))
+                .style(dropdown_item_style())
+                .into()
+        })
+        .collect();
+
+    container(column(format_buttons))
         .padding(4)
         .style(|_theme: &Theme| container::Style {
             background: Some(Background::Color(Color::WHITE)),
