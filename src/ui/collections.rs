@@ -3,7 +3,7 @@ use crate::ui::{IconName, icon};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
 use iced::widget::{button, column, container, row, scrollable, space, text};
-use iced::{Background, Border, Color, Element, Length, Shadow, Vector};
+use iced::{Background, Border, Color, Element, Length, Shadow, Theme, Vector};
 use iced_aw::ContextMenu;
 use log::info;
 use std::time::Instant;
@@ -113,75 +113,19 @@ impl CollectionPanel {
                         button(text("Add Request"))
                             .on_press(Message::AddHttpRequest(collection_index))
                             .width(Length::Fill)
-                            .style(|_theme, status| {
-                                let base = button::Style::default();
-                                match status {
-                                    Status::Hovered => button::Style {
-                                        background: Some(Background::Color(Color::from_rgb(
-                                            0.7, 0.7, 0.7,
-                                        ))),
-                                        ..base
-                                    },
-                                    _ => button::Style {
-                                        background: Some(Background::Color(Color::TRANSPARENT)),
-                                        ..base
-                                    },
-                                }
-                            }),
+                            .style(context_menu_item_style()),
                         button(text("Add Folder"))
                             .on_press(Message::AddFolder(collection_index))
                             .width(Length::Fill)
-                            .style(|_theme, status| {
-                                let base = button::Style::default();
-                                match status {
-                                    Status::Hovered => button::Style {
-                                        background: Some(Background::Color(Color::from_rgb(
-                                            0.7, 0.7, 0.7,
-                                        ))),
-                                        ..base
-                                    },
-                                    _ => button::Style {
-                                        background: Some(Background::Color(Color::TRANSPARENT)),
-                                        ..base
-                                    },
-                                }
-                            }),
+                            .style(context_menu_item_style()),
                         button(text("Rename"))
                             .on_press(Message::RenameFolder(collection_index))
                             .width(Length::Fill)
-                            .style(|_theme, status| {
-                                let base = button::Style::default();
-                                match status {
-                                    Status::Hovered => button::Style {
-                                        background: Some(Background::Color(Color::from_rgb(
-                                            0.7, 0.7, 0.7,
-                                        ))),
-                                        ..base
-                                    },
-                                    _ => button::Style {
-                                        background: Some(Background::Color(Color::TRANSPARENT)),
-                                        ..base
-                                    },
-                                }
-                            }),
+                            .style(context_menu_item_style()),
                         button(text("Delete"))
                             .on_press(Message::DeleteFolder(collection_index))
                             .width(Length::Fill)
-                            .style(|_theme, status| {
-                                let base = button::Style::default();
-                                match status {
-                                    Status::Hovered => button::Style {
-                                        background: Some(Background::Color(Color::from_rgb(
-                                            0.7, 0.7, 0.7,
-                                        ))),
-                                        ..base
-                                    },
-                                    _ => button::Style {
-                                        background: Some(Background::Color(Color::TRANSPARENT)),
-                                        ..base
-                                    },
-                                }
-                            }),
+                            .style(context_menu_item_style()),
                     ]
                     .spacing(2),
                 )
@@ -285,115 +229,35 @@ impl CollectionPanel {
                                         request_index
                                     ))
                                     .width(Length::Fill)
-                                    .style(|_theme, status| {
-                                        let base = button::Style::default();
-                                        match status {
-                                            Status::Hovered => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::from_rgb(0.7, 0.7, 0.7),
-                                                )),
-                                                ..base
-                                            },
-                                            _ => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::TRANSPARENT,
-                                                )),
-                                                ..base
-                                            },
-                                        }
-                                    }),
+                                    .style(context_menu_item_style()),
                                 button(text("Copy as cURL"))
                                     .on_press(Message::CopyRequestAsCurl(
                                         collection_index,
                                         request_index
                                     ))
                                     .width(Length::Fill)
-                                    .style(|_theme, status| {
-                                        let base = button::Style::default();
-                                        match status {
-                                            Status::Hovered => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::from_rgb(0.7, 0.7, 0.7),
-                                                )),
-                                                ..base
-                                            },
-                                            _ => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::TRANSPARENT,
-                                                )),
-                                                ..base
-                                            },
-                                        }
-                                    }),
+                                    .style(context_menu_item_style()),
                                 button(text("Rename"))
                                     .on_press(Message::RenameRequest(
                                         collection_index,
                                         request_index
                                     ))
                                     .width(Length::Fill)
-                                    .style(|_theme, status| {
-                                        let base = button::Style::default();
-                                        match status {
-                                            Status::Hovered => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::from_rgb(0.7, 0.7, 0.7),
-                                                )),
-                                                ..base
-                                            },
-                                            _ => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::TRANSPARENT,
-                                                )),
-                                                ..base
-                                            },
-                                        }
-                                    }),
+                                    .style(context_menu_item_style()),
                                 button(text("Duplicate"))
                                     .on_press(Message::DuplicateRequest(
                                         collection_index,
                                         request_index
                                     ))
                                     .width(Length::Fill)
-                                    .style(|_theme, status| {
-                                        let base = button::Style::default();
-                                        match status {
-                                            Status::Hovered => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::from_rgb(0.7, 0.7, 0.7),
-                                                )),
-                                                ..base
-                                            },
-                                            _ => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::TRANSPARENT,
-                                                )),
-                                                ..base
-                                            },
-                                        }
-                                    }),
+                                    .style(context_menu_item_style()),
                                 button(text("Delete"))
                                     .on_press(Message::DeleteRequest(
                                         collection_index,
                                         request_index
                                     ))
                                     .width(Length::Fill)
-                                    .style(|__theme, status| {
-                                        let base = button::Style::default();
-                                        match status {
-                                            Status::Hovered => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::from_rgb(0.7, 0.7, 0.7),
-                                                )),
-                                                ..base
-                                            },
-                                            _ => button::Style {
-                                                background: Some(Background::Color(
-                                                    Color::TRANSPARENT,
-                                                )),
-                                                ..base
-                                            },
-                                        }
-                                    }),
+                                    .style(context_menu_item_style()),
                             ]
                             .spacing(2),
                         )
@@ -532,6 +396,21 @@ impl CollectionPanel {
     }
 }
 
+fn context_menu_item_style() -> impl Fn(&Theme, Status) -> button::Style {
+    |_theme: &Theme, status: Status| {
+        let base = button::Style::default();
+        match status {
+            Status::Hovered => button::Style {
+                background: Some(Background::Color(Color::from_rgb(0.7, 0.7, 0.7))),
+                ..base
+            },
+            _ => button::Style {
+                background: Some(Background::Color(Color::TRANSPARENT)),
+                ..base
+            },
+        }
+    }
+}
 fn method_badge<'a>(method: &'a HttpMethod) -> Element<'a, Message> {
     let (color, text_color) = match method {
         HttpMethod::GET => (Color::from_rgb(0.0, 0.8, 0.0), Color::WHITE),
