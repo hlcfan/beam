@@ -68,6 +68,7 @@ pub enum Message {
     CloseMethodMenu,
     ToggleBodyFormatMenu,
     CloseBodyFormatMenu,
+    FormatRequestBody,
     DoNothing, // Used to prevent event propagation
     EnvironmentSelected(usize),
 }
@@ -276,6 +277,42 @@ impl RequestPanel {
 
                 Action::UpdateCurrentRequest(request)
             }
+            Message::FormatRequestBody => {
+                let mut request = current_request.clone();
+
+                // Format the body based on the current format
+                match request.body_format {
+                    BodyFormat::Json => {
+                        // Try to parse and format JSON
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&request.body) {
+                            let formatted = serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| request.body.clone());
+                            log::info!("JSON formatting: original length={}, formatted length={}", request.body.len(), formatted.len());
+                            request.body = formatted;
+                        } else {
+                            log::info!("JSON formatting failed: invalid JSON input");
+                        }
+                    }
+                    BodyFormat::Xml => {
+                        // For XML, we'll just trim whitespace for now
+                        // In a real implementation, you'd use an XML formatter
+                        let trimmed = request.body.trim().to_string();
+                        log::info!("XML formatting: original length={}, trimmed length={}", request.body.len(), trimmed.len());
+                        request.body = trimmed;
+                    }
+                    BodyFormat::Text => {
+                        // For text, trim leading/trailing whitespace
+                        let trimmed = request.body.trim().to_string();
+                        log::info!("Text formatting: original length={}, trimmed length={}", request.body.len(), trimmed.len());
+                        request.body = trimmed;
+                    }
+                    BodyFormat::GraphQL | BodyFormat::None => {
+                        // No formatting for GraphQL or None
+                        log::info!("No formatting applied for {:?}", request.body_format);
+                    }
+                }
+
+                Action::UpdateCurrentRequest(request)
+            }
             Message::AuthTypeChanged(auth_type) => {
                 let mut request = current_request.clone();
 
@@ -481,11 +518,12 @@ impl RequestPanel {
 
         let url_row = row![connected_input].align_y(iced::Alignment::Center);
 
-        // Body tab with format dropdown - now the dropdown button itself handles tab selection
-        let body_tab_button = row![
-            body_format_button(&current_request.body_format, self.selected_tab == RequestTab::Body),
-        ]
-        .align_y(iced::Alignment::Center);
+        // Body tab button (format button moved into body editor overlay)
+        let body_tab_button = tab_button(
+            "Body",
+            self.selected_tab == RequestTab::Body,
+            RequestTab::Body,
+        );
 
         let tabs = row![
             body_tab_button,
@@ -613,8 +651,14 @@ impl RequestPanel {
 }
 
 fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
+    // Special handling for Body tab - clicking it should toggle the format dropdown
+    let message = match tab {
+        RequestTab::Body => Message::ToggleBodyFormatMenu,
+        _ => Message::TabSelected(tab),
+    };
+
     button(text(label))
-        .on_press(Message::TabSelected(tab))
+        .on_press(message)
         .style(move |_theme, status| {
             let base = button::Style::default();
             if is_active {
@@ -687,26 +731,26 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                 text("JSON Format")
                     .size(12)
                     .color(Color::from_rgb(0.5, 0.5, 0.5)),
-                Space::new().width(Length::Fill),
-                button(text("Format"))
-                    .on_press(Message::DoNothing) // TODO: Add JSON formatting
-                    .style(|_theme, _status| button::Style {
-                        background: Some(Background::Color(Color::TRANSPARENT)),
-                        border: Border {
-                            color: Color::from_rgb(0.8, 0.8, 0.8),
-                            width: 1.0,
-                            radius: 3.0.into(),
-                        },
-                        ..Default::default()
-                    })
+                Space::new().width(Length::Fill)
             ]
             .spacing(10)
             .padding(5);
 
-            column![
-                format_info,
-                scrollable(text_editor_widget).height(Length::Fill)
-            ]
+            let overlay_top_right = container(
+                row![
+                    Space::new().width(Length::Fill),
+                    body_format_button(body_format.clone(), true)
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(8),
+            )
+            .width(Length::Fill)
+            .padding(Padding::new(8.0));
+
+            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+            let stacked_editor = stack![editor_area, overlay_top_right];
+
+            column![format_info, stacked_editor]
             .spacing(5)
             .into()
         }
@@ -732,10 +776,21 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                 .size(12)
                 .color(Color::from_rgb(0.5, 0.5, 0.5));
 
-            column![
-                format_info,
-                scrollable(text_editor_widget).height(Length::Fill)
-            ]
+            let overlay_top_right = container(
+                row![
+                    Space::new().width(Length::Fill),
+                    body_format_button(body_format.clone(), true)
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(8),
+            )
+            .width(Length::Fill)
+            .padding(Padding::new(8.0));
+
+            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+            let stacked_editor = stack![editor_area, overlay_top_right];
+
+            column![format_info, stacked_editor]
             .spacing(5)
             .into()
         }
@@ -761,10 +816,21 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                 .size(12)
                 .color(Color::from_rgb(0.5, 0.5, 0.5));
 
-            column![
-                format_info,
-                scrollable(text_editor_widget).height(Length::Fill)
-            ]
+            let overlay_top_right = container(
+                row![
+                    Space::new().width(Length::Fill),
+                    body_format_button(body_format.clone(), true)
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(8),
+            )
+            .width(Length::Fill)
+            .padding(Padding::new(8.0));
+
+            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+            let stacked_editor = stack![editor_area, overlay_top_right];
+
+            column![format_info, stacked_editor]
             .spacing(5)
             .into()
         }
@@ -791,10 +857,21 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                 .size(12)
                 .color(Color::from_rgb(0.8, 0.5, 0.5));
 
-            column![
-                format_info,
-                scrollable(text_editor_widget).height(Length::Fill)
-            ]
+            let overlay_top_right = container(
+                row![
+                    Space::new().width(Length::Fill),
+                    body_format_button(body_format.clone(), true)
+                ]
+                .align_y(iced::Alignment::Center)
+                .spacing(8),
+            )
+            .width(Length::Fill)
+            .padding(Padding::new(8.0));
+
+            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+            let stacked_editor = stack![editor_area, overlay_top_right];
+
+            column![format_info, stacked_editor]
             .spacing(5)
             .into()
         }
@@ -1024,11 +1101,9 @@ fn method_button(method: &HttpMethod) -> Element<'_, Message> {
         .into()
 }
 
-fn body_format_button(format: &BodyFormat, is_active: bool) -> Element<'_, Message> {
-    button(text(format.to_string()))
-        .on_press(Message::ToggleBodyFormatMenu) // This will show the dropdown
-        // .padding(Padding::from(7))
-        // .width(Length::Fixed(80.0))
+fn body_format_button(format: BodyFormat, is_active: bool) -> Element<'static, Message> {
+    button(icon(IconName::Indent).size(14))
+        .on_press(Message::FormatRequestBody)
         .style(move |_theme, status| {
             let base = button::Style::default();
             if is_active {

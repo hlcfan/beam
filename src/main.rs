@@ -273,6 +273,9 @@ impl BeamApp {
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
                         self.current_request = request_config.clone();
+                        
+                        // Update the request body content to reflect the new body
+                        self.request_body_content = text_editor::Content::with_text(&self.current_request.body);
 
                         if let Some(collection) = self
                             .collections

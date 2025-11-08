@@ -11,6 +11,7 @@ pub enum IconName {
     ChevronRight,
     Close,
     Add,
+    Indent,
 }
 
 impl IconName {
@@ -23,6 +24,7 @@ impl IconName {
             IconName::ChevronRight => "chevron-right.svg",
             IconName::Close => "close.svg",
             IconName::Add => "add.svg",
+            IconName::Indent => "indent.svg",
         }
     }
 }
