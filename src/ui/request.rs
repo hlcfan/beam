@@ -654,10 +654,27 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
     // Special handling for Body tab - clicking it should toggle the format dropdown
     let message = match tab {
         RequestTab::Body => Message::ToggleBodyFormatMenu,
-        _ => Message::TabSelected(tab),
+        _ => Message::TabSelected(tab.clone()),
     };
 
-    button(text(label))
+    let content: Element<'a, Message> = match tab {
+        RequestTab::Body => {
+            let chevron = icon(IconName::ChevronDown)
+                .size(Length::Fixed(14.0))
+                .color(if is_active { Color::WHITE } else { Color::from_rgb(0.2, 0.2, 0.2) });
+
+            row![
+                text(label),
+                space::Space::new().width(Length::Fixed(6.0)),
+                chevron,
+            ]
+            .align_y(iced::alignment::Vertical::Center)
+            .into()
+        }
+        _ => text(label).into(),
+    };
+
+    button(content)
         .on_press(message)
         .style(move |_theme, status| {
             let base = button::Style::default();
