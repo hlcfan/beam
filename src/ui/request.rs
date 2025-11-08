@@ -727,14 +727,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                     },
                 );
 
-            let format_info = row![
-                text("JSON Format")
-                    .size(12)
-                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
-                Space::new().width(Length::Fill)
-            ]
-            .spacing(10)
-            .padding(5);
 
             let overlay_top_right = container(
                 row![
@@ -750,9 +742,7 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
             let editor_area = scrollable(text_editor_widget).height(Length::Fill);
             let stacked_editor = stack![editor_area, overlay_top_right];
 
-            column![format_info, stacked_editor]
-            .spacing(5)
-            .into()
+            stacked_editor.into()
         }
         BodyFormat::Xml => {
             let text_editor_widget = text_editor(request_body)
@@ -772,9 +762,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                     },
                 );
 
-            let format_info = text("XML Format")
-                .size(12)
-                .color(Color::from_rgb(0.5, 0.5, 0.5));
 
             let overlay_top_right = container(
                 row![
@@ -790,9 +777,7 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
             let editor_area = scrollable(text_editor_widget).height(Length::Fill);
             let stacked_editor = stack![editor_area, overlay_top_right];
 
-            column![format_info, stacked_editor]
-            .spacing(5)
-            .into()
+            stacked_editor.into()
         }
         BodyFormat::Text => {
             let text_editor_widget = text_editor(request_body)
@@ -812,9 +797,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                     },
                 );
 
-            let format_info = text("Plain Text")
-                .size(12)
-                .color(Color::from_rgb(0.5, 0.5, 0.5));
 
             let overlay_top_right = container(
                 row![
@@ -830,9 +812,7 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
             let editor_area = scrollable(text_editor_widget).height(Length::Fill);
             let stacked_editor = stack![editor_area, overlay_top_right];
 
-            column![format_info, stacked_editor]
-            .spacing(5)
-            .into()
+            stacked_editor.into()
         }
         BodyFormat::GraphQL => {
             // Fallback for existing GraphQL requests - treat as plain text
@@ -853,9 +833,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                     },
                 );
 
-            let format_info = text("GraphQL (deprecated - use Text format)")
-                .size(12)
-                .color(Color::from_rgb(0.8, 0.5, 0.5));
 
             let overlay_top_right = container(
                 row![
@@ -871,9 +848,7 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
             let editor_area = scrollable(text_editor_widget).height(Length::Fill);
             let stacked_editor = stack![editor_area, overlay_top_right];
 
-            column![format_info, stacked_editor]
-            .spacing(5)
-            .into()
+            stacked_editor.into()
         }
     }
 }
