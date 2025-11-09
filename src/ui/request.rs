@@ -270,6 +270,14 @@ impl RequestPanel {
             Message::BodyFormatChanged(format) => {
                 let mut request = current_request.clone();
                 request.body_format = format;
+                // Update Content-Type based on selected body format
+                request.content_type = match format {
+                    BodyFormat::Json => "application/json".to_string(),
+                    BodyFormat::Xml => "application/xml".to_string(),
+                    BodyFormat::Text => "text/plain".to_string(),
+                    BodyFormat::GraphQL => "application/graphql".to_string(),
+                    BodyFormat::None => request.content_type,
+                };
                 // Dismiss the dropdown after selecting a format
                 self.body_format_menu_open = false;
                 // Keep focus on Body tab when changing format
@@ -284,9 +292,16 @@ impl RequestPanel {
                 match request.body_format {
                     BodyFormat::Json => {
                         // Try to parse and format JSON
-                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&request.body) {
-                            let formatted = serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| request.body.clone());
-                            log::info!("JSON formatting: original length={}, formatted length={}", request.body.len(), formatted.len());
+                        if let Ok(json_value) =
+                            serde_json::from_str::<serde_json::Value>(&request.body)
+                        {
+                            let formatted = serde_json::to_string_pretty(&json_value)
+                                .unwrap_or_else(|_| request.body.clone());
+                            log::info!(
+                                "JSON formatting: original length={}, formatted length={}",
+                                request.body.len(),
+                                formatted.len()
+                            );
                             request.body = formatted;
                         } else {
                             log::info!("JSON formatting failed: invalid JSON input");
@@ -296,13 +311,21 @@ impl RequestPanel {
                         // For XML, we'll just trim whitespace for now
                         // In a real implementation, you'd use an XML formatter
                         let trimmed = request.body.trim().to_string();
-                        log::info!("XML formatting: original length={}, trimmed length={}", request.body.len(), trimmed.len());
+                        log::info!(
+                            "XML formatting: original length={}, trimmed length={}",
+                            request.body.len(),
+                            trimmed.len()
+                        );
                         request.body = trimmed;
                     }
                     BodyFormat::Text => {
                         // For text, trim leading/trailing whitespace
                         let trimmed = request.body.trim().to_string();
-                        log::info!("Text formatting: original length={}, trimmed length={}", request.body.len(), trimmed.len());
+                        log::info!(
+                            "Text formatting: original length={}, trimmed length={}",
+                            request.body.len(),
+                            trimmed.len()
+                        );
                         request.body = trimmed;
                     }
                     BodyFormat::GraphQL | BodyFormat::None => {
@@ -519,8 +542,18 @@ impl RequestPanel {
         let url_row = row![connected_input].align_y(iced::Alignment::Center);
 
         // Body tab button (format button moved into body editor overlay)
+        // Label: default "Body"; after selection show selected format using Content-Type
+        let body_label = if !current_request.content_type.is_empty() {
+            match body_label_from_content_type(&current_request.content_type) {
+                Some(lbl) => lbl.to_string(),
+                None => current_request.body_format.to_string(),
+            }
+        } else {
+            "Body".to_string()
+        };
+
         let body_tab_button = tab_button(
-            "Body",
+            body_label,
             self.selected_tab == RequestTab::Body,
             RequestTab::Body,
         );
@@ -528,22 +561,22 @@ impl RequestPanel {
         let tabs = row![
             body_tab_button,
             tab_button(
-                "Params",
+                "Params".to_string(),
                 self.selected_tab == RequestTab::Params,
                 RequestTab::Params
             ),
             tab_button(
-                "Headers",
+                "Headers".to_string(),
                 self.selected_tab == RequestTab::Headers,
                 RequestTab::Headers
             ),
             tab_button(
-                "Auth",
+                "Auth".to_string(),
                 self.selected_tab == RequestTab::Auth,
                 RequestTab::Auth
             ),
             tab_button(
-                "Post-Script",
+                "Post-Script".to_string(),
                 self.selected_tab == RequestTab::PostScript,
                 RequestTab::PostScript
             ),
@@ -650,7 +683,7 @@ impl RequestPanel {
     }
 }
 
-fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
+fn tab_button<'a>(label: String, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
     // Special handling for Body tab - clicking it should toggle the format dropdown
     let message = match tab {
         RequestTab::Body => Message::ToggleBodyFormatMenu,
@@ -659,9 +692,14 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
 
     let content: Element<'a, Message> = match tab {
         RequestTab::Body => {
-            let chevron = icon(IconName::ChevronDown)
-                .size(Length::Fixed(14.0))
-                .color(if is_active { Color::WHITE } else { Color::from_rgb(0.2, 0.2, 0.2) });
+            let chevron =
+                icon(IconName::ChevronDown)
+                    .size(Length::Fixed(14.0))
+                    .color(if is_active {
+                        Color::WHITE
+                    } else {
+                        Color::from_rgb(0.2, 0.2, 0.2)
+                    });
 
             row![
                 text(label),
@@ -712,20 +750,21 @@ fn tab_button<'a>(label: &'a str, is_active: bool, tab: RequestTab) -> Element<'
         .into()
 }
 
-fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat) -> Element<'a, Message> {
+fn body_tab<'a>(
+    request_body: &'a text_editor::Content,
+    body_format: BodyFormat,
+) -> Element<'a, Message> {
     match body_format {
-        BodyFormat::None => {
-            container(
-                text("No body")
-                    .size(14)
-                    .color(Color::from_rgb(0.6, 0.6, 0.6))
-            )
-            .center_x(Fill)
-            .center_y(Fill)
-            .width(Fill)
-            .height(Fill)
-            .into()
-        }
+        BodyFormat::None => container(
+            text("No body")
+                .size(14)
+                .color(Color::from_rgb(0.6, 0.6, 0.6)),
+        )
+        .center_x(Fill)
+        .center_y(Fill)
+        .width(Fill)
+        .height(Fill)
+        .into(),
         BodyFormat::Json => {
             let text_editor_widget = text_editor(request_body)
                 .on_action(Message::BodyChanged)
@@ -743,7 +782,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                         selection: theme.palette().primary,
                     },
                 );
-
 
             let overlay_top_right = container(
                 row![
@@ -779,7 +817,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                     },
                 );
 
-
             let overlay_top_right = container(
                 row![
                     Space::new().width(Length::Fill),
@@ -813,7 +850,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                         selection: theme.palette().primary,
                     },
                 );
-
 
             let overlay_top_right = container(
                 row![
@@ -849,7 +885,6 @@ fn body_tab<'a>(request_body: &'a text_editor::Content, body_format: BodyFormat)
                         selection: theme.palette().primary,
                     },
                 );
-
 
             let overlay_top_right = container(
                 row![
@@ -1174,6 +1209,22 @@ fn method_dropdown() -> Element<'static, Message> {
             snap: true,
         })
         .into()
+}
+
+// Map request Content-Type to a short Body tab label
+fn body_label_from_content_type(content_type: &str) -> Option<&'static str> {
+    let ct = content_type.to_lowercase();
+    if ct.contains("json") {
+        Some("JSON")
+    } else if ct.contains("xml") || ct.contains("html") {
+        Some("XML")
+    } else if ct.contains("graphql") {
+        Some("GraphQL")
+    } else if ct.starts_with("text/") || ct.contains("plain") {
+        Some("Text")
+    } else {
+        None
+    }
 }
 
 fn body_format_dropdown() -> Element<'static, Message> {
