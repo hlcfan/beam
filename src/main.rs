@@ -17,7 +17,7 @@ use ui::ResponsePanel;
 use crate::ui::collections;
 use crate::ui::request;
 use crate::ui::response;
-use crate::ui::{icon, IconName};
+use crate::ui::{IconName, icon};
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
@@ -25,7 +25,7 @@ use iced::widget::{
     button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
     text_editor, text_input,
 };
-use iced::{Color, Element, Fill, Length, Size, Task, Theme, Vector};
+use iced::{Color, Element, Fill, Length, Padding, Size, Task, Theme, Vector};
 use log::{error, info};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -273,9 +273,10 @@ impl BeamApp {
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
                         self.current_request = request_config.clone();
-                        
+
                         // Update the request body content to reflect the new body
-                        self.request_body_content = text_editor::Content::with_text(&self.current_request.body);
+                        self.request_body_content =
+                            text_editor::Content::with_text(&self.current_request.body);
 
                         if let Some(collection) = self
                             .collections
@@ -1683,10 +1684,12 @@ impl BeamApp {
                 pane_grid,
                 mouse_area(
                     container(
-                        mouse_area(container(self.environment_popup_view())
-                            .width(800)
-                            .height(650))
-                            .on_press(Message::DoNothing)
+                        mouse_area(
+                            container(self.environment_popup_view())
+                                .width(800)
+                                .height(650)
+                        )
+                        .on_press(Message::DoNothing)
                     )
                     .center_x(Fill)
                     .center_y(Fill)
@@ -1860,14 +1863,15 @@ impl BeamApp {
         let close_button = button(
             container(
                 icon(IconName::Close)
-                    .size(16)
-                    .color(Color::from_rgb(0.5, 0.5, 0.5))
+                    .size(20)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
             )
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Center)
             .width(Length::Fill)
-            .height(Length::Fill)
+            .height(Length::Fill),
         )
+        .padding(Padding::from(6.0))
         .on_press(Message::CloseEnvironmentPopup)
         .width(32)
         .height(32)
@@ -1995,12 +1999,12 @@ impl BeamApp {
                             container(
                                 icon(IconName::Close)
                                     .size(14)
-                                    .color(Color::from_rgb(0.6, 0.6, 0.6))
+                                    .color(Color::from_rgb(0.6, 0.6, 0.6)),
                             )
                             .align_x(iced::alignment::Horizontal::Center)
                             .align_y(iced::alignment::Vertical::Center)
                             // .width(Length::Fill)
-                            .height(Length::Fill)
+                            .height(Length::Fill),
                         )
                         .on_press(Message::RemoveVariable(active_idx, key_clone3))
                         .width(32)
@@ -2008,7 +2012,9 @@ impl BeamApp {
                             let base = button::Style::default();
                             match status {
                                 button::Status::Hovered => button::Style {
-                                    background: Some(iced::Background::Color(Color::from_rgb(0.95, 0.85, 0.85))),
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.95, 0.85, 0.85,
+                                    ))),
                                     border: iced::Border {
                                         radius: 4.0.into(),
                                         ..Default::default()
@@ -2016,7 +2022,9 @@ impl BeamApp {
                                     ..base
                                 },
                                 _ => button::Style {
-                                    background: Some(iced::Background::Color(Color::from_rgb(0.97, 0.97, 0.97))),
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.97, 0.97, 0.97,
+                                    ))),
                                     border: iced::Border {
                                         radius: 4.0.into(),
                                         ..Default::default()
@@ -2431,12 +2439,12 @@ impl BeamApp {
 
     fn theme(&self) -> Theme {
         // Catppuccin Mocha color palette
-        let base = Color::from_rgb(0.118, 0.118, 0.180);        // #1e1e2e
-        let text = Color::from_rgb(0.804, 0.839, 0.957);        // #cdd6f4
-        let primary = Color::from_rgb(0.537, 0.706, 0.980);     // #89b4fa (blue)
-        let success = Color::from_rgb(0.651, 0.890, 0.631);     // #a6e3a1 (green)
-        let danger = Color::from_rgb(0.953, 0.545, 0.659);      // #f38ba8 (red)
-        let warning = Color::from_rgb(0.980, 0.706, 0.529);     // #fab387 (peach)
+        let base = Color::from_rgb(0.118, 0.118, 0.180); // #1e1e2e
+        let text = Color::from_rgb(0.804, 0.839, 0.957); // #cdd6f4
+        let primary = Color::from_rgb(0.537, 0.706, 0.980); // #89b4fa (blue)
+        let success = Color::from_rgb(0.651, 0.890, 0.631); // #a6e3a1 (green)
+        let danger = Color::from_rgb(0.953, 0.545, 0.659); // #f38ba8 (red)
+        let warning = Color::from_rgb(0.980, 0.706, 0.529); // #fab387 (peach)
 
         Theme::custom(
             "Catppuccin Mocha".to_string(),

@@ -784,12 +784,9 @@ fn body_tab<'a>(
                 );
 
             let overlay_top_right = container(
-                row![
-                    Space::new().width(Length::Fill),
-                    body_format_button(body_format.clone(), true)
-                ]
-                .align_y(iced::Alignment::Center)
-                .spacing(8),
+                row![Space::new().width(Length::Fill), body_format_button()]
+                    .align_y(iced::Alignment::Center)
+                    .spacing(8),
             )
             .width(Length::Fill)
             .padding(Padding::new(8.0));
@@ -818,12 +815,9 @@ fn body_tab<'a>(
                 );
 
             let overlay_top_right = container(
-                row![
-                    Space::new().width(Length::Fill),
-                    body_format_button(body_format.clone(), true)
-                ]
-                .align_y(iced::Alignment::Center)
-                .spacing(8),
+                row![Space::new().width(Length::Fill), body_format_button()]
+                    .align_y(iced::Alignment::Center)
+                    .spacing(8),
             )
             .width(Length::Fill)
             .padding(Padding::new(8.0));
@@ -852,12 +846,9 @@ fn body_tab<'a>(
                 );
 
             let overlay_top_right = container(
-                row![
-                    Space::new().width(Length::Fill),
-                    body_format_button(body_format.clone(), true)
-                ]
-                .align_y(iced::Alignment::Center)
-                .spacing(8),
+                row![Space::new().width(Length::Fill), body_format_button()]
+                    .align_y(iced::Alignment::Center)
+                    .spacing(8),
             )
             .width(Length::Fill)
             .padding(Padding::new(8.0));
@@ -887,12 +878,9 @@ fn body_tab<'a>(
                 );
 
             let overlay_top_right = container(
-                row![
-                    Space::new().width(Length::Fill),
-                    body_format_button(body_format.clone(), true)
-                ]
-                .align_y(iced::Alignment::Center)
-                .spacing(8),
+                row![Space::new().width(Length::Fill), body_format_button()]
+                    .align_y(iced::Alignment::Center)
+                    .spacing(8),
             )
             .width(Length::Fill)
             .padding(Padding::new(8.0));
@@ -1128,43 +1116,39 @@ fn method_button(method: &HttpMethod) -> Element<'_, Message> {
         .into()
 }
 
-fn body_format_button(format: BodyFormat, is_active: bool) -> Element<'static, Message> {
-    button(icon(IconName::Indent).size(14))
-        .on_press(Message::FormatRequestBody)
-        .style(move |_theme, status| {
-            let base = button::Style::default();
-            if is_active {
-                button::Style {
-                    background: Some(Background::Color(Color::from_rgb(0.0, 0.5, 1.0))), // Active blue color
-                    text_color: Color::WHITE,
-                    border: Border {
-                        radius: 4.0.into(),
-                        ..Border::default()
-                    },
-                    ..base
-                }
-            } else {
-                match status {
-                    Status::Hovered => button::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Border::default()
-                        },
-                        ..base
-                    },
-                    _ => button::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
-                        border: Border {
-                            radius: 4.0.into(),
-                            ..Border::default()
-                        },
-                        ..base
-                    },
-                }
-            }
-        })
-        .into()
+fn body_format_button() -> Element<'static, Message> {
+    button(
+        icon(IconName::Indent)
+            .size(28)
+            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+    )
+    .on_press(Message::FormatRequestBody)
+    .width(Length::Fixed(32.0))
+    .height(Length::Fixed(32.0))
+    .padding(Padding::from(6.0))
+    .style(move |_theme, status| {
+        let base = button::Style::default();
+
+        match status {
+            Status::Hovered => button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..base
+            },
+            _ => button::Style {
+                background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..base
+            },
+        }
+    })
+    .into()
 }
 
 fn method_dropdown() -> Element<'static, Message> {
