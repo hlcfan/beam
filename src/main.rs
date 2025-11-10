@@ -447,22 +447,44 @@ impl BeamApp {
                         if let Some(collection) =
                             self.collections.get_mut(request_config.collection_index)
                         {
-                            collection.requests.push(request_config);
-                        }
-                        Task::none()
+                            if let Some(last_request) = collection.requests.last() {
+                                let path = last_request.path.clone();
 
-                        // TODO: save to disk
-                        //     if let Ok(storage_manager) =
-                        //         storage::StorageManager::with_default_config().await
-                        //     {
-                        //         if let Err(e) = storage_manager
-                        //             .storage()
-                        //             .save_request(&collection_name, &persistent_request)
-                        //             .await
-                        //         {
-                        //             error!("Failed to save request: {}", e);
-                        //         }
-                        //     }
+                                let file_name: usize = path
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("0001")
+                                    .parse()
+                                    .unwrap();
+
+                                let file_path =
+                                    path.parent().and_then(|s| s.to_str()).unwrap_or("0001");
+
+                                let new_filename =
+                                    format!("{}/{:04}.toml", file_path, file_name + 1);
+
+                                let last_request_path = PathBuf::from(new_filename);
+
+                                self.last_opened_request = Some((
+                                    request_config.collection_index,
+                                    request_config.request_index,
+                                ));
+
+                                let mut new_req = request_config.clone();
+                                new_req.path = last_request_path;
+
+                                collection.requests.push(new_req.clone());
+
+                                self.current_request = new_req.clone();
+                                let req_to_save = new_req.clone();
+
+                                tokio::spawn(async move {
+                                    Self::save_request(req_to_save).await;
+                                });
+                            }
+                        }
+
+                        Task::none()
                     }
                     collections::Action::SaveNewCollection(new_collection) => {
                         self.collections.push(new_collection.clone());
