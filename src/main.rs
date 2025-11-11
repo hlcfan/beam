@@ -444,9 +444,11 @@ impl BeamApp {
                         Task::none()
                     }
                     collections::Action::SaveRequestToCollection(request_config) => {
+                        info!("====req: {:?}", request_config);
                         if let Some(collection) =
                             self.collections.get_mut(request_config.collection_index)
                         {
+
                             if let Some(last_request) = collection.requests.last() {
                                 let path = last_request.path.clone();
 
@@ -481,6 +483,29 @@ impl BeamApp {
                                 tokio::spawn(async move {
                                     Self::save_request(req_to_save).await;
                                 });
+                            } else {
+                                // empty collection
+                                let new_filename = format!("{}/{}.toml", "0001", "0001");
+
+                                let last_request_path = PathBuf::from(new_filename);
+
+                                self.last_opened_request = Some((
+                                    request_config.collection_index,
+                                    request_config.request_index,
+                                ));
+
+                                let mut new_req = request_config.clone();
+                                new_req.path = last_request_path;
+                                info!("====new req: {:?}", new_req);
+
+                                collection.requests.push(new_req.clone());
+
+                                self.current_request = new_req.clone();
+                                let req_to_save = new_req.clone();
+
+                                tokio::spawn(async move {
+                                    Self::save_request(req_to_save).await;
+                                });
                             }
                         }
 
@@ -489,7 +514,6 @@ impl BeamApp {
                     collections::Action::SaveNewCollection(new_collection) => {
                         self.collections.push(new_collection.clone());
 
-                        // Save the collection asynchronously without blocking the UI
                         tokio::spawn(async move {
                             if let Ok(storage_manager) =
                                 storage::StorageManager::with_default_config().await
