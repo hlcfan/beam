@@ -1,9 +1,10 @@
 use super::{
-    CollectionMetadata, CollectionStorage, EnvironmentsMetadata,
-    PersistentEnvironments, PersistentRequest, StorageError,
+    CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentEnvironments,
+    PersistentRequest, StorageError,
 };
-use crate::types::{BodyFormat, Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
-use iced::wgpu::TextureUsages;
+use crate::types::{
+    BodyFormat, Environment, RequestCollection, RequestConfig, SerializableRequestConfig,
+};
 use log::{error, info};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -584,16 +585,20 @@ impl CollectionStorage for TomlFileStorage {
 
             // Sort requests by file name alphanumerically
             requests.sort_by(|a, b| {
-                let file_name_a = a.path.file_name()
+                let file_name_a = a
+                    .path
+                    .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("");
-                let file_name_b = b.path.file_name()
+                let file_name_b = b
+                    .path
+                    .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("");
                 file_name_a.cmp(file_name_b)
             });
 
-            collection_data.push( RequestCollection {
+            collection_data.push(RequestCollection {
                 folder_name: folder_name,
                 name: collection_name,
                 requests: requests,
@@ -844,10 +849,15 @@ impl CollectionStorage for TomlFileStorage {
         Ok(())
     }
 
-    async fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError> {
+    async fn save_request_by_path(
+        &self,
+        request_config: &RequestConfig,
+    ) -> Result<(), StorageError> {
         // Check if the path is empty (new request without a file path)
         if request_config.path.as_os_str().is_empty() {
-            return Err(StorageError::InvalidFormat("Request path is empty".to_string()));
+            return Err(StorageError::InvalidFormat(
+                "Request path is empty".to_string(),
+            ));
         }
 
         // Serialize the request config to TOML
@@ -859,6 +869,41 @@ impl CollectionStorage for TomlFileStorage {
 
         info!("===request saved to path: {:?}", request_config.path);
         Ok(())
+    }
+
+    fn get_new_request_path_from_collection(
+        &self,
+        collection: &RequestCollection,
+    ) -> String {
+        // If collection is empty, update the request path and save
+        // else deduce the new file name, and save
+        // Check if the path is empty (new request without a file path)
+        let base_path = self.base_path.to_str().unwrap().to_string();
+        if collection.requests.is_empty() {
+            return format!("{}/{}/{}.toml", base_path, collection.folder_name, "0001");
+        } else {
+            if let Some(last_request) = collection.requests.last() {
+                let path = last_request.path.clone();
+
+                let file_name: usize = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("0001")
+                    .parse()
+                    .unwrap();
+
+                let file_path = path.parent().and_then(|s| s.to_str()).unwrap_or("0001");
+
+                format!(
+                  "{}/{}/{:04}.toml",
+                  base_path,
+                  file_path,
+                  file_name + 1
+                )
+            } else {
+                format!("{}/{}/{}.toml", base_path, collection.folder_name, "0001")
+            }
+        }
     }
 
     async fn delete_request(
