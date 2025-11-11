@@ -703,16 +703,11 @@ impl BeamApp {
                         }
                     }
                     Err(error) => {
-                        // TODO:
-                        // Self::update_response_content(
-                        //     self.response_panel.get_response_body_content_mut(),
-                        //     &error,
-                        // );
                         let error_response = ResponseData {
                             status: 0,
                             status_text: "Error".to_string(),
                             headers: vec![],
-                            body: error,
+                            body: error.clone(),
                             content_type: "text/plain".to_string(),
                             is_binary: false,
                             size: 0,
@@ -722,7 +717,9 @@ impl BeamApp {
                         // Store the error response in the current request
                         self.current_request.last_response = Some(error_response.clone());
 
-                        // Update the request in the collections as well
+                        self.response_body_content =
+                            text_editor::Content::with_text(error.as_str());
+
                         if let Some(collection) = self
                             .collections
                             .get_mut(self.current_request.collection_index)
@@ -732,6 +729,11 @@ impl BeamApp {
                                 .get_mut(self.current_request.request_index)
                             {
                                 request.last_response = Some(error_response);
+                                let request_to_save = request.clone();
+
+                                tokio::spawn(async move {
+                                    Self::save_request(request_to_save);
+                                });
                             }
                         }
                     }

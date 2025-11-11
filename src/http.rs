@@ -33,7 +33,6 @@ fn is_binary_content_type(content_type: &str) -> bool {
 
 pub async fn send_request(config: RequestConfig) -> Result<ResponseData, String> {
     let start_time = Instant::now();
-    info!("DEBUG: send_request");
 
     // Validate URL
     if config.url.trim().is_empty() {
