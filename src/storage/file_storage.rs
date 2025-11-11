@@ -7,8 +7,8 @@ use crate::types::{
 };
 use log::{error, info};
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 /// TOML-based file storage implementation
 pub struct TomlFileStorage {
@@ -157,15 +157,10 @@ impl TomlFileStorage {
     // }
 
     /// Save a collection to disk (metadata only)
-    fn save_collection_to_disk(
-        &self,
-        collection: &RequestCollection,
-    ) -> Result<(), StorageError> {
+    fn save_collection_to_disk(&self, collection: &RequestCollection) -> Result<(), StorageError> {
         // Try to find existing collection directory by name first
         info!("===collection: {:?}", collection);
-        let collection_dir = match self
-            .find_collection_directory_by_name(&collection.name)?
-        {
+        let collection_dir = match self.find_collection_directory_by_name(&collection.name)? {
             Some(existing_dir) => existing_dir,
             None => {
                 // If no existing directory found, create a new one with numeric name
@@ -652,21 +647,16 @@ impl CollectionStorage for TomlFileStorage {
         self.save_collection_with_requests(collection)
     }
 
-    fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError> {
-        // Find collection directory by searching TOML metadata
-        let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)?
-        {
-            Some(dir) => dir,
-            None => {
-                return Err(StorageError::CollectionNotFound(
-                    collection_name.to_string(),
-                ));
-            }
-        };
+    fn delete_collection_by_folder_name(&self, folder_name: &str) {
+        let base_path = self.base_path.to_str().unwrap().to_string();
+        let dir = format!("{}/collections/{}", base_path, folder_name);
 
-        fs::remove_dir_all(&collection_dir)?;
-        Ok(())
+        match fs::remove_dir_all(&dir) {
+            Ok(()) => {}
+            Err(e) => {
+                error!("fail to delete folder: {:?}, error: {}", folder_name, e);
+            }
+        }
     }
 
     fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError> {
@@ -677,10 +667,7 @@ impl CollectionStorage for TomlFileStorage {
         };
 
         // Check if new name already exists
-        if self
-            .find_collection_directory_by_name(new_name)?
-            .is_some()
-        {
+        if self.find_collection_directory_by_name(new_name)?.is_some() {
             return Err(StorageError::InvalidFormat(format!(
                 "Collection '{}' already exists",
                 new_name
@@ -714,9 +701,7 @@ impl CollectionStorage for TomlFileStorage {
         collection_name: &str,
         request: &RequestConfig,
     ) -> Result<(), StorageError> {
-        let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)?
-        {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name)? {
             Some(dir) => dir,
             None => {
                 return Err(StorageError::CollectionNotFound(
@@ -779,9 +764,7 @@ impl CollectionStorage for TomlFileStorage {
         request_name: &str,
         request_config: &RequestConfig,
     ) -> Result<(), StorageError> {
-        let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)?
-        {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name)? {
             Some(dir) => dir,
             None => {
                 return Err(StorageError::CollectionNotFound(
@@ -848,10 +831,7 @@ impl CollectionStorage for TomlFileStorage {
         Ok(())
     }
 
-    fn save_request_by_path(
-        &self,
-        request_config: &RequestConfig,
-    ) -> Result<(), StorageError> {
+    fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError> {
         // Check if the path is empty (new request without a file path)
         if request_config.path.as_os_str().is_empty() {
             return Err(StorageError::InvalidFormat(
@@ -869,16 +849,16 @@ impl CollectionStorage for TomlFileStorage {
         Ok(())
     }
 
-    fn get_new_request_path_from_collection(
-        &self,
-        collection: &RequestCollection,
-    ) -> String {
+    fn get_new_request_path_from_collection(&self, collection: &RequestCollection) -> String {
         // If collection is empty, update the request path and save
         // else deduce the new file name, and save
         // Check if the path is empty (new request without a file path)
         let base_path = self.base_path.to_str().unwrap().to_string();
         if collection.requests.is_empty() {
-            return format!("{}/collections/{}/{}.toml", base_path, collection.folder_name, "0001");
+            return format!(
+                "{}/collections/{}/{}.toml",
+                base_path, collection.folder_name, "0001"
+            );
         } else {
             if let Some(last_request) = collection.requests.last() {
                 let path = last_request.path.clone();
@@ -892,11 +872,7 @@ impl CollectionStorage for TomlFileStorage {
 
                 let file_path = path.parent().and_then(|s| s.to_str()).unwrap_or("0001");
 
-                format!(
-                  "{}/{:04}.toml",
-                  file_path,
-                  file_name + 1
-                )
+                format!("{}/{:04}.toml", file_path, file_name + 1)
             } else {
                 format!("{}/{}/{}.toml", base_path, collection.folder_name, "0001")
             }
@@ -908,9 +884,7 @@ impl CollectionStorage for TomlFileStorage {
         collection_name: &str,
         request_name: &str,
     ) -> Result<(), StorageError> {
-        let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)?
-        {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name)? {
             Some(dir) => dir,
             None => {
                 return Err(StorageError::CollectionNotFound(
@@ -971,9 +945,7 @@ impl CollectionStorage for TomlFileStorage {
         old_name: &str,
         new_name: &str,
     ) -> Result<(), StorageError> {
-        let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)?
-        {
+        let collection_dir = match self.find_collection_directory_by_name(collection_name)? {
             Some(dir) => dir,
             None => {
                 return Err(StorageError::CollectionNotFound(
@@ -1175,8 +1147,7 @@ impl CollectionStorage for TomlFileStorage {
 
         // Instead of using the display name, we need to find the actual file by index
         // Find the actual collection directory (which may have a numeric prefix)
-        let collection_dir = self
-            .find_collection_directory_by_name(&collection.name)?;
+        let collection_dir = self.find_collection_directory_by_name(&collection.name)?;
         if collection_dir.is_none() {
             eprintln!(
                 "DEBUG: collection directory not found for: {}",

@@ -1,14 +1,14 @@
-use super::types::{RequestCollection, Environment, RequestConfig};
-use std::path::PathBuf;
+use super::types::{Environment, RequestCollection, RequestConfig};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-pub mod persistent_types;
-pub mod file_storage;
 pub mod conversions;
+pub mod file_storage;
+pub mod persistent_types;
 
 // Re-export for convenience
-pub use persistent_types::*;
 pub use file_storage::TomlFileStorage;
+pub use persistent_types::*;
 
 /// Main storage trait that abstracts persistence operations
 #[allow(dead_code)]
@@ -20,34 +20,52 @@ pub trait CollectionStorage: Send + Sync {
     fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError>;
 
     /// Save a collection with all its requests to storage (for initial creation)
-    fn save_collection_with_requests(&self, collection: &RequestCollection) -> Result<(), StorageError>;
+    fn save_collection_with_requests(
+        &self,
+        collection: &RequestCollection,
+    ) -> Result<(), StorageError>;
 
     /// Delete a collection from storage
-    fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError>;
+    fn delete_collection_by_folder_name(&self, folder_name: &str);
 
     /// Rename a collection
     fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError>;
 
     /// Save a request within a collection
-    fn save_request(&self, collection_name: &str, request: &RequestConfig) -> Result<(), StorageError>;
+    fn save_request(
+        &self,
+        collection_name: &str,
+        request: &RequestConfig,
+    ) -> Result<(), StorageError>;
 
     /// Save a request into a collection
     fn get_new_request_path_from_collection(&self, collection: &RequestCollection) -> String;
 
     /// Save a serializable request config directly (optimized version)
-    fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;
+    fn save_serializable_request(
+        &self,
+        collection_name: &str,
+        request_name: &str,
+        request_config: &RequestConfig,
+    ) -> Result<(), StorageError>;
 
     /// Save a request directly to a file path (simplified version)
     fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError>;
 
     /// Delete a request from a collection
-    fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
+    fn delete_request(&self, collection_name: &str, request_name: &str)
+    -> Result<(), StorageError>;
 
     /// Delete a request by its file path directly (more efficient when path is known)
     fn delete_request_by_path(&self, request_path: &std::path::Path) -> Result<(), StorageError>;
 
     /// Rename a request within a collection
-    fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError>;
+    fn rename_request(
+        &self,
+        collection_name: &str,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<(), StorageError>;
 
     /// Load environments from storage
     fn load_environments(&self) -> Result<PersistentEnvironments, StorageError>;
@@ -56,19 +74,32 @@ pub trait CollectionStorage: Send + Sync {
     fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError>;
 
     /// Save environments with active environment information
-    fn save_environments_with_active(&self, environments: &[Environment], active_environment: Option<&str>) -> Result<(), StorageError>;
+    fn save_environments_with_active(
+        &self,
+        environments: &[Environment],
+        active_environment: Option<&str>,
+    ) -> Result<(), StorageError>;
 
     /// Load active environment name from storage
     fn load_active_environment(&self) -> Result<Option<String>, StorageError>;
 
     /// Save the last opened request
-    fn save_last_opened_request(&self, collection_index: usize, request_index: usize) -> Result<(), StorageError>;
+    fn save_last_opened_request(
+        &self,
+        collection_index: usize,
+        request_index: usize,
+    ) -> Result<(), StorageError>;
 
     /// Load the last opened request
     fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError>;
 
     /// Load a specific request by collection and request indices
-    fn load_request_by_indices(&self, collections: &[RequestCollection], collection_index: usize, request_index: usize) -> Result<Option<RequestConfig>, StorageError>;
+    fn load_request_by_indices(
+        &self,
+        collections: &[RequestCollection],
+        collection_index: usize,
+        request_index: usize,
+    ) -> Result<Option<RequestConfig>, StorageError>;
 
     /// Initialize storage (create directories, etc.)
     fn initialize_storage(&self) -> Result<(), StorageError>;
@@ -139,8 +170,6 @@ pub enum StorageError {
     NotInitialized,
 }
 
-
-
 /// Storage manager that provides a unified interface
 pub struct StorageManager {
     storage: Box<dyn CollectionStorage>,
@@ -161,10 +190,14 @@ impl StorageManager {
         let storage: Box<dyn CollectionStorage> = match config.storage_type {
             StorageType::TomlFiles => Box::new(TomlFileStorage::new(config.base_path.clone())),
             StorageType::Sqlite => {
-                return Err(StorageError::InvalidFormat("SQLite not implemented yet".to_string()));
+                return Err(StorageError::InvalidFormat(
+                    "SQLite not implemented yet".to_string(),
+                ));
             }
             StorageType::Json => {
-                return Err(StorageError::InvalidFormat("JSON not implemented yet".to_string()));
+                return Err(StorageError::InvalidFormat(
+                    "JSON not implemented yet".to_string(),
+                ));
             }
         };
 

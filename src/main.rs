@@ -601,40 +601,25 @@ impl BeamApp {
                             self.rename_target = Some(RenameTarget::Folder(collection_index));
                         }
 
-                        // Update the folder name
-                        // if let Some(collection) = self.collections.get_mut(collection_index) {
-                        //     let old_name = collection.name.clone();
-                        //     collection.name = new_name.clone();
-
-                        //     // Hide the modal
-                        //     self.show_rename_modal = false;
-                        //     self.rename_input.clear();
-                        //     self.rename_target = None;
-
-                        //     // Rename the collection folder (non-blocking)
-                        //     tokio::spawn(async move {
-                        //         if let Ok(storage_manager) =
-                        //             storage::StorageManager::with_default_config().await
-                        //         {
-                        //             let storage = storage_manager.storage();
-                        //             if let Err(e) =
-                        //                 storage.rename_collection(&old_name, &new_name).await
-                        //             {
-                        //                 error!("Failed to rename collection folder: {}", e);
-                        //             }
-                        //         }
-                        //     });
-
-                        //     return Task::none();
-                        // }
-
                         Task::none()
                     }
                     collections::Action::DeleteCollection(collection_index) => {
-                        // TODO
-                        // if collection_index < collections.len() {
-                        //     collections.remove(collection_index);
-                        // }
+                        if collection_index >= self.collections.len() {
+                            return Task::none();
+                        }
+
+                        if let Some(collection) = self.collections.get(collection_index) {
+                            if let Ok(storage_manager) =
+                                storage::StorageManager::with_default_config()
+                            {
+                                storage_manager
+                                    .storage()
+                                    .delete_collection_by_folder_name(&collection.folder_name);
+                            }
+                        }
+
+                        self.collections.remove(collection_index);
+
                         Task::none()
                     }
                     collections::Action::None => Task::none(),
