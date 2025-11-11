@@ -1,4 +1,4 @@
-use crate::types::{RequestCollection, Environment, RequestConfig};
+use super::types::{RequestCollection, Environment, RequestConfig};
 use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
@@ -31,6 +31,9 @@ pub trait CollectionStorage: Send + Sync {
 
     /// Save a request within a collection
     async fn save_request(&self, collection_name: &str, request: &RequestConfig) -> Result<(), StorageError>;
+
+    /// Save a request into a collection
+    fn get_new_request_path_from_collection(&self, collection: &RequestCollection) -> String;
 
     /// Save a serializable request config directly (optimized version)
     async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;

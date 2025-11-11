@@ -1,23 +1,27 @@
-mod http;
-mod icons;
 mod script;
-mod storage;
-mod types;
-mod ui;
 use std::path::PathBuf;
 
-use beam::storage::StorageManager;
-use http::*;
-use std::sync::Arc;
-use types::*;
-use ui::CollectionPanel;
-use ui::RequestPanel;
-use ui::ResponsePanel;
+use beam::types::AuthType;
+use beam::types::BodyFormat;
+use beam::types::Environment;
+use beam::types::HttpMethod;
+use beam::types::RenameTarget;
+use beam::types::RequestCollection;
+use beam::types::RequestConfig;
+use beam::types::ResponseData;
 
-use crate::ui::collections;
-use crate::ui::request;
-use crate::ui::response;
-use crate::ui::{IconName, icon};
+use beam::http::*;
+use beam::storage;
+use beam::storage::StorageManager;
+use beam::ui::CollectionPanel;
+use beam::ui::RequestPanel;
+use beam::ui::ResponsePanel;
+use std::sync::Arc;
+
+use beam::ui::collections;
+use beam::ui::request;
+use beam::ui::response;
+use beam::ui::{IconName, icon};
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
@@ -448,65 +452,30 @@ impl BeamApp {
                         if let Some(collection) =
                             self.collections.get_mut(request_config.collection_index)
                         {
-
-                            if let Some(last_request) = collection.requests.last() {
-                                let path = last_request.path.clone();
-
-                                let file_name: usize = path
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("0001")
-                                    .parse()
-                                    .unwrap();
-
-                                let file_path =
-                                    path.parent().and_then(|s| s.to_str()).unwrap_or("0001");
-
-                                let new_filename =
-                                    format!("{}/{:04}.toml", file_path, file_name + 1);
-
-                                let last_request_path = PathBuf::from(new_filename);
-
-                                self.last_opened_request = Some((
-                                    request_config.collection_index,
-                                    request_config.request_index,
-                                ));
-
-                                let mut new_req = request_config.clone();
-                                new_req.path = last_request_path;
-
-                                collection.requests.push(new_req.clone());
-
-                                self.current_request = new_req.clone();
-                                let req_to_save = new_req.clone();
-
-                                tokio::spawn(async move {
-                                    Self::save_request(req_to_save).await;
-                                });
+                            let mut new_req = request_config.clone();
+                            // Get the new request path using the storage manager
+                            if let Some(storage_manager) = &self.storage_manager {
+                                let new_request_path = storage_manager
+                                    .storage()
+                                    .get_new_request_path_from_collection(collection);
+                                new_req.path = PathBuf::from(new_request_path);
                             } else {
-                                // empty collection
-                                let new_filename = format!("{}/{}.toml", "0001", "0001");
+                                error!("failed to get storage manager");
+                                return Task::none();
+                            };
 
-                                let last_request_path = PathBuf::from(new_filename);
+                            self.last_opened_request = Some((
+                                request_config.collection_index,
+                                request_config.request_index,
+                            ));
 
-                                self.last_opened_request = Some((
-                                    request_config.collection_index,
-                                    request_config.request_index,
-                                ));
+                            collection.requests.push(new_req.clone());
 
-                                let mut new_req = request_config.clone();
-                                new_req.path = last_request_path;
-                                info!("====new req: {:?}", new_req);
+                            self.current_request = new_req.clone();
 
-                                collection.requests.push(new_req.clone());
-
-                                self.current_request = new_req.clone();
-                                let req_to_save = new_req.clone();
-
-                                tokio::spawn(async move {
-                                    Self::save_request(req_to_save).await;
-                                });
-                            }
+                            tokio::spawn(async move {
+                                Self::save_request(new_req).await;
+                            });
                         }
 
                         Task::none()

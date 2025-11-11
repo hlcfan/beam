@@ -1,4 +1,4 @@
-use crate::types::{Environment, ResponseData, RequestConfig};
+use beam::types::{Environment, ResponseData, RequestConfig};
 use std::collections::BTreeMap;
 use log::{error, info};
 
@@ -25,11 +25,11 @@ pub fn execute_post_request_script(
     environment: &Environment,
 ) -> ScriptExecutionResult {
     info!("Executing post-request script: {}", script);
-    
+
     // For now, return a simple mock result
     // TODO: Implement actual JavaScript execution with rquickjs
     let mut environment_changes = BTreeMap::new();
-    
+
     // Simple pattern matching for basic environment variable setting
     if script.contains("pm.environment.set") {
         // This is a very basic implementation - in reality we'd parse and execute JS
@@ -37,7 +37,7 @@ pub fn execute_post_request_script(
             environment_changes.insert("token".to_string(), "mock_token_value".to_string());
         }
     }
-    
+
     ScriptExecutionResult {
         success: true,
         error_message: None,
