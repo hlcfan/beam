@@ -8,7 +8,7 @@ use crate::types::{
 use log::{error, info};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use std::fs;
 
 /// TOML-based file storage implementation
 pub struct TomlFileStorage {
@@ -43,23 +43,19 @@ impl TomlFileStorage {
     }
 
     /// Find the actual collection directory by searching for directories that match the collection name
-    async fn find_collection_directory(
+    fn find_collection_directory(
         &self,
         collection_name: &str,
     ) -> Result<Option<PathBuf>, StorageError> {
-        let mut entries = match fs::read_dir(&self.collections_path).await {
+        let entries = match fs::read_dir(&self.collections_path) {
             Ok(entries) => entries,
             Err(_) => return Ok(None),
         };
 
-        while let Some(entry) = entries
-            .next_entry()
-            .await
-            .map_err(|e| StorageError::IoError(e))?
-        {
+        for entry in entries {
+            let entry = entry.map_err(|e| StorageError::IoError(e))?;
             if entry
                 .file_type()
-                .await
                 .map_err(|e| StorageError::IoError(e))?
                 .is_dir()
             {
@@ -161,22 +157,21 @@ impl TomlFileStorage {
     // }
 
     /// Save a collection to disk (metadata only)
-    async fn save_collection_to_disk(
+    fn save_collection_to_disk(
         &self,
         collection: &RequestCollection,
     ) -> Result<(), StorageError> {
         // Try to find existing collection directory by name first
         info!("===collection: {:?}", collection);
         let collection_dir = match self
-            .find_collection_directory_by_name(&collection.name)
-            .await?
+            .find_collection_directory_by_name(&collection.name)?
         {
             Some(existing_dir) => existing_dir,
             None => {
                 // If no existing directory found, create a new one with numeric name
-                let numeric_folder = self.find_next_collection_number().await?;
+                let numeric_folder = self.find_next_collection_number()?;
                 let new_dir = self.collections_path.join(&numeric_folder);
-                fs::create_dir_all(&new_dir).await?;
+                fs::create_dir_all(&new_dir)?;
                 new_dir
             }
         };
@@ -195,18 +190,18 @@ impl TomlFileStorage {
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         let metadata_path = collection_dir.join("collection.toml");
-        fs::write(&metadata_path, metadata_content).await?;
+        fs::write(&metadata_path, metadata_content)?;
 
         Ok(())
     }
 
     /// Save a collection with all its requests to disk (for initial creation)
-    async fn save_collection_with_requests(
+    fn save_collection_with_requests(
         &self,
         collection: &RequestCollection,
     ) -> Result<(), StorageError> {
         // First save the collection metadata
-        self.save_collection_to_disk(collection).await?;
+        self.save_collection_to_disk(collection)?;
 
         // Then save each request as a separate file
         for request in &collection.requests {
@@ -229,18 +224,19 @@ impl TomlFileStorage {
             //     metadata: Some(super::persistent_types::RequestMetadata::default()),
             // };
 
-            self.save_request(&collection.name, &request).await?;
+            self.save_request(&collection.name, &request)?;
         }
 
         Ok(())
     }
 
     /// Find the next available numeric prefix for a new request in the collection
-    async fn find_next_numeric_prefix(&self, collection_dir: &Path) -> Result<u32, StorageError> {
+    fn find_next_numeric_prefix(&self, collection_dir: &Path) -> Result<u32, StorageError> {
         let mut max_prefix = 0u32;
-        let mut entries = fs::read_dir(collection_dir).await?;
+        let entries = fs::read_dir(collection_dir)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 let filename = path
@@ -264,15 +260,16 @@ impl TomlFileStorage {
     }
 
     /// Find the next available 4-digit numeric folder name for collections
-    async fn find_next_collection_number(&self) -> Result<String, StorageError> {
+    fn find_next_collection_number(&self) -> Result<String, StorageError> {
         if !self.collections_path.exists() {
             return Ok("0001".to_string());
         }
 
         let mut max_number = 0u32;
-        let mut entries = fs::read_dir(&self.collections_path).await?;
+        let entries = fs::read_dir(&self.collections_path)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
@@ -290,7 +287,7 @@ impl TomlFileStorage {
     }
 
     /// Find collection directory by searching for the collection name in TOML metadata
-    async fn find_collection_directory_by_name(
+    fn find_collection_directory_by_name(
         &self,
         collection_name: &str,
     ) -> Result<Option<PathBuf>, StorageError> {
@@ -298,14 +295,15 @@ impl TomlFileStorage {
             return Ok(None);
         }
 
-        let mut entries = fs::read_dir(&self.collections_path).await?;
+        let entries = fs::read_dir(&self.collections_path)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 let metadata_path = path.join("collection.toml");
                 if metadata_path.exists() {
-                    if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                    if let Ok(content) = fs::read_to_string(&metadata_path) {
                         if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
                             if metadata.name == collection_name {
                                 return Ok(Some(path));
@@ -320,17 +318,18 @@ impl TomlFileStorage {
     }
 
     /// Migrate existing collections from folder-based names to numeric folders with TOML metadata
-    pub async fn migrate_collections_to_numeric_folders(&self) -> Result<(), StorageError> {
+    pub fn migrate_collections_to_numeric_folders(&self) -> Result<(), StorageError> {
         if !self.collections_path.exists() {
             return Ok(());
         }
 
-        let mut entries = fs::read_dir(&self.collections_path).await?;
+        let entries = fs::read_dir(&self.collections_path)?;
         let mut collections_to_migrate = Vec::new();
         let mut collections_to_fix = Vec::new();
 
         // Find collections that need migration or fixing
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 if let Some(folder_name) = path.file_name().and_then(|s| s.to_str()) {
@@ -341,7 +340,7 @@ impl TomlFileStorage {
                         collections_to_migrate.push((folder_name.to_string(), path));
                     } else if metadata_path.exists() {
                         // Numeric folder with collection.toml - check if name field is missing
-                        if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                        if let Ok(content) = fs::read_to_string(&metadata_path) {
                             if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
                                 if metadata.name.is_empty() || metadata.name == "New Collection" {
                                     // Name field is missing or default - needs fixing
@@ -360,11 +359,11 @@ impl TomlFileStorage {
         // Migrate collections that need full migration (non-numeric folders)
         for (original_name, old_path) in collections_to_migrate {
             // Get next available numeric folder name
-            let numeric_folder = self.find_next_collection_number().await?;
+            let numeric_folder = self.find_next_collection_number()?;
             let new_path = self.collections_path.join(&numeric_folder);
 
             // Create new numeric folder
-            fs::create_dir_all(&new_path).await?;
+            fs::create_dir_all(&new_path)?;
 
             // Create collection.toml with the original folder name as the collection name
             let metadata = CollectionMetadata {
@@ -379,22 +378,23 @@ impl TomlFileStorage {
             let metadata_content = toml::to_string_pretty(&metadata)
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?;
             let metadata_path = new_path.join("collection.toml");
-            fs::write(&metadata_path, metadata_content).await?;
+            fs::write(&metadata_path, metadata_content)?;
 
             // Copy all request files from old to new location
-            let mut old_entries = fs::read_dir(&old_path).await?;
-            while let Some(entry) = old_entries.next_entry().await? {
+            let old_entries = fs::read_dir(&old_path)?;
+            for entry in old_entries {
+                let entry = entry?;
                 let file_path = entry.path();
                 if file_path.is_file() {
                     if let Some(file_name) = file_path.file_name() {
                         let new_file_path = new_path.join(file_name);
-                        fs::copy(&file_path, &new_file_path).await?;
+                        fs::copy(&file_path, &new_file_path)?;
                     }
                 }
             }
 
             // Remove the old folder
-            fs::remove_dir_all(&old_path).await?;
+            fs::remove_dir_all(&old_path)?;
 
             println!(
                 "Migrated collection '{}' from folder-based to numeric storage",
@@ -407,7 +407,7 @@ impl TomlFileStorage {
             let metadata_path = collection_path.join("collection.toml");
 
             // Try to determine the collection name from existing data
-            let collection_name = if let Ok(content) = fs::read_to_string(&metadata_path).await {
+            let collection_name = if let Ok(content) = fs::read_to_string(&metadata_path) {
                 if let Ok(mut metadata) = toml::from_str::<CollectionMetadata>(&content) {
                     // If name is missing or default, use folder name or "My Requests"
                     if metadata.name.is_empty() || metadata.name == "New Collection" {
@@ -421,7 +421,7 @@ impl TomlFileStorage {
                         // Write the updated metadata back
                         let metadata_content = toml::to_string_pretty(&metadata)
                             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-                        fs::write(&metadata_path, metadata_content).await?;
+                        fs::write(&metadata_path, metadata_content)?;
 
                         println!(
                             "Fixed collection metadata for folder '{}' with name '{}'",
@@ -449,7 +449,7 @@ impl TomlFileStorage {
 
                     let metadata_content = toml::to_string_pretty(&metadata)
                         .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-                    fs::write(&metadata_path, metadata_content).await?;
+                    fs::write(&metadata_path, metadata_content)?;
 
                     println!(
                         "Created new collection metadata for folder '{}' with name '{}'",
@@ -475,7 +475,7 @@ impl TomlFileStorage {
 
                 let metadata_content = toml::to_string_pretty(&metadata)
                     .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-                fs::write(&metadata_path, metadata_content).await?;
+                fs::write(&metadata_path, metadata_content)?;
 
                 println!(
                     "Created collection metadata for folder '{}' with name '{}'",
@@ -489,21 +489,21 @@ impl TomlFileStorage {
     }
 }
 
-#[async_trait::async_trait]
 impl CollectionStorage for TomlFileStorage {
-    async fn load_collections(&self) -> Result<Vec<RequestCollection>, StorageError> {
+    fn load_collections(&self) -> Result<Vec<RequestCollection>, StorageError> {
         if !self.collections_path.exists() {
             return Ok(Vec::new());
         }
 
         // First, collect all collection directories with their metadata
         let mut collection_data = Vec::new();
-        let mut collection_entries = fs::read_dir(&self.collections_path).await?;
+        let collection_entries = fs::read_dir(&self.collections_path)?;
 
         let mut collecion_index = 0;
         let mut request_index = 0;
 
-        while let Some(entry) = collection_entries.next_entry().await? {
+        for entry in collection_entries {
+            let entry = entry?;
             let collection_path = entry.path();
             if !collection_path.is_dir() {
                 continue;
@@ -526,9 +526,10 @@ impl CollectionStorage for TomlFileStorage {
 
             let mut requests = Vec::new();
 
-            let mut request_files = fs::read_dir(&collection_path).await?;
-            while let Some(requst_file) = request_files.next_entry().await? {
-                let request_path = requst_file.path();
+            let request_files = fs::read_dir(&collection_path)?;
+            for request_file in request_files {
+                let request_file = request_file?;
+                let request_path = request_file.path();
                 if request_path.is_dir() {
                     continue;
                 }
@@ -540,14 +541,14 @@ impl CollectionStorage for TomlFileStorage {
                 // info!("===request path: {:?}", request_path);
                 // TODO: any simple way to compare the file name?
                 if request_path.file_name() == Some(OsStr::new("collection.toml")) {
-                    if let Ok(content) = fs::read_to_string(&metadata_path).await {
+                    if let Ok(content) = fs::read_to_string(&metadata_path) {
                         if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
                             collection_name = metadata.name;
                         }
                     }
                 } else {
                     // request toml files
-                    if let Ok(content) = fs::read_to_string(&request_path).await {
+                    if let Ok(content) = fs::read_to_string(&request_path) {
                         match toml::from_str::<SerializableRequestConfig>(&content) {
                             Ok(r) => {
                                 requests.push(RequestConfig {
@@ -640,22 +641,21 @@ impl CollectionStorage for TomlFileStorage {
         Ok(collection_data)
     }
 
-    async fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError> {
-        self.save_collection_to_disk(collection).await
+    fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError> {
+        self.save_collection_to_disk(collection)
     }
 
-    async fn save_collection_with_requests(
+    fn save_collection_with_requests(
         &self,
         collection: &RequestCollection,
     ) -> Result<(), StorageError> {
-        self.save_collection_with_requests(collection).await
+        self.save_collection_with_requests(collection)
     }
 
-    async fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError> {
+    fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError> {
         // Find collection directory by searching TOML metadata
         let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)
-            .await?
+            .find_collection_directory_by_name(collection_name)?
         {
             Some(dir) => dir,
             None => {
@@ -665,21 +665,20 @@ impl CollectionStorage for TomlFileStorage {
             }
         };
 
-        fs::remove_dir_all(&collection_dir).await?;
+        fs::remove_dir_all(&collection_dir)?;
         Ok(())
     }
 
-    async fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError> {
+    fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError> {
         // Find collection directory by old name
-        let collection_dir = match self.find_collection_directory_by_name(old_name).await? {
+        let collection_dir = match self.find_collection_directory_by_name(old_name)? {
             Some(dir) => dir,
             None => return Err(StorageError::CollectionNotFound(old_name.to_string())),
         };
 
         // Check if new name already exists
         if self
-            .find_collection_directory_by_name(new_name)
-            .await?
+            .find_collection_directory_by_name(new_name)?
             .is_some()
         {
             return Err(StorageError::InvalidFormat(format!(
@@ -691,7 +690,7 @@ impl CollectionStorage for TomlFileStorage {
         // Load existing metadata
         let metadata_path = collection_dir.join("collection.toml");
         let mut metadata = if metadata_path.exists() {
-            let content = fs::read_to_string(&metadata_path).await?;
+            let content = fs::read_to_string(&metadata_path)?;
             toml::from_str::<CollectionMetadata>(&content)
                 .map_err(|e| StorageError::SerializationError(e.to_string()))?
         } else {
@@ -705,19 +704,18 @@ impl CollectionStorage for TomlFileStorage {
         // Save updated metadata
         let metadata_content = toml::to_string_pretty(&metadata)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-        fs::write(&metadata_path, metadata_content).await?;
+        fs::write(&metadata_path, metadata_content)?;
 
         Ok(())
     }
 
-    async fn save_request(
+    fn save_request(
         &self,
         collection_name: &str,
         request: &RequestConfig,
     ) -> Result<(), StorageError> {
         let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)
-            .await?
+            .find_collection_directory_by_name(collection_name)?
         {
             Some(dir) => dir,
             None => {
@@ -732,9 +730,10 @@ impl CollectionStorage for TomlFileStorage {
 
         // Find existing file that contains this request by checking file content
         let mut existing_file_path = None;
-        let mut entries = fs::read_dir(&collection_dir).await?;
+        let entries = fs::read_dir(&collection_dir)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 let filename = path
@@ -748,7 +747,7 @@ impl CollectionStorage for TomlFileStorage {
                 }
 
                 // Read the file content and check if it matches this request
-                if let Ok(content) = fs::read_to_string(&path).await {
+                if let Ok(content) = fs::read_to_string(&path) {
                     if let Ok(existing_request) = toml::from_str::<PersistentRequest>(&content) {
                         if existing_request.name == request.name {
                             existing_file_path = Some(path);
@@ -764,25 +763,24 @@ impl CollectionStorage for TomlFileStorage {
             existing_path
         } else {
             // Find next available numeric prefix for new request
-            let next_prefix = self.find_next_numeric_prefix(&collection_dir).await?;
+            let next_prefix = self.find_next_numeric_prefix(&collection_dir)?;
             let filename = format!("{:04}.toml", next_prefix);
             collection_dir.join(filename)
         };
 
-        fs::write(&request_path, request_content).await?;
+        fs::write(&request_path, request_content)?;
 
         Ok(())
     }
 
-    async fn save_serializable_request(
+    fn save_serializable_request(
         &self,
         collection_name: &str,
         request_name: &str,
         request_config: &RequestConfig,
     ) -> Result<(), StorageError> {
         let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)
-            .await?
+            .find_collection_directory_by_name(collection_name)?
         {
             Some(dir) => dir,
             None => {
@@ -797,9 +795,10 @@ impl CollectionStorage for TomlFileStorage {
 
         // Find existing file that contains this request by checking file content
         let mut existing_file_path = None;
-        let mut entries = fs::read_dir(&collection_dir).await?;
+        let entries = fs::read_dir(&collection_dir)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 let filename = path
@@ -813,7 +812,7 @@ impl CollectionStorage for TomlFileStorage {
                 }
 
                 // Read the file content and check if it matches this request
-                if let Ok(content) = fs::read_to_string(&path).await {
+                if let Ok(content) = fs::read_to_string(&path) {
                     // Try to parse as SerializableRequestConfig first (new format)
                     if let Ok(existing_request) = toml::from_str::<RequestConfig>(&content) {
                         if existing_request.name == request_name {
@@ -839,17 +838,17 @@ impl CollectionStorage for TomlFileStorage {
             existing_path
         } else {
             // Find next available numeric prefix for new request
-            let next_prefix = self.find_next_numeric_prefix(&collection_dir).await?;
+            let next_prefix = self.find_next_numeric_prefix(&collection_dir)?;
             let filename = format!("{:04}.toml", next_prefix);
             collection_dir.join(filename)
         };
 
-        fs::write(&request_path, request_content).await?;
+        fs::write(&request_path, request_content)?;
 
         Ok(())
     }
 
-    async fn save_request_by_path(
+    fn save_request_by_path(
         &self,
         request_config: &RequestConfig,
     ) -> Result<(), StorageError> {
@@ -864,8 +863,7 @@ impl CollectionStorage for TomlFileStorage {
         let request_content = toml::to_string_pretty(request_config)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        // Write directly to the specified path
-        fs::write(&request_config.path, request_content).await?;
+        fs::write(&request_config.path, request_content)?;
 
         info!("===request saved to path: {:?}", request_config.path);
         Ok(())
@@ -880,7 +878,7 @@ impl CollectionStorage for TomlFileStorage {
         // Check if the path is empty (new request without a file path)
         let base_path = self.base_path.to_str().unwrap().to_string();
         if collection.requests.is_empty() {
-            return format!("{}/{}/{}.toml", base_path, collection.folder_name, "0001");
+            return format!("{}/collections/{}/{}.toml", base_path, collection.folder_name, "0001");
         } else {
             if let Some(last_request) = collection.requests.last() {
                 let path = last_request.path.clone();
@@ -895,8 +893,7 @@ impl CollectionStorage for TomlFileStorage {
                 let file_path = path.parent().and_then(|s| s.to_str()).unwrap_or("0001");
 
                 format!(
-                  "{}/{}/{:04}.toml",
-                  base_path,
+                  "{}/{:04}.toml",
                   file_path,
                   file_name + 1
                 )
@@ -906,14 +903,13 @@ impl CollectionStorage for TomlFileStorage {
         }
     }
 
-    async fn delete_request(
+    fn delete_request(
         &self,
         collection_name: &str,
         request_name: &str,
     ) -> Result<(), StorageError> {
         let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)
-            .await?
+            .find_collection_directory_by_name(collection_name)?
         {
             Some(dir) => dir,
             None => {
@@ -925,9 +921,10 @@ impl CollectionStorage for TomlFileStorage {
 
         // Find the file that contains this request by checking the content
         let mut target_file_path = None;
-        let mut entries = fs::read_dir(&collection_dir).await?;
+        let entries = fs::read_dir(&collection_dir)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 let filename = path
@@ -941,7 +938,7 @@ impl CollectionStorage for TomlFileStorage {
                 }
 
                 // Read the file content to check if it matches this request
-                if let Ok(content) = fs::read_to_string(&path).await {
+                if let Ok(content) = fs::read_to_string(&path) {
                     if let Ok(existing_request) = toml::from_str::<PersistentRequest>(&content) {
                         if existing_request.name == request_name {
                             target_file_path = Some(path);
@@ -955,7 +952,7 @@ impl CollectionStorage for TomlFileStorage {
         // Delete the file if found
         match target_file_path {
             Some(file_path) => {
-                fs::remove_file(&file_path).await?;
+                fs::remove_file(&file_path)?;
                 Ok(())
             }
             None => Err(StorageError::RequestNotFound(request_name.to_string())),
@@ -963,20 +960,19 @@ impl CollectionStorage for TomlFileStorage {
     }
 
     /// Delete a request by its file path directly (more efficient when path is known)
-    async fn delete_request_by_path(&self, request_path: &Path) -> Result<(), StorageError> {
-        fs::remove_file(request_path).await?;
+    fn delete_request_by_path(&self, request_path: &Path) -> Result<(), StorageError> {
+        fs::remove_file(request_path)?;
         Ok(())
     }
 
-    async fn rename_request(
+    fn rename_request(
         &self,
         collection_name: &str,
         old_name: &str,
         new_name: &str,
     ) -> Result<(), StorageError> {
         let collection_dir = match self
-            .find_collection_directory_by_name(collection_name)
-            .await?
+            .find_collection_directory_by_name(collection_name)?
         {
             Some(dir) => dir,
             None => {
@@ -988,9 +984,10 @@ impl CollectionStorage for TomlFileStorage {
 
         // Find the file that contains this request by checking the content
         let mut existing_file_path = None;
-        let mut entries = fs::read_dir(&collection_dir).await?;
+        let entries = fs::read_dir(&collection_dir)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 let filename = path
@@ -1004,7 +1001,7 @@ impl CollectionStorage for TomlFileStorage {
                 }
 
                 // Read the file content to check if it matches the old request name
-                if let Ok(content) = fs::read_to_string(&path).await {
+                if let Ok(content) = fs::read_to_string(&path) {
                     if let Ok(existing_request) = toml::from_str::<PersistentRequest>(&content) {
                         if existing_request.name == old_name {
                             existing_file_path = Some(path);
@@ -1019,7 +1016,7 @@ impl CollectionStorage for TomlFileStorage {
             .ok_or_else(|| StorageError::RequestNotFound(old_name.to_string()))?;
 
         // Read the existing file content
-        let content = fs::read_to_string(&file_path).await?;
+        let content = fs::read_to_string(&file_path)?;
         let mut persistent_request: PersistentRequest = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
@@ -1030,12 +1027,12 @@ impl CollectionStorage for TomlFileStorage {
         let updated_content = toml::to_string_pretty(&persistent_request)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        fs::write(&file_path, updated_content).await?;
+        fs::write(&file_path, updated_content)?;
 
         Ok(())
     }
 
-    async fn load_environments(&self) -> Result<PersistentEnvironments, StorageError> {
+    fn load_environments(&self) -> Result<PersistentEnvironments, StorageError> {
         if !self.environments_path.exists() {
             return Ok(PersistentEnvironments {
                 environments: Vec::new(),
@@ -1044,24 +1041,24 @@ impl CollectionStorage for TomlFileStorage {
             });
         }
 
-        let content = fs::read_to_string(&self.environments_path).await?;
+        let content = fs::read_to_string(&self.environments_path)?;
         let persistent_envs: PersistentEnvironments = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         Ok(persistent_envs)
     }
 
-    async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
-        self.save_environments_with_active(environments, None).await
+    fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError> {
+        self.save_environments_with_active(environments, None)
     }
 
-    async fn save_environments_with_active(
+    fn save_environments_with_active(
         &self,
         environments: &[Environment],
         active_environment: Option<&str>,
     ) -> Result<(), StorageError> {
         // Create base directory only when saving
-        fs::create_dir_all(&self.base_path).await?;
+        fs::create_dir_all(&self.base_path)?;
 
         let persistent_data = PersistentEnvironments {
             environments: environments.to_vec(),
@@ -1072,23 +1069,23 @@ impl CollectionStorage for TomlFileStorage {
         let content = toml::to_string_pretty(&persistent_data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        fs::write(&self.environments_path, content).await?;
+        fs::write(&self.environments_path, content)?;
         Ok(())
     }
 
-    async fn load_active_environment(&self) -> Result<Option<String>, StorageError> {
+    fn load_active_environment(&self) -> Result<Option<String>, StorageError> {
         if !self.environments_path.exists() {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(&self.environments_path).await?;
+        let content = fs::read_to_string(&self.environments_path)?;
         let persistent_envs: PersistentEnvironments = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         Ok(persistent_envs.active_environment)
     }
 
-    async fn save_last_opened_request(
+    fn save_last_opened_request(
         &self,
         collection_index: usize,
         request_index: usize,
@@ -1096,7 +1093,7 @@ impl CollectionStorage for TomlFileStorage {
         use serde::Serialize;
 
         // Create base directory only when saving
-        fs::create_dir_all(&self.base_path).await?;
+        fs::create_dir_all(&self.base_path)?;
 
         #[derive(Serialize)]
         struct LastOpenedRequest {
@@ -1112,11 +1109,11 @@ impl CollectionStorage for TomlFileStorage {
         let content = toml::to_string_pretty(&data)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
-        fs::write(self.last_opened_request_path(), content).await?;
+        fs::write(self.last_opened_request_path(), content)?;
         Ok(())
     }
 
-    async fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError> {
+    fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError> {
         use serde::Deserialize;
 
         #[derive(Deserialize)]
@@ -1131,14 +1128,14 @@ impl CollectionStorage for TomlFileStorage {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(&path).await?;
+        let content = fs::read_to_string(&path)?;
         let data: LastOpenedRequest = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
         Ok(Some((data.collection_index, data.request_index)))
     }
 
-    async fn load_request_by_indices(
+    fn load_request_by_indices(
         &self,
         collections: &[RequestCollection],
         collection_index: usize,
@@ -1179,8 +1176,7 @@ impl CollectionStorage for TomlFileStorage {
         // Instead of using the display name, we need to find the actual file by index
         // Find the actual collection directory (which may have a numeric prefix)
         let collection_dir = self
-            .find_collection_directory_by_name(&collection.name)
-            .await?;
+            .find_collection_directory_by_name(&collection.name)?;
         if collection_dir.is_none() {
             eprintln!(
                 "DEBUG: collection directory not found for: {}",
@@ -1192,9 +1188,10 @@ impl CollectionStorage for TomlFileStorage {
 
         // Collect all request files with their filenames
         let mut request_files = Vec::new();
-        let mut entries = fs::read_dir(&collection_dir).await?;
+        let entries = fs::read_dir(&collection_dir)?;
 
-        while let Some(entry) = entries.next_entry().await? {
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
                 let filename = path
@@ -1246,7 +1243,7 @@ impl CollectionStorage for TomlFileStorage {
             return Ok(None);
         }
 
-        let content = fs::read_to_string(&request_path).await?;
+        let content = fs::read_to_string(&request_path)?;
         let persistent_request: RequestConfig = toml::from_str(&content)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
 
@@ -1257,24 +1254,24 @@ impl CollectionStorage for TomlFileStorage {
         Ok(Some(persistent_request))
     }
 
-    async fn initialize_storage(&self) -> Result<(), StorageError> {
+    fn initialize_storage(&self) -> Result<(), StorageError> {
         // Don't create directories automatically on startup
         // Directories will be created only when needed (e.g., when saving data)
 
         // Run migration for existing collections to convert them to numeric folders
         if self.collections_path.exists() {
-            self.migrate_collections_to_numeric_folders().await?;
+            self.migrate_collections_to_numeric_folders()?;
         }
 
         Ok(())
     }
 
-    async fn backup_storage(&self, backup_path: &str) -> Result<(), StorageError> {
+    fn backup_storage(&self, backup_path: &str) -> Result<(), StorageError> {
         let backup_dir = Path::new(backup_path);
-        fs::create_dir_all(backup_dir).await?;
+        fs::create_dir_all(backup_dir)?;
 
         // Copy the entire storage directory
-        copy_dir_all(&self.base_path, backup_dir).await?;
+        copy_dir_all(&self.base_path, backup_dir)?;
 
         Ok(())
     }
@@ -1335,18 +1332,19 @@ fn sort_by_numeric_prefix(names: &mut Vec<String>) {
 
 /// Recursively copy a directory
 #[allow(dead_code)]
-async fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
-    fs::create_dir_all(dst).await?;
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(dst)?;
 
-    let mut entries = fs::read_dir(src).await?;
-    while let Some(entry) = entries.next_entry().await? {
+    let entries = fs::read_dir(src)?;
+    for entry in entries {
+        let entry = entry?;
         let path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
         if path.is_dir() {
-            Box::pin(copy_dir_all(&path, &dst_path)).await?;
+            copy_dir_all(&path, &dst_path)?;
         } else {
-            fs::copy(&path, &dst_path).await?;
+            fs::copy(&path, &dst_path)?;
         }
     }
 

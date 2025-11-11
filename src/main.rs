@@ -310,15 +310,13 @@ impl BeamApp {
                         let active_env_name = environments[index].name.clone();
 
                         tokio::spawn(async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    if let Err(e) = storage_manager
-                                        .storage()
-                                        .save_environments_with_active(
+                                    if let Err(e) =
+                                        storage_manager.storage().save_environments_with_active(
                                             &environments,
                                             Some(&active_env_name),
                                         )
-                                        .await
                                     {
                                         error!("Failed to save active environment: {}", e);
                                     }
@@ -385,10 +383,9 @@ impl BeamApp {
                             let col = collection.clone();
 
                             tokio::spawn(async move {
-                                match storage::StorageManager::with_default_config().await {
+                                match storage::StorageManager::with_default_config() {
                                     Ok(storage_manager) => {
-                                        match storage_manager.storage().save_collection(&col).await
-                                        {
+                                        match storage_manager.storage().save_collection(&col) {
                                             Ok(_) => Ok(()),
                                             Err(e) => Err(e.to_string()),
                                         }
@@ -428,15 +425,13 @@ impl BeamApp {
                                 // TODO; don't save last open request if no index change
                                 tokio::spawn(async move {
                                     if let Ok(storage_manager) =
-                                        storage::StorageManager::with_default_config().await
+                                        storage::StorageManager::with_default_config()
                                     {
-                                        if let Err(e) = storage_manager
-                                            .storage()
-                                            .save_last_opened_request(
+                                        if let Err(e) =
+                                            storage_manager.storage().save_last_opened_request(
                                                 collection_index,
                                                 request_index,
                                             )
-                                            .await
                                         {
                                             error!("Failed to save last opened request: {}", e);
                                         }
@@ -448,16 +443,18 @@ impl BeamApp {
                         Task::none()
                     }
                     collections::Action::SaveRequestToCollection(request_config) => {
-                        info!("====req: {:?}", request_config);
                         if let Some(collection) =
                             self.collections.get_mut(request_config.collection_index)
                         {
                             let mut new_req = request_config.clone();
                             // Get the new request path using the storage manager
-                            if let Some(storage_manager) = &self.storage_manager {
+                            if let Ok(storage_manager) =
+                                storage::StorageManager::with_default_config()
+                            {
                                 let new_request_path = storage_manager
                                     .storage()
                                     .get_new_request_path_from_collection(collection);
+
                                 new_req.path = PathBuf::from(new_request_path);
                             } else {
                                 error!("failed to get storage manager");
@@ -474,7 +471,7 @@ impl BeamApp {
                             self.current_request = new_req.clone();
 
                             tokio::spawn(async move {
-                                Self::save_request(new_req).await;
+                                Self::save_request(new_req);
                             });
                         }
 
@@ -485,12 +482,10 @@ impl BeamApp {
 
                         tokio::spawn(async move {
                             if let Ok(storage_manager) =
-                                storage::StorageManager::with_default_config().await
+                                storage::StorageManager::with_default_config()
                             {
-                                if let Err(e) = storage_manager
-                                    .storage()
-                                    .save_collection(&new_collection)
-                                    .await
+                                if let Err(e) =
+                                    storage_manager.storage().save_collection(&new_collection)
                                 {
                                     error!("Failed to save collection: {}", e);
                                 }
@@ -546,7 +541,7 @@ impl BeamApp {
                                 collection.requests.push(new_request);
 
                                 tokio::spawn(async move {
-                                    Self::save_request(request_to_persist).await;
+                                    Self::save_request(request_to_persist);
                                 });
                             }
                         }
@@ -563,11 +558,11 @@ impl BeamApp {
                                     // Use the storage method to delete the file
                                     tokio::spawn(async move {
                                         if let Ok(storage_manager) =
-                                            StorageManager::with_default_config().await
+                                            StorageManager::with_default_config()
                                         {
                                             let storage = storage_manager.storage();
                                             if let Err(e) =
-                                                storage.delete_request_by_path(&request_path).await
+                                                storage.delete_request_by_path(&request_path)
                                             {
                                                 error!("Failed to delete request file: {}", e);
                                             }
@@ -677,7 +672,7 @@ impl BeamApp {
                                 let request_to_persist = request.clone();
 
                                 tokio::spawn(async move {
-                                    Self::save_request(request_to_persist).await;
+                                    Self::save_request(request_to_persist);
                                 });
                             }
                         }
@@ -823,13 +818,9 @@ impl BeamApp {
                 let environments = self.environments.clone();
                 Task::perform(
                     async move {
-                        match storage::StorageManager::with_default_config().await {
+                        match storage::StorageManager::with_default_config() {
                             Ok(storage_manager) => {
-                                match storage_manager
-                                    .storage()
-                                    .save_environments(&environments)
-                                    .await
-                                {
+                                match storage_manager.storage().save_environments(&environments) {
                                     Ok(_) => Ok(()),
                                     Err(e) => Err(e.to_string()),
                                 }
@@ -856,12 +847,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -884,12 +872,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -916,12 +901,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -948,12 +930,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -979,12 +958,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -1011,12 +987,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -1042,12 +1015,9 @@ impl BeamApp {
                     let environments = self.environments.clone();
                     Task::perform(
                         async move {
-                            match storage::StorageManager::with_default_config().await {
+                            match storage::StorageManager::with_default_config() {
                                 Ok(storage_manager) => {
-                                    match storage_manager
-                                        .storage()
-                                        .save_environments(&environments)
-                                        .await
+                                    match storage_manager.storage().save_environments(&environments)
                                     {
                                         Ok(_) => Ok(()),
                                         Err(e) => Err(e.to_string()),
@@ -1074,13 +1044,11 @@ impl BeamApp {
             }
             Message::LoadCollections => Task::perform(
                 async {
-                    match storage::StorageManager::with_default_config().await {
-                        Ok(storage_manager) => {
-                            match storage_manager.storage().load_collections().await {
-                                Ok(collections) => Ok(collections),
-                                Err(e) => Err(e.to_string()),
-                            }
-                        }
+                    match storage::StorageManager::with_default_config() {
+                        Ok(storage_manager) => match storage_manager.storage().load_collections() {
+                            Ok(collections) => Ok(collections),
+                            Err(e) => Err(e.to_string()),
+                        },
                         Err(e) => Err(e.to_string()),
                     }
                 },
@@ -1095,12 +1063,11 @@ impl BeamApp {
                             // Load lsast opened request after collections are loaded
                             return Task::perform(
                                 async {
-                                    match storage::StorageManager::with_default_config().await {
+                                    match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
                                             match storage_manager
                                                 .storage()
                                                 .load_last_opened_request()
-                                                .await
                                             {
                                                 Ok(last_opened) => Ok(last_opened),
                                                 Err(e) => Err(e.to_string()),
@@ -1157,9 +1124,9 @@ impl BeamApp {
             }
             Message::LoadEnvironments => Task::perform(
                 async {
-                    match storage::StorageManager::with_default_config().await {
+                    match storage::StorageManager::with_default_config() {
                         Ok(storage_manager) => {
-                            match storage_manager.storage().load_environments().await {
+                            match storage_manager.storage().load_environments() {
                                 Ok(persistent_envs) => persistent_envs,
                                 Err(e) => {
                                     error!("Failed to load environments: {}", e);
@@ -1202,9 +1169,9 @@ impl BeamApp {
             }
             Message::LoadActiveEnvironment => Task::perform(
                 async {
-                    match storage::StorageManager::with_default_config().await {
+                    match storage::StorageManager::with_default_config() {
                         Ok(storage_manager) => {
-                            match storage_manager.storage().load_active_environment().await {
+                            match storage_manager.storage().load_active_environment() {
                                 Ok(active_env) => Ok(active_env),
                                 Err(e) => Err(e.to_string()),
                             }
@@ -1247,7 +1214,7 @@ impl BeamApp {
 
                 Task::perform(
                     async move {
-                        match storage::StorageManager::with_default_config().await {
+                        match storage::StorageManager::with_default_config() {
                             Ok(storage_manager) => {
                                 let storage = storage_manager.storage();
 
@@ -1255,7 +1222,7 @@ impl BeamApp {
                                 let env_path =
                                     storage_manager.config().base_path.join("environments.toml");
                                 if !env_path.exists() {
-                                    if let Err(e) = storage.save_environments(&environments).await {
+                                    if let Err(e) = storage.save_environments(&environments) {
                                         error!("Failed to save initial environments: {}", e);
                                     } else {
                                         info!("Initial environments saved successfully");
@@ -1271,7 +1238,7 @@ impl BeamApp {
                                         .join(&collection.name);
                                     if !collection_path.exists() {
                                         if let Err(e) =
-                                            storage.save_collection_with_requests(collection).await
+                                            storage.save_collection_with_requests(collection)
                                         {
                                             error!(
                                                 "Failed to save initial collection '{}': {}",
@@ -1298,13 +1265,9 @@ impl BeamApp {
                 let environments = self.environments.clone();
                 Task::perform(
                     async move {
-                        match storage::StorageManager::with_default_config().await {
+                        match storage::StorageManager::with_default_config() {
                             Ok(storage_manager) => {
-                                match storage_manager
-                                    .storage()
-                                    .save_environments(&environments)
-                                    .await
-                                {
+                                match storage_manager.storage().save_environments(&environments) {
                                     Ok(_) => Ok(()),
                                     Err(e) => Err(e.to_string()),
                                 }
@@ -1331,13 +1294,10 @@ impl BeamApp {
                 self.last_opened_request = Some((collection_index, request_index));
                 // Save the last opened request asynchronously without blocking the UI
                 tokio::spawn(async move {
-                    if let Ok(storage_manager) =
-                        storage::StorageManager::with_default_config().await
-                    {
+                    if let Ok(storage_manager) = storage::StorageManager::with_default_config() {
                         if let Err(e) = storage_manager
                             .storage()
                             .save_last_opened_request(collection_index, request_index)
-                            .await
                         {
                             error!("Failed to save last opened request: {}", e);
                         }
@@ -1590,17 +1550,14 @@ impl BeamApp {
 
                                     tokio::spawn(async move {
                                         if let Ok(storage_manager) =
-                                            storage::StorageManager::with_default_config().await
+                                            storage::StorageManager::with_default_config()
                                         {
                                             let storage = storage_manager.storage();
-                                            if let Err(e) = storage
-                                                .rename_request(
-                                                    &collection_name,
-                                                    &old_name,
-                                                    &new_name,
-                                                )
-                                                .await
-                                            {
+                                            if let Err(e) = storage.rename_request(
+                                                &collection_name,
+                                                &old_name,
+                                                &new_name,
+                                            ) {
                                                 eprintln!("Failed to rename request file: {}", e);
                                             }
                                         }
@@ -1637,11 +1594,11 @@ impl BeamApp {
                                 // Rename the collection folder (non-blocking)
                                 tokio::spawn(async move {
                                     if let Ok(storage_manager) =
-                                        storage::StorageManager::with_default_config().await
+                                        storage::StorageManager::with_default_config()
                                     {
                                         let storage = storage_manager.storage();
                                         if let Err(e) =
-                                            storage.rename_collection(&old_name, &new_name).await
+                                            storage.rename_collection(&old_name, &new_name)
                                         {
                                             eprintln!("Failed to rename collection folder: {}", e);
                                         }
@@ -2416,7 +2373,7 @@ impl BeamApp {
                     Ok(None) => {
                         // Channel closed, save any pending request and exit
                         if let Some(request) = last_request {
-                            Self::save_request(request).await;
+                            Self::save_request(request);
                         }
                         info!("Debounce channel closed");
                         break;
@@ -2425,7 +2382,7 @@ impl BeamApp {
                         // Timeout occurred, save the last request if any
                         if let Some(request) = last_request.take() {
                             info!("Debounce save request");
-                            Self::save_request(request).await;
+                            Self::save_request(request);
                         }
                     }
                 }
@@ -2433,15 +2390,14 @@ impl BeamApp {
         });
     }
 
-    async fn save_request(request_config: RequestConfig) {
-        match storage::StorageManager::with_default_config().await {
+    fn save_request(request_config: RequestConfig) {
+        match storage::StorageManager::with_default_config() {
             Ok(storage_manager) => {
                 info!("===request auto saved (debounced)");
 
                 if let Err(e) = storage_manager
                     .storage()
                     .save_request_by_path(&request_config)
-                    .await
                 {
                     error!("Failed to save request: {}", e);
                 }

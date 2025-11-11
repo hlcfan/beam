@@ -12,70 +12,69 @@ pub use file_storage::TomlFileStorage;
 
 /// Main storage trait that abstracts persistence operations
 #[allow(dead_code)]
-#[async_trait::async_trait]
 pub trait CollectionStorage: Send + Sync {
     /// Load all collections from storage
-    async fn load_collections(&self) -> Result<Vec<RequestCollection>, StorageError>;
+    fn load_collections(&self) -> Result<Vec<RequestCollection>, StorageError>;
 
     /// Save a collection to storage (metadata only)
-    async fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError>;
+    fn save_collection(&self, collection: &RequestCollection) -> Result<(), StorageError>;
 
     /// Save a collection with all its requests to storage (for initial creation)
-    async fn save_collection_with_requests(&self, collection: &RequestCollection) -> Result<(), StorageError>;
+    fn save_collection_with_requests(&self, collection: &RequestCollection) -> Result<(), StorageError>;
 
     /// Delete a collection from storage
-    async fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError>;
+    fn delete_collection(&self, collection_name: &str) -> Result<(), StorageError>;
 
     /// Rename a collection
-    async fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError>;
+    fn rename_collection(&self, old_name: &str, new_name: &str) -> Result<(), StorageError>;
 
     /// Save a request within a collection
-    async fn save_request(&self, collection_name: &str, request: &RequestConfig) -> Result<(), StorageError>;
+    fn save_request(&self, collection_name: &str, request: &RequestConfig) -> Result<(), StorageError>;
 
     /// Save a request into a collection
     fn get_new_request_path_from_collection(&self, collection: &RequestCollection) -> String;
 
     /// Save a serializable request config directly (optimized version)
-    async fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;
+    fn save_serializable_request(&self, collection_name: &str, request_name: &str, request_config: &RequestConfig) -> Result<(), StorageError>;
 
     /// Save a request directly to a file path (simplified version)
-    async fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError>;
+    fn save_request_by_path(&self, request_config: &RequestConfig) -> Result<(), StorageError>;
 
     /// Delete a request from a collection
-    async fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
+    fn delete_request(&self, collection_name: &str, request_name: &str) -> Result<(), StorageError>;
 
     /// Delete a request by its file path directly (more efficient when path is known)
-    async fn delete_request_by_path(&self, request_path: &std::path::Path) -> Result<(), StorageError>;
+    fn delete_request_by_path(&self, request_path: &std::path::Path) -> Result<(), StorageError>;
 
     /// Rename a request within a collection
-    async fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError>;
+    fn rename_request(&self, collection_name: &str, old_name: &str, new_name: &str) -> Result<(), StorageError>;
 
     /// Load environments from storage
-    async fn load_environments(&self) -> Result<PersistentEnvironments, StorageError>;
+    fn load_environments(&self) -> Result<PersistentEnvironments, StorageError>;
 
     /// Save environments to storage
-    async fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError>;
+    fn save_environments(&self, environments: &[Environment]) -> Result<(), StorageError>;
 
     /// Save environments with active environment information
-    async fn save_environments_with_active(&self, environments: &[Environment], active_environment: Option<&str>) -> Result<(), StorageError>;
+    fn save_environments_with_active(&self, environments: &[Environment], active_environment: Option<&str>) -> Result<(), StorageError>;
 
     /// Load active environment name from storage
-    async fn load_active_environment(&self) -> Result<Option<String>, StorageError>;
+    fn load_active_environment(&self) -> Result<Option<String>, StorageError>;
 
     /// Save the last opened request
-    async fn save_last_opened_request(&self, collection_index: usize, request_index: usize) -> Result<(), StorageError>;
+    fn save_last_opened_request(&self, collection_index: usize, request_index: usize) -> Result<(), StorageError>;
 
     /// Load the last opened request
-    async fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError>;
+    fn load_last_opened_request(&self) -> Result<Option<(usize, usize)>, StorageError>;
 
     /// Load a specific request by collection and request indices
-    async fn load_request_by_indices(&self, collections: &[RequestCollection], collection_index: usize, request_index: usize) -> Result<Option<RequestConfig>, StorageError>;
+    fn load_request_by_indices(&self, collections: &[RequestCollection], collection_index: usize, request_index: usize) -> Result<Option<RequestConfig>, StorageError>;
 
     /// Initialize storage (create directories, etc.)
-    async fn initialize_storage(&self) -> Result<(), StorageError>;
+    fn initialize_storage(&self) -> Result<(), StorageError>;
 
     /// Create a backup of the storage
-    async fn backup_storage(&self, backup_path: &str) -> Result<(), StorageError>;
+    fn backup_storage(&self, backup_path: &str) -> Result<(), StorageError>;
 }
 
 /// Storage configuration
@@ -158,7 +157,7 @@ impl std::fmt::Debug for StorageManager {
 
 impl StorageManager {
     /// Create a new storage manager with the specified configuration
-    pub async fn new(config: StorageConfig) -> Result<Self, StorageError> {
+    pub fn new(config: StorageConfig) -> Result<Self, StorageError> {
         let storage: Box<dyn CollectionStorage> = match config.storage_type {
             StorageType::TomlFiles => Box::new(TomlFileStorage::new(config.base_path.clone())),
             StorageType::Sqlite => {
@@ -170,14 +169,14 @@ impl StorageManager {
         };
 
         // Initialize storage
-        storage.initialize_storage().await?;
+        storage.initialize_storage()?;
 
         Ok(Self { storage, config })
     }
 
     /// Create a new storage manager with default configuration
-    pub async fn with_default_config() -> Result<Self, StorageError> {
-        Self::new(StorageConfig::default()).await
+    pub fn with_default_config() -> Result<Self, StorageError> {
+        Self::new(StorageConfig::default())
     }
 
     /// Get a reference to the storage implementation
