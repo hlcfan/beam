@@ -293,7 +293,6 @@ impl RequestPanel {
                 // Format the body based on the current format
                 match request.body_format {
                     BodyFormat::Json => {
-                        // Try to parse and format JSON
                         if let Ok(json_value) =
                             serde_json::from_str::<serde_json::Value>(&request.body)
                         {

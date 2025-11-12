@@ -17,7 +17,7 @@ iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
 
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["preserve_order"] }
 toml = "0.8"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
