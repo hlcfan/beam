@@ -104,6 +104,9 @@ pub trait CollectionStorage: Send + Sync {
     /// Initialize storage (create directories, etc.)
     fn initialize_storage(&self) -> Result<(), StorageError>;
 
+    /// Initialize default collections and files when the app is launched for the first time
+    fn initialize_default_collections(&self) -> Result<(), StorageError>;
+
     /// Create a backup of the storage
     fn backup_storage(&self, backup_path: &str) -> Result<(), StorageError>;
 }

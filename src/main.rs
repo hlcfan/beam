@@ -1065,29 +1065,6 @@ impl BeamApp {
                                 },
                                 Message::LoadLastOpenedRequest,
                             );
-                        } else {
-                            // TODO: add default request
-                            // maybe move this to the load_collections func
-                            // Create default folder and request when no collections exist
-                            // let default_request = RequestConfig {
-                            //     name: "New Request".to_string(),
-                            //     method: HttpMethod::GET,
-                            //     url: "https://httpbin.org/get".to_string(),
-                            // };
-
-                            let default_collection = RequestCollection {
-                                folder_name: format!("{:0>4}", 1),
-                                name: "My Requests".to_string(),
-                                requests: vec![],
-                                expanded: true,
-                            };
-
-                            self.collections = vec![default_collection];
-
-                            // Set the default request as the current request and mark it as opened
-                            self.current_request.method = HttpMethod::GET;
-                            self.current_request.url = "https://httpbin.org/get".to_string();
-                            self.last_opened_request = Some((0, 0)); // First collection, first request
                         }
 
                         Task::none()

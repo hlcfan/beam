@@ -74,7 +74,7 @@ impl Highlighter for ResponseHighlighter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestCollection {
     pub name: String,
     pub folder_name: String,

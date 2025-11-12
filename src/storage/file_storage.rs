@@ -1,11 +1,13 @@
 use super::{
-    CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentEnvironments,
-    PersistentRequest, StorageError,
+    CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentCollection,
+    PersistentEnvironments, PersistentRequest, StorageError,
 };
+use crate::storage::RequestMetadata;
 use crate::types::{
     BodyFormat, Environment, RequestCollection, RequestConfig, SerializableRequestConfig,
 };
 use log::{error, info};
+use serde::Serialize;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,85 +79,6 @@ impl TomlFileStorage {
         self.base_path.join("last_opened_request.toml")
     }
 
-    /// Load a collection from disk
-    // async fn load_collection_from_disk(
-    //     &self,
-    //     collection: &CollectionMetadata,
-    // ) -> Result<RequestCollection, StorageError> {
-    //     info!(
-    //         "===Filename: {:?}, {:?}",
-    //         collection.name, self.collections_path
-    //     );
-    //     // First, collect all request files with their filenames
-    //     let mut request_files = Vec::new();
-    //     let mut entries = fs::read_dir(&self.collections_path).await?;
-
-    //     while let Some(entry) = entries.next_entry().await? {
-    //         let path = entry.path();
-    //         if path.is_file() && path.extension().map_or(false, |ext| ext == "toml") {
-    //             let filename = path
-    //                 .file_stem()
-    //                 .and_then(|s| s.to_str())
-    //                 .unwrap_or("unknown");
-
-    //             // Skip collection metadata file
-    //             if filename == "collection" {
-    //                 continue;
-    //             }
-
-    //             request_files.push((filename.to_string(), path));
-    //         }
-    //     }
-
-    //     // Sort request files by numeric ID (filename without extension)
-    //     request_files.sort_by(|a, b| {
-    //         // Try to parse filenames as numbers (e.g., "0001" -> 1)
-    //         let num_a = a.0.parse::<u32>().unwrap_or(u32::MAX);
-    //         let num_b = b.0.parse::<u32>().unwrap_or(u32::MAX);
-
-    //         match (num_a == u32::MAX, num_b == u32::MAX) {
-    //             (false, false) => num_a.cmp(&num_b), // Both are valid numbers
-    //             (false, true) => std::cmp::Ordering::Less, // a is number, b is not
-    //             (true, false) => std::cmp::Ordering::Greater, // a is not number, b is
-    //             (true, true) => a.0.cmp(&b.0),       // Both are not numbers, sort alphabetically
-    //         }
-    //     });
-
-    //     // Load requests in sorted order
-    //     let mut requests = Vec::new();
-    //     for (_filename, path) in request_files {
-    //         let content = fs::read_to_string(&path).await?;
-    //         let persistent_request: PersistentRequest = toml::from_str(&content)
-    //             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
-
-    //         // Convert to SavedRequest (simplified version)
-    //         let method = match persistent_request.method.to_uppercase().as_str() {
-    //             "GET" => crate::types::HttpMethod::GET,
-    //             "POST" => crate::types::HttpMethod::POST,
-    //             "PUT" => crate::types::HttpMethod::PUT,
-    //             "DELETE" => crate::types::HttpMethod::DELETE,
-    //             "PATCH" => crate::types::HttpMethod::PATCH,
-    //             "HEAD" => crate::types::HttpMethod::HEAD,
-    //             "OPTIONS" => crate::types::HttpMethod::OPTIONS,
-    //             _ => crate::types::HttpMethod::GET, // Default to GET for unknown methods
-    //         };
-
-    //         let saved_request = crate::types::SavedRequest {
-    //             name: persistent_request.name.clone(), // Use the name directly from TOML content
-    //             method,
-    //             url: persistent_request.url.clone(),
-    //         };
-
-    //         requests.push(saved_request);
-    //     }
-
-    //     Ok(RequestCollection {
-    //         name: collection.name.clone(),
-    //         requests,
-    //         expanded: collection.expanded,
-    //     })
-    // }
-
     /// Save a collection to disk (metadata only)
     fn save_collection_to_disk(&self, collection: &RequestCollection) -> Result<(), StorageError> {
         // Try to find existing collection directory by name first
@@ -174,10 +97,7 @@ impl TomlFileStorage {
         // Save collection metadata with the collection name stored in TOML
         let metadata = CollectionMetadata {
             name: collection.name.clone(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            modified_at: chrono::Utc::now().to_rfc3339(),
             description: None,
-            version: "1.0".to_string(),
             expanded: collection.expanded,
         };
 
@@ -363,10 +283,7 @@ impl TomlFileStorage {
             // Create collection.toml with the original folder name as the collection name
             let metadata = CollectionMetadata {
                 name: original_name.clone(),
-                created_at: chrono::Utc::now().to_rfc3339(),
-                modified_at: chrono::Utc::now().to_rfc3339(),
                 description: None,
-                version: "1.0".to_string(),
                 expanded: false,
             };
 
@@ -411,7 +328,7 @@ impl TomlFileStorage {
                         } else {
                             folder_name.clone()
                         };
-                        metadata.modified_at = chrono::Utc::now().to_rfc3339();
+                        // metadata.modified_at = chrono::Utc::now().to_rfc3339();
 
                         // Write the updated metadata back
                         let metadata_content = toml::to_string_pretty(&metadata)
@@ -435,10 +352,7 @@ impl TomlFileStorage {
                     };
                     let metadata = CollectionMetadata {
                         name: collection_name.clone(),
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                        modified_at: chrono::Utc::now().to_rfc3339(),
                         description: None,
-                        version: "1.0".to_string(),
                         expanded: false,
                     };
 
@@ -461,10 +375,7 @@ impl TomlFileStorage {
                 };
                 let metadata = CollectionMetadata {
                     name: collection_name.clone(),
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    modified_at: chrono::Utc::now().to_rfc3339(),
                     description: None,
-                    version: "1.0".to_string(),
                     expanded: false,
                 };
 
@@ -487,7 +398,7 @@ impl TomlFileStorage {
 impl CollectionStorage for TomlFileStorage {
     fn load_collections(&self) -> Result<Vec<RequestCollection>, StorageError> {
         if !self.collections_path.exists() {
-            return Ok(Vec::new());
+            self.initialize_default_collections()?;
         }
 
         // First, collect all collection directories with their metadata
@@ -536,9 +447,16 @@ impl CollectionStorage for TomlFileStorage {
                 // info!("===request path: {:?}", request_path);
                 // TODO: any simple way to compare the file name?
                 if request_path.file_name() == Some(OsStr::new("collection.toml")) {
+                    info!("===filename: {:?}", request_path.file_name());
                     if let Ok(content) = fs::read_to_string(&metadata_path) {
-                        if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
-                            collection_name = metadata.name;
+                        info!("===Name: {:?}", content);
+                        match toml::from_str::<CollectionMetadata>(&content) {
+                            Ok(metadata) => {
+                                collection_name = metadata.name;
+                            }
+                            Err(e) => {
+                                error!("===Errr: {:?}", e);
+                            }
                         }
                     }
                 } else {
@@ -686,7 +604,7 @@ impl CollectionStorage for TomlFileStorage {
 
         // Update the name and modified_at fields
         metadata.name = new_name.to_string();
-        metadata.modified_at = chrono::Utc::now().to_rfc3339();
+        // metadata.modified_at = chrono::Utc::now().to_rfc3339();
 
         // Save updated metadata
         let metadata_content = toml::to_string_pretty(&metadata)
@@ -842,6 +760,10 @@ impl CollectionStorage for TomlFileStorage {
         // Serialize the request config to TOML
         let request_content = toml::to_string_pretty(request_config)
             .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        if let Some(parent) = request_config.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         fs::write(&request_config.path, request_content)?;
 
@@ -1062,8 +984,6 @@ impl CollectionStorage for TomlFileStorage {
         collection_index: usize,
         request_index: usize,
     ) -> Result<(), StorageError> {
-        use serde::Serialize;
-
         // Create base directory only when saving
         fs::create_dir_all(&self.base_path)?;
 
@@ -1230,10 +1150,91 @@ impl CollectionStorage for TomlFileStorage {
         // Directories will be created only when needed (e.g., when saving data)
 
         // Run migration for existing collections to convert them to numeric folders
-        if self.collections_path.exists() {
-            self.migrate_collections_to_numeric_folders()?;
+        // if self.collections_path.exists() {
+        //     self.migrate_collections_to_numeric_folders()?;
+        // }
+
+        Ok(())
+    }
+
+    /// Initialize default collections and files when the app is launched for the first time
+    /// Creates:
+    /// - collections/0001/0001.toml (default request)
+    /// - collections/0001/collection.toml (collection metadata)
+    /// - last_opened_request.toml (tracks last opened request)
+    fn initialize_default_collections(&self) -> Result<(), StorageError> {
+        // Check if collections already exist - if so, don't create defaults
+        if self.collections_path.exists() && self.collections_path.read_dir()?.next().is_some() {
+            info!("Collections already exist, skipping default initialization");
+            return Ok(());
         }
 
+        // Create the first collection directory: collections/0001
+        let first_collection_dir = self.collections_path.join("0001");
+        fs::create_dir_all(&first_collection_dir)?;
+
+        // Create the first request file: collections/0001/0001.toml
+        let first_request_path = first_collection_dir.join("0001.toml");
+        let default_request = RequestConfig {
+            name: "My First Request".to_string(),
+            path: first_request_path.clone(),
+            method: crate::types::HttpMethod::GET,
+            url: "https://httpbin.org/get".to_string(),
+            headers: vec![("Content-Type".to_string(), "application/json".to_string())],
+            params: vec![],
+            body: String::new(),
+            content_type: "application/json".to_string(),
+            auth_type: crate::types::AuthType::None,
+            body_format: crate::types::BodyFormat::Json,
+            bearer_token: String::new(),
+            basic_username: String::new(),
+            basic_password: String::new(),
+            api_key: String::new(),
+            api_key_header: String::new(),
+            collection_index: 0,
+            request_index: 0,
+            metadata: Some(RequestMetadata::default()),
+            post_request_script: None,
+            last_response: None,
+        };
+
+        let request_content = toml::to_string_pretty(&default_request)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+        fs::write(&first_request_path, request_content)?;
+
+        // Create the collection metadata file: collections/0001/collection.toml
+        let collection_metadata_path = first_collection_dir.join("collection.toml");
+        let default_collection = RequestCollection {
+            name: "Default Collection".to_string(),
+            folder_name: "0001".to_string(),
+            requests: vec![],
+            // requests: vec![default_request], // Include the first request
+            expanded: true,
+        };
+
+        let collection_content = toml::to_string_pretty(&default_collection)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+        fs::write(&collection_metadata_path, collection_content)?;
+
+        // Create the last opened request file: last_opened_request.toml
+        #[derive(Serialize)]
+        struct LastOpenedRequestData {
+            collection_index: usize,
+            request_index: usize,
+        }
+
+        let last_opened_data = LastOpenedRequestData {
+            collection_index: 0,
+            request_index: 0,
+        };
+
+        let last_opened_content = toml::to_string_pretty(&last_opened_data)
+            .map_err(|e| StorageError::SerializationError(e.to_string()))?;
+
+        let last_opened_path = self.last_opened_request_path();
+        fs::write(&last_opened_path, last_opened_content)?;
+
+        info!("Default collections initialized successfully");
         Ok(())
     }
 
