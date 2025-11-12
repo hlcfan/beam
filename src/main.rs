@@ -345,6 +345,39 @@ impl BeamApp {
 
                         let request_to_persist = self.current_request.clone();
 
+                        // TODO: only save if edit, not movement
+                        if let Some(tx) = &self.debounce_tx {
+                            if let Err(_) = tx.try_send(request_to_persist) {
+                                info!("Debounce channel is full or closed");
+                            }
+                        }
+
+                        Task::none()
+                    }
+                    request::Action::FormatRequestBody(formatted_body) => {
+                        let select_all_action = text_editor::Action::SelectAll;
+                        self.request_body_content.perform(select_all_action);
+
+                        let paste_action = text_editor::Action::Edit(
+                            text_editor::Edit::Paste(std::sync::Arc::new(formatted_body))
+                        );
+                        self.request_body_content.perform(paste_action);
+                        self.current_request.body = self.request_body_content.text();
+
+                        if let Some(collection) = self
+                            .collections
+                            .get_mut(self.current_request.collection_index)
+                        {
+                            if let Some(request) = collection
+                                .requests
+                                .get_mut(self.current_request.request_index)
+                            {
+                                *request = self.current_request.clone();
+                            }
+                        }
+
+                        // Save the updated request
+                        let request_to_persist = self.current_request.clone();
                         if let Some(tx) = &self.debounce_tx {
                             if let Err(_) = tx.try_send(request_to_persist) {
                                 info!("Debounce channel is full or closed");
@@ -400,11 +433,6 @@ impl BeamApp {
                     collections::Action::SelectRequestConfig(collection_index, request_index) => {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
-                                // let request_config = collection.requests.get(request_index).unwrap_or_default();
-                                // self.request_panel.set_url(request_config.url.to_string());
-
-                                // self.request_panel
-                                //     .set_body_content(request_config.body.to_string());
                                 self.current_request = request_config.clone();
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
@@ -415,8 +443,6 @@ impl BeamApp {
                                     self.response_body_content =
                                         text_editor::Content::with_text(formatted_resp.as_str());
                                 }
-                                // Environment variables applied to URL input are handled during rendering
-                                info!("===select request load successed");
 
                                 // Update the last opened request state and save to storage
                                 // directly here to avoid one more render

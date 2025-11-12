@@ -1,5 +1,6 @@
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::{IconName, icon, url_input};
+use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
@@ -24,6 +25,7 @@ pub enum Action {
     // The components needs to run a task
     Run(iced::Task<Message>),
     EditRequestBody(text_editor::Action),
+    FormatRequestBody(String),
     OpenEnvironmentPopup,
     // The component does not require any additional actions
     None,
@@ -143,7 +145,6 @@ impl RequestPanel {
     ) -> Action {
         match message {
             Message::UrlInputChanged(url) => {
-                info!("===URL updated to: {:?}", url);
                 let mut request = current_request.clone();
                 request.url = url;
 
@@ -287,6 +288,7 @@ impl RequestPanel {
             }
             Message::FormatRequestBody => {
                 let mut request = current_request.clone();
+                let mut formatted_body = None;
 
                 // Format the body based on the current format
                 match request.body_format {
@@ -295,14 +297,14 @@ impl RequestPanel {
                         if let Ok(json_value) =
                             serde_json::from_str::<serde_json::Value>(&request.body)
                         {
-                            let formatted = serde_json::to_string_pretty(&json_value)
-                                .unwrap_or_else(|_| request.body.clone());
+                            let formatted = serde_json::to_string_pretty(&json_value).unwrap();
+
                             log::info!(
                                 "JSON formatting: original length={}, formatted length={}",
                                 request.body.len(),
                                 formatted.len()
                             );
-                            request.body = formatted;
+                            formatted_body = Some(formatted);
                         } else {
                             log::info!("JSON formatting failed: invalid JSON input");
                         }
@@ -316,7 +318,7 @@ impl RequestPanel {
                             request.body.len(),
                             trimmed.len()
                         );
-                        request.body = trimmed;
+                        formatted_body = Some(trimmed);
                     }
                     BodyFormat::Text => {
                         // For text, trim leading/trailing whitespace
@@ -326,7 +328,7 @@ impl RequestPanel {
                             request.body.len(),
                             trimmed.len()
                         );
-                        request.body = trimmed;
+                        formatted_body = Some(trimmed);
                     }
                     BodyFormat::GraphQL | BodyFormat::None => {
                         // No formatting for GraphQL or None
@@ -334,7 +336,11 @@ impl RequestPanel {
                     }
                 }
 
-                Action::UpdateCurrentRequest(request)
+                if let Some(formatted) = formatted_body {
+                    Action::FormatRequestBody(formatted)
+                } else {
+                    Action::None
+                }
             }
             Message::AuthTypeChanged(auth_type) => {
                 let mut request = current_request.clone();
@@ -401,17 +407,6 @@ impl RequestPanel {
             }
             Message::DoNothing => Action::None,
         }
-
-        // // Only trigger auto-save for actual content-changing actions
-        // let should_save = match &action {
-        //     text_editor::Action::Edit(_) => true, // Only Edit actions change content
-        //     _ => false, // All other actions (Move, Select, Click, Drag, Scroll) don't change content
-        // };
-
-        // self.request_body_content.perform(action);
-        // let body_text = self.request_body_content.text();
-
-        // (should_save, body_text)
     }
 
     pub fn view<'a>(
@@ -583,7 +578,6 @@ impl RequestPanel {
         ]
         .spacing(5);
 
-        // let request_body_content = text_editor::Content::with_text(current_request.body.as_str());
         let tab_content = match self.selected_tab {
             RequestTab::Body => body_tab(&request_body_content, current_request.body_format),
             RequestTab::Params => params_tab(&current_request),
@@ -767,6 +761,7 @@ fn body_tab<'a>(
         .into(),
         BodyFormat::Json => {
             let text_editor_widget = text_editor(request_body)
+                .highlight("json", highlighter::Theme::Base16Mocha)
                 .on_action(Message::BodyChanged)
                 .placeholder("Enter JSON body...")
                 .style(
@@ -798,6 +793,7 @@ fn body_tab<'a>(
         }
         BodyFormat::Xml => {
             let text_editor_widget = text_editor(request_body)
+                .highlight("xml", highlighter::Theme::Base16Mocha)
                 .on_action(Message::BodyChanged)
                 .placeholder("Enter XML body...")
                 .style(
