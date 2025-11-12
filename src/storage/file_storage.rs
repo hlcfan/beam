@@ -82,7 +82,6 @@ impl TomlFileStorage {
     /// Save a collection to disk (metadata only)
     fn save_collection_to_disk(&self, collection: &RequestCollection) -> Result<(), StorageError> {
         // Try to find existing collection directory by name first
-        info!("===collection: {:?}", collection);
         let collection_dir = match self.find_collection_directory_by_name(&collection.name)? {
             Some(existing_dir) => existing_dir,
             None => {
@@ -444,19 +443,11 @@ impl CollectionStorage for TomlFileStorage {
                     continue;
                 }
 
-                // info!("===request path: {:?}", request_path);
                 // TODO: any simple way to compare the file name?
                 if request_path.file_name() == Some(OsStr::new("collection.toml")) {
-                    info!("===filename: {:?}", request_path.file_name());
                     if let Ok(content) = fs::read_to_string(&metadata_path) {
-                        info!("===Name: {:?}", content);
-                        match toml::from_str::<CollectionMetadata>(&content) {
-                            Ok(metadata) => {
-                                collection_name = metadata.name;
-                            }
-                            Err(e) => {
-                                error!("===Errr: {:?}", e);
-                            }
+                        if let Ok(metadata) = toml::from_str::<CollectionMetadata>(&content) {
+                            collection_name = metadata.name;
                         }
                     }
                 } else {
@@ -767,7 +758,6 @@ impl CollectionStorage for TomlFileStorage {
 
         fs::write(&request_config.path, request_content)?;
 
-        info!("===request saved to path: {:?}", request_config.path);
         Ok(())
     }
 

@@ -188,7 +188,6 @@ pub struct SerializableRequestConfig {
 
 impl Clone for RequestConfig {
     fn clone(&self) -> Self {
-        info!("====clone request config");
         Self {
             name: self.name.clone(),
             path: self.path.clone(),
