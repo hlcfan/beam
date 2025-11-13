@@ -162,7 +162,8 @@ pub struct SerializableRequestConfig {
     pub url: Option<String>,
     pub headers: Vec<(String, String)>,
     pub params: Vec<(String, String)>,
-    pub body: Option<String>, // Store as string instead of text_editor::Content
+    pub body_format: Option<BodyFormat>,
+    pub body: Option<String>,
     pub content_type: Option<String>,
     pub auth_type: Option<AuthType>,
 
@@ -310,7 +311,7 @@ pub enum BodyFormat {
 
 impl Default for BodyFormat {
     fn default() -> Self {
-        BodyFormat::Json
+        BodyFormat::None
     }
 }
 

@@ -465,7 +465,7 @@ impl CollectionStorage for TomlFileStorage {
                                     body: r.body.unwrap_or_default(),
                                     content_type: r.content_type.unwrap_or_default(),
                                     auth_type: r.auth_type.unwrap_or_default(),
-                                    body_format: BodyFormat::default(), // Default to JSON for backward compatibility
+                                    body_format: r.body_format.unwrap_or_default(),
                                     bearer_token: r.bearer_token.unwrap_or_default(),
                                     basic_username: r.basic_username.unwrap_or_default(),
                                     basic_password: r.basic_password.unwrap_or_default(),
