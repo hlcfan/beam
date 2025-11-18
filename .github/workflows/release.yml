@@ -28,12 +28,6 @@ jobs:
             binary: beam.exe
             archive: beam-windows-x86_64.zip
             
-          - platform: macos-x86_64
-            os: macos-13
-            target: x86_64-apple-darwin
-            binary: beam
-            archive: beam-macos-x86_64.tar.gz
-            
           - platform: macos-aarch64
             os: macos-14
             target: aarch64-apple-darwin
@@ -71,11 +65,17 @@ jobs:
         run: cargo install cargo-bundle
 
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} --no-default-features
 
       - name: Create macOS app bundle
         if: runner.os == 'macOS'
-        run: cargo bundle --release --target ${{ matrix.target }}
+        run: |
+          cargo bundle --release --target ${{ matrix.target }} --no-default-features
+          
+      - name: Sign macOS app (ad-hoc)
+        if: runner.os == 'macOS'
+        run: |
+          codesign --force --deep --sign - target/${{ matrix.target }}/release/bundle/osx/Beam.app
 
       - name: Package Windows
         if: runner.os == 'Windows'
@@ -149,12 +149,23 @@ jobs:
             ### Downloads
             
             - **Windows (x86_64)**: `beam-windows-x86_64.zip`
-            - **macOS (Intel)**: `beam-macos-x86_64.tar.gz`
             - **macOS (Apple Silicon)**: `beam-macos-aarch64.tar.gz`
             - **Linux (x86_64)**: `beam-linux-x86_64.tar.gz`
             
             ### Installation
             
-            **macOS**: Extract the `.tar.gz` file and move `Beam.app` to Applications
+            **macOS**: 
+            ```bash
+            tar -xzf beam-macos-aarch64.tar.gz
+            xattr -cr Beam.app  # Remove quarantine attribute
+            mv Beam.app /Applications/
+            ```
+            
             **Windows**: Extract the `.zip` file and run `beam.exe`
-            **Linux**: Extract the `.tar.gz` file and run `./beam`
+            
+            **Linux**: 
+            ```bash
+            tar -xzf beam-linux-x86_64.tar.gz
+            chmod +x beam
+            ./beam
+            ```
