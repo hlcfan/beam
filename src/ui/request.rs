@@ -25,6 +25,7 @@ pub enum Action {
     // The components needs to run a task
     Run(iced::Task<Message>),
     EditRequestBody(text_editor::Action),
+    EditRequestPostRequestScript(text_editor::Action),
     FormatRequestBody(String),
     OpenEnvironmentPopup,
     // The component does not require any additional actions
@@ -63,6 +64,7 @@ pub enum Message {
     BasicPasswordChanged(String),
     ApiKeyChanged(String),
     ApiKeyHeaderChanged(String),
+    ScriptChanged(text_editor::Action),
 
     // Environment management
     OpenEnvironmentPopup,
@@ -94,6 +96,7 @@ pub struct RequestPanel {
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
     pub selected_tab: RequestTab,
+    pub script_editor_content: text_editor::Content,
 }
 
 impl Default for RequestPanel {
@@ -128,6 +131,7 @@ impl Default for RequestPanel {
             body_format_menu_open: false,
             send_button_hovered: false,
             cancel_button_hovered: false,
+            script_editor_content: text_editor::Content::new(),
         }
     }
 }
@@ -404,14 +408,38 @@ impl RequestPanel {
                 self.body_format_menu_open = false;
                 Action::None
             }
+            Message::ScriptChanged(action) => {
+                return Action::EditRequestPostRequestScript(action);
+                // // Update the script editor content and sync to request
+                // self.script_editor_content.perform(action);
+                // let mut request = current_request.clone();
+                // request.post_request_script = Some(self.script_editor_content.text());
+                // Action::UpdateCurrentRequest(request)
+            }
             Message::DoNothing => Action::None,
         }
     }
+
+    // pub fn sync_script_content(&mut self, script_content: Option<&String>) {
+    //     let script_text = script_content.map(|s| s.as_str()).unwrap_or("");
+    //     if self.script_editor_content.text() != script_text {
+    //         // Clear existing content and insert new content using edit actions
+    //         self.script_editor_content
+    //             .perform(text_editor::Action::SelectAll);
+    //         self.script_editor_content
+    //             .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+    //         self.script_editor_content
+    //             .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+    //                 std::sync::Arc::new(script_text.to_string()),
+    //             )));
+    //     }
+    // }
 
     pub fn view<'a>(
         &'a self,
         current_request: &'a RequestConfig,
         request_body_content: &'a text_editor::Content,
+        post_script_content: &'a text_editor::Content,
         is_loading: bool,
         environments: &'a [Environment],
         active_environment: Option<usize>,
@@ -582,7 +610,7 @@ impl RequestPanel {
             RequestTab::Params => params_tab(&current_request),
             RequestTab::Headers => headers_tab(&current_request),
             RequestTab::Auth => auth_tab(&current_request),
-            RequestTab::PostScript => post_script_tab(&current_request),
+            RequestTab::PostScript => post_script_tab(&post_script_content),
             // RequestTab::Environment => body_tab(&request_body_content); // Fallback to body tab if somehow Environment is selected
         };
 
@@ -1247,42 +1275,50 @@ fn body_format_dropdown() -> Element<'static, Message> {
         .into()
 }
 
-fn post_script_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
-    let script_content = config
-        .post_request_script
-        .as_deref()
-        .unwrap_or("// No script defined");
+fn post_script_tab<'a>(script_content: &'a text_editor::Content) -> Element<'a, Message> {
+    // let script_content = config
+    //     .post_request_script
+    //     .as_deref()
+    //     .unwrap_or("// No script defined");
 
-    let help_text = text("Post-request scripts run after receiving a response. Use 'pm' object to access response data and environment variables.")
-        .size(12)
-        .color(Color::from_rgb(0.6, 0.6, 0.6));
+    // let help_text = text("Post-request scripts run after receiving a response. Use 'pm' object to access response data and environment variables.")
+    //     .size(12)
+    //     .color(Color::from_rgb(0.6, 0.6, 0.6));
 
-    let example_text =
-        text("Example: pm.environment.set('token', pm.response.json().access_token);")
-            .size(11)
-            .color(Color::from_rgb(0.5, 0.5, 0.5));
+    // let example_text =
+    //     text("Example: pm.environment.set('token', pm.response.json().access_token);")
+    //         .size(11)
+    //         .color(Color::from_rgb(0.5, 0.5, 0.5));
 
-    let script_display = container(scrollable(text(script_content).size(14)))
-        .height(Length::Fill)
-        .padding(10)
-        .style(|theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
-            border: Border {
-                color: Color::from_rgb(0.8, 0.8, 0.8),
-                width: 1.0,
-                radius: 4.0.into(),
+    // let script_display = container(scrollable(text(script_content).size(14)))
+    //     .height(Length::Fill)
+    //     .padding(10)
+    //     .style(|theme: &Theme| container::Style {
+    //         background: Some(Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+    //         border: Border {
+    //             color: Color::from_rgb(0.8, 0.8, 0.8),
+    //             width: 1.0,
+    //             radius: 4.0.into(),
+    //         },
+    //         ..Default::default()
+    //     });
+    let script_editor_widget = text_editor(script_content)
+        .on_action(Message::ScriptChanged)
+        .placeholder("// Enter your post-request script here...")
+        .style(
+            |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                background: Background::Color(theme.palette().background),
+                border: Border {
+                    color: Color::from_rgb(0.9, 0.9, 0.9),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                value: theme.palette().text,
+                selection: theme.palette().primary,
             },
-            ..Default::default()
-        });
+        );
 
-    column![
-        help_text,
-        space().height(5),
-        example_text,
-        space().height(10),
-        script_display,
-    ]
-    .spacing(5)
-    .padding(10)
-    .into()
+    scrollable(script_editor_widget).height(Length::Fill).into()
 }
+

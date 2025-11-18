@@ -105,6 +105,7 @@ pub struct BeamApp {
     pub is_loading: bool,
     pub current_elapsed_time: u64,
     pub request_body_content: text_editor::Content,
+    pub post_script_content: text_editor::Content,
     pub response_body_content: text_editor::Content,
     pub collection_panel: CollectionPanel,
     pub response_panel: ResponsePanel,
@@ -218,6 +219,7 @@ impl Default for BeamApp {
             },
             request_body_content: text_editor::Content::new(),
             response_body_content: text_editor::Content::new(),
+            post_script_content: text_editor::Content::new(),
             response_panel: ResponsePanel::new(),
             request_panel: RequestPanel::default(),
             collection_panel: CollectionPanel::new(),
@@ -282,6 +284,9 @@ impl BeamApp {
                         self.request_body_content =
                             text_editor::Content::with_text(&self.current_request.body);
 
+                        // // Sync script content when request is updated
+                        // self.request_panel.sync_script_content(self.current_request.post_request_script.as_ref());
+
                         if let Some(collection) = self
                             .collections
                             .get_mut(self.current_request.collection_index)
@@ -330,6 +335,33 @@ impl BeamApp {
                     request::Action::EditRequestBody(action) => {
                         self.request_body_content.perform(action);
                         self.current_request.body = self.request_body_content.text();
+
+                        if let Some(collection) = self
+                            .collections
+                            .get_mut(self.current_request.collection_index)
+                        {
+                            if let Some(request) = collection
+                                .requests
+                                .get_mut(self.current_request.request_index)
+                            {
+                                *request = self.current_request.clone();
+                            }
+                        }
+
+                        let request_to_persist = self.current_request.clone();
+
+                        // TODO: only save if edit, not movement
+                        if let Some(tx) = &self.debounce_tx {
+                            if let Err(_) = tx.try_send(request_to_persist) {
+                                info!("Debounce channel is full or closed");
+                            }
+                        }
+
+                        Task::none()
+                    }
+                    request::Action::EditRequestPostRequestScript(action) => {
+                        self.post_script_content.perform(action);
+                        self.current_request.post_request_script = Some(self.post_script_content.text());
 
                         if let Some(collection) = self
                             .collections
@@ -436,6 +468,8 @@ impl BeamApp {
                                 self.current_request = request_config.clone();
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
+                                // // Sync script content when request is selected
+                                // self.request_panel.sync_script_content(self.current_request.post_request_script.as_ref());
                                 if let Some(resp) = &self.current_request.last_response {
                                     let formatted_resp =
                                         Self::format_response_content(resp.body.as_str());
@@ -1802,6 +1836,7 @@ impl BeamApp {
             .view(
                 &self.current_request,
                 &self.request_body_content,
+                &self.post_script_content,
                 self.is_loading,
                 &self.environments,
                 self.active_environment,

@@ -66,16 +66,23 @@ pub fn execute_post_request_script(
         }
     };
 
+    // Create shared state for capturing outputs (needs to be outside context.with)
+    let console_output_shared = Arc::new(Mutex::new(Vec::new()));
+    let env_changes_shared = Arc::new(Mutex::new(BTreeMap::new()));
+    let test_results_shared = Arc::new(Mutex::new(Vec::new()));
+
     // Execute the script within the context
     let execution_result = context.with(|ctx| {
         // Add initial console message
         result.console_output.push("Starting script execution...".to_string());
 
         // Setup global objects with better error handling
-        match setup_global_objects(&ctx, &request, &response, environment, &mut result) {
+        match setup_global_objects(&ctx, &request, &response, environment, 
+                                   Arc::clone(&console_output_shared),
+                                   Arc::clone(&env_changes_shared),
+                                   Arc::clone(&test_results_shared)) {
             Ok(_) => {
                 info!("Global objects setup complete");
-                result.console_output.push("Global objects setup complete".to_string());
             }
             Err(e) => {
                 let setup_error = format!("Failed to setup global objects: {:?}", e);
@@ -88,9 +95,7 @@ pub fn execute_post_request_script(
         // Execute the script
         match ctx.eval::<(), _>(script) {
             Ok(_) => {
-                info!("===environments changes: {:?}", result.environment_changes);
                 result.success = true;
-                result.console_output.push("Script executed successfully".to_string());
                 Ok(())
             }
             Err(e) => {
@@ -111,6 +116,14 @@ pub fn execute_post_request_script(
         }
     });
 
+    // Capture the results AFTER script execution
+    let captured_console = console_output_shared.lock().unwrap().clone();
+    result.console_output.extend(captured_console);
+    result.environment_changes = env_changes_shared.lock().unwrap().clone();
+    result.test_results = test_results_shared.lock().unwrap().clone();
+    
+    info!("===After script execution, environment changes: {:?}", result.environment_changes);
+
     if let Err(e) = execution_result {
         error!("Script execution failed: {:?}", e);
     }
@@ -120,15 +133,13 @@ pub fn execute_post_request_script(
 
 fn setup_global_objects(
     ctx: &rquickjs::Ctx,
-    request: &RequestConfig,
+    _request: &RequestConfig,
     response: &ResponseData,
     environment: &Environment,
-    result: &mut ScriptExecutionResult,
+    console_output: Arc<Mutex<Vec<String>>>,
+    env_changes: Arc<Mutex<BTreeMap<String, String>>>,
+    test_results: Arc<Mutex<Vec<TestResult>>>,
 ) -> Result<(), rquickjs::Error> {
-    // Create shared state for capturing outputs
-    let console_output = Arc::new(Mutex::new(Vec::new()));
-    let env_changes = Arc::new(Mutex::new(BTreeMap::new()));
-    let test_results = Arc::new(Mutex::new(Vec::new()));
 
     // Clone response data for closures
     let response_status = response.status;
@@ -239,12 +250,6 @@ fn setup_global_objects(
 
     // Add pm object to global scope
     ctx.globals().set("pm", pm)?;
-
-    // Store the captured data back to result
-    result.console_output = console_output.lock().unwrap().clone();
-    result.environment_changes = env_changes.lock().unwrap().clone();
-    info!("===before turn, env changes: {:?}", result.environment_changes);
-    result.test_results = test_results.lock().unwrap().clone();
 
     Ok(())
 }
