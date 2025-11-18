@@ -6,7 +6,7 @@ A HTTP client for developers built with Rust and Iced.
 
 ## Features
 
-- 🚀 Fast and lightweight
+- 🚀 Fast and lightweight (hope so)
 - 📁 Request collections
 - 🔐 Multiple authentication methods (Bearer, Basic, API Key)
 - 🌍 Environment variables support
