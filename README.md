@@ -15,11 +15,11 @@ A HTTP client for developers built with Rust and Iced.
 
 ## Installation
 
-### macOS
+### macOS (Apple Silicon)
 
 ```bash
 # Extract and move to Applications
-tar -xzf beam-macos-*.tar.gz
+tar -xzf beam-macos-aarch64.tar.gz
 mv Beam.app /Applications/
 ```
 

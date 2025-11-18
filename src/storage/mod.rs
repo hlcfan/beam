@@ -125,9 +125,9 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             storage_type: StorageType::TomlFiles,
-            // TODO: change the base path to ~/.config/.beam
             base_path: dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
+                .join(".config")
                 .join(".beam"),
             auto_save: true,
             // TODO: do we need this?
