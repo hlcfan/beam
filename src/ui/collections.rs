@@ -285,10 +285,18 @@ impl CollectionPanel {
             }
         }
 
-        scrollable(content.spacing(2).padding(10))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        container(
+            scrollable(content.spacing(2).padding(10))
+                .width(Length::Fill)
+                .height(Length::Fill)
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb(0.980, 0.980, 0.980))), // #fafafa
+            ..Default::default()
+        })
+        .into()
     }
 
     pub fn update(&mut self, message: Message, collections: &[RequestCollection]) -> Action {
