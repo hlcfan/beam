@@ -286,7 +286,6 @@ fn response_body_tab<'a>(
     info!("===response body content");
     // For text responses, use the normal text editor with dynamic syntax highlighting
     // TODO: move the syntax to main file
-    info!("===response body updated");
 
     // let resp = response.as_ref().unwrap();
     // Check if this is a binary response

@@ -464,13 +464,20 @@ impl BeamApp {
                         Task::none()
                     }
                     collections::Action::SelectRequestConfig(collection_index, request_index) => {
+                        if self.last_opened_request == Some((collection_index, request_index)) {
+                            return Task::none();
+                        }
+
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
-                                // // Sync script content when request is selected
-                                // self.request_panel.sync_script_content(self.current_request.post_request_script.as_ref());
+
+                                self.post_script_content = text_editor::Content::with_text(
+                                    self.current_request.post_request_script.as_deref().unwrap_or("")
+                                );
+
                                 if let Some(resp) = &self.current_request.last_response {
                                     let formatted_resp =
                                         Self::format_response_content(resp.body.as_str(), self.current_request.body_format);
@@ -480,10 +487,8 @@ impl BeamApp {
                                 }
 
                                 // Update the last opened request state and save to storage
-                                // directly here to avoid one more render
                                 self.last_opened_request = Some((collection_index, request_index));
                                 // Save the last opened request asynchronously without blocking the UI
-                                // TODO; don't save last open request if no index change
                                 tokio::spawn(async move {
                                     if let Ok(storage_manager) =
                                         storage::StorageManager::with_default_config()
@@ -1357,26 +1362,6 @@ impl BeamApp {
                                     self.response_body_content =
                                         text_editor::Content::with_text(formatted_resp.as_str());
                                 }
-
-                                // Update the last opened request state and save to storage
-                                // directly here to avoid one more render
-                                // Save the last opened request asynchronously without blocking the UI
-                                // tokio::spawn(async move {
-                                //     if let Ok(storage_manager) =
-                                //         storage::StorageManager::with_default_config().await
-                                //     {
-                                //         if let Err(e) = storage_manager
-                                //             .storage()
-                                //             .save_last_opened_request(
-                                //                 collection_index,
-                                //                 request_index,
-                                //             )
-                                //             .await
-                                //         {
-                                //             error!("Failed to save last opened request: {}", e);
-                                //         }
-                                //     }
-                                // });
                             }
                         } else {
                             error!("===no collections");
