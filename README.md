@@ -2,6 +2,8 @@
 
 A HTTP client for developers built with Rust and Iced.
 
+![Beam Screenshot](screenshot.png)
+
 ## Features
 
 - 🚀 Fast and lightweight
