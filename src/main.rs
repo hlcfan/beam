@@ -280,12 +280,10 @@ impl BeamApp {
                     request::Action::UpdateCurrentRequest(request_config) => {
                         self.current_request = request_config.clone();
 
-                        // Update the request body content to reflect the new body
-                        self.request_body_content =
-                            text_editor::Content::with_text(&self.current_request.body);
-
-                        // // Sync script content when request is updated
-                        // self.request_panel.sync_script_content(self.current_request.post_request_script.as_ref());
+                        Self::update_editor_content(
+                            &mut self.request_body_content,
+                            self.current_request.body.to_string(),
+                        );
 
                         if let Some(collection) = self
                             .collections
@@ -471,19 +469,31 @@ impl BeamApp {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
-                                self.request_body_content =
-                                    text_editor::Content::with_text(&self.current_request.body);
 
-                                self.post_script_content = text_editor::Content::with_text(
-                                    self.current_request.post_request_script.as_deref().unwrap_or("")
+                                Self::update_editor_content(
+                                    &mut self.request_body_content,
+                                    self.current_request.body.to_string(),
+                                );
+
+                                Self::update_editor_content(
+                                    &mut self.post_script_content,
+                                    self.current_request
+                                        .post_request_script
+                                        .as_deref()
+                                        .unwrap_or("")
+                                        .to_string(),
                                 );
 
                                 if let Some(resp) = &self.current_request.last_response {
-                                    let formatted_resp =
-                                        Self::format_response_content(resp.body.as_str(), self.current_request.body_format);
+                                    let formatted_resp = Self::format_response_content(
+                                        resp.body.as_str(),
+                                        self.current_request.body_format,
+                                    );
 
-                                    self.response_body_content =
-                                        text_editor::Content::with_text(formatted_resp.as_str());
+                                    Self::update_editor_content(
+                                        &mut self.response_body_content,
+                                        formatted_resp,
+                                    );
                                 }
 
                                 // Update the last opened request state and save to storage
@@ -700,7 +710,10 @@ impl BeamApp {
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        let formatted_body = Self::format_response_content(&response.body, self.current_request.body_format);
+                        let formatted_body = Self::format_response_content(
+                            &response.body,
+                            self.current_request.body_format,
+                        );
                         self.response_body_content
                             .perform(text_editor::Action::SelectAll);
                         self.response_body_content
@@ -767,9 +780,10 @@ impl BeamApp {
 
                         // Store the error response in the current request
                         self.current_request.last_response = Some(error_response.clone());
-
-                        self.response_body_content =
-                            text_editor::Content::with_text(error.as_str());
+                        Self::update_editor_content(
+                            &mut self.response_body_content,
+                            error.to_string(),
+                        );
 
                         if let Some(collection) = self
                             .collections
@@ -1346,21 +1360,32 @@ impl BeamApp {
                                 self.last_opened_request = Some((collection_index, request_index));
 
                                 self.current_request = request_config.clone();
-                                self.request_body_content =
-                                    text_editor::Content::with_text(&self.current_request.body);
+                                Self::update_editor_content(
+                                    &mut self.request_body_content,
+                                    self.current_request.body.to_string(),
+                                );
 
-                                self.post_script_content = text_editor::Content::with_text(
-                                    self.current_request.post_request_script.as_deref().unwrap_or("")
+                                Self::update_editor_content(
+                                    &mut self.post_script_content,
+                                    self.current_request
+                                        .post_request_script
+                                        .as_deref()
+                                        .unwrap_or("")
+                                        .to_string(),
                                 );
 
                                 if let Some(resp) = &self.current_request.last_response {
                                     // TODO: move the response body content update in a new message
                                     // so it doesn't block the UI loading
-                                    let formatted_resp =
-                                        Self::format_response_content(resp.body.as_str(), self.current_request.body_format);
+                                    let formatted_resp = Self::format_response_content(
+                                        resp.body.as_str(),
+                                        self.current_request.body_format,
+                                    );
 
-                                    self.response_body_content =
-                                        text_editor::Content::with_text(formatted_resp.as_str());
+                                    Self::update_editor_content(
+                                        &mut self.response_body_content,
+                                        formatted_resp.to_string(),
+                                    );
                                 }
                             }
                         } else {
@@ -1708,6 +1733,13 @@ impl BeamApp {
         } else {
             pane_grid.into()
         }
+    }
+
+    fn update_editor_content(editor_content: &mut text_editor::Content, content: String) {
+        editor_content.perform(text_editor::Action::SelectAll);
+        editor_content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+            Arc::new(content),
+        )));
     }
 
     fn format_response_content(body: &str, body_format: BodyFormat) -> String {
