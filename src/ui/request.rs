@@ -583,7 +583,7 @@ impl RequestPanel {
                 RequestTab::Auth
             ),
             tab_button(
-                "Post-Script".to_string(),
+                "Script".to_string(),
                 self.selected_tab == RequestTab::PostScript,
                 RequestTab::PostScript
             ),
