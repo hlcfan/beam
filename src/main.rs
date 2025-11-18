@@ -203,9 +203,9 @@ impl Default for BeamApp {
                 ],
                 params: vec![],
                 body: String::new(),
-                content_type: "application/json".to_string(),
+                content_type: String::new(),
                 auth_type: AuthType::None,
-                body_format: BodyFormat::default(), // Default to JSON
+                body_format: BodyFormat::default(),
                 bearer_token: String::new(),
                 basic_username: String::new(),
                 basic_password: String::new(),
@@ -361,7 +361,8 @@ impl BeamApp {
                     }
                     request::Action::EditRequestPostRequestScript(action) => {
                         self.post_script_content.perform(action);
-                        self.current_request.post_request_script = Some(self.post_script_content.text());
+                        self.current_request.post_request_script =
+                            Some(self.post_script_content.text());
 
                         if let Some(collection) = self
                             .collections
@@ -390,9 +391,9 @@ impl BeamApp {
                         let select_all_action = text_editor::Action::SelectAll;
                         self.request_body_content.perform(select_all_action);
 
-                        let paste_action = text_editor::Action::Edit(
-                            text_editor::Edit::Paste(std::sync::Arc::new(formatted_body))
-                        );
+                        let paste_action = text_editor::Action::Edit(text_editor::Edit::Paste(
+                            std::sync::Arc::new(formatted_body),
+                        ));
                         self.request_body_content.perform(paste_action);
                         self.current_request.body = self.request_body_content.text();
 
@@ -472,7 +473,7 @@ impl BeamApp {
                                 // self.request_panel.sync_script_content(self.current_request.post_request_script.as_ref());
                                 if let Some(resp) = &self.current_request.last_response {
                                     let formatted_resp =
-                                        Self::format_response_content(resp.body.as_str());
+                                        Self::format_response_content(resp.body.as_str(), self.current_request.body_format);
 
                                     self.response_body_content =
                                         text_editor::Content::with_text(formatted_resp.as_str());
@@ -694,7 +695,7 @@ impl BeamApp {
                 self.request_start_time = None;
                 match result {
                     Ok(response) => {
-                        let formatted_body = Self::format_response_content(&response.body);
+                        let formatted_body = Self::format_response_content(&response.body, self.current_request.body_format);
                         self.response_body_content
                             .perform(text_editor::Action::SelectAll);
                         self.response_body_content
@@ -1343,11 +1344,15 @@ impl BeamApp {
                                 self.request_body_content =
                                     text_editor::Content::with_text(&self.current_request.body);
 
+                                self.post_script_content = text_editor::Content::with_text(
+                                    self.current_request.post_request_script.as_deref().unwrap_or("")
+                                );
+
                                 if let Some(resp) = &self.current_request.last_response {
                                     // TODO: move the response body content update in a new message
                                     // so it doesn't block the UI loading
                                     let formatted_resp =
-                                        Self::format_response_content(resp.body.as_str());
+                                        Self::format_response_content(resp.body.as_str(), self.current_request.body_format);
 
                                     self.response_body_content =
                                         text_editor::Content::with_text(formatted_resp.as_str());
@@ -1720,24 +1725,26 @@ impl BeamApp {
         }
     }
 
-    fn format_response_content(body: &str) -> String {
-        // Try to format JSON if the content is not too large (limit to 100KB)
+    fn format_response_content(body: &str, body_format: BodyFormat) -> String {
         const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
 
+        // Only format if body format is JSON
+        if body_format != BodyFormat::Json {
+            // Not JSON format, return as-is
+            return body.to_string();
+        }
+
+        // Try to format JSON if the content is not too large
         if body.len() <= MAX_JSON_FORMAT_SIZE {
             if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
                 if let Ok(formatted_json) = serde_json::to_string_pretty(&json_value) {
-                    formatted_json
-                } else {
-                    body.to_string()
+                    return formatted_json;
                 }
-            } else {
-                body.to_string()
             }
-        } else {
-            // If too large, return original content
-            body.to_string()
         }
+
+        // If formatting fails or content is too large, return original
+        body.to_string()
     }
 
     /// Resolves variables in the format {{variable_name}} using the active environment

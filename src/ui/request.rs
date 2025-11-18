@@ -420,21 +420,6 @@ impl RequestPanel {
         }
     }
 
-    // pub fn sync_script_content(&mut self, script_content: Option<&String>) {
-    //     let script_text = script_content.map(|s| s.as_str()).unwrap_or("");
-    //     if self.script_editor_content.text() != script_text {
-    //         // Clear existing content and insert new content using edit actions
-    //         self.script_editor_content
-    //             .perform(text_editor::Action::SelectAll);
-    //         self.script_editor_content
-    //             .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
-    //         self.script_editor_content
-    //             .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-    //                 std::sync::Arc::new(script_text.to_string()),
-    //             )));
-    //     }
-    // }
-
     pub fn view<'a>(
         &'a self,
         current_request: &'a RequestConfig,
@@ -1303,6 +1288,7 @@ fn post_script_tab<'a>(script_content: &'a text_editor::Content) -> Element<'a, 
     //         ..Default::default()
     //     });
     let script_editor_widget = text_editor(script_content)
+        .highlight("javascript", highlighter::Theme::Base16Mocha)
         .on_action(Message::ScriptChanged)
         .placeholder("// Enter your post-request script here...")
         .style(
