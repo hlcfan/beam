@@ -128,7 +128,7 @@ impl Default for StorageConfig {
             base_path: dirs::home_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join(".config")
-                .join(".beam"),
+                .join("beam"),
             auto_save: true,
             // TODO: do we need this?
             backup_enabled: true,
