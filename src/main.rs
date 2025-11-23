@@ -1712,6 +1712,7 @@ impl BeamApp {
                     })
                 )
                 .on_press(Message::DoNothing)
+                .on_scroll(|_| Message::DoNothing)
             ]
             .into()
         } else if self.show_rename_modal {
@@ -2078,7 +2079,25 @@ impl BeamApp {
                         })
                         .padding(8)
                         .size(18)
-                        .width(Length::FillPortion(3)),
+                        .width(Length::FillPortion(3))
+                        .style(|_theme, status| {
+                            let (border_color, border_width) = match status {
+                                text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
+                            };
+                            text_input::Style {
+                                background: iced::Background::Color(Color::TRANSPARENT),
+                                border: iced::Border {
+                                    color: border_color,
+                                    width: border_width,
+                                    radius: 4.0.into(),
+                                },
+                                icon: Color::from_rgb(0.5, 0.5, 0.5),
+                                placeholder: Color::from_rgb(0.7, 0.7, 0.7),
+                                value: Color::from_rgb(0.1, 0.1, 0.1),
+                                selection: Color::from_rgb(0.7, 0.85, 1.0),
+                            }
+                        }),
                     space().width(10),
                     container(
                         text("Active")
@@ -2136,20 +2155,68 @@ impl BeamApp {
                 panel_content = panel_content.push(variables_header);
                 panel_content = panel_content.push(space().height(8));
 
+                // Variables table - create a column to hold header and rows
+                let mut table_content = column![].spacing(0);
+
                 // Variables table header
-                let table_header = row![
-                    container(text("Key").size(12).color(Color::from_rgb(0.5, 0.5, 0.5)))
-                        .width(Length::FillPortion(1)),
-                    container(text("Value").size(12).color(Color::from_rgb(0.5, 0.5, 0.5)))
-                        .width(Length::FillPortion(1)),
-                    container(text("").width(40)) // Delete button column
-                ]
-                .spacing(10);
+                let table_header = container(
+                    row![
+                        container(text("Key").size(12).color(Color::from_rgb(0.3, 0.3, 0.3)).font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        }))
+                            .width(Length::FillPortion(1))
+                            .padding([8, 8]),
+                        container(text("Value").size(12).color(Color::from_rgb(0.3, 0.3, 0.3)).font(iced::Font {
+                            weight: iced::font::Weight::Bold,
+                            ..Default::default()
+                        }))
+                            .width(Length::FillPortion(1))
+                            .padding([8, 8]),
+                        container(text("").width(40)) // Delete button column
+                    ]
+                    .spacing(10)
+                )
+                .padding([8, 8])
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                    border: iced::Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                });
 
-                panel_content = panel_content.push(table_header);
+                table_content = table_content.push(table_header);
 
-                // Variables list
-                for (key, value) in active_env.variables.iter() {
+                // Add separator after header
+                if !active_env.variables.is_empty() {
+                    table_content = table_content.push(
+                        container(space())
+                            .width(Length::Fill)
+                            .height(1)
+                            .style(|_theme: &Theme| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                                ..Default::default()
+                            })
+                    );
+                }
+
+                // Variables rows
+                for (i, (key, value)) in active_env.variables.iter().enumerate() {
+                    if i > 0 {
+                        // Add separator between rows
+                        table_content = table_content.push(
+                            container(space())
+                                .width(Length::Fill)
+                                .height(1)
+                                .style(|_theme: &Theme| container::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                                    ..Default::default()
+                                })
+                        );
+                    }
                     let key_clone = key.clone();
                     let key_clone2 = key.clone();
                     let key_clone3 = key.clone();
@@ -2171,7 +2238,7 @@ impl BeamApp {
                     .style(|_theme: &Theme, status| {
                         let base = button::Style::default();
                         match status {
-                            button::Status::Hovered => button::Style {
+                            button::Status::Hovered | button::Status::Pressed => button::Style {
                                 background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.95, 0.95))),
                                 border: iced::Border {
                                     radius: 4.0.into(),
@@ -2196,7 +2263,25 @@ impl BeamApp {
                                 ))
                                 .padding(8)
                                 .size(13)
-                                .width(Length::FillPortion(1)),
+                                .width(Length::FillPortion(1))
+                                .style(|_theme, status| {
+                                    let (border_color, border_width) = match status {
+                                        text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                        _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
+                                    };
+                                    text_input::Style {
+                                        background: iced::Background::Color(Color::TRANSPARENT),
+                                        border: iced::Border {
+                                            color: border_color,
+                                            width: border_width,
+                                            radius: 4.0.into(),
+                                        },
+                                        icon: Color::from_rgb(0.5, 0.5, 0.5),
+                                        placeholder: Color::from_rgb(0.7, 0.7, 0.7),
+                                        value: Color::from_rgb(0.1, 0.1, 0.1),
+                                        selection: Color::from_rgb(0.7, 0.85, 1.0),
+                                    }
+                                }),
                             text_input("", value)
                                 .on_input(move |input| Message::VariableValueChanged(
                                     active_idx,
@@ -2205,7 +2290,25 @@ impl BeamApp {
                                 ))
                                 .padding(8)
                                 .size(13)
-                                .width(Length::FillPortion(1)),
+                                .width(Length::FillPortion(1))
+                                .style(|_theme, status| {
+                                    let (border_color, border_width) = match status {
+                                        text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                        _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
+                                    };
+                                    text_input::Style {
+                                        background: iced::Background::Color(Color::TRANSPARENT),
+                                        border: iced::Border {
+                                            color: border_color,
+                                            width: border_width,
+                                            radius: 4.0.into(),
+                                        },
+                                        icon: Color::from_rgb(0.5, 0.5, 0.5),
+                                        placeholder: Color::from_rgb(0.7, 0.7, 0.7),
+                                        value: Color::from_rgb(0.1, 0.1, 0.1),
+                                        selection: Color::from_rgb(0.7, 0.85, 1.0),
+                                    }
+                                }),
                             container(delete_button)
                                 .width(40)
                                 .align_x(iced::alignment::Horizontal::Center)
@@ -2213,19 +2316,33 @@ impl BeamApp {
                         .spacing(10)
                         .align_y(iced::Alignment::Center)
                     )
-                    .padding([8, 0])
+                    .padding([8, 8])
                     .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
+                        background: Some(iced::Background::Color(Color::TRANSPARENT)),
                         border: iced::Border {
-                            color: Color::from_rgb(0.92, 0.92, 0.92),
-                            width: 1.0,
-                            radius: 6.0.into(),
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 0.0.into(),
                         },
                         ..Default::default()
                     });
 
-                    panel_content = panel_content.push(variable_row);
+                    table_content = table_content.push(variable_row);
                 }
+
+                // Wrap the table in a container with rounded border
+                let table_container = container(table_content)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(iced::Background::Color(Color::WHITE)),
+                        border: iced::Border {
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                        ..Default::default()
+                    });
+
+                panel_content = panel_content.push(table_container);
 
                 // Add Variable button
                 panel_content = panel_content.push(space().height(8));
