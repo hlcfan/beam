@@ -2400,6 +2400,7 @@ impl BeamApp {
                         ]
                         .spacing(0)
                     )
+                    .width(Length::Fill)
                     .padding(12)
                     .style(|_theme: &Theme| container::Style {
                         background: Some(iced::Background::Color(Color::from_rgb(0.97, 0.97, 0.98))),
@@ -2429,53 +2430,31 @@ impl BeamApp {
                                 Message::EnvironmentDescriptionChanged(active_idx, input)
                             })
                             .padding(8)
-                            .size(13),
-                            if self.environments.len() > 1 {
-                                column![
-                                    space().height(15),
-                                    button(
-                                        row![
-                                            icon(IconName::Close).size(14).color(Color::from_rgb(0.8, 0.3, 0.3)),
-                                            space().width(6),
-                                            text("Delete Environment").size(13)
-                                        ]
-                                        .align_y(iced::Alignment::Center)
-                                    )
-                                    .on_press(Message::DeleteEnvironment(active_idx))
-                                    .padding([8, 12])
-                                    .style(|_theme, status| {
-                                        match status {
-                                            button::Status::Hovered => button::Style {
-                                                background: Some(iced::Background::Color(Color::from_rgb(0.95, 0.3, 0.3))),
-                                                text_color: Color::WHITE,
-                                                border: iced::Border {
-                                                    radius: 6.0.into(),
-                                                    ..Default::default()
-                                                },
-                                                ..button::Style::default()
-                                            },
-                                            _ => button::Style {
-                                                background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.95, 0.95))),
-                                                text_color: Color::from_rgb(0.8, 0.3, 0.3),
-                                                border: iced::Border {
-                                                    color: Color::from_rgb(0.95, 0.85, 0.85),
-                                                    width: 1.0,
-                                                    radius: 6.0.into(),
-                                                },
-                                                ..button::Style::default()
-                                            },
-                                        }
-                                    })
-                                ]
-                            } else {
-                                column![]
-                            }
+                            .size(13)
+                            .style(|_theme, status| {
+                                let (border_color, border_width) = match status {
+                                    text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                    _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
+                                };
+                                text_input::Style {
+                                    background: iced::Background::Color(Color::TRANSPARENT),
+                                    border: iced::Border {
+                                        color: border_color,
+                                        width: border_width,
+                                        radius: 4.0.into(),
+                                    },
+                                    icon: Color::from_rgb(0.5, 0.5, 0.5),
+                                    placeholder: Color::from_rgb(0.7, 0.7, 0.7),
+                                    value: Color::from_rgb(0.1, 0.1, 0.1),
+                                    selection: Color::from_rgb(0.7, 0.85, 1.0),
+                                }
+                            }),
                         ]
                         .spacing(0)
                     )
                     .padding(12)
                     .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
+                        background: Some(iced::Background::Color(Color::from_rgb(0.97, 0.97, 0.98))),
                         border: iced::Border {
                             color: Color::from_rgb(0.92, 0.92, 0.92),
                             width: 1.0,
@@ -2484,6 +2463,45 @@ impl BeamApp {
                         ..Default::default()
                     })
                 );
+
+                if self.environments.len() > 1 {
+                    panel_content = panel_content.push(space().height(15));
+                    panel_content = panel_content.push(
+                        button(
+                            row![
+                                icon(IconName::Close).size(14).color(Color::from_rgb(0.8, 0.3, 0.3)),
+                                space().width(6),
+                                text("Delete Environment").size(13)
+                            ]
+                            .align_y(iced::Alignment::Center)
+                        )
+                        .on_press(Message::DeleteEnvironment(active_idx))
+                        .padding([8, 12])
+                        .style(|_theme, status| {
+                            match status {
+                                button::Status::Hovered => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(0.95, 0.3, 0.3))),
+                                    text_color: Color::WHITE,
+                                    border: iced::Border {
+                                        radius: 6.0.into(),
+                                        ..Default::default()
+                                    },
+                                    ..button::Style::default()
+                                },
+                                _ => button::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.95, 0.95))),
+                                    text_color: Color::from_rgb(0.8, 0.3, 0.3),
+                                    border: iced::Border {
+                                        color: Color::from_rgb(0.95, 0.85, 0.85),
+                                        width: 1.0,
+                                        radius: 6.0.into(),
+                                    },
+                                    ..button::Style::default()
+                                },
+                            }
+                        })
+                    );
+                }
 
                 scrollable(panel_content)
                     .height(Fill)
