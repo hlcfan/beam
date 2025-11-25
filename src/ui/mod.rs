@@ -4,9 +4,11 @@ pub mod response;
 pub mod icon;
 pub mod spinner;
 pub mod url_input;
+pub mod environment;
 
 pub use icon::{IconName, icon};
 pub use request::*;
 pub use spinner::Spinner;
 pub use collections::CollectionPanel;
 pub use response::ResponsePanel;
+pub use environment::EnvironmentPanel;
