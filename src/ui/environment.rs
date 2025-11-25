@@ -13,6 +13,7 @@ pub enum Action {
     VariableValueChanged(usize, String, String), // (env_index, key, new_value)
     AddVariable(usize),
     RemoveVariable(usize, String), // (env_index, key)
+    ToggleVariable(usize, String), // (env_index, key)
     ClosePopup,
     EnvironmentSelected(usize),
     None,
@@ -28,6 +29,7 @@ pub enum Message {
     VariableValueChanged(usize, String, String),
     AddVariable(usize),
     RemoveVariable(usize, String),
+    ToggleVariable(usize, String),
     ClosePopup,
     EnvironmentSelected(usize),
 }
@@ -60,6 +62,7 @@ impl EnvironmentPanel {
             }
             Message::AddVariable(env_index) => Action::AddVariable(env_index),
             Message::RemoveVariable(env_index, key) => Action::RemoveVariable(env_index, key),
+            Message::ToggleVariable(env_index, key) => Action::ToggleVariable(env_index, key),
             Message::ClosePopup => {
                 self.show_popup = false;
                 Action::ClosePopup
@@ -315,7 +318,7 @@ impl EnvironmentPanel {
                 panel_content = panel_content.push(space().height(10));
 
                 // Variables section header
-                let enabled_count = active_env.variables.len();
+                let enabled_count = active_env.variables.values().filter(|v| v.enabled).count();
                 let variables_header = row![
                     text("Variables").size(14),
                     space().width(10),
@@ -351,6 +354,7 @@ impl EnvironmentPanel {
                 // Variables table header
                 let table_header = container(
                     row![
+                        container(text("").width(40)), // Toggle button column
                         container(
                             text("Key")
                                 .size(12)
@@ -404,7 +408,7 @@ impl EnvironmentPanel {
                 }
 
                 // Variables rows
-                for (i, (key, value)) in active_env.variables.iter().enumerate() {
+                for (i, (key, var)) in active_env.variables.iter().enumerate() {
                     if i > 0 {
                         // Add separator between rows
                         table_content = table_content.push(
@@ -421,6 +425,45 @@ impl EnvironmentPanel {
                     let key_clone = key.clone();
                     let key_clone2 = key.clone();
                     let key_clone3 = key.clone();
+                    let key_clone4 = key.clone();
+                    let is_enabled = var.enabled;
+
+                    // Toggle button
+                    let toggle_button = button(
+                        container(text(if is_enabled { "✓" } else { "○" }).size(16).color(
+                            if is_enabled {
+                                Color::from_rgb(0.2, 0.7, 0.3)
+                            } else {
+                                Color::from_rgb(0.7, 0.7, 0.7)
+                            },
+                        ))
+                        .align_x(iced::alignment::Horizontal::Center)
+                        .align_y(iced::alignment::Vertical::Center)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                    )
+                    .on_press(Message::ToggleVariable(active_idx, key_clone4))
+                    .width(32)
+                    .height(32)
+                    .style(|_theme: &Theme, status| {
+                        let base = button::Style::default();
+                        match status {
+                            button::Status::Hovered | button::Status::Pressed => button::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.95, 0.95, 0.95,
+                                ))),
+                                border: iced::Border {
+                                    radius: 4.0.into(),
+                                    ..Default::default()
+                                },
+                                ..base
+                            },
+                            _ => button::Style {
+                                background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                                ..base
+                            },
+                        }
+                    });
 
                     let delete_button = button(
                         container(
@@ -456,8 +499,18 @@ impl EnvironmentPanel {
                         }
                     });
 
+                    // Apply visual styling based on enabled state
+                    let text_color = if is_enabled {
+                        Color::from_rgb(0.1, 0.1, 0.1)
+                    } else {
+                        Color::from_rgb(0.6, 0.6, 0.6)
+                    };
+
                     let variable_row = container(
                         row![
+                            container(toggle_button)
+                                .width(40)
+                                .align_x(iced::alignment::Horizontal::Center),
                             text_input("", key)
                                 .on_input(move |input| Message::VariableKeyChanged(
                                     active_idx,
@@ -467,7 +520,7 @@ impl EnvironmentPanel {
                                 .padding(8)
                                 .size(13)
                                 .width(Length::FillPortion(1))
-                                .style(|_theme, status| {
+                                .style(move |_theme, status| {
                                     let (border_color, border_width) = match status {
                                         text_input::Status::Focused { .. } => {
                                             (Color::from_rgb(0.7, 0.7, 0.7), 1.0)
@@ -483,11 +536,11 @@ impl EnvironmentPanel {
                                         },
                                         icon: Color::from_rgb(0.5, 0.5, 0.5),
                                         placeholder: Color::from_rgb(0.7, 0.7, 0.7),
-                                        value: Color::from_rgb(0.1, 0.1, 0.1),
+                                        value: text_color,
                                         selection: Color::from_rgb(0.7, 0.85, 1.0),
                                     }
                                 }),
-                            text_input("", value)
+                            text_input("", &var.value)
                                 .on_input(move |input| Message::VariableValueChanged(
                                     active_idx,
                                     key_clone2.clone(),
@@ -496,7 +549,7 @@ impl EnvironmentPanel {
                                 .padding(8)
                                 .size(13)
                                 .width(Length::FillPortion(1))
-                                .style(|_theme, status| {
+                                .style(move |_theme, status| {
                                     let (border_color, border_width) = match status {
                                         text_input::Status::Focused { .. } => {
                                             (Color::from_rgb(0.7, 0.7, 0.7), 1.0)
@@ -512,7 +565,7 @@ impl EnvironmentPanel {
                                         },
                                         icon: Color::from_rgb(0.5, 0.5, 0.5),
                                         placeholder: Color::from_rgb(0.7, 0.7, 0.7),
-                                        value: Color::from_rgb(0.1, 0.1, 0.1),
+                                        value: text_color,
                                         selection: Color::from_rgb(0.7, 0.85, 1.0),
                                     }
                                 }),

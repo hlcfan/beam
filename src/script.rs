@@ -1,7 +1,7 @@
-use beam::types::{Environment, ResponseData, RequestConfig};
-use std::collections::BTreeMap;
+use beam::types::{Environment, RequestConfig, ResponseData};
 use log::{error, info};
-use rquickjs::{Context, Runtime, Object, function::Func};
+use rquickjs::{Context, Object, Runtime, function::Func};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone)]
@@ -39,10 +39,11 @@ pub fn execute_post_request_script(
     // Basic script validation
     if script.trim().is_empty() {
         result.success = true;
-        result.console_output.push("No script to execute".to_string());
+        result
+            .console_output
+            .push("No script to execute".to_string());
         return result;
     }
-
 
     // Create a new runtime for this execution
     let runtime = match Runtime::new() {
@@ -70,13 +71,20 @@ pub fn execute_post_request_script(
     // Execute the script within the context
     let execution_result = context.with(|ctx| {
         // Add initial console message
-        result.console_output.push("Starting script execution...".to_string());
+        result
+            .console_output
+            .push("Starting script execution...".to_string());
 
         // Setup global objects with better error handling
-        match setup_global_objects(&ctx, &request, &response, environment, 
-                                   Arc::clone(&console_output_shared),
-                                   Arc::clone(&env_changes_shared),
-                                   Arc::clone(&test_results_shared)) {
+        match setup_global_objects(
+            &ctx,
+            &request,
+            &response,
+            environment,
+            Arc::clone(&console_output_shared),
+            Arc::clone(&env_changes_shared),
+            Arc::clone(&test_results_shared),
+        ) {
             Ok(_) => {
                 info!("Global objects setup complete");
             }
@@ -94,14 +102,14 @@ pub fn execute_post_request_script(
             Ok(val) => info!("pm.response.json() test successful: {:?}", val),
             Err(e) => error!("pm.response.json() test failed: {:?}", e),
         }
-        
+
         // Test property access
         info!("Testing pm.response.json().refreshToken...");
         match ctx.eval::<rquickjs::Value, _>("pm.response.json().refreshToken") {
             Ok(val) => info!("Property access test successful: {:?}", val),
             Err(e) => error!("Property access test failed: {:?}", e),
         }
-        
+
         // Test pm.environment.set with a string
         info!("Testing pm.environment.set('test', 'value')...");
         match ctx.eval::<(), _>("pm.environment.set('test', 'value')") {
@@ -120,11 +128,11 @@ pub fn execute_post_request_script(
                 let error_msg = format!("JavaScript execution error: {:?}", e);
                 error!("Script execution failed. Script content: {}", script);
                 error!("Error details: {:?}", e);
-                
+
                 // Try to extract more info from the error
                 let err_str = e.to_string();
                 error!("Error string: {}", err_str);
-                
+
                 result.error_message = Some(error_msg.clone());
                 result.console_output.push(error_msg.clone());
 
@@ -138,8 +146,11 @@ pub fn execute_post_request_script(
     result.console_output.extend(captured_console);
     result.environment_changes = env_changes_shared.lock().unwrap().clone();
     result.test_results = test_results_shared.lock().unwrap().clone();
-    
-    info!("===After script execution, environment changes: {:?}", result.environment_changes);
+
+    info!(
+        "===After script execution, environment changes: {:?}",
+        result.environment_changes
+    );
 
     if let Err(e) = execution_result {
         error!("Script execution failed: {:?}", e);
@@ -203,14 +214,14 @@ fn setup_global_objects(
         changes.insert(key.clone(), value.clone());
         info!("===Environment variable set: {} = {}", key, value);
     });
-    
+
     // Set the Rust function directly
     env_obj.prop("__internalSet", set_fn_rust)?;
-    
+
     // Now create the wrapper using eval within the env_obj context
     // We'll evaluate it and set it directly
     ctx.globals().set("__tempEnvObj", env_obj.clone())?;
-    
+
     let wrapper_eval = r#"
         (function() {
             var internalSetFn = __tempEnvObj.__internalSet;
@@ -230,14 +241,17 @@ fn setup_global_objects(
         })();
     "#;
     ctx.eval::<(), _>(wrapper_eval)?;
-    
+
     // Clean up the temporary global
     ctx.globals().remove("__tempEnvObj");
     info!("Set property added to env_obj");
 
     // Add pm.environment.get method
     let get_fn = Func::new(move |key: String| -> Option<String> {
-        env_vars.get(&key).cloned()
+        env_vars
+            .get(&key)
+            .filter(|v| v.enabled)
+            .map(|v| v.value.clone())
     });
     env_obj.prop("get", get_fn)?;
 
@@ -261,9 +275,7 @@ fn setup_global_objects(
 
     // Add response.text() method
     let response_body_for_text = response_body.clone();
-    let text_fn = Func::new(move || -> String {
-        response_body_for_text.clone()
-    });
+    let text_fn = Func::new(move || -> String { response_body_for_text.clone() });
     response_obj.prop("text", text_fn)?;
 
     // Add pm.test method for test assertions - simplified version
@@ -273,7 +285,11 @@ fn setup_global_objects(
             Ok(passed) => TestResult {
                 name: name.clone(),
                 passed,
-                error_message: if passed { None } else { Some("Test assertion failed".to_string()) },
+                error_message: if passed {
+                    None
+                } else {
+                    Some("Test assertion failed".to_string())
+                },
             },
             Err(e) => TestResult {
                 name: name.clone(),
@@ -292,7 +308,7 @@ fn setup_global_objects(
 
     // Add pm object to global scope BEFORE setting up json() method
     ctx.globals().set("pm", pm)?;
-    
+
     // Now parse JSON and add the json() method to the global pm.response
     info!("About to parse response JSON");
     let json_value = match ctx.json_parse(response_body.as_bytes()) {
@@ -303,10 +319,10 @@ fn setup_global_objects(
         }
     };
     info!("JSON parsed successfully");
-    
+
     // Set up the json() method on the global pm.response
     ctx.globals().set("__tempJsonData", json_value)?;
-    
+
     let json_fn_eval = r#"
         (function() {
             var capturedData = __tempJsonData;
@@ -316,10 +332,10 @@ fn setup_global_objects(
         })();
     "#;
     ctx.eval::<(), _>(json_fn_eval)?;
-    
+
     ctx.globals().remove("__tempJsonData");
     info!("json() method added to pm.response");
-    
+
     info!("pm.response object setup complete");
 
     Ok(())

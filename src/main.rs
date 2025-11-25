@@ -806,7 +806,11 @@ impl BeamApp {
                 if let Some(active_env_idx) = self.active_environment {
                     if let Some(active_env) = self.environments.get_mut(active_env_idx) {
                         for (key, value) in script_result.environment_changes {
-                            active_env.variables.insert(key, value);
+                            if let Some(var) = active_env.variables.get_mut(&key) {
+                                var.value = value;
+                            } else {
+                                active_env.add_variable(key, value);
+                            }
                         }
                     }
                 }
@@ -979,7 +983,9 @@ impl BeamApp {
                     }
                     environment::Action::VariableValueChanged(env_index, key, value) => {
                         if let Some(env) = self.environments.get_mut(env_index) {
-                            env.variables.insert(key, value);
+                            if let Some(var) = env.variables.get_mut(&key) {
+                                var.value = value;
+                            }
 
                             let environments = self.environments.clone();
                             Task::perform(
@@ -1033,6 +1039,34 @@ impl BeamApp {
                     environment::Action::RemoveVariable(env_index, key) => {
                         if let Some(env) = self.environments.get_mut(env_index) {
                             env.variables.remove(&key);
+
+                            let environments = self.environments.clone();
+                            Task::perform(
+                                async move {
+                                    match storage::StorageManager::with_default_config() {
+                                        Ok(storage_manager) => {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
+                                                Ok(_) => Ok(()),
+                                                Err(e) => Err(e.to_string()),
+                                            }
+                                        }
+                                        Err(e) => Err(e.to_string()),
+                                    }
+                                },
+                                Message::EnvironmentsSaved,
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
+                    environment::Action::ToggleVariable(env_index, key) => {
+                        if let Some(env) = self.environments.get_mut(env_index) {
+                            if let Some(var) = env.variables.get_mut(&key) {
+                                var.enabled = !var.enabled;
+                            }
 
                             let environments = self.environments.clone();
                             Task::perform(

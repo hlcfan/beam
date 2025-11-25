@@ -265,9 +265,128 @@ impl Default for RequestConfig {
 // }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentVariable {
+    pub value: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+impl EnvironmentVariable {
+    pub fn new(value: String) -> Self {
+        Self {
+            value,
+            enabled: true,
+        }
+    }
+}
+
+// Custom deserialization to support backward compatibility
+// Old format: BTreeMap<String, String>
+// New format: BTreeMap<String, EnvironmentVariable>
+impl<'de> serde::Deserialize<'de> for Environment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct EnvironmentHelper {
+            name: String,
+            #[serde(deserialize_with = "deserialize_variables")]
+            variables: std::collections::BTreeMap<String, EnvironmentVariable>,
+            description: Option<String>,
+        }
+
+        fn deserialize_variables<'de, D>(
+            deserializer: D,
+        ) -> Result<std::collections::BTreeMap<String, EnvironmentVariable>, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            use serde::de::{MapAccess, Visitor};
+            use std::fmt;
+
+            struct VariablesVisitor;
+
+            impl<'de> Visitor<'de> for VariablesVisitor {
+                type Value = std::collections::BTreeMap<String, EnvironmentVariable>;
+
+                fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                    formatter.write_str("a map of variables")
+                }
+
+                fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+                where
+                    M: MapAccess<'de>,
+                {
+                    let mut variables = std::collections::BTreeMap::new();
+
+                    while let Some(key) = map.next_key::<String>()? {
+                        // Try to deserialize as EnvironmentVariable first
+                        if let Ok(var) = map.next_value::<EnvironmentVariable>() {
+                            variables.insert(key, var);
+                        } else {
+                            // Fall back to String for backward compatibility
+                            // This branch won't be reached in normal flow, so we need a different approach
+                        }
+                    }
+
+                    Ok(variables)
+                }
+            }
+
+            // Try deserializing as new format first
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum VariableValue {
+                New(EnvironmentVariable),
+                Old(String),
+            }
+
+            let map =
+                std::collections::BTreeMap::<String, VariableValue>::deserialize(deserializer)?;
+            Ok(map
+                .into_iter()
+                .map(|(k, v)| {
+                    let var = match v {
+                        VariableValue::New(var) => var,
+                        VariableValue::Old(value) => EnvironmentVariable::new(value),
+                    };
+                    (k, var)
+                })
+                .collect())
+        }
+
+        let helper = EnvironmentHelper::deserialize(deserializer)?;
+        Ok(Environment {
+            name: helper.name,
+            variables: helper.variables,
+            description: helper.description,
+        })
+    }
+}
+
+impl serde::Serialize for Environment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("Environment", 3)?;
+        state.serialize_field("name", &self.name)?;
+        state.serialize_field("variables", &self.variables)?;
+        state.serialize_field("description", &self.description)?;
+        state.end()
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Environment {
     pub name: String,
-    pub variables: std::collections::BTreeMap<String, String>,
+    pub variables: std::collections::BTreeMap<String, EnvironmentVariable>,
     pub description: Option<String>,
 }
 
@@ -281,11 +400,27 @@ impl Environment {
     }
 
     pub fn add_variable(&mut self, key: String, value: String) {
-        self.variables.insert(key, value);
+        self.variables.insert(key, EnvironmentVariable::new(value));
     }
 
+    /// Get variable value only if it's enabled (for request resolution)
     pub fn get_variable(&self, key: &str) -> Option<&String> {
+        self.variables
+            .get(key)
+            .filter(|var| var.enabled)
+            .map(|var| &var.value)
+    }
+
+    /// Get variable with its state (for UI display)
+    pub fn get_variable_with_state(&self, key: &str) -> Option<&EnvironmentVariable> {
         self.variables.get(key)
+    }
+
+    /// Set variable enabled state
+    pub fn set_variable_enabled(&mut self, key: &str, enabled: bool) {
+        if let Some(var) = self.variables.get_mut(key) {
+            var.enabled = enabled;
+        }
     }
 }
 
