@@ -364,8 +364,8 @@ impl EnvironmentPanel {
                                     ..Default::default()
                                 })
                         )
-                        .width(Length::FillPortion(1))
-                        .padding([8, 8]),
+                        .width(Length::FillPortion(3))
+                        .padding([6, 8]),
                         container(
                             text("Value")
                                 .size(12)
@@ -375,13 +375,13 @@ impl EnvironmentPanel {
                                     ..Default::default()
                                 })
                         )
-                        .width(Length::FillPortion(1))
-                        .padding([8, 8]),
+                        .width(Length::FillPortion(7))
+                        .padding([6, 8]),
                         container(text("").width(40)) // Delete button column
                     ]
                     .spacing(10),
                 )
-                .padding([8, 8])
+                .padding([6, 8])
                 .style(|_theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(Color::TRANSPARENT)),
                     border: iced::Border {
@@ -819,7 +819,8 @@ impl EnvironmentPanel {
         // Main layout: header + two-panel content
         let main_content = row![
             sidebar_container,
-            container(column![text("")].width(1))
+            container(space())
+                .width(1)
                 .height(Fill)
                 .style(|_theme: &Theme| container::Style {
                     background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
