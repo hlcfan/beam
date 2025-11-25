@@ -1,6 +1,6 @@
 use crate::types::Environment;
 use crate::ui::{IconName, icon};
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
+use iced::widget::{button, checkbox, column, container, row, scrollable, space, text, text_input};
 use iced::{Color, Element, Fill, Length, Padding, Theme, Vector};
 
 #[derive(Debug, Clone)]
@@ -428,42 +428,38 @@ impl EnvironmentPanel {
                     let key_clone4 = key.clone();
                     let is_enabled = var.enabled;
 
-                    // Toggle button
-                    let toggle_button = button(
-                        container(text(if is_enabled { "✓" } else { "○" }).size(16).color(
-                            if is_enabled {
-                                Color::from_rgb(0.2, 0.7, 0.3)
-                            } else {
-                                Color::from_rgb(0.7, 0.7, 0.7)
-                            },
-                        ))
-                        .align_x(iced::alignment::Horizontal::Center)
-                        .align_y(iced::alignment::Vertical::Center)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                    )
-                    .on_press(Message::ToggleVariable(active_idx, key_clone4))
-                    .width(32)
-                    .height(32)
-                    .style(|_theme: &Theme, status| {
-                        let base = button::Style::default();
-                        match status {
-                            button::Status::Hovered | button::Status::Pressed => button::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(
-                                    0.95, 0.95, 0.95,
-                                ))),
+                    // Toggle checkbox
+                    let toggle_checkbox = checkbox("", is_enabled)
+                        .on_toggle(move |_| Message::ToggleVariable(active_idx, key_clone4.clone()))
+                        .size(20)
+                        .style(move |_theme, _status| {
+                            checkbox::Style {
+                                background: iced::Background::Color(if is_enabled {
+                                    Color::from_rgb(
+                                        0x18 as f32 / 255.0,
+                                        0x18 as f32 / 255.0,
+                                        0x1b as f32 / 255.0,
+                                    ) // #18181b (zinc-900)
+                                } else {
+                                    Color::WHITE
+                                }),
+                                icon_color: Color::WHITE,
                                 border: iced::Border {
-                                    radius: 4.0.into(),
-                                    ..Default::default()
+                                    color: if is_enabled {
+                                        Color::from_rgb(
+                                            0x18 as f32 / 255.0,
+                                            0x18 as f32 / 255.0,
+                                            0x1b as f32 / 255.0,
+                                        ) // #18181b (zinc-900)
+                                    } else {
+                                        Color::from_rgb(0.7, 0.7, 0.7)
+                                    },
+                                    width: 1.5,
+                                    radius: 3.0.into(),
                                 },
-                                ..base
-                            },
-                            _ => button::Style {
-                                background: Some(iced::Background::Color(Color::TRANSPARENT)),
-                                ..base
-                            },
-                        }
-                    });
+                                text_color: None,
+                            }
+                        });
 
                     let delete_button = button(
                         container(
@@ -508,7 +504,7 @@ impl EnvironmentPanel {
 
                     let variable_row = container(
                         row![
-                            container(toggle_button)
+                            container(toggle_checkbox)
                                 .width(40)
                                 .align_x(iced::alignment::Horizontal::Center),
                             text_input("", key)
