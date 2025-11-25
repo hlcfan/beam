@@ -39,9 +39,7 @@ pub struct EnvironmentPanel {
 
 impl EnvironmentPanel {
     pub fn new() -> Self {
-        Self {
-            show_popup: false,
-        }
+        Self { show_popup: false }
     }
 
     pub fn update(&mut self, message: Message) -> Action {
@@ -114,85 +112,76 @@ impl EnvironmentPanel {
         });
 
         let header = row![
-            text("Environments").size(16).color(Color::from_rgb(0.3, 0.3, 0.3)),
+            text("Environments")
+                .size(16)
+                .color(Color::from_rgb(0.3, 0.3, 0.3)),
             space().width(Fill),
             close_button
         ]
         .align_y(iced::Alignment::Center);
 
-        let mut sidebar = column![].spacing(8);
-        
-        sidebar = sidebar.push(space().height(10));
-        
-        // New Environment button at the top
+        // New Environment button (fixed at top)
         let new_env_button = button(
             row![
                 icon(IconName::Add).size(14).color(Color::WHITE),
                 space().width(8),
                 text("New Environment").size(14)
             ]
-            .align_y(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center),
         )
         .on_press(Message::AddEnvironment)
         .width(Fill)
         .padding([10, 16])
-        .style(|_theme, status| {
-            match status {
-                button::Status::Hovered => button::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb(0.1, 0.1, 0.1))),
-                    text_color: Color::WHITE,
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        ..Default::default()
-                    },
-                    ..button::Style::default()
+        .style(|_theme, status| match status {
+            button::Status::Hovered => button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb(0.1, 0.1, 0.1))),
+                text_color: Color::WHITE,
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
                 },
-                _ => button::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb(0.2, 0.2, 0.2))),
-                    text_color: Color::WHITE,
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        ..Default::default()
-                    },
-                    ..button::Style::default()
+                ..button::Style::default()
+            },
+            _ => button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb(0.2, 0.2, 0.2))),
+                text_color: Color::WHITE,
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
                 },
-            }
+                ..button::Style::default()
+            },
         });
-        
-        sidebar = sidebar.push(new_env_button);
-        sidebar = sidebar.push(space().height(10));
 
-        // Environment list
+        // Environment list (scrollable)
+        let mut env_list = column![].spacing(8);
+
         for (idx, env) in environments.iter().enumerate() {
             let is_active = active_environment == Some(idx);
             let var_count = env.variables.len();
-            
+
             let env_item = button(
                 column![
                     row![
-                        text(&env.name)
-                            .size(14)
-                            .color(if is_active { 
-                                Color::from_rgb(0.1, 0.1, 0.1) 
-                            } else { 
-                                Color::from_rgb(0.3, 0.3, 0.3) 
-                            }),
+                        text(&env.name).size(14).color(if is_active {
+                            Color::from_rgb(0.1, 0.1, 0.1)
+                        } else {
+                            Color::from_rgb(0.3, 0.3, 0.3)
+                        }),
                         space().width(Fill),
                         if is_active {
-                            container(
-                                text("Active")
-                                    .size(10)
-                                    .color(Color::WHITE)
-                            )
-                            .padding([2, 6])
-                            .style(|_theme: &Theme| container::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(0.1, 0.1, 0.1))),
-                                border: iced::Border {
-                                    radius: 4.0.into(),
+                            container(text("Active").size(10).color(Color::WHITE))
+                                .padding([2, 6])
+                                .style(|_theme: &Theme| container::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.1, 0.1, 0.1,
+                                    ))),
+                                    border: iced::Border {
+                                        radius: 4.0.into(),
+                                        ..Default::default()
+                                    },
                                     ..Default::default()
-                                },
-                                ..Default::default()
-                            })
+                                })
                         } else {
                             container(text(""))
                         }
@@ -203,50 +192,53 @@ impl EnvironmentPanel {
                         .size(12)
                         .color(Color::from_rgb(0.6, 0.6, 0.6))
                 ]
-                .spacing(0)
+                .spacing(0),
             )
             .on_press(Message::EnvironmentSelected(idx))
             .width(Fill)
             .padding([10, 12])
-            .style(move |_theme, status| {
-                match status {
-                    button::Status::Hovered => button::Style {
-                        background: Some(iced::Background::Color(
-                            if is_active {
-                                Color::from_rgb(0.92, 0.92, 0.92)
-                            } else {
-                                Color::from_rgb(0.97, 0.97, 0.97)
-                            }
-                        )),
-                        border: iced::Border {
-                            radius: 6.0.into(),
-                            ..Default::default()
-                        },
-                        ..button::Style::default()
+            .style(move |_theme, status| match status {
+                button::Status::Hovered => button::Style {
+                    background: Some(iced::Background::Color(if is_active {
+                        Color::from_rgb(0.92, 0.92, 0.92)
+                    } else {
+                        Color::from_rgb(0.97, 0.97, 0.97)
+                    })),
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
                     },
-                    _ => button::Style {
-                        background: Some(iced::Background::Color(
-                            if is_active {
-                                Color::from_rgb(0.95, 0.95, 0.95)
-                            } else {
-                                Color::TRANSPARENT
-                            }
-                        )),
-                        border: iced::Border {
-                            radius: 6.0.into(),
-                            ..Default::default()
-                        },
-                        ..button::Style::default()
+                    ..button::Style::default()
+                },
+                _ => button::Style {
+                    background: Some(iced::Background::Color(if is_active {
+                        Color::from_rgb(0.95, 0.95, 0.95)
+                    } else {
+                        Color::TRANSPARENT
+                    })),
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
                     },
-                }
+                    ..button::Style::default()
+                },
             });
-            
-            sidebar = sidebar.push(env_item);
+
+            env_list = env_list.push(env_item);
         }
 
         let sidebar_container = container(
-            scrollable(sidebar)
-                .height(Fill)
+            column![
+                space().height(10),
+                new_env_button,
+                space().height(10),
+                scrollable(env_list)
+                    .height(Fill)
+                    .direction(scrollable::Direction::Vertical(
+                        scrollable::Scrollbar::new().width(0).scroller_width(0),
+                    ))
+            ]
+            .spacing(0),
         )
         .width(240)
         .height(Fill)
@@ -276,7 +268,9 @@ impl EnvironmentPanel {
                         .width(Length::FillPortion(3))
                         .style(|_theme, status| {
                             let (border_color, border_width) = match status {
-                                text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                text_input::Status::Focused { .. } => {
+                                    (Color::from_rgb(0.7, 0.7, 0.7), 1.0)
+                                }
                                 _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
                             };
                             text_input::Style {
@@ -293,31 +287,29 @@ impl EnvironmentPanel {
                             }
                         }),
                     space().width(10),
-                    container(
-                        text("Active")
-                            .size(12)
-                            .color(Color::WHITE)
-                    )
-                    .padding([4, 10])
-                    .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.1, 0.1, 0.1))),
-                        border: iced::Border {
-                            radius: 12.0.into(),
+                    container(text("Active").size(12).color(Color::WHITE))
+                        .padding([4, 10])
+                        .style(|_theme: &Theme| container::Style {
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.1, 0.1, 0.1
+                            ))),
+                            border: iced::Border {
+                                radius: 12.0.into(),
+                                ..Default::default()
+                            },
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
+                        }),
                     space().width(Fill)
                 ]
                 .align_y(iced::Alignment::Center);
 
                 panel_content = panel_content.push(env_header);
-                
+
                 // Description
                 panel_content = panel_content.push(
                     text("Define variables that can be used across your requests")
                         .size(13)
-                        .color(Color::from_rgb(0.5, 0.5, 0.5))
+                        .color(Color::from_rgb(0.5, 0.5, 0.5)),
                 );
 
                 panel_content = panel_content.push(space().height(10));
@@ -334,7 +326,9 @@ impl EnvironmentPanel {
                     )
                     .padding([2, 8])
                     .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.95, 0.95, 0.95))),
+                        background: Some(iced::Background::Color(Color::from_rgb(
+                            0.95, 0.95, 0.95
+                        ))),
                         border: iced::Border {
                             radius: 10.0.into(),
                             ..Default::default()
@@ -342,7 +336,9 @@ impl EnvironmentPanel {
                         ..Default::default()
                     }),
                     space().width(Fill),
-                    text("Show Values").size(13).color(Color::from_rgb(0.5, 0.5, 0.5))
+                    text("Show Values")
+                        .size(13)
+                        .color(Color::from_rgb(0.5, 0.5, 0.5))
                 ]
                 .align_y(iced::Alignment::Center);
 
@@ -355,21 +351,31 @@ impl EnvironmentPanel {
                 // Variables table header
                 let table_header = container(
                     row![
-                        container(text("Key").size(12).color(Color::from_rgb(0.3, 0.3, 0.3)).font(iced::Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        }))
-                            .width(Length::FillPortion(1))
-                            .padding([8, 8]),
-                        container(text("Value").size(12).color(Color::from_rgb(0.3, 0.3, 0.3)).font(iced::Font {
-                            weight: iced::font::Weight::Bold,
-                            ..Default::default()
-                        }))
-                            .width(Length::FillPortion(1))
-                            .padding([8, 8]),
+                        container(
+                            text("Key")
+                                .size(12)
+                                .color(Color::from_rgb(0.3, 0.3, 0.3))
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                })
+                        )
+                        .width(Length::FillPortion(1))
+                        .padding([8, 8]),
+                        container(
+                            text("Value")
+                                .size(12)
+                                .color(Color::from_rgb(0.3, 0.3, 0.3))
+                                .font(iced::Font {
+                                    weight: iced::font::Weight::Bold,
+                                    ..Default::default()
+                                })
+                        )
+                        .width(Length::FillPortion(1))
+                        .padding([8, 8]),
                         container(text("").width(40)) // Delete button column
                     ]
-                    .spacing(10)
+                    .spacing(10),
                 )
                 .padding([8, 8])
                 .style(|_theme: &Theme| container::Style {
@@ -386,15 +392,15 @@ impl EnvironmentPanel {
 
                 // Add separator after header
                 if !active_env.variables.is_empty() {
-                    table_content = table_content.push(
-                        container(space())
-                            .width(Length::Fill)
-                            .height(1)
-                            .style(|_theme: &Theme| container::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    table_content =
+                        table_content.push(container(space()).width(Length::Fill).height(1).style(
+                            |_theme: &Theme| container::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.9, 0.9, 0.9,
+                                ))),
                                 ..Default::default()
-                            })
-                    );
+                            },
+                        ));
                 }
 
                 // Variables rows
@@ -402,19 +408,20 @@ impl EnvironmentPanel {
                     if i > 0 {
                         // Add separator between rows
                         table_content = table_content.push(
-                            container(space())
-                                .width(Length::Fill)
-                                .height(1)
-                                .style(|_theme: &Theme| container::Style {
-                                    background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                            container(space()).width(Length::Fill).height(1).style(
+                                |_theme: &Theme| container::Style {
+                                    background: Some(iced::Background::Color(Color::from_rgb(
+                                        0.9, 0.9, 0.9,
+                                    ))),
                                     ..Default::default()
-                                })
+                                },
+                            ),
                         );
                     }
                     let key_clone = key.clone();
                     let key_clone2 = key.clone();
                     let key_clone3 = key.clone();
-                    
+
                     let delete_button = button(
                         container(
                             icon(IconName::Close)
@@ -433,7 +440,9 @@ impl EnvironmentPanel {
                         let base = button::Style::default();
                         match status {
                             button::Status::Hovered | button::Status::Pressed => button::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.95, 0.95))),
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.98, 0.95, 0.95,
+                                ))),
                                 border: iced::Border {
                                     radius: 4.0.into(),
                                     ..Default::default()
@@ -460,7 +469,9 @@ impl EnvironmentPanel {
                                 .width(Length::FillPortion(1))
                                 .style(|_theme, status| {
                                     let (border_color, border_width) = match status {
-                                        text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                        text_input::Status::Focused { .. } => {
+                                            (Color::from_rgb(0.7, 0.7, 0.7), 1.0)
+                                        }
                                         _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
                                     };
                                     text_input::Style {
@@ -487,7 +498,9 @@ impl EnvironmentPanel {
                                 .width(Length::FillPortion(1))
                                 .style(|_theme, status| {
                                     let (border_color, border_width) = match status {
-                                        text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                        text_input::Status::Focused { .. } => {
+                                            (Color::from_rgb(0.7, 0.7, 0.7), 1.0)
+                                        }
                                         _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
                                     };
                                     text_input::Style {
@@ -508,7 +521,7 @@ impl EnvironmentPanel {
                                 .align_x(iced::alignment::Horizontal::Center)
                         ]
                         .spacing(10)
-                        .align_y(iced::Alignment::Center)
+                        .align_y(iced::Alignment::Center),
                     )
                     .padding([8, 8])
                     .style(|_theme: &Theme| container::Style {
@@ -525,8 +538,8 @@ impl EnvironmentPanel {
                 }
 
                 // Wrap the table in a container with rounded border
-                let table_container = container(table_content)
-                    .style(|_theme: &Theme| container::Style {
+                let table_container =
+                    container(table_content).style(|_theme: &Theme| container::Style {
                         background: Some(iced::Background::Color(Color::WHITE)),
                         border: iced::Border {
                             color: Color::from_rgb(0.9, 0.9, 0.9),
@@ -547,34 +560,34 @@ impl EnvironmentPanel {
                             space().width(6),
                             text("Add Variable").size(13)
                         ]
-                        .align_y(iced::Alignment::Center)
+                        .align_y(iced::Alignment::Center),
                     )
                     .on_press(Message::AddVariable(active_idx))
                     .padding([8, 12])
-                    .style(|_theme, status| {
-                        match status {
-                            button::Status::Hovered => button::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(0.96, 0.96, 0.96))),
-                                text_color: Color::from_rgb(0.3, 0.3, 0.3),
-                                border: iced::Border {
-                                    color: Color::from_rgb(0.85, 0.85, 0.85),
-                                    width: 1.0,
-                                    radius: 6.0.into(),
-                                },
-                                ..button::Style::default()
+                    .style(|_theme, status| match status {
+                        button::Status::Hovered => button::Style {
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.96, 0.96, 0.96,
+                            ))),
+                            text_color: Color::from_rgb(0.3, 0.3, 0.3),
+                            border: iced::Border {
+                                color: Color::from_rgb(0.85, 0.85, 0.85),
+                                width: 1.0,
+                                radius: 6.0.into(),
                             },
-                            _ => button::Style {
-                                background: Some(iced::Background::Color(Color::WHITE)),
-                                text_color: Color::from_rgb(0.3, 0.3, 0.3),
-                                border: iced::Border {
-                                    color: Color::from_rgb(0.9, 0.9, 0.9),
-                                    width: 1.0,
-                                    radius: 6.0.into(),
-                                },
-                                ..button::Style::default()
+                            ..button::Style::default()
+                        },
+                        _ => button::Style {
+                            background: Some(iced::Background::Color(Color::WHITE)),
+                            text_color: Color::from_rgb(0.3, 0.3, 0.3),
+                            border: iced::Border {
+                                color: Color::from_rgb(0.9, 0.9, 0.9),
+                                width: 1.0,
+                                radius: 6.0.into(),
                             },
-                        }
-                    })
+                            ..button::Style::default()
+                        },
+                    }),
                 );
 
                 // Using Variables section
@@ -614,7 +627,9 @@ impl EnvironmentPanel {
                         column![
                             text("Environment Settings").size(14),
                             space().height(10),
-                            text("Description").size(12).color(Color::from_rgb(0.5, 0.5, 0.5)),
+                            text("Description")
+                                .size(12)
+                                .color(Color::from_rgb(0.5, 0.5, 0.5)),
                             space().height(4),
                             text_input(
                                 "Environment description",
@@ -627,7 +642,9 @@ impl EnvironmentPanel {
                             .size(13)
                             .style(|_theme, status| {
                                 let (border_color, border_width) = match status {
-                                    text_input::Status::Focused { .. } => (Color::from_rgb(0.7, 0.7, 0.7), 1.0),
+                                    text_input::Status::Focused { .. } => {
+                                        (Color::from_rgb(0.7, 0.7, 0.7), 1.0)
+                                    }
                                     _ => (Color::from_rgb(0.9, 0.9, 0.9), 1.0),
                                 };
                                 text_input::Style {
@@ -644,18 +661,20 @@ impl EnvironmentPanel {
                                 }
                             }),
                         ]
-                        .spacing(0)
+                        .spacing(0),
                     )
                     .padding(12)
                     .style(|_theme: &Theme| container::Style {
-                        background: Some(iced::Background::Color(Color::from_rgb(0.97, 0.97, 0.98))),
+                        background: Some(iced::Background::Color(Color::from_rgb(
+                            0.97, 0.97, 0.98,
+                        ))),
                         border: iced::Border {
                             color: Color::from_rgb(0.92, 0.92, 0.92),
                             width: 1.0,
                             radius: 6.0.into(),
                         },
                         ..Default::default()
-                    })
+                    }),
                 );
 
                 if environments.len() > 1 {
@@ -663,125 +682,110 @@ impl EnvironmentPanel {
                     panel_content = panel_content.push(
                         button(
                             row![
-                                icon(IconName::Close).size(14).color(Color::from_rgb(0.8, 0.3, 0.3)),
+                                icon(IconName::Close)
+                                    .size(14)
+                                    .color(Color::from_rgb(0.8, 0.3, 0.3)),
                                 space().width(6),
                                 text("Delete Environment").size(13)
                             ]
-                            .align_y(iced::Alignment::Center)
+                            .align_y(iced::Alignment::Center),
                         )
                         .on_press(Message::DeleteEnvironment(active_idx))
                         .padding([8, 12])
-                        .style(|_theme, status| {
-                            match status {
-                                button::Status::Hovered => button::Style {
-                                    background: Some(iced::Background::Color(Color::from_rgb(0.95, 0.3, 0.3))),
-                                    text_color: Color::WHITE,
-                                    border: iced::Border {
-                                        radius: 6.0.into(),
-                                        ..Default::default()
-                                    },
-                                    ..button::Style::default()
+                        .style(|_theme, status| match status {
+                            button::Status::Hovered => button::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.95, 0.3, 0.3,
+                                ))),
+                                text_color: Color::WHITE,
+                                border: iced::Border {
+                                    radius: 6.0.into(),
+                                    ..Default::default()
                                 },
-                                _ => button::Style {
-                                    background: Some(iced::Background::Color(Color::from_rgb(0.98, 0.95, 0.95))),
-                                    text_color: Color::from_rgb(0.8, 0.3, 0.3),
-                                    border: iced::Border {
-                                        color: Color::from_rgb(0.95, 0.85, 0.85),
-                                        width: 1.0,
-                                        radius: 6.0.into(),
-                                    },
-                                    ..button::Style::default()
+                                ..button::Style::default()
+                            },
+                            _ => button::Style {
+                                background: Some(iced::Background::Color(Color::from_rgb(
+                                    0.98, 0.95, 0.95,
+                                ))),
+                                text_color: Color::from_rgb(0.8, 0.3, 0.3),
+                                border: iced::Border {
+                                    color: Color::from_rgb(0.95, 0.85, 0.85),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
                                 },
-                            }
-                        })
+                                ..button::Style::default()
+                            },
+                        }),
                     );
                 }
 
                 scrollable(panel_content)
                     .height(Fill)
                     .direction(scrollable::Direction::Vertical(
-                        scrollable::Scrollbar::new()
-                            .width(0)
-                            .scroller_width(0)
+                        scrollable::Scrollbar::new().width(0).scroller_width(0),
                     ))
             } else {
-                scrollable(
-                    column![
-                        text("No environment selected").size(14).color(Color::from_rgb(0.5, 0.5, 0.5))
-                    ]
-                )
+                scrollable(column![
+                    text("No environment selected")
+                        .size(14)
+                        .color(Color::from_rgb(0.5, 0.5, 0.5))
+                ])
                 .height(Fill)
                 .direction(scrollable::Direction::Vertical(
-                    scrollable::Scrollbar::new()
-                        .width(0)
-                        .scroller_width(0)
+                    scrollable::Scrollbar::new().width(0).scroller_width(0),
                 ))
             }
         } else {
-            scrollable(
-                column![
-                    text("No environment selected").size(14).color(Color::from_rgb(0.5, 0.5, 0.5)),
-                    space().height(10),
-                    text("Select an environment from the sidebar or create a new one")
-                        .size(13)
-                        .color(Color::from_rgb(0.6, 0.6, 0.6))
-                ]
-            )
+            scrollable(column![
+                text("No environment selected")
+                    .size(14)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+                space().height(10),
+                text("Select an environment from the sidebar or create a new one")
+                    .size(13)
+                    .color(Color::from_rgb(0.6, 0.6, 0.6))
+            ])
             .height(Fill)
             .direction(scrollable::Direction::Vertical(
-                scrollable::Scrollbar::new()
-                    .width(0)
-                    .scroller_width(0)
+                scrollable::Scrollbar::new().width(0).scroller_width(0),
             ))
         };
 
-        let right_panel_container = container(right_panel)
-            .width(Fill)
-            .height(Fill)
-            .padding(12);
+        let right_panel_container = container(right_panel).width(Fill).height(Fill).padding(12);
 
         // Main layout: header + two-panel content
         let main_content = row![
             sidebar_container,
-            container(
-                column![text("")]
-                    .width(1)
-            )
-            .height(Fill)
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                ..Default::default()
-            }),
+            container(column![text("")].width(1))
+                .height(Fill)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                    ..Default::default()
+                }),
             right_panel_container
         ]
         .spacing(0)
         .height(Fill);
 
-        container(
-            column![
-                header,
-                main_content
-            ]
-            .spacing(0)
-            .height(Fill),
-        )
-        .width(Length::Fixed(1000.0))
-        .height(Length::Fixed(650.0))
-        .padding(20)
-        .style(|_theme: &Theme| container::Style {
-            background: Some(iced::Background::Color(Color::WHITE)),
-            border: iced::Border {
-                color: Color::from_rgb(0.85, 0.85, 0.85),
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            shadow: iced::Shadow {
-                color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
-                offset: Vector::new(0.0, 4.0),
-                blur_radius: 20.0,
-            },
-            ..Default::default()
-        })
-        .into()
+        container(column![header, main_content].spacing(0).height(Fill))
+            .width(Length::Fixed(1000.0))
+            .height(Length::Fixed(650.0))
+            .padding(20)
+            .style(|_theme: &Theme| container::Style {
+                background: Some(iced::Background::Color(Color::WHITE)),
+                border: iced::Border {
+                    color: Color::from_rgb(0.85, 0.85, 0.85),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                shadow: iced::Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+                    offset: Vector::new(0.0, 4.0),
+                    blur_radius: 20.0,
+                },
+                ..Default::default()
+            })
+            .into()
     }
 }
