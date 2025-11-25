@@ -20,16 +20,16 @@ use beam::ui::ResponsePanel;
 use std::sync::Arc;
 
 use beam::ui::collections;
+use beam::ui::environment;
 use beam::ui::request;
 use beam::ui::response;
-use beam::ui::environment;
 use beam::ui::{IconName, icon};
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
-    button, column, container, mouse_area, row, scrollable, space, stack, text,
-    text_editor, text_input,
+    button, column, container, mouse_area, row, scrollable, space, stack, text, text_editor,
+    text_input,
 };
 use iced::{Color, Element, Fill, Length, Padding, Size, Task, Theme, Vector};
 use log::{error, info};
@@ -708,12 +708,11 @@ impl BeamApp {
                             &response.body,
                             self.current_request.body_format,
                         );
-                        self.response_body_content
-                            .perform(text_editor::Action::SelectAll);
-                        self.response_body_content
-                            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                                Arc::new(formatted_body),
-                            )));
+
+                        Self::update_editor_content(
+                            &mut self.response_body_content,
+                            formatted_body,
+                        );
 
                         // Update the request in the collections as well
                         if let Some(collection) = self
@@ -835,7 +834,10 @@ impl BeamApp {
             Message::EnvironmentPanel(env_message) => {
                 match self.environment_panel.update(env_message) {
                     environment::Action::AddEnvironment => {
-                        let new_env = Environment::new(format!("Environment {}", self.environments.len() + 1));
+                        let new_env = Environment::new(format!(
+                            "Environment {}",
+                            self.environments.len() + 1
+                        ));
                         self.environments.push(new_env);
                         self.active_environment = Some(self.environments.len() - 1);
 
@@ -844,7 +846,10 @@ impl BeamApp {
                             async move {
                                 match storage::StorageManager::with_default_config() {
                                     Ok(storage_manager) => {
-                                        match storage_manager.storage().save_environments(&environments) {
+                                        match storage_manager
+                                            .storage()
+                                            .save_environments(&environments)
+                                        {
                                             Ok(_) => Ok(()),
                                             Err(e) => Err(e.to_string()),
                                         }
@@ -871,7 +876,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -894,7 +902,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -921,7 +932,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -946,7 +960,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -969,7 +986,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -993,7 +1013,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -1016,7 +1039,10 @@ impl BeamApp {
                                 async move {
                                     match storage::StorageManager::with_default_config() {
                                         Ok(storage_manager) => {
-                                            match storage_manager.storage().save_environments(&environments) {
+                                            match storage_manager
+                                                .storage()
+                                                .save_environments(&environments)
+                                            {
                                                 Ok(_) => Ok(()),
                                                 Err(e) => Err(e.to_string()),
                                             }
@@ -1669,8 +1695,8 @@ impl BeamApp {
                                     .view(&self.environments, self.active_environment)
                                     .map(Message::EnvironmentPanel)
                             )
-                                .width(800)
-                                .height(650)
+                            .width(800)
+                            .height(650)
                         )
                         .on_press(Message::DoNothing)
                     )
@@ -1716,7 +1742,7 @@ impl BeamApp {
     }
 
     fn format_response_content(body: &str, body_format: BodyFormat) -> String {
-        const MAX_JSON_FORMAT_SIZE: usize = 100 * 1024; // 100KB
+        const MAX_JSON_FORMAT_SIZE: usize = 1000 * 1024; // 1MB
 
         // Only format if body format is JSON
         if body_format != BodyFormat::Json {
@@ -1852,7 +1878,6 @@ impl BeamApp {
             .map(Message::ResponsePanel)
     }
 
-
     fn rename_modal_view(&self) -> Element<'_, Message> {
         let (title, description) = match &self.rename_target {
             Some(RenameTarget::Folder(_)) => ("Rename Folder", "Enter a new name for the folder:"),
@@ -1977,9 +2002,7 @@ impl BeamApp {
 
         let keyboard_subscription = iced::event::listen_with(|event, _status, _id| {
             match event {
-                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key, ..
-                }) => {
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
                     // Forward all key presses to the KeyPressed handler
                     Some(Message::KeyPressed(key.clone()))
                 }
