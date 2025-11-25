@@ -464,8 +464,8 @@ impl EnvironmentPanel {
                     let delete_button = button(
                         container(
                             icon(IconName::Close)
-                                .size(14)
-                                .color(Color::from_rgb(0.8, 0.3, 0.3)),
+                                .size(16)
+                                .color(Color::from_rgb(0.6, 0.6, 0.6)),
                         )
                         .align_x(iced::alignment::Horizontal::Center)
                         .align_y(iced::alignment::Vertical::Center)
@@ -475,24 +475,37 @@ impl EnvironmentPanel {
                     .on_press(Message::RemoveVariable(active_idx, key_clone3))
                     .width(32)
                     .height(32)
-                    .style(|_theme: &Theme, status| {
-                        let base = button::Style::default();
-                        match status {
-                            button::Status::Hovered | button::Status::Pressed => button::Style {
-                                background: Some(iced::Background::Color(Color::from_rgb(
-                                    0.98, 0.95, 0.95,
-                                ))),
-                                border: iced::Border {
-                                    radius: 4.0.into(),
-                                    ..Default::default()
-                                },
-                                ..base
+                    .style(|_theme: &Theme, status| match status {
+                        button::Status::Hovered => button::Style {
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.95, 0.95, 0.95,
+                            ))),
+                            border: iced::Border {
+                                radius: 6.0.into(),
+                                ..Default::default()
                             },
-                            _ => button::Style {
-                                background: Some(iced::Background::Color(Color::TRANSPARENT)),
-                                ..base
+                            text_color: Color::from_rgb(0.9, 0.2, 0.2),
+                            ..Default::default()
+                        },
+                        button::Status::Pressed => button::Style {
+                            background: Some(iced::Background::Color(Color::from_rgb(
+                                0.9, 0.9, 0.9,
+                            ))),
+                            border: iced::Border {
+                                radius: 6.0.into(),
+                                ..Default::default()
                             },
-                        }
+                            text_color: Color::from_rgb(0.8, 0.1, 0.1),
+                            ..Default::default()
+                        },
+                        _ => button::Style {
+                            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                            border: iced::Border {
+                                radius: 6.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
                     });
 
                     // Apply visual styling based on enabled state
