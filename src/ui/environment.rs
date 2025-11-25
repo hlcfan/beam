@@ -528,7 +528,7 @@ impl EnvironmentPanel {
                                 ))
                                 .padding(8)
                                 .size(13)
-                                .width(Length::FillPortion(1))
+                                .width(Length::FillPortion(3))
                                 .style(move |_theme, status| {
                                     let (border_color, border_width) = match status {
                                         text_input::Status::Focused { .. } => {
@@ -557,7 +557,7 @@ impl EnvironmentPanel {
                                 ))
                                 .padding(8)
                                 .size(13)
-                                .width(Length::FillPortion(1))
+                                .width(Length::FillPortion(7))
                                 .style(move |_theme, status| {
                                     let (border_color, border_width) = match status {
                                         text_input::Status::Focused { .. } => {
