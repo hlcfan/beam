@@ -473,6 +473,7 @@ pub struct ResponseData {
     pub status: u16,
     pub status_text: String,
     pub headers: Vec<(String, String)>,
+    #[serde(default)]
     pub body: String,
     pub content_type: String,
     pub is_binary: bool,
