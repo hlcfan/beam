@@ -1,5 +1,7 @@
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::{IconName, icon, url_input};
+use crate::ui::undoable_input::UndoHistory;
+use crate::ui::undoable_input::UndoableInput;
+use crate::ui::{IconName, icon, request, undoable_input, url_input};
 use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::{
@@ -36,6 +38,7 @@ pub enum Action {
 pub enum Message {
     ClickSendRequest,
     CancelRequest,
+    UrlInputMessage(undoable_input::Message),
     UrlInputChanged(String),
     SetProcessingCmdZ(bool),
     UrlInputFocused,
@@ -75,56 +78,22 @@ pub enum Message {
     EnvironmentSelected(usize),
 }
 
-// #[derive(Debug, Clone, PartialEq)]
-// pub enum RequestField {
-//     Url,
-//     Method,
-//     Body,
-//     Headers,
-//     Params,
-//     Auth,
-// }
-
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
-    // pub environments: Vec<Environment>,
-    // pub active_environment: Option<usize>,
     pub method_menu_open: bool,
     pub body_format_menu_open: bool,
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
     pub selected_tab: RequestTab,
     pub script_editor_content: text_editor::Content,
+    pub url_undo_history: UndoHistory,
 }
 
 impl Default for RequestPanel {
     fn default() -> Self {
         Self {
-            // request_body_content: text_editor::Content::new(),
             selected_tab: RequestTab::Body,
-            // current_request: RequestConfig {
-            //     name: String::new(),
-            //     method: HttpMethod::GET,
-            //     url: String::new(),
-            //     headers: vec![
-            //         ("Content-Type".to_string(), "application/json".to_string()),
-            //         ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
-            //     ],
-            //     params: vec![],
-            //     body: String::new(),
-            //     content_type: "application/json".to_string(),
-            //     auth_type: AuthType::None,
-            //     bearer_token: String::new(),
-            //     basic_username: String::new(),
-            //     basic_password: String::new(),
-            //     api_key: String::new(),
-            //     api_key_header: "X-API-Key".to_string(),
-            //     collection_index: 0,
-            //     request_index: 0,
-            //     metadata: None,
-            // },
-            // environments: Vec::new(),
-            // active_environment: None,
+            url_undo_history: UndoHistory::new("test".to_string()),
             method_menu_open: false,
             body_format_menu_open: false,
             send_button_hovered: false,
@@ -137,6 +106,10 @@ impl Default for RequestPanel {
 impl RequestPanel {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn reset_undo_histories<'a>(&mut self, current_request: &RequestConfig) {
+        self.url_undo_history = UndoHistory::new(current_request.url.clone());
     }
 
     pub fn update<'a>(
@@ -163,6 +136,37 @@ impl RequestPanel {
             Message::SetProcessingCmdZ(processing) => {
                 // self.processing_cmd_z = processing;
                 Action::None
+            }
+            Message::UrlInputMessage(message) => {
+                info!("====UrlInputMessage: {:?}", message);
+                let mut request = current_request.clone();
+                match message {
+                    undoable_input::Message::Changed(url) => {
+                        self.url_undo_history.push(url.clone());
+                        request.url = url;
+
+                        Action::UpdateCurrentRequest(request)
+                    }
+                    undoable_input::Message::Undo => {
+                        if let Some(prev) = self.url_undo_history.undo() {
+                            request.url = prev.clone();
+
+                            Action::UpdateCurrentRequest(request)
+                        } else {
+                            Action::None
+                        }
+                    }
+                    undoable_input::Message::Redo => {
+                        if let Some(next) = self.url_undo_history.redo() {
+                            request.url = next.clone();
+
+                            Action::UpdateCurrentRequest(request)
+                        } else {
+                            Action::None
+                        }
+                    }
+                    undoable_input::Message::Submit => Action::None,
+                }
             }
             Message::MethodChanged(method) => {
                 let mut request = current_request.clone();
@@ -512,9 +516,14 @@ impl RequestPanel {
             }
         };
 
+        let undoable_input = UndoableInput::new(
+            url.clone(),
+            self.url_undo_history.clone(),
+            "Enter URL...".to_string(),
+        );
         let base_input = container(row![
             method_label,
-            UrlInput::new("Enter URL...", &url).on_input(Message::UrlInputChanged),
+            undoable_input.view().map(Message::UrlInputMessage),
             space().width(1),
             send_button,
         ])
@@ -1295,4 +1304,3 @@ fn post_script_tab<'a>(script_content: &'a text_editor::Content) -> Element<'a, 
 
     scrollable(script_editor_widget).height(Length::Fill).into()
 }
-

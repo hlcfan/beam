@@ -460,9 +460,11 @@ impl BeamApp {
                             return Task::none();
                         }
 
+
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
+                                self.request_panel.reset_undo_histories(&self.current_request);
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
