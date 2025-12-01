@@ -37,8 +37,6 @@ pub enum Message {
     ClickSendRequest,
     CancelRequest,
     UrlInputChanged(String),
-    UrlInputUndo,
-    UrlInputRedo,
     SetProcessingCmdZ(bool),
     UrlInputFocused,
     UrlInputUnfocused,
@@ -153,16 +151,6 @@ impl RequestPanel {
                 request.url = url;
 
                 Action::UpdateCurrentRequest(request)
-            }
-            Message::UrlInputUndo => {
-                info!("DEBUG: UrlInputUndo message received");
-                // TODO: Implement undo functionality for UrlInput
-                Action::None
-            }
-            Message::UrlInputRedo => {
-                info!("DEBUG: UrlInputRedo message received");
-                // TODO: Implement redo functionality for UrlInput
-                Action::None
             }
             Message::UrlInputFocused => {
                 // TODO: Implement focus handling for UrlInput
