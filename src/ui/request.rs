@@ -93,7 +93,7 @@ impl Default for RequestPanel {
     fn default() -> Self {
         Self {
             selected_tab: RequestTab::Body,
-            url_undo_history: UndoHistory::new("test".to_string()),
+            url_undo_history: UndoHistory::new(),
             method_menu_open: false,
             body_format_menu_open: false,
             send_button_hovered: false,
@@ -109,7 +109,8 @@ impl RequestPanel {
     }
 
     pub fn reset_undo_histories<'a>(&mut self, current_request: &RequestConfig) {
-        self.url_undo_history = UndoHistory::new(current_request.url.clone());
+        self.url_undo_history
+            .set_initial(current_request.url.clone());
     }
 
     pub fn update<'a>(

@@ -1,51 +1,61 @@
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use crate::ui::url_input::UrlInput;
 use iced::{Element, Length};
-use std::time::{Duration, Instant};
 use log::info;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct UndoHistory {
     past: Vec<String>,
     future: Vec<String>,
-    current: String,
+    current: Option<String>,
     last_snapshot_time: Instant,
     debounce_duration: Duration,
 }
 
 impl UndoHistory {
-    pub fn new(initial: String) -> Self {
+    pub fn new() -> Self {
         Self {
             past: Vec::new(),
             future: Vec::new(),
-            current: initial,
+            current: None,
             last_snapshot_time: Instant::now(),
             debounce_duration: Duration::from_millis(500),
         }
     }
 
+    pub fn set_initial(&mut self, initial: String) {
+        self.current = Some(initial);
+    }
+
     pub fn push(&mut self, new_state: String) {
-        if self.current == new_state {
-            return;
+        if let Some(current) = &self.current {
+            if *current == new_state {
+                return;
+            }
         }
 
         let now = Instant::now();
         let time_since_last = now.duration_since(self.last_snapshot_time);
 
         // If enough time passed or past is empty, save current to past
-        if time_since_last >= self.debounce_duration || self.past.is_empty() {
-            self.past.push(self.current.clone());
-            self.last_snapshot_time = now;
+        if let Some(current) = &self.current {
+            if time_since_last >= self.debounce_duration || self.past.is_empty() {
+                self.past.push(current.clone());
+                self.last_snapshot_time = now;
+            }
         }
 
-        self.current = new_state;
+        self.current = Some(new_state);
         self.future.clear();
     }
 
     pub fn undo(&mut self) -> Option<String> {
+        let current = self.current.as_ref()?;
+
         if let Some(prev) = self.past.pop() {
-            self.future.push(self.current.clone());
-            self.current = prev.clone();
+            self.future.push(current.clone());
+            self.current = Some(prev.clone());
             Some(prev)
         } else {
             None
@@ -53,9 +63,11 @@ impl UndoHistory {
     }
 
     pub fn redo(&mut self) -> Option<String> {
+        let current = self.current.as_ref()?;
+
         if let Some(next) = self.future.pop() {
-            self.past.push(self.current.clone());
-            self.current = next.clone();
+            self.past.push(current.clone());
+            self.current = Some(next.clone());
             Some(next)
         } else {
             None
@@ -72,7 +84,7 @@ pub enum Message {
 }
 
 #[derive(Debug, Clone)]
-pub struct UndoableInput{
+pub struct UndoableInput {
     value: String,
     history: UndoHistory,
     placeholder: String,
@@ -80,7 +92,7 @@ pub struct UndoableInput{
     on_submit: Option<Message>,
 }
 
-impl UndoableInput{
+impl UndoableInput {
     pub fn new(initial_value: String, undo_history: UndoHistory, placeholder: String) -> Self {
         Self {
             value: initial_value.clone(),
