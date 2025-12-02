@@ -327,6 +327,7 @@ impl BeamApp {
                     request::Action::EditRequestBody(action) => {
                         self.request_body_content.perform(action);
                         self.current_request.body = self.request_body_content.text();
+                        self.request_panel.url_undo_history.push(self.current_request.body.clone());
 
                         if let Some(collection) = self
                             .collections
@@ -1395,6 +1396,8 @@ impl BeamApp {
                                 self.last_opened_request = Some((collection_index, request_index));
 
                                 self.current_request = request_config.clone();
+                                self.request_panel.reset_undo_histories(&self.current_request);
+
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
                                     self.current_request.body.to_string(),

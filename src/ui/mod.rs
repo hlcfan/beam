@@ -6,6 +6,7 @@ pub mod spinner;
 pub mod url_input;
 pub mod environment;
 pub mod undoable_input;
+pub mod undoable_editor;
 pub mod undoable;
 
 pub use icon::{IconName, icon};

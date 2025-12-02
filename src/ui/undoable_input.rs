@@ -25,10 +25,12 @@ impl UndoHistory {
     }
 
     pub fn set_initial(&mut self, initial: String) {
+        info!("===Initial: {:?}", initial);
         self.current = Some(initial);
     }
 
     pub fn push(&mut self, new_state: String) {
+        info!("===push: {:?}", new_state);
         if let Some(current) = &self.current {
             if *current == new_state {
                 return;
@@ -40,7 +42,9 @@ impl UndoHistory {
 
         // If enough time passed or past is empty, save current to past
         if let Some(current) = &self.current {
+            info!("====push2: {:?}", self.past);
             if time_since_last >= self.debounce_duration || self.past.is_empty() {
+                info!("====push3");
                 self.past.push(current.clone());
                 self.last_snapshot_time = now;
             }
@@ -51,8 +55,10 @@ impl UndoHistory {
     }
 
     pub fn undo(&mut self) -> Option<String> {
+        info!("====undo1: {:?}", self.current);
         let current = self.current.as_ref()?;
 
+        info!("====undo2: {:?}", self.past);
         if let Some(prev) = self.past.pop() {
             self.future.push(current.clone());
             self.current = Some(prev.clone());
