@@ -140,6 +140,8 @@ where
                     false
                 };
 
+            println!("Is focused event: {:?}", is_focused);
+
             if is_focused {
                 match (key.as_ref(), modifiers.command(), modifiers.shift()) {
                     (Key::Character(c), true, false) if c == "z" => {
@@ -161,7 +163,7 @@ where
                 }
             }
         }
-        // println!("Undoable event: {:?}", event);
+
         // Forward event to wrapped widget
         self.content.as_widget_mut().update(
             &mut tree.children[0],

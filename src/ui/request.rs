@@ -150,10 +150,10 @@ impl RequestPanel {
 
                 match message {
                     undoable_editor::EditorMessage::Action(action) => {
-                      info!("===Action: {:?}", action);
-                      // match action {
-                      //     text_editor::Ch
-                      // }
+                        info!("===Action: {:?}", action);
+                        // match action {
+                        //     text_editor::Ch
+                        // }
                         // self.url_undo_history.push(url.clone());
                         // request.url = url;
 
@@ -748,8 +748,7 @@ impl RequestPanel {
             .height(Fill)
             .into(),
             BodyFormat::Json => {
-                let undoable_editor =
-                    UndoableEditor::new(self.body_undo_history.clone(), "Enter URL...".to_string());
+                let undoable_editor = UndoableEditor::new();
 
                 // let text_editor_widget = text_editor(request_body)
                 //     .highlight("json", highlighter::Theme::Base16Mocha)
