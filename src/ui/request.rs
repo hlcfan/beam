@@ -1,7 +1,5 @@
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::undoable_editor::EditorMessage;
 use crate::ui::undoable_editor::UndoableEditor;
-use crate::ui::undoable_input::UndoHistory;
 use crate::ui::undoable_input::UndoableInput;
 use crate::ui::{IconName, icon, request, undoable_editor, undoable_input, url_input};
 use iced::highlighter::{self};
@@ -40,7 +38,7 @@ pub enum Message {
     ClickSendRequest,
     CancelRequest,
     UrlInputMessage(undoable_input::Message),
-    EditorMessage(undoable_editor::EditorMessage),
+    EditorMessage(undoable_editor::Message),
     UrlInputChanged(String),
     SetProcessingCmdZ(bool),
     UrlInputFocused,
@@ -88,16 +86,18 @@ pub struct RequestPanel {
     pub cancel_button_hovered: bool,
     pub selected_tab: RequestTab,
     pub script_editor_content: text_editor::Content,
-    pub url_undo_history: UndoHistory,
-    pub body_undo_history: UndoHistory,
+    pub url_input: UndoableInput,
+    pub body_editor: UndoableEditor,
 }
 
 impl Default for RequestPanel {
     fn default() -> Self {
         Self {
             selected_tab: RequestTab::Body,
-            url_undo_history: UndoHistory::new(),
-            body_undo_history: UndoHistory::new(),
+            url_input: UndoableInput::new(String::new(), "Type here...".to_string())
+                .size(20.0)
+                .padding(10.0),
+            body_editor: UndoableEditor::new(String::new()).height(iced::Length::Fixed(200.0)),
             method_menu_open: false,
             body_format_menu_open: false,
             send_button_hovered: false,
@@ -113,11 +113,11 @@ impl RequestPanel {
     }
 
     pub fn reset_undo_histories<'a>(&mut self, current_request: &RequestConfig) {
-        self.url_undo_history
-            .set_initial(current_request.url.clone());
+        // self.url_undo_history
+        //     .set_initial(current_request.url.clone());
 
-        self.body_undo_history
-            .set_initial(current_request.body.clone());
+        // self.body_undo_history
+        //     .set_initial(current_request.body.clone());
     }
 
     pub fn update<'a>(
@@ -146,73 +146,61 @@ impl RequestPanel {
                 Action::None
             }
             Message::EditorMessage(message) => {
-                let mut request = current_request.clone();
+                if let Some(new_text) = self.body_editor.update(message) {
+                    println!("Editor changed to: {:?}", new_text);
+                    let mut request = current_request.clone();
+                    request.body = new_text;
 
-                match message {
-                    undoable_editor::EditorMessage::Action(action) => {
-                        info!("===Action: {:?}", action);
-                        // match action {
-                        //     text_editor::Ch
-                        // }
-                        // self.url_undo_history.push(url.clone());
-                        // request.url = url;
-
-                        // Action::UpdateCurrentRequest(request)
-
-                        Action::EditRequestBody(action)
-                    }
-                    undoable_editor::EditorMessage::Undo => {
-                        if let Some(prev) = self.body_undo_history.undo() {
-                            info!("===editor message: {:?}", message);
-                            request.body = prev;
-
-                            return Action::UpdateCurrentRequest(request);
-                        }
-
-                        info!("===no prev");
-                        Action::None
-                    }
-                    undoable_editor::EditorMessage::Redo => {
-                        if let Some(next) = self.body_undo_history.redo() {
-                            request.body = next;
-
-                            return Action::UpdateCurrentRequest(request);
-                        }
-
-                        Action::None
-                    }
+                    return Action::UpdateCurrentRequest(request);
                 }
+                Action::None
+
+                // match message {
+                //     undoable_editor::EditorMessage::Action(action) => {
+                //         info!("===Action: {:?}", action);
+                //         // match action {
+                //         //     text_editor::Ch
+                //         // }
+                //         // self.url_undo_history.push(url.clone());
+                //         // request.url = url;
+
+                //         // Action::UpdateCurrentRequest(request)
+
+                //         Action::EditRequestBody(action)
+                //     }
+                //     undoable_editor::EditorMessage::Undo => {
+                //         // if let Some(prev) = self.body_undo_history.undo() {
+                //         //     info!("===editor message: {:?}", message);
+                //         //     request.body = prev;
+
+                //         //     return Action::UpdateCurrentRequest(request);
+                //         // }
+
+                //         info!("===no prev");
+                //         Action::None
+                //     }
+                //     undoable_editor::EditorMessage::Redo => {
+                //         // if let Some(next) = self.body_undo_history.redo() {
+                //         //     request.body = next;
+
+                //         //     return Action::UpdateCurrentRequest(request);
+                //         // }
+
+                //         Action::None
+                //     }
+                // }
             }
             Message::UrlInputMessage(message) => {
                 info!("====UrlInputMessage: {:?}", message);
-                let mut request = current_request.clone();
-                match message {
-                    undoable_input::Message::Changed(url) => {
-                        self.url_undo_history.push(url.clone());
-                        request.url = url;
+                if let Some(new_value) = self.url_input.update(message) {
+                    println!("Input changed to: {:?}", new_value);
+                    let mut request = current_request.clone();
+                    request.url = new_value;
 
-                        Action::UpdateCurrentRequest(request)
-                    }
-                    undoable_input::Message::Undo => {
-                        if let Some(prev) = self.url_undo_history.undo() {
-                            request.url = prev.clone();
-
-                            Action::UpdateCurrentRequest(request)
-                        } else {
-                            Action::None
-                        }
-                    }
-                    undoable_input::Message::Redo => {
-                        if let Some(next) = self.url_undo_history.redo() {
-                            request.url = next.clone();
-
-                            Action::UpdateCurrentRequest(request)
-                        } else {
-                            Action::None
-                        }
-                    }
-                    undoable_input::Message::Submit => Action::None,
+                    return Action::UpdateCurrentRequest(request);
                 }
+
+                Action::None
             }
             Message::MethodChanged(method) => {
                 let mut request = current_request.clone();
@@ -562,14 +550,9 @@ impl RequestPanel {
             }
         };
 
-        let undoable_input = UndoableInput::new(
-            url.clone(),
-            self.url_undo_history.clone(),
-            "Enter URL...".to_string(),
-        );
         let base_input = container(row![
             method_label,
-            undoable_input.view().map(Message::UrlInputMessage),
+            self.url_input.view().map(Message::UrlInputMessage),
             space().width(1),
             send_button,
         ])
@@ -748,7 +731,7 @@ impl RequestPanel {
             .height(Fill)
             .into(),
             BodyFormat::Json => {
-                let undoable_editor = UndoableEditor::new();
+                // let undoable_editor = UndoableEditor::new();
 
                 // let text_editor_widget = text_editor(request_body)
                 //     .highlight("json", highlighter::Theme::Base16Mocha)
@@ -777,9 +760,7 @@ impl RequestPanel {
                 .padding(Padding::new(8.0));
 
                 let editor_area = scrollable(
-                    undoable_editor
-                        .view(request_body)
-                        .map(Message::EditorMessage),
+                  self.body_editor.view().map(Message::EditorMessage)
                 )
                 .height(Length::Fill);
                 let stacked_editor = stack![editor_area, overlay_top_right];

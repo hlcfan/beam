@@ -1,79 +1,60 @@
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
-use crate::ui::url_input::UrlInput;
+use iced::widget::text_input;
 use iced::{Element, Length};
-use log::info;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 pub struct UndoHistory {
     past: Vec<String>,
     future: Vec<String>,
-    current: Option<String>,
+    current: String,
     last_snapshot_time: Instant,
     debounce_duration: Duration,
 }
 
 impl UndoHistory {
-    pub fn new() -> Self {
+    fn new(initial: String) -> Self {
         Self {
             past: Vec::new(),
             future: Vec::new(),
-            current: None,
+            current: initial,
             last_snapshot_time: Instant::now(),
             debounce_duration: Duration::from_millis(500),
         }
     }
 
-    pub fn set_initial(&mut self, initial: String) {
-        info!("===Initial: {:?}", initial);
-        self.current = Some(initial);
-    }
-
-    pub fn push(&mut self, new_state: String) {
-        info!("===push: {:?}", new_state);
-        if let Some(current) = &self.current {
-            if *current == new_state {
-                return;
-            }
+    fn push(&mut self, new_state: String) {
+        if self.current == new_state {
+            return;
         }
 
         let now = Instant::now();
         let time_since_last = now.duration_since(self.last_snapshot_time);
 
         // If enough time passed or past is empty, save current to past
-        if let Some(current) = &self.current {
-            info!("====push2: {:?}", self.past);
-            if time_since_last >= self.debounce_duration || self.past.is_empty() {
-                info!("====push3");
-                self.past.push(current.clone());
-                self.last_snapshot_time = now;
-            }
+        if time_since_last >= self.debounce_duration || self.past.is_empty() {
+            self.past.push(self.current.clone());
+            self.last_snapshot_time = now;
         }
 
-        self.current = Some(new_state);
+        self.current = new_state;
         self.future.clear();
     }
 
-    pub fn undo(&mut self) -> Option<String> {
-        info!("====undo1: {:?}", self.current);
-        let current = self.current.as_ref()?;
-
-        info!("====undo2: {:?}", self.past);
+    fn undo(&mut self) -> Option<String> {
         if let Some(prev) = self.past.pop() {
-            self.future.push(current.clone());
-            self.current = Some(prev.clone());
+            self.future.push(self.current.clone());
+            self.current = prev.clone();
             Some(prev)
         } else {
             None
         }
     }
 
-    pub fn redo(&mut self) -> Option<String> {
-        let current = self.current.as_ref()?;
-
+    fn redo(&mut self) -> Option<String> {
         if let Some(next) = self.future.pop() {
-            self.past.push(current.clone());
-            self.current = Some(next.clone());
+            self.past.push(self.current.clone());
+            self.current = next.clone();
             Some(next)
         } else {
             None
@@ -86,7 +67,6 @@ pub enum Message {
     Changed(String),
     Undo,
     Redo,
-    Submit,
 }
 
 #[derive(Debug, Clone)]
@@ -94,28 +74,28 @@ pub struct UndoableInput {
     value: String,
     history: UndoHistory,
     placeholder: String,
-    width: Length,
-    on_submit: Option<Message>,
+    size: f32,
+    padding: f32,
 }
 
 impl UndoableInput {
-    pub fn new(initial_value: String, undo_history: UndoHistory, placeholder: String) -> Self {
+    pub fn new(initial_value: String, placeholder: String) -> Self {
         Self {
             value: initial_value.clone(),
-            history: undo_history,
+            history: UndoHistory::new(initial_value),
             placeholder,
-            width: Length::Fill,
-            on_submit: None,
+            size: 16.0,
+            padding: 10.0,
         }
     }
 
-    pub fn width(mut self, width: Length) -> Self {
-        self.width = width;
+    pub fn size(mut self, size: f32) -> Self {
+        self.size = size;
         self
     }
 
-    pub fn on_submit(mut self, message: Message) -> Self {
-        self.on_submit = Some(message);
+    pub fn padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
         self
     }
 
@@ -123,17 +103,9 @@ impl UndoableInput {
         &self.value
     }
 
-    pub fn set_value(&mut self, value: String) {
-        if self.value != value {
-            self.history.push(value.clone());
-            self.value = value;
-        }
-    }
-
     /// Update the component with a message.
     /// Returns Some(new_value) if the value changed (for parent notification).
     pub fn update(&mut self, message: Message) -> Option<String> {
-        info!("=========undoable input update: {:?}", message);
         match message {
             Message::Changed(new_value) => {
                 self.history.push(new_value.clone());
@@ -156,18 +128,15 @@ impl UndoableInput {
                     None
                 }
             }
-            Message::Submit => None, // Handled by parent if needed, or just triggers on_submit
         }
     }
 
-    pub fn view(self) -> Element<'static, Message> {
-        let mut input = UrlInput::new(&self.placeholder, &self.value)
+    pub fn view(&self) -> Element<Message> {
+        let input = text_input(&self.placeholder, &self.value)
             .on_input(Message::Changed)
-            .width(self.width);
-
-        if self.on_submit.is_some() {
-            input = input.on_submit(Message::Submit);
-        }
+            .size(self.size)
+            .padding(self.padding)
+            .width(Length::Fill);
 
         Undoable::new(input, |action| match action {
             UndoableAction::Undo => Message::Undo,

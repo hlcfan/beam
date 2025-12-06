@@ -1,22 +1,86 @@
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::widget::text_editor;
 use iced::{Element, Length};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
-pub struct UndoableEditor {
-    height: Length,
+struct UndoHistory {
+    past: Vec<String>,
+    future: Vec<String>,
+    current: String,
+    last_snapshot_time: Instant,
+    debounce_duration: Duration,
+}
+
+impl UndoHistory {
+    fn new(initial: String) -> Self {
+        Self {
+            past: Vec::new(),
+            future: Vec::new(),
+            current: initial,
+            last_snapshot_time: Instant::now(),
+            debounce_duration: Duration::from_millis(500),
+        }
+    }
+
+    fn push(&mut self, new_state: String) {
+        if self.current == new_state {
+            return;
+        }
+
+        let now = Instant::now();
+        let time_since_last = now.duration_since(self.last_snapshot_time);
+
+        // If enough time passed or past is empty, save current to past
+        if time_since_last >= self.debounce_duration || self.past.is_empty() {
+            self.past.push(self.current.clone());
+            self.last_snapshot_time = now;
+        }
+
+        self.current = new_state;
+        self.future.clear();
+    }
+
+    fn undo(&mut self) -> Option<String> {
+        if let Some(prev) = self.past.pop() {
+            self.future.push(self.current.clone());
+            self.current = prev.clone();
+            Some(prev)
+        } else {
+            None
+        }
+    }
+
+    fn redo(&mut self) -> Option<String> {
+        if let Some(next) = self.future.pop() {
+            self.past.push(self.current.clone());
+            self.current = next.clone();
+            Some(next)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub enum EditorMessage {
+pub enum Message {
     Action(text_editor::Action),
     Undo,
     Redo,
 }
 
+#[derive(Debug, Clone)]
+pub struct UndoableEditor {
+    content: text_editor::Content,
+    history: UndoHistory,
+    height: Length,
+}
+
 impl UndoableEditor {
-    pub fn new() -> Self {
+    pub fn new(initial_text: String) -> Self {
         Self {
+            content: text_editor::Content::with_text(&initial_text),
+            history: UndoHistory::new(initial_text),
             height: Length::Fill,
         }
     }
@@ -26,14 +90,63 @@ impl UndoableEditor {
         self
     }
 
-    pub fn view<'a>(&self, content: &'a text_editor::Content) -> Element<'a, EditorMessage> {
-        let editor = text_editor(content)
-            .on_action(EditorMessage::Action)
+    pub fn text(&self) -> String {
+        self.content.text()
+    }
+
+    /// Update the component with a message.
+    /// Returns Some(new_text) if the text changed (for parent notification).
+    pub fn update(&mut self, message: Message) -> Option<String> {
+        match message {
+            Message::Action(action) => {
+                self.content.perform(action);
+                let text = self.content.text();
+                self.history.push(text.clone());
+                Some(text)
+            }
+            Message::Undo => {
+                if let Some(prev) = self.history.undo() {
+                    // Use perform to update content while preserving cursor position
+                    self.content.perform(text_editor::Action::SelectAll);
+                    self.content
+                        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                            std::sync::Arc::new(prev.clone()),
+                        )));
+                    // Move cursor to end
+                    self.content
+                        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    Some(prev)
+                } else {
+                    None
+                }
+            }
+            Message::Redo => {
+                if let Some(next) = self.history.redo() {
+                    // Use perform to update content while preserving cursor position
+                    self.content.perform(text_editor::Action::SelectAll);
+                    self.content
+                        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                            std::sync::Arc::new(next.clone()),
+                        )));
+                    // Move cursor to end
+                    self.content
+                        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    Some(next)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    pub fn view(&self) -> Element<Message> {
+        let editor = text_editor(&self.content)
+            .on_action(Message::Action)
             .height(self.height);
 
         Undoable::new(editor, |action| match action {
-            UndoableAction::Undo => EditorMessage::Undo,
-            UndoableAction::Redo => EditorMessage::Redo,
+            UndoableAction::Undo => Message::Undo,
+            UndoableAction::Redo => Message::Redo,
         })
         .into()
     }
