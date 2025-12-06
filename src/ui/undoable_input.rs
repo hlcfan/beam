@@ -131,8 +131,8 @@ impl UndoableInput {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
-        let input = text_input(&self.placeholder, &self.value)
+    pub fn view<'a>(&'a self, value: &'a str) -> Element<'a, Message> {
+        let input = text_input(&self.placeholder, value)
             .on_input(Message::Changed)
             .size(self.size)
             .padding(self.padding)

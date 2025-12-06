@@ -552,7 +552,9 @@ impl RequestPanel {
 
         let base_input = container(row![
             method_label,
-            self.url_input.view().map(Message::UrlInputMessage),
+            self.url_input
+                .view(&current_request.url)
+                .map(Message::UrlInputMessage),
             space().width(1),
             send_button,
         ])
@@ -759,10 +761,8 @@ impl RequestPanel {
                 .width(Length::Fill)
                 .padding(Padding::new(8.0));
 
-                let editor_area = scrollable(
-                  self.body_editor.view().map(Message::EditorMessage)
-                )
-                .height(Length::Fill);
+                let editor_area = scrollable(self.body_editor.view().map(Message::EditorMessage))
+                    .height(Length::Fill);
                 let stacked_editor = stack![editor_area, overlay_top_right];
 
                 stacked_editor.into()
