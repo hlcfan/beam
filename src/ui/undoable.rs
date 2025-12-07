@@ -13,6 +13,7 @@ use iced::{
 pub enum Action {
     Undo,
     Redo,
+    Find,
 }
 
 #[allow(missing_debug_implementations)]
@@ -157,6 +158,11 @@ where
                     (Key::Character(c), true, true) if c == "z" => {
                         // Redo: Cmd+Shift+Z
                         shell.publish((self.on_change)(Action::Redo));
+                        return;
+                    }
+                    (Key::Character(c), true, _) if c == "f" => {
+                        // Find: Cmd+F
+                        shell.publish((self.on_change)(Action::Find));
                         return;
                     }
                     _ => (),

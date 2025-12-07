@@ -9,10 +9,19 @@ use iced::{
     mouse,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnchorPosition {
+    #[default]
+    TopRight,
+    BottomRight,
+    BottomCenter,
+}
+
 pub struct FloatingElement<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     anchor: Element<'a, Message, Theme, Renderer>,
     offset: Vector,
+    position: AnchorPosition,
 }
 
 impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer> {
@@ -25,11 +34,17 @@ impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer>
             content: content.into(),
             anchor: anchor.into(),
             offset: Vector::new(0.0, 0.0),
+            position: AnchorPosition::default(),
         }
     }
 
     pub fn offset(mut self, offset: Vector) -> Self {
         self.offset = offset;
+        self
+    }
+
+    pub fn position(mut self, position: AnchorPosition) -> Self {
+        self.position = position;
         self
     }
 }
@@ -64,12 +79,24 @@ where
                 .as_widget_mut()
                 .layout(&mut tree.children[1], renderer, &anchor_limits);
 
-        // Position anchor at top-right of content
+        // Position anchor based on configured position
         let content_size = content_node.size();
         let anchor_size = anchor_node.size();
 
-        let val_x = content_size.width - anchor_size.width - self.offset.x;
-        let val_y = self.offset.y;
+        let (val_x, val_y) = match self.position {
+            AnchorPosition::TopRight => (
+                content_size.width - anchor_size.width - self.offset.x,
+                self.offset.y,
+            ),
+            AnchorPosition::BottomRight => (
+                content_size.width - anchor_size.width - self.offset.x,
+                content_size.height - anchor_size.height - self.offset.y,
+            ),
+            AnchorPosition::BottomCenter => (
+                (content_size.width - anchor_size.width) / 2.0 + self.offset.x,
+                content_size.height - anchor_size.height - self.offset.y,
+            ),
+        };
 
         anchor_node = anchor_node.move_to(Point::new(val_x, val_y));
 

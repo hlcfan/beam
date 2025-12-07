@@ -67,6 +67,7 @@ pub enum Message {
     Changed(String),
     Undo,
     Redo,
+    None,
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +129,7 @@ impl UndoableInput {
                     None
                 }
             }
+            Message::None => None,
         }
     }
 
@@ -141,6 +143,7 @@ impl UndoableInput {
         Undoable::new(input, |action| match action {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
+            UndoableAction::Find => Message::None,
         })
         .into()
     }

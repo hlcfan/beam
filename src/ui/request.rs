@@ -77,6 +77,8 @@ pub enum Message {
     FormatRequestBody,
     DoNothing, // Used to prevent event propagation
     EnvironmentSelected(usize),
+    SearchQueryChanged(String),
+    CloseSearch,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +89,8 @@ pub struct RequestPanel {
     pub cancel_button_hovered: bool,
     pub selected_tab: RequestTab,
     pub script_editor_content: text_editor::Content,
+    pub show_search: bool,
+    pub search_query: String,
     pub url_input: UndoableInput,
     pub body_editor: UndoableEditor,
 }
@@ -103,7 +107,10 @@ impl Default for RequestPanel {
             body_format_menu_open: false,
             send_button_hovered: false,
             cancel_button_hovered: false,
+
             script_editor_content: text_editor::Content::new(),
+            show_search: false,
+            search_query: String::new(),
         }
     }
 }
@@ -148,6 +155,11 @@ impl RequestPanel {
             //     Action::None
             // }
             Message::EditorMessage(message) => {
+                if let undoable_editor::Message::Find = message {
+                    self.show_search = true;
+                    return Action::None;
+                }
+
                 if let Some(new_text) = self.body_editor.update(message, request_body_content) {
                     println!("Editor changed to: {:?}", new_text);
                     let mut request = current_request.clone();
@@ -418,6 +430,15 @@ impl RequestPanel {
                 } else {
                     Action::None
                 }
+            }
+            Message::SearchQueryChanged(query) => {
+                self.search_query = query;
+                Action::None
+            }
+            Message::CloseSearch => {
+                self.show_search = false;
+                self.search_query.clear();
+                Action::None
             }
             Message::ToggleMethodMenu => {
                 self.method_menu_open = !self.method_menu_open;
@@ -762,11 +783,36 @@ impl RequestPanel {
                 )
                 .height(Length::Fill);
 
-                let overlay = body_format_button();
+                let format_button = body_format_button();
 
-                floating_element::FloatingElement::new(editor_area, overlay)
-                    .offset(iced::Vector::new(10.0, 5.0))
-                    .into()
+                let editor_with_format =
+                    floating_element::FloatingElement::new(editor_area, format_button)
+                        .offset(iced::Vector::new(10.0, 5.0))
+                        .position(floating_element::AnchorPosition::TopRight);
+
+                if self.show_search {
+                    let search_bar = iced::widget::container(
+                        iced::widget::row![
+                            iced::widget::text_input("Find...", &self.search_query)
+                                .on_input(Message::SearchQueryChanged)
+                                .width(Length::Fixed(200.0))
+                                .padding(5),
+                            iced::widget::button(iced::widget::text("X").size(14))
+                                .on_press(Message::CloseSearch)
+                                .padding(5)
+                        ]
+                        .spacing(5)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .padding(5);
+
+                    floating_element::FloatingElement::new(editor_with_format, search_bar)
+                        .offset(iced::Vector::new(20.0, 10.0))
+                        .position(floating_element::AnchorPosition::BottomRight)
+                        .into()
+                } else {
+                    editor_with_format.into()
+                }
             }
             BodyFormat::Xml => {
                 let text_editor_widget = text_editor(request_body)
@@ -798,7 +844,29 @@ impl RequestPanel {
                 let editor_area = scrollable(text_editor_widget).height(Length::Fill);
                 let stacked_editor = stack![editor_area, overlay_top_right];
 
-                stacked_editor.into()
+                if self.show_search {
+                    let search_bar = iced::widget::container(
+                        iced::widget::row![
+                            iced::widget::text_input("Find...", &self.search_query)
+                                .on_input(Message::SearchQueryChanged)
+                                .width(Length::Fixed(200.0))
+                                .padding(5),
+                            iced::widget::button(iced::widget::text("X").size(14))
+                                .on_press(Message::CloseSearch)
+                                .padding(5)
+                        ]
+                        .spacing(5)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .padding(5);
+
+                    floating_element::FloatingElement::new(stacked_editor, search_bar)
+                        .offset(iced::Vector::new(10.0, 10.0))
+                        .position(floating_element::AnchorPosition::BottomRight)
+                        .into()
+                } else {
+                    stacked_editor.into()
+                }
             }
             BodyFormat::Text => {
                 let text_editor_widget = text_editor(request_body)
@@ -829,7 +897,29 @@ impl RequestPanel {
                 let editor_area = scrollable(text_editor_widget).height(Length::Fill);
                 let stacked_editor = stack![editor_area, overlay_top_right];
 
-                stacked_editor.into()
+                if self.show_search {
+                    let search_bar = iced::widget::container(
+                        iced::widget::row![
+                            iced::widget::text_input("Find...", &self.search_query)
+                                .on_input(Message::SearchQueryChanged)
+                                .width(Length::Fixed(200.0))
+                                .padding(5),
+                            iced::widget::button(iced::widget::text("X").size(14))
+                                .on_press(Message::CloseSearch)
+                                .padding(5)
+                        ]
+                        .spacing(5)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .padding(5);
+
+                    floating_element::FloatingElement::new(stacked_editor, search_bar)
+                        .offset(iced::Vector::new(10.0, 10.0))
+                        .position(floating_element::AnchorPosition::BottomRight)
+                        .into()
+                } else {
+                    stacked_editor.into()
+                }
             }
             BodyFormat::GraphQL => {
                 // Fallback for existing GraphQL requests - treat as plain text

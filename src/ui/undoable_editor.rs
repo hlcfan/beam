@@ -67,6 +67,7 @@ pub enum Message {
     Action(text_editor::Action),
     Undo,
     Redo,
+    Find,
 }
 
 #[derive(Debug, Clone)]
@@ -134,6 +135,7 @@ impl UndoableEditor {
                     None
                 }
             }
+            Message::Find => None,
         }
     }
 
@@ -145,6 +147,7 @@ impl UndoableEditor {
         Undoable::new(editor, |action| match action {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
+            UndoableAction::Find => Message::Find,
         })
         .into()
     }

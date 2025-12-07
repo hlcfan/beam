@@ -275,10 +275,12 @@ impl BeamApp {
                     request::Action::UpdateCurrentRequest(request_config) => {
                         self.current_request = request_config.clone();
 
-                        Self::update_editor_content(
-                            &mut self.request_body_content,
-                            self.current_request.body.to_string(),
-                        );
+                        if self.request_body_content.text() != self.current_request.body {
+                            Self::update_editor_content(
+                                &mut self.request_body_content,
+                                self.current_request.body.to_string(),
+                            );
+                        }
 
                         if let Some(collection) = self
                             .collections
@@ -328,9 +330,6 @@ impl BeamApp {
                     request::Action::EditRequestBody(action) => {
                         self.request_body_content.perform(action);
                         self.current_request.body = self.request_body_content.text();
-                        // self.request_panel
-                        //     .body_undo_history
-                        //     .push(self.current_request.body.clone());
 
                         if let Some(collection) = self
                             .collections
