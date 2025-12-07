@@ -99,8 +99,12 @@ impl UndoableEditor {
             Message::Action(action) => {
                 content.perform(action);
                 let text = content.text();
-                self.history.push(text.clone());
-                Some(text)
+                if text != self.history.current {
+                    self.history.push(text.clone());
+                    Some(text)
+                } else {
+                    None
+                }
             }
             Message::Undo => {
                 if let Some(prev) = self.history.undo() {
