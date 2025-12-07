@@ -1,6 +1,6 @@
 use beam::ui::undoable_editor;
 use beam::ui::undoable_input;
-use iced::widget::{column, container, text};
+use iced::widget::{column, container, text, text_editor};
 use iced::{Element, Task};
 
 pub fn main() -> iced::Result {
@@ -15,6 +15,7 @@ pub fn main() -> iced::Result {
 
 struct UndoTest {
     input_value: String,
+    editor_content: text_editor::Content,
     input: undoable_input::UndoableInput,
     editor: undoable_editor::UndoableEditor,
 }
@@ -29,10 +30,11 @@ impl Default for UndoTest {
     fn default() -> Self {
         Self {
             input_value: "test".to_string(),
+            editor_content: text_editor::Content::with_text("test"),
             input: undoable_input::UndoableInput::new(String::new(), "Type here...".to_string())
                 .size(20.0)
                 .padding(10.0),
-            editor: undoable_editor::UndoableEditor::new(String::new())
+            editor: undoable_editor::UndoableEditor::new("test".to_string()) // Init history
                 .height(iced::Length::Fixed(200.0)),
         }
     }
@@ -48,7 +50,7 @@ impl UndoTest {
                 }
             }
             Message::EditorMessage(msg) => {
-                if let Some(new_text) = self.editor.update(msg) {
+                if let Some(new_text) = self.editor.update(msg, &mut self.editor_content) {
                     println!("Editor changed to: {:?}", new_text);
                 }
             }
@@ -65,8 +67,14 @@ impl UndoTest {
                 .map(Message::InputMessage),
             text(format!("Current value: {:?}", self.input.value())).size(12),
             text("Text Editor:").size(16),
-            self.editor.view().map(Message::EditorMessage),
-            text(format!("Current text length: {}", self.editor.text().len())).size(12),
+            self.editor
+                .view(&self.editor_content)
+                .map(Message::EditorMessage),
+            text(format!(
+                "Current text length: {}",
+                self.editor_content.text().len()
+            ))
+            .size(12),
         ]
         .spacing(20)
         .padding(40);
