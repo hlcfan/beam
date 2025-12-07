@@ -754,10 +754,12 @@ impl RequestPanel {
                 //         },
                 //     );
 
-                let editor_area = self
-                    .body_editor
-                    .view(request_body)
-                    .map(Message::EditorMessage);
+                let editor_area = scrollable(
+                    self.body_editor
+                        .view(request_body)
+                        .map(Message::EditorMessage),
+                )
+                .height(Length::Fill);
 
                 editor_area.into()
             }
