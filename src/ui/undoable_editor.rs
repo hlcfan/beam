@@ -71,7 +71,6 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct UndoableEditor {
-    content: text_editor::Content,
     history: UndoHistory,
     height: Length,
 }
@@ -79,7 +78,6 @@ pub struct UndoableEditor {
 impl UndoableEditor {
     pub fn new(initial_text: String) -> Self {
         Self {
-            content: text_editor::Content::with_text(&initial_text),
             history: UndoHistory::new(initial_text),
             height: Length::Fill,
         }
@@ -90,31 +88,29 @@ impl UndoableEditor {
         self
     }
 
-    pub fn text(&self) -> String {
-        self.content.text()
-    }
-
     /// Update the component with a message.
     /// Returns Some(new_text) if the text changed (for parent notification).
-    pub fn update(&mut self, message: Message) -> Option<String> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        content: &mut text_editor::Content,
+    ) -> Option<String> {
         match message {
             Message::Action(action) => {
-                self.content.perform(action);
-                let text = self.content.text();
+                content.perform(action);
+                let text = content.text();
                 self.history.push(text.clone());
                 Some(text)
             }
             Message::Undo => {
                 if let Some(prev) = self.history.undo() {
                     // Use perform to update content while preserving cursor position
-                    self.content.perform(text_editor::Action::SelectAll);
-                    self.content
-                        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                            std::sync::Arc::new(prev.clone()),
-                        )));
+                    content.perform(text_editor::Action::SelectAll);
+                    content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                        std::sync::Arc::new(prev.clone()),
+                    )));
                     // Move cursor to end
-                    self.content
-                        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
                     Some(prev)
                 } else {
                     None
@@ -123,14 +119,12 @@ impl UndoableEditor {
             Message::Redo => {
                 if let Some(next) = self.history.redo() {
                     // Use perform to update content while preserving cursor position
-                    self.content.perform(text_editor::Action::SelectAll);
-                    self.content
-                        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                            std::sync::Arc::new(next.clone()),
-                        )));
+                    content.perform(text_editor::Action::SelectAll);
+                    content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                        std::sync::Arc::new(next.clone()),
+                    )));
                     // Move cursor to end
-                    self.content
-                        .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
                     Some(next)
                 } else {
                     None
@@ -139,8 +133,8 @@ impl UndoableEditor {
         }
     }
 
-    pub fn view(&self) -> Element<Message> {
-        let editor = text_editor(&self.content)
+    pub fn view<'a>(&'a self, content: &'a text_editor::Content) -> Element<'a, Message> {
+        let editor = text_editor(content)
             .on_action(Message::Action)
             .height(self.height);
 
