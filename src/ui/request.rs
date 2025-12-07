@@ -1,7 +1,8 @@
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
+use crate::ui::floating_element;
 use crate::ui::undoable_editor::UndoableEditor;
 use crate::ui::undoable_input::UndoableInput;
-use crate::ui::{IconName, icon, request, undoable_editor, undoable_input, url_input};
+use crate::ui::{IconName, icon, undoable_editor, undoable_input};
 use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::{
@@ -761,7 +762,11 @@ impl RequestPanel {
                 )
                 .height(Length::Fill);
 
-                editor_area.into()
+                let overlay = body_format_button();
+
+                floating_element::FloatingElement::new(editor_area, overlay)
+                    .offset(iced::Vector::new(10.0, 5.0))
+                    .into()
             }
             BodyFormat::Xml => {
                 let text_editor_widget = text_editor(request_body)
