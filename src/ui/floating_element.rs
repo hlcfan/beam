@@ -9,14 +9,25 @@ use iced::{
     mouse,
 };
 
+/// Specifies the anchor position for the floating element relative to the content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AnchorPosition {
+    /// Positions the anchor at the top-right corner of the content.
     #[default]
     TopRight,
+    /// Positions the anchor at the bottom-right corner of the content.
     BottomRight,
+    /// Positions the anchor at the bottom-center of the content.
     BottomCenter,
 }
 
+/// A container that overlays an "anchor" element on top of a "content" element.
+///
+/// The anchor can be positioned relative to the content using `AnchorPosition` and an offset.
+///
+/// This widget handles mouse interactions by checking if the cursor is over the anchor.
+/// If it is, the content receives a "hidden" cursor to prevent unwanted interactions
+/// on the underlying content while interacting with the floating element.
 pub struct FloatingElement<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
     anchor: Element<'a, Message, Theme, Renderer>,
@@ -25,6 +36,7 @@ pub struct FloatingElement<'a, Message, Theme, Renderer> {
 }
 
 impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer> {
+    /// Creates a new `FloatingElement` wrapping the given content and anchor.
     pub fn new<C, A>(content: C, anchor: A) -> Self
     where
         C: Into<Element<'a, Message, Theme, Renderer>>,
@@ -38,11 +50,13 @@ impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer>
         }
     }
 
+    /// Sets the offset vector for the anchor position.
     pub fn offset(mut self, offset: Vector) -> Self {
         self.offset = offset;
         self
     }
 
+    /// Sets the position of the anchor relative to the content.
     pub fn position(mut self, position: AnchorPosition) -> Self {
         self.position = position;
         self
@@ -117,11 +131,16 @@ where
         let content_layout = children.next().unwrap();
         let anchor_layout = children.next().unwrap();
 
+        // Check if the cursor is over the anchor. If so, we want to prevent the content
+        // from receiving mouse events at this position to avoid unintended interactions
+        // (like selecting text through the floating element).
         let is_over_anchor = cursor
             .position()
             .map(|p| anchor_layout.bounds().contains(p))
             .unwrap_or(false);
 
+        // If the cursor is over the anchor, pass a "masked" cursor (off-screen) to the content.
+        // This effectively disables mouse interactions for the content under the anchor.
         let content_cursor = if is_over_anchor {
             mouse::Cursor::Available(Point::new(-1.0, -1.0))
         } else {
@@ -197,11 +216,13 @@ where
         let content_layout = children.next().unwrap();
         let anchor_layout = children.next().unwrap();
 
+        // Check if the cursor is over the anchor to implement event masking
         let is_over_anchor = cursor
             .position()
             .map(|p| anchor_layout.bounds().contains(p))
             .unwrap_or(false);
 
+        // Mask the cursor for the content if the mouse is over the anchor
         let content_cursor = if is_over_anchor {
             mouse::Cursor::Available(Point::new(-1.0, -1.0))
         } else {
@@ -249,11 +270,13 @@ where
         let content_layout = children.next().unwrap();
         let anchor_layout = children.next().unwrap();
 
+        // Check if the cursor is over the anchor
         let is_over_anchor = cursor
             .position()
             .map(|p| anchor_layout.bounds().contains(p))
             .unwrap_or(false);
 
+        // Mask the cursor for the content if necessary
         let content_cursor = if is_over_anchor {
             mouse::Cursor::Available(Point::new(-1.0, -1.0))
         } else {
