@@ -1,5 +1,8 @@
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::{IconName, icon, url_input};
+use crate::ui::floating_element;
+use crate::ui::undoable_editor::UndoableEditor;
+use crate::ui::undoable_input::UndoableInput;
+use crate::ui::{IconName, icon, undoable_editor, undoable_input};
 use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::{
@@ -9,7 +12,6 @@ use iced::widget::{
 use iced::{Background, Border, Color, Element, Fill, Length, Padding, Shadow, Theme, Vector};
 use log::info;
 use std::time::Instant;
-use url_input::UrlInput;
 
 // Action is returned from update function, to trigger a side effect, used in the main
 
@@ -36,12 +38,12 @@ pub enum Action {
 pub enum Message {
     ClickSendRequest,
     CancelRequest,
-    UrlInputChanged(String),
-    UrlInputUndo,
-    UrlInputRedo,
-    SetProcessingCmdZ(bool),
-    UrlInputFocused,
-    UrlInputUnfocused,
+    UrlInputMessage(undoable_input::Message),
+    EditorMessage(undoable_editor::Message),
+    // UrlInputChanged(String),
+    // SetProcessingCmdZ(bool),
+    // UrlInputFocused,
+    // UrlInputUnfocused,
     MethodChanged(HttpMethod),
 
     SendButtonHovered(bool),
@@ -77,56 +79,26 @@ pub enum Message {
     EnvironmentSelected(usize),
 }
 
-// #[derive(Debug, Clone, PartialEq)]
-// pub enum RequestField {
-//     Url,
-//     Method,
-//     Body,
-//     Headers,
-//     Params,
-//     Auth,
-// }
-
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
-    // pub environments: Vec<Environment>,
-    // pub active_environment: Option<usize>,
     pub method_menu_open: bool,
     pub body_format_menu_open: bool,
     pub send_button_hovered: bool,
     pub cancel_button_hovered: bool,
     pub selected_tab: RequestTab,
     pub script_editor_content: text_editor::Content,
+    pub url_input: UndoableInput,
+    pub body_editor: UndoableEditor,
 }
 
 impl Default for RequestPanel {
     fn default() -> Self {
         Self {
-            // request_body_content: text_editor::Content::new(),
             selected_tab: RequestTab::Body,
-            // current_request: RequestConfig {
-            //     name: String::new(),
-            //     method: HttpMethod::GET,
-            //     url: String::new(),
-            //     headers: vec![
-            //         ("Content-Type".to_string(), "application/json".to_string()),
-            //         ("User-Agent".to_string(), "BeamApp/1.0".to_string()),
-            //     ],
-            //     params: vec![],
-            //     body: String::new(),
-            //     content_type: "application/json".to_string(),
-            //     auth_type: AuthType::None,
-            //     bearer_token: String::new(),
-            //     basic_username: String::new(),
-            //     basic_password: String::new(),
-            //     api_key: String::new(),
-            //     api_key_header: "X-API-Key".to_string(),
-            //     collection_index: 0,
-            //     request_index: 0,
-            //     metadata: None,
-            // },
-            // environments: Vec::new(),
-            // active_environment: None,
+            url_input: UndoableInput::new(String::new(), "Type here...".to_string())
+                .size(20.0)
+                .padding(10.0),
+            body_editor: UndoableEditor::new(String::new()).height(iced::Length::Fixed(200.0)),
             method_menu_open: false,
             body_format_menu_open: false,
             send_button_hovered: false,
@@ -141,39 +113,95 @@ impl RequestPanel {
         Self::default()
     }
 
+    pub fn reset_undo_histories<'a>(&mut self, current_request: &RequestConfig) {
+        // self.url_undo_history
+        //     .set_initial(current_request.url.clone());
+
+        // self.body_undo_history
+        //     .set_initial(current_request.body.clone());
+    }
+
     pub fn update<'a>(
         &mut self,
         message: Message,
         current_request: &RequestConfig,
         environments: &'a Vec<Environment>,
+        request_body_content: &mut text_editor::Content,
     ) -> Action {
         match message {
-            Message::UrlInputChanged(url) => {
-                let mut request = current_request.clone();
-                request.url = url;
+            // Message::UrlInputChanged(url) => {
+            //     let mut request = current_request.clone();
+            //     request.url = url;
 
-                Action::UpdateCurrentRequest(request)
-            }
-            Message::UrlInputUndo => {
-                info!("DEBUG: UrlInputUndo message received");
-                // TODO: Implement undo functionality for UrlInput
+            //     Action::UpdateCurrentRequest(request)
+            // }
+            // Message::UrlInputFocused => {
+            //     // TODO: Implement focus handling for UrlInput
+            //     Action::None
+            // }
+            // Message::UrlInputUnfocused => {
+            //     // TODO: Implement unfocus handling for UrlInput
+            //     Action::None
+            // }
+            // Message::SetProcessingCmdZ(processing) => {
+            //     // self.processing_cmd_z = processing;
+            //     Action::None
+            // }
+            Message::EditorMessage(message) => {
+                if let Some(new_text) = self.body_editor.update(message, request_body_content) {
+                    println!("Editor changed to: {:?}", new_text);
+                    let mut request = current_request.clone();
+                    request.body = new_text;
+
+                    return Action::UpdateCurrentRequest(request);
+                }
                 Action::None
+
+                // match message {
+                //     undoable_editor::EditorMessage::Action(action) => {
+                //         info!("===Action: {:?}", action);
+                //         // match action {
+                //         //     text_editor::Ch
+                //         // }
+                //         // self.url_undo_history.push(url.clone());
+                //         // request.url = url;
+
+                //         // Action::UpdateCurrentRequest(request)
+
+                //         Action::EditRequestBody(action)
+                //     }
+                //     undoable_editor::EditorMessage::Undo => {
+                //         // if let Some(prev) = self.body_undo_history.undo() {
+                //         //     info!("===editor message: {:?}", message);
+                //         //     request.body = prev;
+
+                //         //     return Action::UpdateCurrentRequest(request);
+                //         // }
+
+                //         info!("===no prev");
+                //         Action::None
+                //     }
+                //     undoable_editor::EditorMessage::Redo => {
+                //         // if let Some(next) = self.body_undo_history.redo() {
+                //         //     request.body = next;
+
+                //         //     return Action::UpdateCurrentRequest(request);
+                //         // }
+
+                //         Action::None
+                //     }
+                // }
             }
-            Message::UrlInputRedo => {
-                info!("DEBUG: UrlInputRedo message received");
-                // TODO: Implement redo functionality for UrlInput
-                Action::None
-            }
-            Message::UrlInputFocused => {
-                // TODO: Implement focus handling for UrlInput
-                Action::None
-            }
-            Message::UrlInputUnfocused => {
-                // TODO: Implement unfocus handling for UrlInput
-                Action::None
-            }
-            Message::SetProcessingCmdZ(processing) => {
-                // self.processing_cmd_z = processing;
+            Message::UrlInputMessage(message) => {
+                info!("====UrlInputMessage: {:?}", message);
+                if let Some(new_value) = self.url_input.update(message) {
+                    println!("URL Input changed to: {:?}", new_value);
+                    let mut request = current_request.clone();
+                    request.url = new_value;
+
+                    return Action::UpdateCurrentRequest(request);
+                }
+
                 Action::None
             }
             Message::MethodChanged(method) => {
@@ -291,7 +319,7 @@ impl RequestPanel {
                 Action::UpdateCurrentRequest(request)
             }
             Message::FormatRequestBody => {
-                let mut request = current_request.clone();
+                let request = current_request.clone();
                 let mut formatted_body = None;
 
                 // Format the body based on the current format
@@ -418,6 +446,8 @@ impl RequestPanel {
             }
             Message::DoNothing => Action::None,
         }
+
+        // Action::None
     }
 
     pub fn view<'a>(
@@ -526,7 +556,9 @@ impl RequestPanel {
 
         let base_input = container(row![
             method_label,
-            UrlInput::new("Enter URL...", &url).on_input(Message::UrlInputChanged),
+            self.url_input
+                .view(&current_request.url)
+                .map(Message::UrlInputMessage),
             space().width(1),
             send_button,
         ])
@@ -591,7 +623,7 @@ impl RequestPanel {
         .spacing(5);
 
         let tab_content = match self.selected_tab {
-            RequestTab::Body => body_tab(&request_body_content, current_request.body_format),
+            RequestTab::Body => self.body_tab(&request_body_content, current_request.body_format),
             RequestTab::Params => params_tab(&current_request),
             RequestTab::Headers => headers_tab(&current_request),
             RequestTab::Auth => auth_tab(&current_request),
@@ -687,6 +719,152 @@ impl RequestPanel {
 
         base_layout
     }
+
+    fn body_tab<'a>(
+        &'a self,
+        request_body: &'a text_editor::Content,
+        body_format: BodyFormat,
+    ) -> Element<'a, Message> {
+        match body_format {
+            BodyFormat::None => container(
+                text("No body")
+                    .size(14)
+                    .color(Color::from_rgb(0.6, 0.6, 0.6)),
+            )
+            .center_x(Fill)
+            .center_y(Fill)
+            .width(Fill)
+            .height(Fill)
+            .into(),
+            BodyFormat::Json => {
+                // let text_editor_widget = text_editor(request_body)
+                //     .highlight("json", highlighter::Theme::Base16Mocha)
+                //     .on_action(Message::BodyChanged)
+                //     .placeholder("Enter JSON body...")
+                //     .style(
+                //         |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                //             background: Background::Color(theme.palette().background),
+                //             border: Border {
+                //                 color: Color::from_rgb(0.9, 0.9, 0.9),
+                //                 width: 1.0,
+                //                 radius: 4.0.into(),
+                //             },
+                //             placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                //             value: theme.palette().text,
+                //             selection: theme.palette().primary,
+                //         },
+                //     );
+
+                let editor_area = scrollable(
+                    self.body_editor
+                        .view(request_body)
+                        .map(Message::EditorMessage),
+                )
+                .height(Length::Fill);
+
+                let overlay = body_format_button();
+
+                floating_element::FloatingElement::new(editor_area, overlay)
+                    .offset(iced::Vector::new(10.0, 5.0))
+                    .into()
+            }
+            BodyFormat::Xml => {
+                let text_editor_widget = text_editor(request_body)
+                    .highlight("xml", highlighter::Theme::Base16Mocha)
+                    .on_action(Message::BodyChanged)
+                    .placeholder("Enter XML body...")
+                    .style(
+                        |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                            background: Background::Color(theme.palette().background),
+                            border: Border {
+                                color: Color::from_rgb(0.9, 0.9, 0.9),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                            value: theme.palette().text,
+                            selection: theme.palette().primary,
+                        },
+                    );
+
+                let overlay_top_right = container(
+                    row![Space::new().width(Length::Fill), body_format_button()]
+                        .align_y(iced::Alignment::Center)
+                        .spacing(8),
+                )
+                .width(Length::Fill)
+                .padding(Padding::new(8.0));
+
+                let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+                let stacked_editor = stack![editor_area, overlay_top_right];
+
+                stacked_editor.into()
+            }
+            BodyFormat::Text => {
+                let text_editor_widget = text_editor(request_body)
+                    .on_action(Message::BodyChanged)
+                    .placeholder("Enter text body...")
+                    .style(
+                        |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                            background: Background::Color(theme.palette().background),
+                            border: Border {
+                                color: Color::from_rgb(0.9, 0.9, 0.9),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                            value: theme.palette().text,
+                            selection: theme.palette().primary,
+                        },
+                    );
+
+                let overlay_top_right = container(
+                    row![Space::new().width(Length::Fill), body_format_button()]
+                        .align_y(iced::Alignment::Center)
+                        .spacing(8),
+                )
+                .width(Length::Fill)
+                .padding(Padding::new(8.0));
+
+                let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+                let stacked_editor = stack![editor_area, overlay_top_right];
+
+                stacked_editor.into()
+            }
+            BodyFormat::GraphQL => {
+                // Fallback for existing GraphQL requests - treat as plain text
+                let text_editor_widget = text_editor(request_body)
+                    .on_action(Message::BodyChanged)
+                    .placeholder("GraphQL format no longer supported - edit as text...")
+                    .style(
+                        |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                            background: Background::Color(theme.palette().background),
+                            border: Border {
+                                color: Color::from_rgb(0.9, 0.9, 0.9),
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            placeholder: Color::from_rgb(0.8, 0.6, 0.6),
+                            value: theme.palette().text,
+                            selection: theme.palette().primary,
+                        },
+                    );
+
+                let overlay_top_right = container(
+                    row![Space::new().width(Length::Fill), body_format_button()]
+                        .align_y(iced::Alignment::Center)
+                        .spacing(8),
+                )
+                .width(Length::Fill)
+                .padding(Padding::new(8.0));
+
+                let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+                let stacked_editor = stack![editor_area, overlay_top_right];
+
+                stacked_editor.into()
+            }
+        }
+    }
 }
 
 fn tab_button<'a>(label: String, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
@@ -754,151 +932,6 @@ fn tab_button<'a>(label: String, is_active: bool, tab: RequestTab) -> Element<'a
             }
         })
         .into()
-}
-
-fn body_tab<'a>(
-    request_body: &'a text_editor::Content,
-    body_format: BodyFormat,
-) -> Element<'a, Message> {
-    match body_format {
-        BodyFormat::None => container(
-            text("No body")
-                .size(14)
-                .color(Color::from_rgb(0.6, 0.6, 0.6)),
-        )
-        .center_x(Fill)
-        .center_y(Fill)
-        .width(Fill)
-        .height(Fill)
-        .into(),
-        BodyFormat::Json => {
-            let text_editor_widget = text_editor(request_body)
-                .highlight("json", highlighter::Theme::Base16Mocha)
-                .on_action(Message::BodyChanged)
-                .placeholder("Enter JSON body...")
-                .style(
-                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                        background: Background::Color(theme.palette().background),
-                        border: Border {
-                            color: Color::from_rgb(0.9, 0.9, 0.9),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                        value: theme.palette().text,
-                        selection: theme.palette().primary,
-                    },
-                );
-
-            let overlay_top_right = container(
-                row![Space::new().width(Length::Fill), body_format_button()]
-                    .align_y(iced::Alignment::Center)
-                    .spacing(8),
-            )
-            .width(Length::Fill)
-            .padding(Padding::new(8.0));
-
-            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
-            let stacked_editor = stack![editor_area, overlay_top_right];
-
-            stacked_editor.into()
-        }
-        BodyFormat::Xml => {
-            let text_editor_widget = text_editor(request_body)
-                .highlight("xml", highlighter::Theme::Base16Mocha)
-                .on_action(Message::BodyChanged)
-                .placeholder("Enter XML body...")
-                .style(
-                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                        background: Background::Color(theme.palette().background),
-                        border: Border {
-                            color: Color::from_rgb(0.9, 0.9, 0.9),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                        value: theme.palette().text,
-                        selection: theme.palette().primary,
-                    },
-                );
-
-            let overlay_top_right = container(
-                row![Space::new().width(Length::Fill), body_format_button()]
-                    .align_y(iced::Alignment::Center)
-                    .spacing(8),
-            )
-            .width(Length::Fill)
-            .padding(Padding::new(8.0));
-
-            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
-            let stacked_editor = stack![editor_area, overlay_top_right];
-
-            stacked_editor.into()
-        }
-        BodyFormat::Text => {
-            let text_editor_widget = text_editor(request_body)
-                .on_action(Message::BodyChanged)
-                .placeholder("Enter text body...")
-                .style(
-                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                        background: Background::Color(theme.palette().background),
-                        border: Border {
-                            color: Color::from_rgb(0.9, 0.9, 0.9),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                        value: theme.palette().text,
-                        selection: theme.palette().primary,
-                    },
-                );
-
-            let overlay_top_right = container(
-                row![Space::new().width(Length::Fill), body_format_button()]
-                    .align_y(iced::Alignment::Center)
-                    .spacing(8),
-            )
-            .width(Length::Fill)
-            .padding(Padding::new(8.0));
-
-            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
-            let stacked_editor = stack![editor_area, overlay_top_right];
-
-            stacked_editor.into()
-        }
-        BodyFormat::GraphQL => {
-            // Fallback for existing GraphQL requests - treat as plain text
-            let text_editor_widget = text_editor(request_body)
-                .on_action(Message::BodyChanged)
-                .placeholder("GraphQL format no longer supported - edit as text...")
-                .style(
-                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                        background: Background::Color(theme.palette().background),
-                        border: Border {
-                            color: Color::from_rgb(0.9, 0.9, 0.9),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        placeholder: Color::from_rgb(0.8, 0.6, 0.6),
-                        value: theme.palette().text,
-                        selection: theme.palette().primary,
-                    },
-                );
-
-            let overlay_top_right = container(
-                row![Space::new().width(Length::Fill), body_format_button()]
-                    .align_y(iced::Alignment::Center)
-                    .spacing(8),
-            )
-            .width(Length::Fill)
-            .padding(Padding::new(8.0));
-
-            let editor_area = scrollable(text_editor_widget).height(Length::Fill);
-            let stacked_editor = stack![editor_area, overlay_top_right];
-
-            stacked_editor.into()
-        }
-    }
 }
 
 fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
@@ -1307,4 +1340,3 @@ fn post_script_tab<'a>(script_content: &'a text_editor::Content) -> Element<'a, 
 
     scrollable(script_editor_widget).height(Length::Fill).into()
 }
-
