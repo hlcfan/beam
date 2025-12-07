@@ -117,13 +117,24 @@ where
         let content_layout = children.next().unwrap();
         let anchor_layout = children.next().unwrap();
 
+        let is_over_anchor = cursor
+            .position()
+            .map(|p| anchor_layout.bounds().contains(p))
+            .unwrap_or(false);
+
+        let content_cursor = if is_over_anchor {
+            mouse::Cursor::Available(Point::new(-1.0, -1.0))
+        } else {
+            cursor
+        };
+
         self.content.as_widget().draw(
             &tree.children[0],
             renderer,
             theme,
             style,
             content_layout,
-            cursor,
+            content_cursor,
             viewport,
         );
 
@@ -186,6 +197,17 @@ where
         let content_layout = children.next().unwrap();
         let anchor_layout = children.next().unwrap();
 
+        let is_over_anchor = cursor
+            .position()
+            .map(|p| anchor_layout.bounds().contains(p))
+            .unwrap_or(false);
+
+        let content_cursor = if is_over_anchor {
+            mouse::Cursor::Available(Point::new(-1.0, -1.0))
+        } else {
+            cursor
+        };
+
         let (content_tree, anchor_tree) = tree.children.split_at_mut(1);
         let content_tree = &mut content_tree[0];
         let anchor_tree = &mut anchor_tree[0];
@@ -207,7 +229,7 @@ where
             content_tree,
             event,
             content_layout,
-            cursor,
+            content_cursor,
             renderer,
             clipboard,
             shell,
@@ -227,6 +249,17 @@ where
         let content_layout = children.next().unwrap();
         let anchor_layout = children.next().unwrap();
 
+        let is_over_anchor = cursor
+            .position()
+            .map(|p| anchor_layout.bounds().contains(p))
+            .unwrap_or(false);
+
+        let content_cursor = if is_over_anchor {
+            mouse::Cursor::Available(Point::new(-1.0, -1.0))
+        } else {
+            cursor
+        };
+
         let anchor_interaction = self.anchor.as_widget().mouse_interaction(
             &tree.children[1],
             anchor_layout,
@@ -238,7 +271,7 @@ where
         let content_interaction = self.content.as_widget().mouse_interaction(
             &tree.children[0],
             content_layout,
-            cursor,
+            content_cursor,
             viewport,
             renderer,
         );

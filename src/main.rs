@@ -356,8 +356,8 @@ impl BeamApp {
                     }
                     request::Action::EditRequestPostRequestScript(action) => {
                         self.post_script_content.perform(action);
-                        self.current_request.post_request_script =
-                            Some(self.post_script_content.text());
+                        let mut request = self.current_request.clone();
+                        request.post_request_script = Some(self.post_script_content.text());
 
                         if let Some(collection) = self
                             .collections
@@ -373,7 +373,6 @@ impl BeamApp {
 
                         let request_to_persist = self.current_request.clone();
 
-                        // TODO: only save if edit, not movement
                         if let Some(tx) = &self.debounce_tx {
                             if let Err(_) = tx.try_send(request_to_persist) {
                                 info!("Debounce channel is full or closed");
@@ -381,6 +380,10 @@ impl BeamApp {
                         }
 
                         Task::none()
+                    }
+                    request::Action::Focus(id) => {
+                        return iced::widget::operation::focus(id)
+                            .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
                     }
                     request::Action::FormatRequestBody(formatted_body) => {
                         let select_all_action = text_editor::Action::SelectAll;

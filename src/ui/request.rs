@@ -28,6 +28,7 @@ pub enum Action {
     Run(iced::Task<Message>),
     EditRequestBody(text_editor::Action),
     EditRequestPostRequestScript(text_editor::Action),
+    Focus(iced::widget::Id),
     FormatRequestBody(String),
     OpenEnvironmentPopup,
     // The component does not require any additional actions
@@ -91,6 +92,7 @@ pub struct RequestPanel {
     pub script_editor_content: text_editor::Content,
     pub show_search: bool,
     pub search_query: String,
+    pub search_input_id: iced::widget::Id,
     pub url_input: UndoableInput,
     pub body_editor: UndoableEditor,
 }
@@ -111,6 +113,7 @@ impl Default for RequestPanel {
             script_editor_content: text_editor::Content::new(),
             show_search: false,
             search_query: String::new(),
+            search_input_id: iced::widget::Id::unique(),
         }
     }
 }
@@ -157,7 +160,7 @@ impl RequestPanel {
             Message::EditorMessage(message) => {
                 if let undoable_editor::Message::Find = message {
                     self.show_search = true;
-                    return Action::None;
+                    return Action::Focus(self.search_input_id.clone());
                 }
 
                 if let Some(new_text) = self.body_editor.update(message, request_body_content) {
@@ -794,6 +797,7 @@ impl RequestPanel {
                     let search_bar = iced::widget::container(
                         iced::widget::row![
                             iced::widget::text_input("Find...", &self.search_query)
+                                .id(self.search_input_id.clone())
                                 .on_input(Message::SearchQueryChanged)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
@@ -848,6 +852,7 @@ impl RequestPanel {
                     let search_bar = iced::widget::container(
                         iced::widget::row![
                             iced::widget::text_input("Find...", &self.search_query)
+                                .id(self.search_input_id.clone())
                                 .on_input(Message::SearchQueryChanged)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
