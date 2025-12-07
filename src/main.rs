@@ -385,6 +385,14 @@ impl BeamApp {
                         return iced::widget::operation::focus(id)
                             .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
                     }
+                    request::Action::SearchNext => {
+                        self.perform_search(true);
+                        Task::none()
+                    }
+                    request::Action::SearchPrevious => {
+                        self.perform_search(false);
+                        Task::none()
+                    }
                     request::Action::FormatRequestBody(formatted_body) => {
                         let select_all_action = text_editor::Action::SelectAll;
                         self.request_body_content.perform(select_all_action);
@@ -1691,8 +1699,96 @@ impl BeamApp {
 
                 Task::none()
             }
+
             Message::DoNothing => Task::none(),
         }
+    }
+
+    fn perform_search(&mut self, next: bool) {
+        let query = &self.request_panel.search_query;
+        if query.is_empty() {
+            return;
+        }
+
+        let content = &mut self.request_body_content;
+        let text = content.text();
+        let (current_line, current_col) = content.cursor_position();
+
+        let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
+
+        let match_range = if next {
+            let start_idx = current_idx + 1;
+            if start_idx < text.len() {
+                text[start_idx..].find(query).map(|i| {
+                    let start = start_idx + i;
+                    (start, start + query.len())
+                })
+            } else {
+                None
+            }
+            .or_else(|| text.find(query).map(|i| (i, i + query.len())))
+        } else {
+            if current_idx > 0 {
+                let limit = current_idx.min(text.len());
+                text[..limit].rfind(query).map(|i| (i, i + query.len()))
+            } else {
+                None
+            }
+            .or_else(|| text.rfind(query).map(|i| (i, i + query.len())))
+        };
+
+        if let Some((start, _end)) = match_range {
+            let (line, col) = Self::byte_index_to_line_col(&text, start);
+
+            use iced::widget::text_editor::{Action, Motion};
+
+            content.perform(Action::Move(Motion::DocumentStart));
+            for _ in 0..line {
+                content.perform(Action::Move(Motion::Down));
+            }
+            for _ in 0..col {
+                content.perform(Action::Move(Motion::Right));
+            }
+
+            let query_char_count = query.chars().count();
+            for _ in 0..query_char_count {
+                content.perform(Action::Select(Motion::Right));
+            }
+        }
+    }
+
+    fn line_col_to_byte_index(text: &str, target_line: usize, target_col: usize) -> usize {
+        let mut line = 0;
+        let mut col = 0;
+        for (idx, c) in text.char_indices() {
+            if line == target_line && col == target_col {
+                return idx;
+            }
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        text.len()
+    }
+
+    fn byte_index_to_line_col(text: &str, target_idx: usize) -> (usize, usize) {
+        let mut line = 0;
+        let mut col = 0;
+        for (idx, c) in text.char_indices() {
+            if idx == target_idx {
+                return (line, col);
+            }
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
     }
 
     fn view(&self) -> Element<'_, Message> {
