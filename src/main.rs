@@ -258,6 +258,7 @@ impl BeamApp {
                     view_message,
                     &self.current_request,
                     &self.environments,
+                    &mut self.request_body_content,
                 ) {
                     request::Action::SendRequest(request_start_time) => {
                         let resolved_config =

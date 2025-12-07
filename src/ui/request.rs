@@ -39,10 +39,10 @@ pub enum Message {
     CancelRequest,
     UrlInputMessage(undoable_input::Message),
     EditorMessage(undoable_editor::Message),
-    UrlInputChanged(String),
-    SetProcessingCmdZ(bool),
-    UrlInputFocused,
-    UrlInputUnfocused,
+    // UrlInputChanged(String),
+    // SetProcessingCmdZ(bool),
+    // UrlInputFocused,
+    // UrlInputUnfocused,
     MethodChanged(HttpMethod),
 
     SendButtonHovered(bool),
@@ -125,28 +125,29 @@ impl RequestPanel {
         message: Message,
         current_request: &RequestConfig,
         environments: &'a Vec<Environment>,
+        request_body_content: &mut text_editor::Content,
     ) -> Action {
         match message {
-            Message::UrlInputChanged(url) => {
-                let mut request = current_request.clone();
-                request.url = url;
+            // Message::UrlInputChanged(url) => {
+            //     let mut request = current_request.clone();
+            //     request.url = url;
 
-                Action::UpdateCurrentRequest(request)
-            }
-            Message::UrlInputFocused => {
-                // TODO: Implement focus handling for UrlInput
-                Action::None
-            }
-            Message::UrlInputUnfocused => {
-                // TODO: Implement unfocus handling for UrlInput
-                Action::None
-            }
-            Message::SetProcessingCmdZ(processing) => {
-                // self.processing_cmd_z = processing;
-                Action::None
-            }
+            //     Action::UpdateCurrentRequest(request)
+            // }
+            // Message::UrlInputFocused => {
+            //     // TODO: Implement focus handling for UrlInput
+            //     Action::None
+            // }
+            // Message::UrlInputUnfocused => {
+            //     // TODO: Implement unfocus handling for UrlInput
+            //     Action::None
+            // }
+            // Message::SetProcessingCmdZ(processing) => {
+            //     // self.processing_cmd_z = processing;
+            //     Action::None
+            // }
             Message::EditorMessage(message) => {
-                if let Some(new_text) = self.body_editor.update(message) {
+                if let Some(new_text) = self.body_editor.update(message, request_body_content) {
                     println!("Editor changed to: {:?}", new_text);
                     let mut request = current_request.clone();
                     request.body = new_text;
@@ -193,7 +194,7 @@ impl RequestPanel {
             Message::UrlInputMessage(message) => {
                 info!("====UrlInputMessage: {:?}", message);
                 if let Some(new_value) = self.url_input.update(message) {
-                    println!("Input changed to: {:?}", new_value);
+                    println!("URL Input changed to: {:?}", new_value);
                     let mut request = current_request.clone();
                     request.url = new_value;
 
@@ -317,7 +318,7 @@ impl RequestPanel {
                 Action::UpdateCurrentRequest(request)
             }
             Message::FormatRequestBody => {
-                let mut request = current_request.clone();
+                let request = current_request.clone();
                 let mut formatted_body = None;
 
                 // Format the body based on the current format
@@ -444,6 +445,8 @@ impl RequestPanel {
             }
             Message::DoNothing => Action::None,
         }
+
+        // Action::None
     }
 
     pub fn view<'a>(
@@ -733,8 +736,6 @@ impl RequestPanel {
             .height(Fill)
             .into(),
             BodyFormat::Json => {
-                // let undoable_editor = UndoableEditor::new();
-
                 // let text_editor_widget = text_editor(request_body)
                 //     .highlight("json", highlighter::Theme::Base16Mocha)
                 //     .on_action(Message::BodyChanged)
@@ -753,19 +754,12 @@ impl RequestPanel {
                 //         },
                 //     );
 
-                let overlay_top_right = container(
-                    row![Space::new().width(Length::Fill), body_format_button()]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(8),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(8.0));
+                let editor_area = self
+                    .body_editor
+                    .view(request_body)
+                    .map(Message::EditorMessage);
 
-                let editor_area = scrollable(self.body_editor.view().map(Message::EditorMessage))
-                    .height(Length::Fill);
-                let stacked_editor = stack![editor_area, overlay_top_right];
-
-                stacked_editor.into()
+                editor_area.into()
             }
             BodyFormat::Xml => {
                 let text_editor_widget = text_editor(request_body)
