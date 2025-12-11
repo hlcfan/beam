@@ -603,7 +603,7 @@ impl BeamApp {
 
                                 new_request.name = format!("{} (Copy)", new_request.name);
                                 new_request.collection_index = collection_index;
-                                new_request.request_index = request_index;
+                                new_request.request_index = collection.requests.len();
 
                                 let mut path = PathBuf::new();
                                 let curr_request_path = PathBuf::from(&request.path);
@@ -1710,11 +1710,16 @@ impl BeamApp {
             return;
         }
 
+        info!("perform_search: query='{}', next={}", query, next);
+
         let content = &mut self.request_body_content;
         let text = content.text();
         let (current_line, current_col) = content.cursor_position();
 
+        info!("Current cursor: line={}, col={}", current_line, current_col);
+
         let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
+        info!("Current byte index: {}", current_idx);
 
         let match_range = if next {
             let start_idx = current_idx + 1;
@@ -1738,7 +1743,9 @@ impl BeamApp {
         };
 
         if let Some((start, _end)) = match_range {
+            info!("Match found at index: {}", start);
             let (line, col) = Self::byte_index_to_line_col(&text, start);
+            info!("Target: line={}, col={}", line, col);
 
             use iced::widget::text_editor::{Action, Motion};
 
@@ -1754,6 +1761,8 @@ impl BeamApp {
             for _ in 0..query_char_count {
                 content.perform(Action::Select(Motion::Right));
             }
+        } else {
+            info!("No match found");
         }
     }
 
