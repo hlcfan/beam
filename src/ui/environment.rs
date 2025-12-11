@@ -429,7 +429,7 @@ impl EnvironmentPanel {
                     let is_enabled = var.enabled;
 
                     // Toggle checkbox
-                    let toggle_checkbox = checkbox("", is_enabled)
+                    let toggle_checkbox = checkbox(is_enabled)
                         .on_toggle(move |_| Message::ToggleVariable(active_idx, key_clone4.clone()))
                         .size(20)
                         .style(move |_theme, _status| {

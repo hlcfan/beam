@@ -17,6 +17,8 @@ use beam::ui::CollectionPanel;
 use beam::ui::EnvironmentPanel;
 use beam::ui::RequestPanel;
 use beam::ui::ResponsePanel;
+use iced::advanced::graphics::text::cosmic_text::Cursor;
+use iced::widget::text_editor::Position;
 use std::sync::Arc;
 
 use beam::ui::collections;
@@ -1714,7 +1716,10 @@ impl BeamApp {
 
         let content = &mut self.request_body_content;
         let text = content.text();
-        let (current_line, current_col) = content.cursor_position();
+        let Position {
+            line: current_line,
+            column: current_col,
+        } = content.cursor().position;
 
         info!("Current cursor: line={}, col={}", current_line, current_col);
 
@@ -1782,6 +1787,37 @@ impl BeamApp {
         }
         text.len()
     }
+
+    // fn index_to_position(content: &text_editor::Content, index: usize) -> text_editor::Position {
+    //   let mut current_index = 0;
+
+    //   for (line_index, line) in content.lines().enumerate() {
+    //     let line_len = line.text.chars().count();
+    //     let ending_len = line.ending.as_str().len();
+    //     let total_len = line_len + ending_len;
+
+    //     if index < current_index + total_len {
+    //       let column = index - current_index;
+    //       return text_editor::Position {
+    //         line: line_index,
+    //         column: column.min(line_len),
+    //       };
+    //     }
+    //     current_index += total_len;
+    //   }
+
+    //   let line_count = content.line_count();
+    //   if line_count > 0 {
+    //     let last_line_idx = line_count - 1;
+    //     let last_line = content.line(last_line_idx).unwrap();
+    //     text_editor::Position {
+    //       line: last_line_idx,
+    //       column: last_line.text.chars().count(),
+    //     }
+    //   } else {
+    //     text_editor::Position { line: 0, column: 0 }
+    //   }
+    // }
 
     fn byte_index_to_line_col(text: &str, target_idx: usize) -> (usize, usize) {
         let mut line = 0;
