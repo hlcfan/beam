@@ -31,6 +31,7 @@ impl UndoHistory {
     }
 
     pub fn push(&mut self, new_state: String) {
+        // Bug: first keyword can't be undo
         if self.current.as_ref() == Some(&new_state) {
             return;
         }
@@ -74,3 +75,4 @@ impl UndoHistory {
         &self.current
     }
 }
+

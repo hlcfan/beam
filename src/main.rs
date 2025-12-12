@@ -20,16 +20,16 @@ use beam::ui::ResponsePanel;
 use iced::widget::text_editor::Position;
 use std::sync::Arc;
 
+use beam::constant::REQUEST_BODY_EDITOR_ID;
 use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
 use beam::ui::response;
-use beam::constant::REQUEST_BODY_EDITOR_ID;
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
-    button, column, container, operation, mouse_area, row, space, stack, text, text_editor,
+    button, column, container, mouse_area, operation, row, space, stack, text, text_editor,
     text_input,
 };
 use iced::{Color, Element, Fill, Size, Task, Theme, Vector};
@@ -478,8 +478,7 @@ impl BeamApp {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
-                                // self.request_panel
-                                //     .reset_undo_histories(&self.current_request);
+                                self.request_panel.reset_undo_histories();
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1750,7 +1749,7 @@ impl BeamApp {
             info!("Match found at index: {}", start);
             let start_pos = Self::byte_index_to_line_col(&text, start);
             let end_pos = Self::byte_index_to_line_col(&text, end);
-            info!("Target: line={:?}, col={:?}",start_pos, end_pos);
+            info!("Target: line={:?}, col={:?}", start_pos, end_pos);
 
             content.move_to(text_editor::Cursor {
                 position: end_pos,

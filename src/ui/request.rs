@@ -127,12 +127,9 @@ impl RequestPanel {
         Self::default()
     }
 
-    pub fn reset_undo_histories<'a>(&mut self, current_request: &RequestConfig) {
-        // self.url_undo_history
-        //     .set_initial(current_request.url.clone());
-
-        // self.body_undo_history
-        //     .set_initial(current_request.body.clone());
+    pub fn reset_undo_histories<'a>(&mut self) {
+        self.url_input = UndoableInput::new_empty("Enter URL...".to_string());
+        self.body_editor = UndoableEditor::new_empty();
     }
 
     pub fn update<'a>(
