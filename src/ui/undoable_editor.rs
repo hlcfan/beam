@@ -1,14 +1,15 @@
+use crate::constant::REQUEST_BODY_EDITOR_ID;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::widget::text_editor;
 use iced::{Element, Length};
+use log::info;
 use std::time::{Duration, Instant};
-use crate::constant::REQUEST_BODY_EDITOR_ID;
 
 #[derive(Debug, Clone)]
 struct UndoHistory {
     past: Vec<String>,
     future: Vec<String>,
-    current: String,
+    current: Option<String>,
     last_snapshot_time: Instant,
     debounce_duration: Duration,
 }
@@ -18,14 +19,24 @@ impl UndoHistory {
         Self {
             past: Vec::new(),
             future: Vec::new(),
-            current: initial,
+            current: Some(initial),
+            last_snapshot_time: Instant::now(),
+            debounce_duration: Duration::from_millis(500),
+        }
+    }
+
+    fn new_empty() -> Self {
+        Self {
+            past: Vec::new(),
+            future: Vec::new(),
+            current: None,
             last_snapshot_time: Instant::now(),
             debounce_duration: Duration::from_millis(500),
         }
     }
 
     fn push(&mut self, new_state: String) {
-        if self.current == new_state {
+        if self.current.as_ref() == Some(&new_state) {
             return;
         }
 
@@ -34,18 +45,20 @@ impl UndoHistory {
 
         // If enough time passed or past is empty, save current to past
         if time_since_last >= self.debounce_duration || self.past.is_empty() {
-            self.past.push(self.current.clone());
-            self.last_snapshot_time = now;
+            if let Some(current) = &self.current {
+                self.past.push(current.clone());
+                self.last_snapshot_time = now;
+            }
         }
 
-        self.current = new_state;
+        self.current = Some(new_state);
         self.future.clear();
     }
 
     fn undo(&mut self) -> Option<String> {
         if let Some(prev) = self.past.pop() {
-            self.future.push(self.current.clone());
-            self.current = prev.clone();
+            self.future.push(self.current.clone().unwrap_or_default());
+            self.current = Some(prev.clone());
             Some(prev)
         } else {
             None
@@ -54,8 +67,8 @@ impl UndoHistory {
 
     fn redo(&mut self) -> Option<String> {
         if let Some(next) = self.future.pop() {
-            self.past.push(self.current.clone());
-            self.current = next.clone();
+            self.past.push(self.current.clone().unwrap_or_default());
+            self.current = Some(next.clone());
             Some(next)
         } else {
             None
@@ -85,6 +98,13 @@ impl UndoableEditor {
         }
     }
 
+    pub fn new_empty() -> Self {
+        Self {
+            history: UndoHistory::new_empty(),
+            height: Length::Fill,
+        }
+    }
+
     pub fn height(mut self, height: Length) -> Self {
         self.height = height;
         self
@@ -99,12 +119,15 @@ impl UndoableEditor {
     ) -> Option<String> {
         match message {
             Message::Action(action) => {
+                info!("===Action: {:?}", action);
                 content.perform(action);
                 let text = content.text();
-                if text != self.history.current {
+                if self.history.current.as_ref() != Some(&text) {
+                    info!("====diff");
                     self.history.push(text.clone());
                     Some(text)
                 } else {
+                    info!("====same");
                     None
                 }
             }

@@ -108,7 +108,7 @@ impl Default for RequestPanel {
             url_input: UndoableInput::new(String::new(), "Enter URL...".to_string())
                 .size(14.0)
                 .padding(8.0),
-            body_editor: UndoableEditor::new(String::new()).height(iced::Length::Fixed(200.0)),
+            body_editor: UndoableEditor::new_empty().height(iced::Length::Fixed(200.0)),
             method_menu_open: false,
             body_format_menu_open: false,
             send_button_hovered: false,
@@ -168,7 +168,7 @@ impl RequestPanel {
                 }
 
                 if let Some(new_text) = self.body_editor.update(message, request_body_content) {
-                    println!("Editor changed to: {:?}", new_text);
+                    // println!("Editor changed to: {:?}", new_text);
                     let mut request = current_request.clone();
                     request.body = new_text;
 
