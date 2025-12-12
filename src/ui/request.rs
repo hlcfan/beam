@@ -105,7 +105,7 @@ impl Default for RequestPanel {
     fn default() -> Self {
         Self {
             selected_tab: RequestTab::Body,
-            url_input: UndoableInput::new(String::new(), "Enter URL...".to_string())
+            url_input: UndoableInput::new_empty("Enter URL...".to_string())
                 .size(14.0)
                 .padding(8.0),
             body_editor: UndoableEditor::new_empty().height(iced::Length::Fixed(200.0)),

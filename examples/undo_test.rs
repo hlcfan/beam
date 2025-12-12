@@ -31,7 +31,7 @@ impl Default for UndoTest {
         Self {
             input_value: "test".to_string(),
             editor_content: text_editor::Content::with_text("test"),
-            input: undoable_input::UndoableInput::new(String::new(), "Type here...".to_string())
+            input: undoable_input::UndoableInput::new_empty("Type here...".to_string())
                 .size(20.0)
                 .padding(10.0),
             editor: undoable_editor::UndoableEditor::new("test".to_string()) // Init history

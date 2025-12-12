@@ -1,68 +1,11 @@
 use crate::constant;
+use crate::history::UndoHistory;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use constant::URL_INPUT_ID;
 use iced::widget::text_input;
 use iced::{Background, Border, Color, Element, Length, Theme};
-use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone)]
-pub struct UndoHistory {
-    past: Vec<String>,
-    future: Vec<String>,
-    current: String,
-    last_snapshot_time: Instant,
-    debounce_duration: Duration,
-}
 
-impl UndoHistory {
-    fn new(initial: String) -> Self {
-        Self {
-            past: Vec::new(),
-            future: Vec::new(),
-            current: initial,
-            last_snapshot_time: Instant::now(),
-            debounce_duration: Duration::from_millis(500),
-        }
-    }
-
-    fn push(&mut self, new_state: String) {
-        if self.current == new_state {
-            return;
-        }
-
-        let now = Instant::now();
-        let time_since_last = now.duration_since(self.last_snapshot_time);
-
-        // If enough time passed or past is empty, save current to past
-        if time_since_last >= self.debounce_duration || self.past.is_empty() {
-            self.past.push(self.current.clone());
-            self.last_snapshot_time = now;
-        }
-
-        self.current = new_state;
-        self.future.clear();
-    }
-
-    fn undo(&mut self) -> Option<String> {
-        if let Some(prev) = self.past.pop() {
-            self.future.push(self.current.clone());
-            self.current = prev.clone();
-            Some(prev)
-        } else {
-            None
-        }
-    }
-
-    fn redo(&mut self) -> Option<String> {
-        if let Some(next) = self.future.pop() {
-            self.past.push(self.current.clone());
-            self.current = next.clone();
-            Some(next)
-        } else {
-            None
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -86,6 +29,16 @@ impl UndoableInput {
         Self {
             value: initial_value.clone(),
             history: UndoHistory::new(initial_value),
+            placeholder,
+            size: 14.0,
+            padding: 8.0,
+        }
+    }
+
+    pub fn new_empty(placeholder: String) -> Self {
+        Self {
+            value: String::new(),
+            history: UndoHistory::new_empty(),
             placeholder,
             size: 14.0,
             padding: 8.0,

@@ -1,80 +1,11 @@
 use crate::constant::REQUEST_BODY_EDITOR_ID;
+use crate::history::UndoHistory;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::widget::text_editor;
 use iced::{Element, Length};
 use log::info;
-use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone)]
-struct UndoHistory {
-    past: Vec<String>,
-    future: Vec<String>,
-    current: Option<String>,
-    last_snapshot_time: Instant,
-    debounce_duration: Duration,
-}
 
-impl UndoHistory {
-    fn new(initial: String) -> Self {
-        Self {
-            past: Vec::new(),
-            future: Vec::new(),
-            current: Some(initial),
-            last_snapshot_time: Instant::now(),
-            debounce_duration: Duration::from_millis(500),
-        }
-    }
-
-    fn new_empty() -> Self {
-        Self {
-            past: Vec::new(),
-            future: Vec::new(),
-            current: None,
-            last_snapshot_time: Instant::now(),
-            debounce_duration: Duration::from_millis(500),
-        }
-    }
-
-    fn push(&mut self, new_state: String) {
-        if self.current.as_ref() == Some(&new_state) {
-            return;
-        }
-
-        let now = Instant::now();
-        let time_since_last = now.duration_since(self.last_snapshot_time);
-
-        // If enough time passed or past is empty, save current to past
-        if time_since_last >= self.debounce_duration || self.past.is_empty() {
-            if let Some(current) = &self.current {
-                self.past.push(current.clone());
-                self.last_snapshot_time = now;
-            }
-        }
-
-        self.current = Some(new_state);
-        self.future.clear();
-    }
-
-    fn undo(&mut self) -> Option<String> {
-        if let Some(prev) = self.past.pop() {
-            self.future.push(self.current.clone().unwrap_or_default());
-            self.current = Some(prev.clone());
-            Some(prev)
-        } else {
-            None
-        }
-    }
-
-    fn redo(&mut self) -> Option<String> {
-        if let Some(next) = self.future.pop() {
-            self.past.push(self.current.clone().unwrap_or_default());
-            self.current = Some(next.clone());
-            Some(next)
-        } else {
-            None
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -122,7 +53,7 @@ impl UndoableEditor {
                 info!("===Action: {:?}", action);
                 content.perform(action);
                 let text = content.text();
-                if self.history.current.as_ref() != Some(&text) {
+                if self.history.current().as_ref() != Some(&text) {
                     info!("====diff");
                     self.history.push(text.clone());
                     Some(text)
