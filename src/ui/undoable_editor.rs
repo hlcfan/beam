@@ -2,6 +2,7 @@ use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::widget::text_editor;
 use iced::{Element, Length};
 use std::time::{Duration, Instant};
+use crate::constant::REQUEST_BODY_EDITOR_ID;
 
 #[derive(Debug, Clone)]
 struct UndoHistory {
@@ -141,6 +142,7 @@ impl UndoableEditor {
 
     pub fn view<'a>(&'a self, content: &'a text_editor::Content) -> Element<'a, Message> {
         let editor = text_editor(content)
+            .id(REQUEST_BODY_EDITOR_ID)
             .on_action(Message::Action)
             .height(self.height);
 

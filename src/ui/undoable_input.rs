@@ -1,6 +1,8 @@
+use crate::constant;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use constant::URL_INPUT_ID;
 use iced::widget::text_input;
-use iced::{Element, Length};
+use iced::{Background, Border, Color, Element, Length, Theme};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -85,8 +87,8 @@ impl UndoableInput {
             value: initial_value.clone(),
             history: UndoHistory::new(initial_value),
             placeholder,
-            size: 16.0,
-            padding: 10.0,
+            size: 14.0,
+            padding: 8.0,
         }
     }
 
@@ -135,10 +137,27 @@ impl UndoableInput {
 
     pub fn view<'a>(&'a self, value: &'a str) -> Element<'a, Message> {
         let input = text_input(&self.placeholder, value)
+            .id(URL_INPUT_ID)
             .on_input(Message::Changed)
             .size(self.size)
             .padding(self.padding)
-            .width(Length::Fill);
+            .width(Length::Fill)
+            .style(move |theme: &Theme, _status| {
+                let palette = theme.palette();
+
+                text_input::Style {
+                    background: Background::Color(palette.background),
+                    border: Border {
+                        color: Color::TRANSPARENT,
+                        width: 0.0,
+                        radius: 4.0.into(),
+                    },
+                    icon: palette.text,
+                    placeholder: palette.text,
+                    value: palette.text,
+                    selection: palette.primary,
+                }
+            });
 
         Undoable::new(input, |action| match action {
             UndoableAction::Undo => Message::Undo,

@@ -17,7 +17,6 @@ use beam::ui::CollectionPanel;
 use beam::ui::EnvironmentPanel;
 use beam::ui::RequestPanel;
 use beam::ui::ResponsePanel;
-use iced::advanced::graphics::text::cosmic_text::Cursor;
 use iced::widget::text_editor::Position;
 use std::sync::Arc;
 
@@ -25,15 +24,15 @@ use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
 use beam::ui::response;
-use beam::ui::{IconName, icon};
+use beam::constant::REQUEST_BODY_EDITOR_ID;
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
 use iced::widget::{
-    button, column, container, mouse_area, row, scrollable, space, stack, text, text_editor,
+    button, column, container, operation, mouse_area, row, space, stack, text, text_editor,
     text_input,
 };
-use iced::{Color, Element, Fill, Length, Padding, Size, Task, Theme, Vector};
+use iced::{Color, Element, Fill, Size, Task, Theme, Vector};
 use log::{error, info};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -389,11 +388,11 @@ impl BeamApp {
                     }
                     request::Action::SearchNext => {
                         self.perform_search(true);
-                        Task::none()
+                        operation::focus(REQUEST_BODY_EDITOR_ID)
                     }
                     request::Action::SearchPrevious => {
                         self.perform_search(false);
-                        Task::none()
+                        operation::focus(REQUEST_BODY_EDITOR_ID)
                     }
                     request::Action::FormatRequestBody(formatted_body) => {
                         let select_all_action = text_editor::Action::SelectAll;
@@ -1747,25 +1746,31 @@ impl BeamApp {
             .or_else(|| text.rfind(query).map(|i| (i, i + query.len())))
         };
 
-        if let Some((start, _end)) = match_range {
+        if let Some((start, end)) = match_range {
             info!("Match found at index: {}", start);
-            let (line, col) = Self::byte_index_to_line_col(&text, start);
-            info!("Target: line={}, col={}", line, col);
+            let start_pos = Self::byte_index_to_line_col(&text, start);
+            let end_pos = Self::byte_index_to_line_col(&text, end);
+            info!("Target: line={:?}, col={:?}",start_pos, end_pos);
 
-            use iced::widget::text_editor::{Action, Motion};
+            content.move_to(text_editor::Cursor {
+                position: end_pos,
+                selection: Some(start_pos),
+            });
 
-            content.perform(Action::Move(Motion::DocumentStart));
-            for _ in 0..line {
-                content.perform(Action::Move(Motion::Down));
-            }
-            for _ in 0..col {
-                content.perform(Action::Move(Motion::Right));
-            }
+            // operation::focus("body-editor")
 
-            let query_char_count = query.chars().count();
-            for _ in 0..query_char_count {
-                content.perform(Action::Select(Motion::Right));
-            }
+            // content.perform(Action::Move(Motion::DocumentStart));
+            // for _ in 0..line {
+            //     content.perform(Action::Move(Motion::Down));
+            // }
+            // for _ in 0..col {
+            //     content.perform(Action::Move(Motion::Right));
+            // }
+
+            // let query_char_count = query.chars().count();
+            // for _ in 0..query_char_count {
+            //     content.perform(Action::Select(Motion::Right));
+            // }
         } else {
             info!("No match found");
         }
@@ -1788,44 +1793,48 @@ impl BeamApp {
         text.len()
     }
 
-    // fn index_to_position(content: &text_editor::Content, index: usize) -> text_editor::Position {
-    //   let mut current_index = 0;
+    fn index_to_position(content: &text_editor::Content, index: usize) -> text_editor::Position {
+        let mut current_index = 0;
 
-    //   for (line_index, line) in content.lines().enumerate() {
-    //     let line_len = line.text.chars().count();
-    //     let ending_len = line.ending.as_str().len();
-    //     let total_len = line_len + ending_len;
+        for (line_index, line) in content.lines().enumerate() {
+            let line_len = line.text.chars().count();
+            let ending_len = line.ending.as_str().len();
+            let total_len = line_len + ending_len;
 
-    //     if index < current_index + total_len {
-    //       let column = index - current_index;
-    //       return text_editor::Position {
-    //         line: line_index,
-    //         column: column.min(line_len),
-    //       };
-    //     }
-    //     current_index += total_len;
-    //   }
+            if index < current_index + total_len {
+                let column = index - current_index;
+                return text_editor::Position {
+                    line: line_index,
+                    column: column.min(line_len),
+                };
+            }
+            current_index += total_len;
+        }
 
-    //   let line_count = content.line_count();
-    //   if line_count > 0 {
-    //     let last_line_idx = line_count - 1;
-    //     let last_line = content.line(last_line_idx).unwrap();
-    //     text_editor::Position {
-    //       line: last_line_idx,
-    //       column: last_line.text.chars().count(),
-    //     }
-    //   } else {
-    //     text_editor::Position { line: 0, column: 0 }
-    //   }
-    // }
+        let line_count = content.line_count();
+        if line_count > 0 {
+            let last_line_idx = line_count - 1;
+            let last_line = content.line(last_line_idx).unwrap();
+            text_editor::Position {
+                line: last_line_idx,
+                column: last_line.text.chars().count(),
+            }
+        } else {
+            text_editor::Position { line: 0, column: 0 }
+        }
+    }
 
-    fn byte_index_to_line_col(text: &str, target_idx: usize) -> (usize, usize) {
+    fn byte_index_to_line_col(text: &str, target_idx: usize) -> text_editor::Position {
         let mut line = 0;
         let mut col = 0;
         for (idx, c) in text.char_indices() {
             if idx == target_idx {
-                return (line, col);
+                return text_editor::Position {
+                    line: line,
+                    column: col,
+                };
             }
+
             if c == '\n' {
                 line += 1;
                 col = 0;
@@ -1833,7 +1842,11 @@ impl BeamApp {
                 col += 1;
             }
         }
-        (line, col)
+
+        text_editor::Position {
+            line: line,
+            column: col,
+        }
     }
 
     fn view(&self) -> Element<'_, Message> {
