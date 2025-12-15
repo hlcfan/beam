@@ -101,7 +101,6 @@ impl UndoableEditor {
             let editor = text_editor(content)
                 .id(REQUEST_BODY_EDITOR_ID)
                 .on_action(Message::Action)
-                .height(self.height)
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark);
 
             Undoable::new(editor, |action| match action {
@@ -113,8 +112,7 @@ impl UndoableEditor {
         } else {
             let editor = text_editor(content)
                 .id(REQUEST_BODY_EDITOR_ID)
-                .on_action(Message::Action)
-                .height(self.height);
+                .on_action(Message::Action);
 
             Undoable::new(editor, |action| match action {
                 UndoableAction::Undo => Message::Undo,

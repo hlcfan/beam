@@ -764,29 +764,12 @@ impl RequestPanel {
             .height(Fill)
             .into(),
             BodyFormat::Json => {
-                // let text_editor_widget = text_editor(request_body)
-                //     .highlight("json", highlighter::Theme::Base16Mocha)
-                //     .on_action(Message::BodyChanged)
-                //     .placeholder("Enter JSON body...")
-                //     .style(
-                //         |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                //             background: Background::Color(theme.palette().background),
-                //             border: Border {
-                //                 color: Color::from_rgb(0.9, 0.9, 0.9),
-                //                 width: 1.0,
-                //                 radius: 4.0.into(),
-                //             },
-                //             placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                //             value: theme.palette().text,
-                //             selection: theme.palette().primary,
-                //         },
-                //     );
-
                 let editor_area = scrollable(
                     self.body_editor
                         .view(request_body, Some("json"))
                         .map(Message::EditorMessage),
-                );
+                )
+                .height(Length::Fill);
 
                 let format_button = body_format_button();
 
