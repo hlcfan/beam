@@ -33,6 +33,7 @@ pub struct FloatingElement<'a, Message, Theme, Renderer> {
     anchor: Element<'a, Message, Theme, Renderer>,
     offset: Vector,
     position: AnchorPosition,
+    height: Option<Length>,
 }
 
 impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer> {
@@ -47,6 +48,7 @@ impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer>
             anchor: anchor.into(),
             offset: Vector::new(0.0, 0.0),
             position: AnchorPosition::default(),
+            height: None,
         }
     }
 
@@ -61,6 +63,12 @@ impl<'a, Message, Theme, Renderer> FloatingElement<'a, Message, Theme, Renderer>
         self.position = position;
         self
     }
+
+    /// Sets the height of the floating element.
+    pub fn height(mut self, height: impl Into<Length>) -> Self {
+        self.height = Some(height.into());
+        self
+    }
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -69,11 +77,19 @@ where
     Renderer: renderer::Renderer,
 {
     fn size(&self) -> Size<Length> {
-        self.content.as_widget().size()
+        let size = self.content.as_widget().size();
+        Size {
+            width: size.width,
+            height: self.height.unwrap_or(size.height),
+        }
     }
 
     fn size_hint(&self) -> Size<Length> {
-        self.content.as_widget().size_hint()
+        let size = self.content.as_widget().size_hint();
+        Size {
+            width: size.width,
+            height: self.height.unwrap_or(size.height),
+        }
     }
 
     fn layout(
@@ -82,10 +98,16 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
+        let limits = if let Some(height) = self.height {
+            limits.height(height)
+        } else {
+            *limits
+        };
+
         let content_node =
             self.content
                 .as_widget_mut()
-                .layout(&mut tree.children[0], renderer, limits);
+                .layout(&mut tree.children[0], renderer, &limits);
 
         let anchor_limits = limits.loose();
         let mut anchor_node =

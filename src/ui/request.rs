@@ -786,20 +786,20 @@ impl RequestPanel {
                     self.body_editor
                         .view(request_body)
                         .map(Message::EditorMessage),
-                )
-                .height(Length::Fill);
+                );
 
                 let format_button = body_format_button();
 
                 let editor_with_format =
                     floating_element::FloatingElement::new(editor_area, format_button)
                         .offset(iced::Vector::new(10.0, 5.0))
-                        .position(floating_element::AnchorPosition::TopRight);
+                        .position(floating_element::AnchorPosition::TopRight)
+                        .height(Length::Fill);
 
                 if self.show_search {
                     let search_bar = iced::widget::container(
                         iced::widget::row![
-                            iced::widget::text_input("Find...", &self.search_query)
+                            iced::widget::text_input("Find", &self.search_query)
                                 .id(self.search_input_id.clone())
                                 .on_input(Message::SearchQueryChanged)
                                 .on_submit(Message::FindNext)
@@ -823,6 +823,7 @@ impl RequestPanel {
                     floating_element::FloatingElement::new(editor_with_format, search_bar)
                         .offset(iced::Vector::new(20.0, 10.0))
                         .position(floating_element::AnchorPosition::BottomRight)
+                        .height(Length::Fill)
                         .into()
                 } else {
                     editor_with_format.into()
