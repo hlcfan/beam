@@ -133,6 +133,12 @@ where
                         >>()
                     {
                         state.is_focused()
+                    } else if let Some(state) = state
+                        .downcast_ref::<iced::widget::text_editor::State<
+                            iced::highlighter::Highlighter,
+                        >>()
+                    {
+                        state.is_focused()
                     } else {
                         println!("Undoable: Unknown state type!");
                         false

@@ -784,7 +784,7 @@ impl RequestPanel {
 
                 let editor_area = scrollable(
                     self.body_editor
-                        .view(request_body)
+                        .view(request_body, Some("json"))
                         .map(Message::EditorMessage),
                 );
 

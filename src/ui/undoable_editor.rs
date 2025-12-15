@@ -5,8 +5,6 @@ use iced::widget::text_editor;
 use iced::{Element, Length};
 use log::info;
 
-
-
 #[derive(Debug, Clone)]
 pub enum Message {
     Action(text_editor::Action),
@@ -94,17 +92,36 @@ impl UndoableEditor {
         }
     }
 
-    pub fn view<'a>(&'a self, content: &'a text_editor::Content) -> Element<'a, Message> {
-        let editor = text_editor(content)
-            .id(REQUEST_BODY_EDITOR_ID)
-            .on_action(Message::Action)
-            .height(self.height);
+    pub fn view<'a>(
+        &'a self,
+        content: &'a text_editor::Content,
+        syntax: Option<&'a str>,
+    ) -> Element<'a, Message> {
+        if let Some(syntax) = syntax {
+            let editor = text_editor(content)
+                .id(REQUEST_BODY_EDITOR_ID)
+                .on_action(Message::Action)
+                .height(self.height)
+                .highlight(syntax, iced::highlighter::Theme::SolarizedDark);
 
-        Undoable::new(editor, |action| match action {
-            UndoableAction::Undo => Message::Undo,
-            UndoableAction::Redo => Message::Redo,
-            UndoableAction::Find => Message::Find,
-        })
-        .into()
+            Undoable::new(editor, |action| match action {
+                UndoableAction::Undo => Message::Undo,
+                UndoableAction::Redo => Message::Redo,
+                UndoableAction::Find => Message::Find,
+            })
+            .into()
+        } else {
+            let editor = text_editor(content)
+                .id(REQUEST_BODY_EDITOR_ID)
+                .on_action(Message::Action)
+                .height(self.height);
+
+            Undoable::new(editor, |action| match action {
+                UndoableAction::Undo => Message::Undo,
+                UndoableAction::Redo => Message::Redo,
+                UndoableAction::Find => Message::Find,
+            })
+            .into()
+        }
     }
 }
