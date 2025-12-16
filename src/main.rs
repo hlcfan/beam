@@ -1741,18 +1741,21 @@ impl BeamApp {
         info!("Current byte index: {}", current_idx);
 
         let search_start_idx = if next {
-            // Start search from current cursor position + 1 to find the "next" match
-            current_idx + 1
+            // Start search from current cursor position + char length to find the "next" match
+            if let Some(c) = text.get(current_idx..).and_then(|s| s.chars().next()) {
+                current_idx + c.len_utf8()
+            } else {
+                current_idx
+            }
         } else {
-            // For previous, search from beginning up to current cursor position - 1
-            // If current_idx is 0, stay at 0.
-            current_idx.checked_sub(1).unwrap_or(0)
+            // For previous, search from beginning up to current cursor position
+            current_idx
         };
 
         let search_range = if next {
             search_start_idx..text.len()
         } else {
-            0..search_start_idx + 1 // Include current position for reverse search
+            0..search_start_idx
         };
 
         let mut found_match = false;
@@ -1765,6 +1768,13 @@ impl BeamApp {
                 match_start_byte = search_start_idx + start;
                 match_end_byte = match_start_byte + query.len();
                 found_match = true;
+            } else {
+                // Wrap around: search from beginning
+                if let Some(start) = text[0..search_start_idx].find(query) {
+                    match_start_byte = start;
+                    match_end_byte = match_start_byte + query.len();
+                    found_match = true;
+                }
             }
         } else {
             // Search backward
@@ -1779,8 +1789,22 @@ impl BeamApp {
                         match_start_byte = prev_start;
                         match_end_byte = match_start_byte + query.len();
                         found_match = true;
+                    } else {
+                        // If no previous match, try wrapping around to the end
+                        if let Some(last_start) = text[search_start_idx..text.len()].rfind(query) {
+                            match_start_byte = search_start_idx + last_start;
+                            match_end_byte = match_start_byte + query.len();
+                            found_match = true;
+                        }
                     }
                 } else {
+                    found_match = true;
+                }
+            } else {
+                // Wrap around: search from end
+                if let Some(start) = text[search_start_idx..text.len()].rfind(query) {
+                    match_start_byte = search_start_idx + start;
+                    match_end_byte = match_start_byte + query.len();
                     found_match = true;
                 }
             }

@@ -218,22 +218,39 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let mut overlays = Vec::new();
+
         let layout = layout.children().next().unwrap();
+
+        let (content_tree, anchor_tree) = tree.children.split_at_mut(1);
+
+        if let Some(content_overlay) = self.content.as_widget_mut().overlay(
+            &mut content_tree[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        ) {
+            overlays.push(content_overlay);
+        }
+
         let bounds = layout.bounds();
         let position = bounds.position() + translation;
 
         // Pass the actual content size to the overlay so it can position the anchor correctly
         let content_size = bounds.size();
 
-        Some(overlay::Element::new(Box::new(FloatingElementOverlay {
+        overlays.push(overlay::Element::new(Box::new(FloatingElementOverlay {
             anchor: &mut self.anchor,
-            tree: &mut tree.children[1],
+            tree: &mut anchor_tree[0],
             position,
             content_size,
             offset: self.offset,
             anchor_position: self.position,
             viewport: *viewport,
-        })))
+        })));
+
+        Some(overlay::Group::with_children(overlays).into())
     }
 }
 
@@ -329,21 +346,13 @@ where
         );
     }
 
-    fn operate(
-        &mut self,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-        operation: &mut dyn Operation,
-    ) {
+    fn operate(&mut self, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation) {
         let mut children = layout.children();
         let anchor_layout = children.next().unwrap();
 
-        self.anchor.as_widget_mut().operate(
-            self.tree,
-            anchor_layout,
-            renderer,
-            operation,
-        );
+        self.anchor
+            .as_widget_mut()
+            .operate(self.tree, anchor_layout, renderer, operation);
     }
 
     fn mouse_interaction(
@@ -363,7 +372,6 @@ where
             renderer,
         )
     }
-
 
     fn overlay<'c>(
         &'c mut self,

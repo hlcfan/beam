@@ -2,8 +2,7 @@ use crate::constant::REQUEST_BODY_EDITOR_ID;
 use crate::history::UndoHistory;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::widget::text_editor;
-use iced::{Color, Element, Length, Theme};
-use log::info;
+use iced::{Element, Length, Theme};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -48,15 +47,12 @@ impl UndoableEditor {
     ) -> Option<String> {
         match message {
             Message::Action(action) => {
-                info!("===Action: {:?}", action);
                 content.perform(action);
                 let text = content.text();
                 if self.history.current().as_ref() != Some(&text) {
-                    info!("====diff");
                     self.history.push(text.clone());
                     Some(text)
                 } else {
-                    info!("====same");
                     None
                 }
             }
