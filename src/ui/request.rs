@@ -35,6 +35,7 @@ pub enum Action {
     Focus(iced::widget::Id),
     SearchNext(iced::widget::Id),
     SearchPrevious(iced::widget::Id),
+    SubmitSearch(iced::widget::Id),
     FormatRequestBody(String),
     OpenEnvironmentPopup,
     // The component does not require any additional actions
@@ -87,6 +88,7 @@ pub enum Message {
     SearchQueryChanged(String),
     FindNext,
     FindPrevious,
+    SubmitSearch,
     CloseSearch,
     FocusSearch,
 }
@@ -451,6 +453,7 @@ impl RequestPanel {
             }
             Message::FindNext => Action::SearchNext(self.search_input_id.clone()),
             Message::FindPrevious => Action::SearchPrevious(self.search_input_id.clone()),
+            Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
             Message::CloseSearch => {
                 self.show_search = false;
                 self.search_query.clear();
@@ -798,7 +801,7 @@ impl RequestPanel {
                             iced::widget::text_input("Find", &self.search_query)
                                 .id(self.search_input_id.clone())
                                 .on_input(Message::SearchQueryChanged)
-                                .on_submit(Message::FindNext)
+                                .on_submit(Message::SubmitSearch)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
                             iced::widget::button(iced::widget::text("↓").size(14))
@@ -865,7 +868,7 @@ impl RequestPanel {
                             iced::widget::text_input("Find...", &self.search_query)
                                 .id(self.search_input_id.clone())
                                 .on_input(Message::SearchQueryChanged)
-                                .on_submit(Message::FindNext)
+                                .on_submit(Message::SubmitSearch)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
                             iced::widget::button(iced::widget::text("↓").size(14))
@@ -930,7 +933,7 @@ impl RequestPanel {
                             iced::widget::text_input("Find...", &self.search_query)
                                 .id(self.search_input_id.clone())
                                 .on_input(Message::SearchQueryChanged)
-                                .on_submit(Message::FindNext)
+                                .on_submit(Message::SubmitSearch)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
                             iced::widget::button(iced::widget::text("↓").size(14))

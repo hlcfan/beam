@@ -55,6 +55,7 @@ pub enum Message {
     PaneResized(pane_grid::ResizeEvent),
     TimerTick,
 
+    ModifiersChanged(iced::keyboard::Modifiers),
     KeyPressed(iced::keyboard::Key),
     RequestCompleted(Result<ResponseData, String>),
     PostScriptCompleted(crate::script::ScriptExecutionResult),
@@ -137,6 +138,9 @@ pub struct BeamApp {
 
     // Flag to track when Cmd+Z is being processed to prevent visual flicker
     pub processing_cmd_z: bool,
+
+    // Track keyboard modifiers
+    pub modifiers: iced::keyboard::Modifiers,
 }
 
 pub fn main() -> iced::Result {
@@ -248,6 +252,7 @@ impl Default for BeamApp {
             // Initialize undo tracking
             just_performed_undo: false,
             processing_cmd_z: false,
+            modifiers: iced::keyboard::Modifiers::default(),
         }
     }
 }
@@ -255,6 +260,10 @@ impl Default for BeamApp {
 impl BeamApp {
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers;
+                Task::none()
+            }
             Message::RequestPanel(view_message) => {
                 match self.request_panel.update(
                     view_message,
@@ -392,6 +401,10 @@ impl BeamApp {
                     }
                     request::Action::SearchPrevious(focus_id) => {
                         self.perform_search(false, Some(focus_id))
+                    }
+                    request::Action::SubmitSearch(focus_id) => {
+                        let is_previous = self.modifiers.shift();
+                        self.perform_search(!is_previous, Some(focus_id))
                     }
                     request::Action::FormatRequestBody(formatted_body) => {
                         let select_all_action = text_editor::Action::SelectAll;
@@ -2255,6 +2268,9 @@ impl BeamApp {
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
                     // Forward all key presses to the KeyPressed handler
                     Some(Message::KeyPressed(key.clone()))
+                }
+                iced::Event::Keyboard(iced::keyboard::Event::ModifiersChanged(modifiers)) => {
+                    Some(Message::ModifiersChanged(modifiers))
                 }
                 _ => None,
             }
