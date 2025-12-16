@@ -1755,18 +1755,21 @@ impl BeamApp {
             }
         } else {
             // Search backward
-            // Need to iterate from the end of the search_range backwards
-            let reversed_text: String = text[search_range.clone()].chars().rev().collect();
-            let reversed_query: String = query.chars().rev().collect();
-
-            if let Some(start_in_reversed) = reversed_text.find(&reversed_query) {
-                // Calculate the start of the match in the original (non-reversed) substring
-                let start_in_original_substring =
-                    text[search_range.clone()].len() - (start_in_reversed + query.len());
-
-                match_start_byte = search_range.start + start_in_original_substring;
+            if let Some(start) = text[search_range.clone()].rfind(query) {
+                match_start_byte = search_range.start + start;
                 match_end_byte = match_start_byte + query.len();
-                found_match = true;
+
+                if match_end_byte == current_idx {
+                    // If we found the match ending exactly at our cursor,
+                    // we want to find the one before it.
+                    if let Some(prev_start) = text[0..match_start_byte].rfind(query) {
+                        match_start_byte = prev_start;
+                        match_end_byte = match_start_byte + query.len();
+                        found_match = true;
+                    }
+                } else {
+                    found_match = true;
+                }
             }
         }
 
