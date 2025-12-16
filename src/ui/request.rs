@@ -801,11 +801,11 @@ impl RequestPanel {
                                 .on_submit(Message::FindNext)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
-                            iced::widget::button(iced::widget::text("↑").size(14))
-                                .on_press(Message::FindPrevious)
-                                .padding(5),
                             iced::widget::button(iced::widget::text("↓").size(14))
                                 .on_press(Message::FindNext)
+                                .padding(5),
+                            iced::widget::button(iced::widget::text("↑").size(14))
+                                .on_press(Message::FindPrevious)
                                 .padding(5),
                             iced::widget::button(iced::widget::text("X").size(14))
                                 .on_press(Message::CloseSearch)
@@ -868,11 +868,11 @@ impl RequestPanel {
                                 .on_submit(Message::FindNext)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
-                            iced::widget::button(iced::widget::text("↑").size(14))
-                                .on_press(Message::FindPrevious)
-                                .padding(5),
                             iced::widget::button(iced::widget::text("↓").size(14))
                                 .on_press(Message::FindNext)
+                                .padding(5),
+                            iced::widget::button(iced::widget::text("↑").size(14))
+                                .on_press(Message::FindPrevious)
                                 .padding(5),
                             iced::widget::button(iced::widget::text("X").size(14))
                                 .on_press(Message::CloseSearch)
@@ -933,11 +933,11 @@ impl RequestPanel {
                                 .on_submit(Message::FindNext)
                                 .width(Length::Fixed(200.0))
                                 .padding(5),
-                            iced::widget::button(iced::widget::text("↑").size(14))
-                                .on_press(Message::FindPrevious)
-                                .padding(5),
                             iced::widget::button(iced::widget::text("↓").size(14))
                                 .on_press(Message::FindNext)
+                                .padding(5),
+                            iced::widget::button(iced::widget::text("↑").size(14))
+                                .on_press(Message::FindPrevious)
                                 .padding(5),
                             iced::widget::button(iced::widget::text("X").size(14))
                                 .on_press(Message::CloseSearch)
