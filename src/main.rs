@@ -387,15 +387,11 @@ impl BeamApp {
                         return iced::widget::operation::focus(id)
                             .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
                     }
-                    request::Action::SearchNext => {
-                        let search_task = self.perform_search(true);
-                        let focus_task = operation::focus(REQUEST_BODY_EDITOR_ID);
-                        Task::batch(vec![search_task, focus_task])
+                    request::Action::SearchNext(focus_id) => {
+                        self.perform_search(true, Some(focus_id))
                     }
-                    request::Action::SearchPrevious => {
-                        let search_task = self.perform_search(false);
-                        let focus_task = operation::focus(REQUEST_BODY_EDITOR_ID);
-                        Task::batch(vec![search_task, focus_task])
+                    request::Action::SearchPrevious(focus_id) => {
+                        self.perform_search(false, Some(focus_id))
                     }
                     request::Action::FormatRequestBody(formatted_body) => {
                         let select_all_action = text_editor::Action::SelectAll;
@@ -1707,9 +1703,12 @@ impl BeamApp {
         }
     }
 
-    fn perform_search(&mut self, next: bool) -> Task<Message> {
+    fn perform_search(&mut self, next: bool, focus_id: Option<iced::widget::Id>) -> Task<Message> {
         let query = &self.request_panel.search_query;
         if query.is_empty() {
+            if let Some(id) = focus_id {
+                return operation::focus(id).map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
+            }
             return Task::none();
         }
 
@@ -1790,17 +1789,27 @@ impl BeamApp {
             // Subtract 200px to roughly center the match in the viewport
             let y_offset = ((start_pos.line as f32) * 18.0 - 200.0).max(0.0);
 
-            return iced::widget::operation::scroll_to(
+            let scroll_task = iced::widget::operation::scroll_to(
                 iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID),
                 iced::widget::scrollable::AbsoluteOffset {
                     x: Some(0.0),
                     y: Some(y_offset),
                 },
-            )
-            .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
+            );
+
+            if let Some(id) = focus_id {
+                scroll_task.chain(operation::focus(id))
+                    .map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+            } else {
+                scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+            }
         } else {
             info!("No match found");
-            Task::none()
+            if let Some(id) = focus_id {
+                operation::focus(id).map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+            } else {
+                Task::none()
+            }
         }
     }
 

@@ -2,7 +2,7 @@ use crate::constant::REQUEST_BODY_EDITOR_ID;
 use crate::history::UndoHistory;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::widget::text_editor;
-use iced::{Element, Length};
+use iced::{Color, Element, Length, Theme};
 use log::info;
 
 #[derive(Debug, Clone)]
@@ -103,27 +103,78 @@ impl UndoableEditor {
                 .on_action(Message::Action)
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark)
                 .font(iced::Font::MONOSPACE)
-                .size(14);
-            // .height(self.height);
+                .size(14)
+                .style(|theme: &Theme, _status| text_editor::Style {
+                    background: iced::Background::Color(theme.palette().background),
+                    border: iced::Border {
+                        color: iced::Color::from_rgb(0.9, 0.9, 0.9),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
+                    value: theme.palette().text,
+                    selection: theme.palette().primary,
+                });
+
+            let cursor = content.cursor();
+            let selection = cursor.selection.map(|start| {
+                let end = cursor.position;
+                // Normalize start/end
+                if start.line > end.line || (start.line == end.line && start.column > end.column) {
+                    (end, start)
+                } else {
+                    (start, end)
+                }
+            });
 
             Undoable::new(editor, |action| match action {
                 UndoableAction::Undo => Message::Undo,
                 UndoableAction::Redo => Message::Redo,
                 UndoableAction::Find => Message::Find,
             })
+            .selection(selection)
+            .font(iced::Font::MONOSPACE)
+            .size(14.0)
+            .padding(5.0)
             .into()
         } else {
             let editor = text_editor(content)
                 .id(REQUEST_BODY_EDITOR_ID)
                 .on_action(Message::Action)
                 .font(iced::Font::MONOSPACE)
-                .size(14);
+                .size(14)
+                .style(|theme: &Theme, _status| text_editor::Style {
+                    background: iced::Background::Color(theme.palette().background),
+                    border: iced::Border {
+                        color: iced::Color::from_rgb(0.9, 0.9, 0.9),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
+                    value: theme.palette().text,
+                    selection: theme.palette().primary,
+                });
+
+            let cursor = content.cursor();
+            let selection = cursor.selection.map(|start| {
+                let end = cursor.position;
+                // Normalize start/end
+                if start.line > end.line || (start.line == end.line && start.column > end.column) {
+                    (end, start)
+                } else {
+                    (start, end)
+                }
+            });
 
             Undoable::new(editor, |action| match action {
                 UndoableAction::Undo => Message::Undo,
                 UndoableAction::Redo => Message::Redo,
                 UndoableAction::Find => Message::Find,
             })
+            .selection(selection)
+            .font(iced::Font::MONOSPACE)
+            .size(14.0)
+            .padding(5.0)
             .into()
         }
     }

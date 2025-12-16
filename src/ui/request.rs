@@ -10,9 +10,12 @@ use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
     text_editor, text_input,
 };
-use iced::{Background, Border, Color, Element, Fill, Length, Padding, Shadow, Theme, Vector};
+use iced::{
+    Background, Border, Color, Element, Fill, Length, Padding, Shadow, Task, Theme, Vector,
+};
 use log::info;
 use std::time::Instant;
+use tokio;
 
 // Action is returned from update function, to trigger a side effect, used in the main
 
@@ -30,8 +33,8 @@ pub enum Action {
     EditRequestBody(text_editor::Action),
     EditRequestPostRequestScript(text_editor::Action),
     Focus(iced::widget::Id),
-    SearchNext,
-    SearchPrevious,
+    SearchNext(iced::widget::Id),
+    SearchPrevious(iced::widget::Id),
     FormatRequestBody(String),
     OpenEnvironmentPopup,
     // The component does not require any additional actions
@@ -85,6 +88,7 @@ pub enum Message {
     FindNext,
     FindPrevious,
     CloseSearch,
+    FocusSearch,
 }
 
 #[derive(Debug, Clone)]
@@ -162,7 +166,12 @@ impl RequestPanel {
             Message::EditorMessage(message) => {
                 if let undoable_editor::Message::Find = message {
                     self.show_search = true;
-                    return Action::Focus(self.search_input_id.clone());
+                    return Action::Run(Task::perform(
+                        async {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        },
+                        |_| Message::FocusSearch,
+                    ));
                 }
 
                 if let Some(new_text) = self.body_editor.update(message, request_body_content) {
@@ -440,13 +449,15 @@ impl RequestPanel {
                 self.search_query = query;
                 Action::None
             }
-            Message::FindNext => Action::SearchNext,
-            Message::FindPrevious => Action::SearchPrevious,
+            Message::FindNext => Action::SearchNext(self.search_input_id.clone()),
+            Message::FindPrevious => Action::SearchPrevious(self.search_input_id.clone()),
             Message::CloseSearch => {
                 self.show_search = false;
                 self.search_query.clear();
                 Action::None
             }
+            Message::FocusSearch => Action::Focus(self.search_input_id.clone()),
+
             Message::ToggleMethodMenu => {
                 self.method_menu_open = !self.method_menu_open;
                 Action::None
