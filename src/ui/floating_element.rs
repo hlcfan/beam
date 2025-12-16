@@ -329,6 +329,23 @@ where
         );
     }
 
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        let mut children = layout.children();
+        let anchor_layout = children.next().unwrap();
+
+        self.anchor.as_widget_mut().operate(
+            self.tree,
+            anchor_layout,
+            renderer,
+            operation,
+        );
+    }
+
     fn mouse_interaction(
         &self,
         layout: Layout<'_>,
