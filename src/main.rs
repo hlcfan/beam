@@ -1707,7 +1707,8 @@ impl BeamApp {
         let query = &self.request_panel.search_query;
         if query.is_empty() {
             if let Some(id) = focus_id {
-                return operation::focus(id).map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
+                return operation::focus(id)
+                    .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
             }
             return Task::none();
         }
@@ -1785,9 +1786,18 @@ impl BeamApp {
                 selection: Some(start_pos),
             });
 
-            // Calculate scroll position (approximate line height 18px for 14px font)
-            // Subtract 200px to roughly center the match in the viewport
-            let y_offset = ((start_pos.line as f32) * 18.0 - 200.0).max(0.0);
+            // Calculate scroll position more precisely to center the match
+            // We use 14.0px size + 5.0px padding, matching the editor configuration
+            let text_size = 14.0;
+            let padding = 5.0;
+            let line_height = text_size * 1.3;
+
+            // Calculate y_offset:
+            // top_padding + line_index * line_height - half_viewport_height
+            // We estimate viewport height as 400px (or we could try to track it, but centering is approximate anyway)
+            let viewport_height = 400.0;
+            let target_y = padding + (start_pos.line as f32) * line_height;
+            let y_offset = (target_y - viewport_height / 2.0).max(0.0);
 
             let scroll_task = iced::widget::operation::scroll_to(
                 iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID),
@@ -1798,7 +1808,8 @@ impl BeamApp {
             );
 
             if let Some(id) = focus_id {
-                scroll_task.chain(operation::focus(id))
+                scroll_task
+                    .chain(operation::focus(id))
                     .map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
             } else {
                 scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
