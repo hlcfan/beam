@@ -1,3 +1,4 @@
+use crate::constant::REQUEST_BODY_SCROLLABLE_ID;
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::floating_element;
 use crate::ui::undoable_editor::UndoableEditor;
@@ -769,6 +770,7 @@ impl RequestPanel {
                         .view(request_body, Some("json"))
                         .map(Message::EditorMessage),
                 )
+                .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
                 .height(Length::Fill);
 
                 let format_button = body_format_button();
@@ -817,6 +819,8 @@ impl RequestPanel {
                     .highlight("xml", highlighter::Theme::Base16Mocha)
                     .on_action(Message::BodyChanged)
                     .placeholder("Enter XML body...")
+                    .font(iced::Font::MONOSPACE)
+                    .size(14)
                     .style(
                         |theme: &Theme, _status: text_editor::Status| text_editor::Style {
                             background: Background::Color(theme.palette().background),
@@ -839,7 +843,9 @@ impl RequestPanel {
                 .width(Length::Fill)
                 .padding(Padding::new(8.0));
 
-                let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+                let editor_area = scrollable(text_editor_widget)
+                    .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
+                    .height(Length::Fill);
                 let stacked_editor = stack![editor_area, overlay_top_right];
 
                 if self.show_search {
@@ -878,6 +884,8 @@ impl RequestPanel {
                 let text_editor_widget = text_editor(request_body)
                     .on_action(Message::BodyChanged)
                     .placeholder("Enter text body...")
+                    .font(iced::Font::MONOSPACE)
+                    .size(14)
                     .style(
                         |theme: &Theme, _status: text_editor::Status| text_editor::Style {
                             background: Background::Color(theme.palette().background),
@@ -900,7 +908,9 @@ impl RequestPanel {
                 .width(Length::Fill)
                 .padding(Padding::new(8.0));
 
-                let editor_area = scrollable(text_editor_widget).height(Length::Fill);
+                let editor_area = scrollable(text_editor_widget)
+                    .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
+                    .height(Length::Fill);
                 let stacked_editor = stack![editor_area, overlay_top_right];
 
                 if self.show_search {

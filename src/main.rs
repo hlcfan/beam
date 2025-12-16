@@ -21,6 +21,7 @@ use iced::widget::text_editor::Position;
 use std::sync::Arc;
 
 use beam::constant::REQUEST_BODY_EDITOR_ID;
+use beam::constant::REQUEST_BODY_SCROLLABLE_ID;
 use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
@@ -387,12 +388,14 @@ impl BeamApp {
                             .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
                     }
                     request::Action::SearchNext => {
-                        self.perform_search(true);
-                        operation::focus(REQUEST_BODY_EDITOR_ID)
+                        let search_task = self.perform_search(true);
+                        let focus_task = operation::focus(REQUEST_BODY_EDITOR_ID);
+                        Task::batch(vec![search_task, focus_task])
                     }
                     request::Action::SearchPrevious => {
-                        self.perform_search(false);
-                        operation::focus(REQUEST_BODY_EDITOR_ID)
+                        let search_task = self.perform_search(false);
+                        let focus_task = operation::focus(REQUEST_BODY_EDITOR_ID);
+                        Task::batch(vec![search_task, focus_task])
                     }
                     request::Action::FormatRequestBody(formatted_body) => {
                         let select_all_action = text_editor::Action::SelectAll;
@@ -1704,10 +1707,10 @@ impl BeamApp {
         }
     }
 
-    fn perform_search(&mut self, next: bool) {
+    fn perform_search(&mut self, next: bool) -> Task<Message> {
         let query = &self.request_panel.search_query;
         if query.is_empty() {
-            return;
+            return Task::none();
         }
 
         info!("perform_search: query='{}', next={}", query, next);
@@ -1724,54 +1727,80 @@ impl BeamApp {
         let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
         info!("Current byte index: {}", current_idx);
 
-        let match_range = if next {
-            let start_idx = current_idx + 1;
-            if start_idx < text.len() {
-                text[start_idx..].find(query).map(|i| {
-                    let start = start_idx + i;
-                    (start, start + query.len())
-                })
-            } else {
-                None
-            }
-            .or_else(|| text.find(query).map(|i| (i, i + query.len())))
+        let search_start_idx = if next {
+            // Start search from current cursor position + 1 to find the "next" match
+            current_idx + 1
         } else {
-            if current_idx > 0 {
-                let limit = current_idx.min(text.len());
-                text[..limit].rfind(query).map(|i| (i, i + query.len()))
-            } else {
-                None
-            }
-            .or_else(|| text.rfind(query).map(|i| (i, i + query.len())))
+            // For previous, search from beginning up to current cursor position - 1
+            // If current_idx is 0, stay at 0.
+            current_idx.checked_sub(1).unwrap_or(0)
         };
 
-        if let Some((start, end)) = match_range {
-            info!("Match found at index: {}", start);
-            let start_pos = Self::byte_index_to_line_col(&text, start);
-            let end_pos = Self::byte_index_to_line_col(&text, end);
-            info!("Target: line={:?}, col={:?}", start_pos, end_pos);
+        let search_range = if next {
+            search_start_idx..text.len()
+        } else {
+            0..search_start_idx + 1 // Include current position for reverse search
+        };
+
+        let mut found_match = false;
+        let mut match_start_byte = 0;
+        let mut match_end_byte = 0;
+
+        if next {
+            // Search forward
+            if let Some(start) = text[search_range].find(query) {
+                match_start_byte = search_start_idx + start;
+                match_end_byte = match_start_byte + query.len();
+                found_match = true;
+            }
+        } else {
+            // Search backward
+            // Need to iterate from the end of the search_range backwards
+            let reversed_text: String = text[search_range.clone()].chars().rev().collect();
+            let reversed_query: String = query.chars().rev().collect();
+
+            if let Some(start_in_reversed) = reversed_text.find(&reversed_query) {
+                // Calculate the start of the match in the original (non-reversed) substring
+                let start_in_original_substring =
+                    text[search_range.clone()].len() - (start_in_reversed + query.len());
+
+                match_start_byte = search_range.start + start_in_original_substring;
+                match_end_byte = match_start_byte + query.len();
+                found_match = true;
+            }
+        }
+
+        if found_match {
+            info!(
+                "Match found at byte range: {}..{}",
+                match_start_byte, match_end_byte
+            );
+
+            let start_pos = Self::byte_index_to_line_col(&text, match_start_byte);
+            let end_pos = Self::byte_index_to_line_col(&text, match_end_byte);
+
+            info!("Match start: {:?}, end: {:?}", start_pos, end_pos);
 
             content.move_to(text_editor::Cursor {
                 position: end_pos,
                 selection: Some(start_pos),
             });
 
-            // operation::focus("body-editor")
+            // Calculate scroll position (approximate line height 18px for 14px font)
+            // Subtract 200px to roughly center the match in the viewport
+            let y_offset = ((start_pos.line as f32) * 18.0 - 200.0).max(0.0);
 
-            // content.perform(Action::Move(Motion::DocumentStart));
-            // for _ in 0..line {
-            //     content.perform(Action::Move(Motion::Down));
-            // }
-            // for _ in 0..col {
-            //     content.perform(Action::Move(Motion::Right));
-            // }
-
-            // let query_char_count = query.chars().count();
-            // for _ in 0..query_char_count {
-            //     content.perform(Action::Select(Motion::Right));
-            // }
+            return iced::widget::operation::scroll_to(
+                iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID),
+                iced::widget::scrollable::AbsoluteOffset {
+                    x: Some(0.0),
+                    y: Some(y_offset),
+                },
+            )
+            .map(|_: ()| Message::RequestPanel(request::Message::DoNothing));
         } else {
             info!("No match found");
+            Task::none()
         }
     }
 
