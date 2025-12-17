@@ -803,24 +803,33 @@ impl RequestPanel {
                                 .on_input(Message::SearchQueryChanged)
                                 .on_submit(Message::SubmitSearch)
                                 .width(Length::Fixed(200.0))
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("↓").size(14))
+                                .padding(3),
+                            iced::widget::button(icon(IconName::ChevronDown).size(14))
                                 .on_press(Message::FindNext)
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("↑").size(14))
+                                .padding(3),
+                            iced::widget::button(icon(IconName::ChevronUp).size(14))
                                 .on_press(Message::FindPrevious)
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("X").size(14))
+                                .padding(3),
+                            iced::widget::button(icon(IconName::Close).size(14))
                                 .on_press(Message::CloseSearch)
-                                .padding(5)
+                                .padding(3)
                         ]
-                        .spacing(5)
+                        .spacing(3)
                         .align_y(iced::Alignment::Center),
                     )
-                    .padding(5);
+                    .padding(3)
+                    .style(|theme: &Theme| container::Style {
+                        background: Some(theme.palette().background.into()),
+                        border: Border {
+                            color: Color::from_rgb(0.8, 0.8, 0.8),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..container::Style::default()
+                    });
 
                     floating_element::FloatingElement::new(editor_with_format, search_bar)
-                        .offset(iced::Vector::new(20.0, 10.0))
+                        .offset(iced::Vector::new(0.0, 0.0))
                         .position(floating_element::AnchorPosition::BottomRight)
                         .height(Length::Fill)
                         .into()
