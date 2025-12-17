@@ -809,10 +809,10 @@ impl RequestPanel {
                                     border: iced::Border {
                                         width: 0.0,
                                         color: iced::Color::TRANSPARENT,
-                                        radius: 0.0.into(),
+                                        radius: 6.0.into(),
                                     },
                                     icon: theme.palette().text,
-                                    placeholder: theme.palette().text,
+                                    placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
                                     value: theme.palette().text,
                                     selection: theme.palette().primary,
                                 }),
@@ -822,6 +822,10 @@ impl RequestPanel {
                                 .style(|_theme, status| {
                                     let base = iced::widget::button::Style {
                                         background: None,
+                                        border: iced::Border {
+                                            radius: 6.0.into(),
+                                            ..iced::Border::default()
+                                        },
                                         ..iced::widget::button::Style::default()
                                     };
                                     match status {
@@ -838,6 +842,10 @@ impl RequestPanel {
                                 .style(|_theme, status| {
                                     let base = iced::widget::button::Style {
                                         background: None,
+                                        border: iced::Border {
+                                            radius: 6.0.into(),
+                                            ..iced::Border::default()
+                                        },
                                         ..iced::widget::button::Style::default()
                                     };
                                     match status {
@@ -854,6 +862,10 @@ impl RequestPanel {
                                 .style(|_theme, status| {
                                     let base = iced::widget::button::Style {
                                         background: None,
+                                        border: iced::Border {
+                                            radius: 6.0.into(),
+                                            ..iced::Border::default()
+                                        },
                                         ..iced::widget::button::Style::default()
                                     };
                                     match status {
