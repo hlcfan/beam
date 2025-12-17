@@ -1,6 +1,5 @@
 use crate::constant::REQUEST_BODY_SCROLLABLE_ID;
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
-use crate::ui::floating_element;
 use crate::ui::undoable_editor::UndoableEditor;
 use crate::ui::undoable_input::UndoableInput;
 use crate::ui::{IconName, icon, undoable_editor, undoable_input};
@@ -787,15 +786,18 @@ impl RequestPanel {
                 .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
                 .height(Length::Fill);
 
-                let format_button = body_format_button();
+                let format_button_row = row![
+                    Space::new().width(Length::Fill),
+                    body_format_button()
+                ]
+                .padding(Padding {
+                    top: 5.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
 
-                let editor_with_format =
-                    floating_element::FloatingElement::new(editor_area, format_button)
-                        .offset(iced::Vector::new(10.0, 5.0))
-                        .position(floating_element::AnchorPosition::TopRight)
-                        .height(Length::Fill);
-
-                if self.show_search {
+                let search_bar_row = if self.show_search {
                     let search_bar = iced::widget::container(
                         iced::widget::row![
                             iced::widget::text_input("Find", &self.search_query)
@@ -891,14 +893,29 @@ impl RequestPanel {
                         ..container::Style::default()
                     });
 
-                    floating_element::FloatingElement::new(editor_with_format, search_bar)
-                        .offset(iced::Vector::new(10.0, 0.0))
-                        .position(floating_element::AnchorPosition::BottomRight)
-                        .height(Length::Fill)
-                        .into()
+                    row![
+                        Space::new().width(Length::Fill),
+                        search_bar
+                    ]
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 10.0,
+                        bottom: 0.0,
+                        left: 0.0,
+                    })
                 } else {
-                    editor_with_format.into()
-                }
+                    row![]
+                };
+
+                let overlay = column![
+                    format_button_row,
+                    Space::new().height(Length::Fill),
+                    search_bar_row
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+                stack![editor_area, overlay].into()
             }
             BodyFormat::Xml => {
                 let text_editor_widget = text_editor(request_body)
@@ -921,20 +938,22 @@ impl RequestPanel {
                         },
                     );
 
-                let overlay_top_right = container(
-                    row![Space::new().width(Length::Fill), body_format_button()]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(8),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(8.0));
-
                 let editor_area = scrollable(text_editor_widget)
                     .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
                     .height(Length::Fill);
-                let stacked_editor = stack![editor_area, overlay_top_right];
 
-                if self.show_search {
+                let format_button_row = row![
+                    Space::new().width(Length::Fill),
+                    body_format_button()
+                ]
+                .padding(Padding {
+                    top: 5.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
+
+                let search_bar_row = if self.show_search {
                     let search_bar = iced::widget::container(
                         iced::widget::row![
                             iced::widget::text_input("Find...", &self.search_query)
@@ -958,13 +977,29 @@ impl RequestPanel {
                     )
                     .padding(5);
 
-                    floating_element::FloatingElement::new(stacked_editor, search_bar)
-                        .offset(iced::Vector::new(10.0, 10.0))
-                        .position(floating_element::AnchorPosition::BottomRight)
-                        .into()
+                    row![
+                        Space::new().width(Length::Fill),
+                        search_bar
+                    ]
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 10.0,
+                        bottom: 10.0,
+                        left: 0.0,
+                    })
                 } else {
-                    stacked_editor.into()
-                }
+                    row![]
+                };
+
+                let overlay = column![
+                    format_button_row,
+                    Space::new().height(Length::Fill),
+                    search_bar_row
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+                stack![editor_area, overlay].into()
             }
             BodyFormat::Text => {
                 let text_editor_widget = text_editor(request_body)
@@ -986,20 +1021,22 @@ impl RequestPanel {
                         },
                     );
 
-                let overlay_top_right = container(
-                    row![Space::new().width(Length::Fill), body_format_button()]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(8),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(8.0));
-
                 let editor_area = scrollable(text_editor_widget)
                     .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
                     .height(Length::Fill);
-                let stacked_editor = stack![editor_area, overlay_top_right];
 
-                if self.show_search {
+                let format_button_row = row![
+                    Space::new().width(Length::Fill),
+                    body_format_button()
+                ]
+                .padding(Padding {
+                    top: 5.0,
+                    right: 10.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                });
+
+                let search_bar_row = if self.show_search {
                     let search_bar = iced::widget::container(
                         iced::widget::row![
                             iced::widget::text_input("Find...", &self.search_query)
@@ -1023,13 +1060,29 @@ impl RequestPanel {
                     )
                     .padding(5);
 
-                    floating_element::FloatingElement::new(stacked_editor, search_bar)
-                        .offset(iced::Vector::new(10.0, 10.0))
-                        .position(floating_element::AnchorPosition::BottomRight)
-                        .into()
+                    row![
+                        Space::new().width(Length::Fill),
+                        search_bar
+                    ]
+                    .padding(Padding {
+                        top: 0.0,
+                        right: 10.0,
+                        bottom: 10.0,
+                        left: 0.0,
+                    })
                 } else {
-                    stacked_editor.into()
-                }
+                    row![]
+                };
+
+                let overlay = column![
+                    format_button_row,
+                    Space::new().height(Length::Fill),
+                    search_bar_row
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill);
+
+                stack![editor_area, overlay].into()
             }
             BodyFormat::GraphQL => {
                 // Fallback for existing GraphQL requests - treat as plain text
