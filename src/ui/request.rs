@@ -803,23 +803,74 @@ impl RequestPanel {
                                 .on_input(Message::SearchQueryChanged)
                                 .on_submit(Message::SubmitSearch)
                                 .width(Length::Fixed(200.0))
-                                .padding(3),
-                            iced::widget::button(icon(IconName::ChevronDown).size(14))
+                                .padding(1)
+                                .style(|theme: &Theme, _status| iced::widget::text_input::Style {
+                                    background: iced::Background::Color(iced::Color::WHITE),
+                                    border: iced::Border {
+                                        width: 0.0,
+                                        color: iced::Color::TRANSPARENT,
+                                        radius: 0.0.into(),
+                                    },
+                                    icon: theme.palette().text,
+                                    placeholder: theme.palette().text,
+                                    value: theme.palette().text,
+                                    selection: theme.palette().primary,
+                                }),
+                            iced::widget::button(icon(IconName::ChevronDown).size(14).color(iced::Color::from_rgb(0.4, 0.4, 0.4)))
                                 .on_press(Message::FindNext)
-                                .padding(3),
-                            iced::widget::button(icon(IconName::ChevronUp).size(14))
+                                .padding(1)
+                                .style(|_theme, status| {
+                                    let base = iced::widget::button::Style {
+                                        background: None,
+                                        ..iced::widget::button::Style::default()
+                                    };
+                                    match status {
+                                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
+                                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.85, 0.85, 0.85))),
+                                            ..base
+                                        },
+                                        _ => base,
+                                    }
+                                }),
+                            iced::widget::button(icon(IconName::ChevronUp).size(14).color(iced::Color::from_rgb(0.4, 0.4, 0.4)))
                                 .on_press(Message::FindPrevious)
-                                .padding(3),
-                            iced::widget::button(icon(IconName::Close).size(14))
+                                .padding(1)
+                                .style(|_theme, status| {
+                                    let base = iced::widget::button::Style {
+                                        background: None,
+                                        ..iced::widget::button::Style::default()
+                                    };
+                                    match status {
+                                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
+                                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.85, 0.85, 0.85))),
+                                            ..base
+                                        },
+                                        _ => base,
+                                    }
+                                }),
+                            iced::widget::button(icon(IconName::Close).size(14).color(iced::Color::from_rgb(0.4, 0.4, 0.4)))
                                 .on_press(Message::CloseSearch)
-                                .padding(3)
+                                .padding(1)
+                                .style(|_theme, status| {
+                                    let base = iced::widget::button::Style {
+                                        background: None,
+                                        ..iced::widget::button::Style::default()
+                                    };
+                                    match status {
+                                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
+                                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.85, 0.85, 0.85))),
+                                            ..base
+                                        },
+                                        _ => base,
+                                    }
+                                })
                         ]
                         .spacing(3)
                         .align_y(iced::Alignment::Center),
                     )
-                    .padding(3)
-                    .style(|theme: &Theme| container::Style {
-                        background: Some(theme.palette().background.into()),
+                    .padding(1)
+                    .style(|_theme: &Theme| container::Style {
+                        background: Some(Color::from_rgb(0.95, 0.95, 0.95).into()),
                         border: Border {
                             color: Color::from_rgb(0.8, 0.8, 0.8),
                             width: 1.0,
@@ -829,7 +880,7 @@ impl RequestPanel {
                     });
 
                     floating_element::FloatingElement::new(editor_with_format, search_bar)
-                        .offset(iced::Vector::new(0.0, 0.0))
+                        .offset(iced::Vector::new(10.0, 0.0))
                         .position(floating_element::AnchorPosition::BottomRight)
                         .height(Length::Fill)
                         .into()
