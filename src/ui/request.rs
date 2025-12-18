@@ -778,10 +778,17 @@ impl RequestPanel {
             .width(Fill)
             .height(Fill)
             .into(),
-            BodyFormat::Json => {
+            _ => {
+                let syntax = match body_format {
+                    BodyFormat::Json => Some("json"),
+                    BodyFormat::Xml => Some("xml"),
+                    BodyFormat::GraphQL => Some("graphql"),
+                    _ => None,
+                };
+
                 let editor_area = scrollable(
                     self.body_editor
-                        .view(request_body, Some("json"))
+                        .view(request_body, syntax)
                         .map(Message::EditorMessage),
                 )
                 .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
@@ -816,66 +823,90 @@ impl RequestPanel {
                                     value: theme.palette().text,
                                     selection: theme.palette().primary,
                                 }),
-                            iced::widget::button(icon(IconName::ChevronDown).size(14).color(iced::Color::from_rgb(0.4, 0.4, 0.4)))
-                                .on_press(Message::FindNext)
-                                .padding(1)
-                                .style(|_theme, status| {
-                                    let base = iced::widget::button::Style {
-                                        background: None,
-                                        border: iced::Border {
-                                            radius: 6.0.into(),
-                                            ..iced::Border::default()
-                                        },
-                                        ..iced::widget::button::Style::default()
-                                    };
-                                    match status {
-                                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.85, 0.85, 0.85))),
+                            iced::widget::button(
+                                icon(IconName::ChevronDown)
+                                    .size(14)
+                                    .color(iced::Color::from_rgb(0.4, 0.4, 0.4))
+                            )
+                            .on_press(Message::FindNext)
+                            .padding(1)
+                            .style(|_theme, status| {
+                                let base = iced::widget::button::Style {
+                                    background: None,
+                                    border: iced::Border {
+                                        radius: 6.0.into(),
+                                        ..iced::Border::default()
+                                    },
+                                    ..iced::widget::button::Style::default()
+                                };
+                                match status {
+                                    iced::widget::button::Status::Hovered => {
+                                        iced::widget::button::Style {
+                                            background: Some(iced::Background::Color(
+                                                iced::Color::from_rgb(0.85, 0.85, 0.85),
+                                            )),
                                             ..base
-                                        },
-                                        _ => base,
+                                        }
                                     }
-                                }),
-                            iced::widget::button(icon(IconName::ChevronUp).size(14).color(iced::Color::from_rgb(0.4, 0.4, 0.4)))
-                                .on_press(Message::FindPrevious)
-                                .padding(1)
-                                .style(|_theme, status| {
-                                    let base = iced::widget::button::Style {
-                                        background: None,
-                                        border: iced::Border {
-                                            radius: 6.0.into(),
-                                            ..iced::Border::default()
-                                        },
-                                        ..iced::widget::button::Style::default()
-                                    };
-                                    match status {
-                                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.85, 0.85, 0.85))),
+                                    _ => base,
+                                }
+                            }),
+                            iced::widget::button(
+                                icon(IconName::ChevronUp)
+                                    .size(14)
+                                    .color(iced::Color::from_rgb(0.4, 0.4, 0.4))
+                            )
+                            .on_press(Message::FindPrevious)
+                            .padding(1)
+                            .style(|_theme, status| {
+                                let base = iced::widget::button::Style {
+                                    background: None,
+                                    border: iced::Border {
+                                        radius: 6.0.into(),
+                                        ..iced::Border::default()
+                                    },
+                                    ..iced::widget::button::Style::default()
+                                };
+                                match status {
+                                    iced::widget::button::Status::Hovered => {
+                                        iced::widget::button::Style {
+                                            background: Some(iced::Background::Color(
+                                                iced::Color::from_rgb(0.85, 0.85, 0.85),
+                                            )),
                                             ..base
-                                        },
-                                        _ => base,
+                                        }
                                     }
-                                }),
-                            iced::widget::button(icon(IconName::Close).size(14).color(iced::Color::from_rgb(0.4, 0.4, 0.4)))
-                                .on_press(Message::CloseSearch)
-                                .padding(1)
-                                .style(|_theme, status| {
-                                    let base = iced::widget::button::Style {
-                                        background: None,
-                                        border: iced::Border {
-                                            radius: 6.0.into(),
-                                            ..iced::Border::default()
-                                        },
-                                        ..iced::widget::button::Style::default()
-                                    };
-                                    match status {
-                                        iced::widget::button::Status::Hovered => iced::widget::button::Style {
-                                            background: Some(iced::Background::Color(iced::Color::from_rgb(0.85, 0.85, 0.85))),
+                                    _ => base,
+                                }
+                            }),
+                            iced::widget::button(
+                                icon(IconName::Close)
+                                    .size(14)
+                                    .color(iced::Color::from_rgb(0.4, 0.4, 0.4))
+                            )
+                            .on_press(Message::CloseSearch)
+                            .padding(1)
+                            .style(|_theme, status| {
+                                let base = iced::widget::button::Style {
+                                    background: None,
+                                    border: iced::Border {
+                                        radius: 6.0.into(),
+                                        ..iced::Border::default()
+                                    },
+                                    ..iced::widget::button::Style::default()
+                                };
+                                match status {
+                                    iced::widget::button::Status::Hovered => {
+                                        iced::widget::button::Style {
+                                            background: Some(iced::Background::Color(
+                                                iced::Color::from_rgb(0.85, 0.85, 0.85),
+                                            )),
                                             ..base
-                                        },
-                                        _ => base,
+                                        }
                                     }
-                                })
+                                    _ => base,
+                                }
+                            })
                         ]
                         .spacing(3)
                         .align_y(iced::Alignment::Center),
@@ -899,169 +930,6 @@ impl RequestPanel {
                 } else {
                     editor_with_format.into()
                 }
-            }
-            BodyFormat::Xml => {
-                let text_editor_widget = text_editor(request_body)
-                    .highlight("xml", highlighter::Theme::Base16Mocha)
-                    .on_action(Message::BodyChanged)
-                    .placeholder("Enter XML body...")
-                    .font(iced::Font::MONOSPACE)
-                    .size(14)
-                    .style(
-                        |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                            background: Background::Color(theme.palette().background),
-                            border: Border {
-                                color: Color::from_rgb(0.9, 0.9, 0.9),
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                            value: theme.palette().text,
-                            selection: theme.palette().primary,
-                        },
-                    );
-
-                let overlay_top_right = container(
-                    row![Space::new().width(Length::Fill), body_format_button()]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(8),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(8.0));
-
-                let editor_area = scrollable(text_editor_widget)
-                    .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
-                    .height(Length::Fill);
-                let stacked_editor = stack![editor_area, overlay_top_right];
-
-                if self.show_search {
-                    let search_bar = iced::widget::container(
-                        iced::widget::row![
-                            iced::widget::text_input("Find...", &self.search_query)
-                                .id(self.search_input_id.clone())
-                                .on_input(Message::SearchQueryChanged)
-                                .on_submit(Message::SubmitSearch)
-                                .width(Length::Fixed(200.0))
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("↓").size(14))
-                                .on_press(Message::FindNext)
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("↑").size(14))
-                                .on_press(Message::FindPrevious)
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("X").size(14))
-                                .on_press(Message::CloseSearch)
-                                .padding(5)
-                        ]
-                        .spacing(5)
-                        .align_y(iced::Alignment::Center),
-                    )
-                    .padding(5);
-
-                    floating_element::FloatingElement::new(stacked_editor, search_bar)
-                        .offset(iced::Vector::new(10.0, 10.0))
-                        .position(floating_element::AnchorPosition::BottomRight)
-                        .into()
-                } else {
-                    stacked_editor.into()
-                }
-            }
-            BodyFormat::Text => {
-                let text_editor_widget = text_editor(request_body)
-                    .on_action(Message::BodyChanged)
-                    .placeholder("Enter text body...")
-                    .font(iced::Font::MONOSPACE)
-                    .size(14)
-                    .style(
-                        |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                            background: Background::Color(theme.palette().background),
-                            border: Border {
-                                color: Color::from_rgb(0.9, 0.9, 0.9),
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                            value: theme.palette().text,
-                            selection: theme.palette().primary,
-                        },
-                    );
-
-                let overlay_top_right = container(
-                    row![Space::new().width(Length::Fill), body_format_button()]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(8),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(8.0));
-
-                let editor_area = scrollable(text_editor_widget)
-                    .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
-                    .height(Length::Fill);
-                let stacked_editor = stack![editor_area, overlay_top_right];
-
-                if self.show_search {
-                    let search_bar = iced::widget::container(
-                        iced::widget::row![
-                            iced::widget::text_input("Find...", &self.search_query)
-                                .id(self.search_input_id.clone())
-                                .on_input(Message::SearchQueryChanged)
-                                .on_submit(Message::SubmitSearch)
-                                .width(Length::Fixed(200.0))
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("↓").size(14))
-                                .on_press(Message::FindNext)
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("↑").size(14))
-                                .on_press(Message::FindPrevious)
-                                .padding(5),
-                            iced::widget::button(iced::widget::text("X").size(14))
-                                .on_press(Message::CloseSearch)
-                                .padding(5)
-                        ]
-                        .spacing(5)
-                        .align_y(iced::Alignment::Center),
-                    )
-                    .padding(5);
-
-                    floating_element::FloatingElement::new(stacked_editor, search_bar)
-                        .offset(iced::Vector::new(10.0, 10.0))
-                        .position(floating_element::AnchorPosition::BottomRight)
-                        .into()
-                } else {
-                    stacked_editor.into()
-                }
-            }
-            BodyFormat::GraphQL => {
-                // Fallback for existing GraphQL requests - treat as plain text
-                let text_editor_widget = text_editor(request_body)
-                    .on_action(Message::BodyChanged)
-                    .placeholder("GraphQL format no longer supported - edit as text...")
-                    .style(
-                        |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                            background: Background::Color(theme.palette().background),
-                            border: Border {
-                                color: Color::from_rgb(0.9, 0.9, 0.9),
-                                width: 1.0,
-                                radius: 4.0.into(),
-                            },
-                            placeholder: Color::from_rgb(0.8, 0.6, 0.6),
-                            value: theme.palette().text,
-                            selection: theme.palette().primary,
-                        },
-                    );
-
-                let overlay_top_right = container(
-                    row![Space::new().width(Length::Fill), body_format_button()]
-                        .align_y(iced::Alignment::Center)
-                        .spacing(8),
-                )
-                .width(Length::Fill)
-                .padding(Padding::new(8.0));
-
-                let editor_area = scrollable(text_editor_widget).height(Length::Fill);
-                let stacked_editor = stack![editor_area, overlay_top_right];
-
-                stacked_editor.into()
             }
         }
     }
