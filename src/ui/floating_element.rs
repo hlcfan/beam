@@ -105,13 +105,46 @@ where
             *limits
         };
 
-        let content_node =
-            self.content
-                .as_widget_mut()
-                .layout(&mut tree.children[0], renderer, &limits);
+        let (content_tree, anchor_tree) = tree.children.split_at_mut(1);
 
-        // We only lay out content here. Anchor layout happens in overlay.
-        layout::Node::with_children(content_node.size(), vec![content_node])
+        let content_node = self.content.as_widget_mut().layout(
+            &mut content_tree[0],
+            renderer,
+            &limits
+        );
+
+        let content_size = content_node.size();
+
+        // Use limits that allow the anchor to be measured properly.
+        // We use the same limits as the container, but relaxed to min size 0.
+        let anchor_limits = layout::Limits::new(Size::ZERO, limits.max());
+
+        let mut anchor_node = self.anchor.as_widget_mut().layout(
+            &mut anchor_tree[0],
+            renderer,
+            &anchor_limits
+        );
+
+        let anchor_size = anchor_node.size();
+
+        let (val_x, val_y) = match self.position {
+            AnchorPosition::TopRight => (
+                content_size.width - anchor_size.width - self.offset.x,
+                self.offset.y,
+            ),
+            AnchorPosition::BottomRight => (
+                content_size.width - anchor_size.width - self.offset.x,
+                content_size.height - anchor_size.height - self.offset.y,
+            ),
+            AnchorPosition::BottomCenter => (
+                (content_size.width - anchor_size.width) / 2.0 + self.offset.x,
+                content_size.height - anchor_size.height - self.offset.y,
+            ),
+        };
+
+        anchor_node = anchor_node.move_to(Point::new(val_x, val_y));
+
+        layout::Node::with_children(content_size, vec![content_node, anchor_node])
     }
 
     fn draw(
@@ -126,6 +159,7 @@ where
     ) {
         let mut children = layout.children();
         let content_layout = children.next().unwrap();
+        let anchor_layout = children.next().unwrap();
 
         self.content.as_widget().draw(
             &tree.children[0],
@@ -136,6 +170,18 @@ where
             cursor,
             viewport,
         );
+
+        renderer.with_layer(*viewport, |renderer| {
+            self.anchor.as_widget().draw(
+                &tree.children[1],
+                renderer,
+                theme,
+                style,
+                anchor_layout,
+                cursor,
+                viewport,
+            );
+        });
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -155,6 +201,14 @@ where
     ) {
         let mut children = layout.children();
         let content_layout = children.next().unwrap();
+        let anchor_layout = children.next().unwrap();
+
+        self.anchor.as_widget_mut().operate(
+            &mut tree.children[1],
+            anchor_layout,
+            renderer,
+            operation,
+        );
 
         self.content.as_widget_mut().operate(
             &mut tree.children[0],
@@ -177,12 +231,32 @@ where
     ) {
         let mut children = layout.children();
         let content_layout = children.next().unwrap();
+        let anchor_layout = children.next().unwrap();
+
+        let is_over_anchor = cursor.is_over(anchor_layout.bounds());
+
+        self.anchor.as_widget_mut().update(
+            &mut tree.children[1],
+            event,
+            anchor_layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        let content_cursor = if is_over_anchor {
+            mouse::Cursor::Unavailable
+        } else {
+            cursor
+        };
 
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
             content_layout,
-            cursor,
+            content_cursor,
             renderer,
             clipboard,
             shell,
@@ -200,11 +274,31 @@ where
     ) -> mouse::Interaction {
         let mut children = layout.children();
         let content_layout = children.next().unwrap();
+        let anchor_layout = children.next().unwrap();
+
+        let anchor_interaction = self.anchor.as_widget().mouse_interaction(
+            &tree.children[1],
+            anchor_layout,
+            cursor,
+            viewport,
+            renderer,
+        );
+
+        if anchor_interaction != mouse::Interaction::None {
+             return anchor_interaction;
+        }
+
+        let is_over_anchor = cursor.is_over(anchor_layout.bounds());
+        let content_cursor = if is_over_anchor {
+            mouse::Cursor::Unavailable
+        } else {
+            cursor
+        };
 
         self.content.as_widget().mouse_interaction(
             &tree.children[0],
             content_layout,
-            cursor,
+            content_cursor,
             viewport,
             renderer,
         )
@@ -218,176 +312,34 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        let mut overlays = Vec::new();
-
-        let layout = layout.children().next().unwrap();
+        let mut children = layout.children();
+        let content_layout = children.next().unwrap();
+        let _anchor_layout = children.next().unwrap();
 
         let (content_tree, anchor_tree) = tree.children.split_at_mut(1);
 
-        if let Some(content_overlay) = self.content.as_widget_mut().overlay(
+        let content_overlay = self.content.as_widget_mut().overlay(
             &mut content_tree[0],
-            layout,
+            content_layout,
             renderer,
             viewport,
             translation,
-        ) {
-            overlays.push(content_overlay);
+        );
+
+        let anchor_overlay = self.anchor.as_widget_mut().overlay(
+            &mut anchor_tree[0],
+            _anchor_layout,
+            renderer,
+            viewport,
+            translation,
+        );
+
+        match (content_overlay, anchor_overlay) {
+            (Some(a), Some(b)) => Some(overlay::Group::with_children(vec![a, b]).into()),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
         }
-
-        let bounds = layout.bounds();
-        let position = bounds.position() + translation;
-
-        // Pass the actual content size to the overlay so it can position the anchor correctly
-        let content_size = bounds.size();
-
-        overlays.push(overlay::Element::new(Box::new(FloatingElementOverlay {
-            anchor: &mut self.anchor,
-            tree: &mut anchor_tree[0],
-            position,
-            content_size,
-            offset: self.offset,
-            anchor_position: self.position,
-            viewport: *viewport,
-        })));
-
-        Some(overlay::Group::with_children(overlays).into())
-    }
-}
-
-struct FloatingElementOverlay<'a, 'b, Message, Theme, Renderer> {
-    anchor: &'b mut Element<'a, Message, Theme, Renderer>,
-    tree: &'b mut Tree,
-    position: Point,
-    content_size: Size,
-    offset: Vector,
-    anchor_position: AnchorPosition,
-    viewport: Rectangle,
-}
-
-impl<'a, 'b, Message, Theme, Renderer> overlay::Overlay<Message, Theme, Renderer>
-    for FloatingElementOverlay<'a, 'b, Message, Theme, Renderer>
-where
-    Renderer: renderer::Renderer,
-    Message: Clone,
-{
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
-        let limits = layout::Limits::new(Size::ZERO, bounds);
-        let mut anchor_node = self
-            .anchor
-            .as_widget_mut()
-            .layout(self.tree, renderer, &limits);
-
-        let anchor_size = anchor_node.size();
-
-        let (val_x, val_y) = match self.anchor_position {
-            AnchorPosition::TopRight => (
-                self.content_size.width - anchor_size.width - self.offset.x,
-                self.offset.y,
-            ),
-            AnchorPosition::BottomRight => (
-                self.content_size.width - anchor_size.width - self.offset.x,
-                self.content_size.height - anchor_size.height - self.offset.y,
-            ),
-            AnchorPosition::BottomCenter => (
-                (self.content_size.width - anchor_size.width) / 2.0 + self.offset.x,
-                self.content_size.height - anchor_size.height - self.offset.y,
-            ),
-        };
-
-        anchor_node =
-            anchor_node.move_to(Point::new(self.position.x + val_x, self.position.y + val_y));
-
-        layout::Node::with_children(bounds, vec![anchor_node])
-    }
-
-    fn draw(
-        &self,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &renderer::Style,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-    ) {
-        let mut children = layout.children();
-        let anchor_layout = children.next().unwrap();
-
-        self.anchor.as_widget().draw(
-            self.tree,
-            renderer,
-            theme,
-            style,
-            anchor_layout,
-            cursor,
-            &self.viewport,
-        );
-    }
-
-    fn update(
-        &mut self,
-        event: &Event,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-        clipboard: &mut dyn Clipboard,
-        shell: &mut Shell<'_, Message>,
-    ) {
-        let mut children = layout.children();
-        let anchor_layout = children.next().unwrap();
-
-        self.anchor.as_widget_mut().update(
-            self.tree,
-            event,
-            anchor_layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            &self.viewport,
-        );
-    }
-
-    fn operate(&mut self, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn Operation) {
-        let mut children = layout.children();
-        let anchor_layout = children.next().unwrap();
-
-        self.anchor
-            .as_widget_mut()
-            .operate(self.tree, anchor_layout, renderer, operation);
-    }
-
-    fn mouse_interaction(
-        &self,
-        layout: Layout<'_>,
-        cursor: mouse::Cursor,
-        renderer: &Renderer,
-    ) -> mouse::Interaction {
-        let mut children = layout.children();
-        let anchor_layout = children.next().unwrap();
-
-        self.anchor.as_widget().mouse_interaction(
-            self.tree,
-            anchor_layout,
-            cursor,
-            &self.viewport,
-            renderer,
-        )
-    }
-
-    fn overlay<'c>(
-        &'c mut self,
-        layout: Layout<'c>,
-        renderer: &Renderer,
-    ) -> Option<overlay::Element<'c, Message, Theme, Renderer>> {
-        let mut children = layout.children();
-        let anchor_layout = children.next().unwrap();
-
-        self.anchor.as_widget_mut().overlay(
-            self.tree,
-            anchor_layout,
-            renderer,
-            &self.viewport,
-            Vector::ZERO, // Translation is already handled by the overlay position
-        )
     }
 }
 
