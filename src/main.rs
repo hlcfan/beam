@@ -20,8 +20,8 @@ use beam::ui::ResponsePanel;
 use iced::widget::text_editor::Position;
 use std::sync::Arc;
 
-use beam::constant::REQUEST_BODY_EDITOR_ID;
 use beam::constant::REQUEST_BODY_SCROLLABLE_ID;
+use beam::constant::RESPONSE_BODY_SCROLLABLE_ID;
 use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
@@ -447,12 +447,38 @@ impl BeamApp {
                 }
             }
             Message::ResponsePanel(view_message) => {
-                match self.response_panel.update(view_message) {
+                match self.response_panel.update(view_message, &self.current_request.last_response) {
                     response::Action::ResponseBodyAction(action) => {
                         self.response_body_content.perform(action);
 
                         Task::none()
                     }
+                    response::Action::FormatResponseBody(formatted_body) => {
+                        let select_all_action = text_editor::Action::SelectAll;
+                        self.response_body_content.perform(select_all_action);
+
+                        let paste_action = text_editor::Action::Edit(text_editor::Edit::Paste(
+                            std::sync::Arc::new(formatted_body),
+                        ));
+                        self.response_body_content.perform(paste_action);
+
+                        Task::none()
+                    }
+                    response::Action::SearchNext(focus_id) => {
+                        self.perform_response_search(true, Some(focus_id))
+                    }
+                    response::Action::SearchPrevious(focus_id) => {
+                        self.perform_response_search(false, Some(focus_id))
+                    }
+                    response::Action::SubmitSearch(focus_id) => {
+                        let is_previous = self.modifiers.shift();
+                        self.perform_response_search(!is_previous, Some(focus_id))
+                    }
+                    response::Action::Focus(id) => {
+                        iced::widget::operation::focus(id)
+                            .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                    }
+                    response::Action::Run(task) => task.map(Message::ResponsePanel),
                     response::Action::None => Task::none(),
                 }
             }
@@ -1858,6 +1884,126 @@ impl BeamApp {
             info!("No match found");
             if let Some(id) = focus_id {
                 operation::focus(id).map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+            } else {
+                Task::none()
+            }
+        }
+    }
+
+    fn perform_response_search(&mut self, next: bool, focus_id: Option<iced::widget::Id>) -> Task<Message> {
+        let query = &self.response_panel.search_query;
+        if query.is_empty() {
+            if let Some(id) = focus_id {
+                return operation::focus(id)
+                    .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing));
+            }
+            return Task::none();
+        }
+
+        let content = &mut self.response_body_content;
+        let text = content.text();
+        let Position {
+            line: current_line,
+            column: current_col,
+        } = content.cursor().position;
+
+        let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
+
+        let search_start_idx = if next {
+            if let Some(c) = text.get(current_idx..).and_then(|s| s.chars().next()) {
+                current_idx + c.len_utf8()
+            } else {
+                current_idx
+            }
+        } else {
+            current_idx
+        };
+
+        let search_range = if next {
+            search_start_idx..text.len()
+        } else {
+            0..search_start_idx
+        };
+
+        let mut found_match = false;
+        let mut match_start_byte = 0;
+        let mut match_end_byte = 0;
+
+        if next {
+            if let Some(start) = text[search_range].find(query) {
+                match_start_byte = search_start_idx + start;
+                match_end_byte = match_start_byte + query.len();
+                found_match = true;
+            } else {
+                if let Some(start) = text[0..search_start_idx].find(query) {
+                    match_start_byte = start;
+                    match_end_byte = match_start_byte + query.len();
+                    found_match = true;
+                }
+            }
+        } else {
+            if let Some(start) = text[search_range.clone()].rfind(query) {
+                match_start_byte = search_range.start + start;
+                match_end_byte = match_start_byte + query.len();
+
+                if match_end_byte == current_idx {
+                    if let Some(prev_start) = text[0..match_start_byte].rfind(query) {
+                        match_start_byte = prev_start;
+                        match_end_byte = match_start_byte + query.len();
+                        found_match = true;
+                    } else {
+                        if let Some(last_start) = text[search_start_idx..text.len()].rfind(query) {
+                            match_start_byte = search_start_idx + last_start;
+                            match_end_byte = match_start_byte + query.len();
+                            found_match = true;
+                        }
+                    }
+                } else {
+                    found_match = true;
+                }
+            } else {
+                if let Some(start) = text[search_start_idx..text.len()].rfind(query) {
+                    match_start_byte = search_start_idx + start;
+                    match_end_byte = match_start_byte + query.len();
+                    found_match = true;
+                }
+            }
+        }
+
+        if found_match {
+            let start_pos = Self::byte_index_to_line_col(&text, match_start_byte);
+            let end_pos = Self::byte_index_to_line_col(&text, match_end_byte);
+
+            content.move_to(text_editor::Cursor {
+                position: end_pos,
+                selection: Some(start_pos),
+            });
+
+            let text_size = 14.0;
+            let padding = 5.0;
+            let line_height = text_size * 1.3;
+            let viewport_height = 400.0;
+            let target_y = padding + (start_pos.line as f32) * line_height;
+            let y_offset = (target_y - viewport_height / 2.0).max(0.0);
+
+            let scroll_task = iced::widget::operation::scroll_to(
+                iced::widget::Id::new(RESPONSE_BODY_SCROLLABLE_ID),
+                iced::widget::scrollable::AbsoluteOffset {
+                    x: Some(0.0),
+                    y: Some(y_offset),
+                },
+            );
+
+            if let Some(id) = focus_id {
+                scroll_task
+                    .chain(operation::focus(id))
+                    .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+            } else {
+                scroll_task.map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+            }
+        } else {
+            if let Some(id) = focus_id {
+                operation::focus(id).map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
             } else {
                 Task::none()
             }

@@ -1,15 +1,26 @@
+use crate::constant::RESPONSE_BODY_SCROLLABLE_ID;
 use crate::types::{ResponseData, ResponseTab};
-use crate::ui::Spinner;
+use crate::ui::floating_element;
+use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use crate::ui::{IconName, Spinner, icon};
 use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
-use iced::widget::{button, column, container, row, scrollable, space, text, text_editor, text_input};
-use iced::{Background, Border, Color, Element, Length, Theme};
-use log::info;
+use iced::widget::{
+    button, column, container, row, scrollable, space, text, text_editor, text_input,
+};
+use iced::{Background, Border, Color, Element, Length, Padding, Theme};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Action {
     ResponseBodyAction(text_editor::Action),
+    FormatResponseBody(String),
+    SearchNext(iced::widget::Id),
+    SearchPrevious(iced::widget::Id),
+    SubmitSearch(iced::widget::Id),
+    Focus(iced::widget::Id),
+    // The components needs to run a task
+    Run(iced::Task<Message>),
     None,
 }
 
@@ -17,6 +28,14 @@ pub enum Action {
 pub enum Message {
     ResponseBodyAction(text_editor::Action),
     TabSelected(ResponseTab),
+    FormatResponseBody,
+    SearchQueryChanged(String),
+    FindNext,
+    FindPrevious,
+    SubmitSearch,
+    CloseSearch,
+    OpenSearch,
+    FocusSearch,
     DoNothing, // Used to prevent event propagation
 }
 
@@ -24,6 +43,9 @@ pub enum Message {
 pub struct ResponsePanel {
     pub selected_tab: ResponseTab,
     pub spinner: Spinner,
+    pub show_search: bool,
+    pub search_query: String,
+    pub search_input_id: iced::widget::Id,
 }
 
 impl ResponsePanel {
@@ -31,10 +53,13 @@ impl ResponsePanel {
         Self {
             selected_tab: ResponseTab::Body,
             spinner: Spinner::new(),
+            show_search: false,
+            search_query: String::new(),
+            search_input_id: iced::widget::Id::unique(),
         }
     }
 
-    pub fn update(&mut self, message: Message) -> Action {
+    pub fn update(&mut self, message: Message, response: &Option<ResponseData>) -> Action {
         match message {
             Message::ResponseBodyAction(text_action) => {
                 // Filter actions to allow only read-only operations
@@ -64,6 +89,52 @@ impl ResponsePanel {
                 self.selected_tab = tab;
                 Action::None
             }
+            Message::FormatResponseBody => {
+                if let Some(resp) = response {
+                    let mut formatted_body = None;
+                    let content_type = &resp.content_type;
+                    let body = &resp.body;
+
+                    if content_type.contains("json") {
+                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(body) {
+                            if let Ok(formatted) = serde_json::to_string_pretty(&json_value) {
+                                formatted_body = Some(formatted);
+                            }
+                        }
+                    } else if content_type.contains("xml") || content_type.contains("html") {
+                        // Simple trim for XML/HTML for now
+                        formatted_body = Some(body.trim().to_string());
+                    } else {
+                        // Default trim
+                        formatted_body = Some(body.trim().to_string());
+                    }
+
+                    if let Some(formatted) = formatted_body {
+                        Action::FormatResponseBody(formatted)
+                    } else {
+                        Action::None
+                    }
+                } else {
+                    Action::None
+                }
+            }
+            Message::SearchQueryChanged(query) => {
+                self.search_query = query;
+                Action::None
+            }
+            Message::FindNext => Action::SearchNext(self.search_input_id.clone()),
+            Message::FindPrevious => Action::SearchPrevious(self.search_input_id.clone()),
+            Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
+            Message::CloseSearch => {
+                self.show_search = false;
+                self.search_query.clear();
+                Action::None
+            }
+            Message::OpenSearch => {
+                self.show_search = true;
+                Action::Focus(self.search_input_id.clone())
+            }
+            Message::FocusSearch => Action::Focus(self.search_input_id.clone()),
             Message::DoNothing => Action::None,
         }
     }
@@ -155,7 +226,7 @@ impl ResponsePanel {
                 .spacing(5);
 
                 let tab_content = match self.selected_tab {
-                    ResponseTab::Body => response_body_tab(resp, response_body_content),
+                    ResponseTab::Body => self.response_body_tab(resp, response_body_content),
                     ResponseTab::Headers => match response {
                         Some(resp) => response_headers_tab(&resp),
                         None => container(
@@ -227,6 +298,242 @@ impl ResponsePanel {
         }
     }
 
+    fn response_body_tab<'a>(
+        &'a self,
+        resp: &'a ResponseData,
+        content: &'a text_editor::Content,
+    ) -> Element<'a, Message> {
+        // For text responses, use the normal text editor with dynamic syntax highlighting
+        // TODO: move the syntax to main file
+
+        // let resp = response.as_ref().unwrap();
+        // Check if this is a binary response
+        if resp.is_binary {
+            // For binary responses, show metadata instead of content
+            let binary_info = column![
+                container(
+                    text("Binary Response")
+                        .size(16)
+                        .color(Color::from_rgb(0.0, 0.5, 1.0))
+                )
+                .style(|_theme| Style {
+                    background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
+                    border: Border {
+                        radius: 4.0.into(),
+                        ..Border::default()
+                    },
+                    ..Style::default()
+                })
+                .padding([8, 12]),
+                space().height(10),
+                text(format!("Content-Type: {}", resp.content_type))
+                    .size(14)
+                    .color(Color::from_rgb(0.3, 0.3, 0.3)),
+                text(format!("Size: {}", format_bytes(resp.size)))
+                    .size(14)
+                    .color(Color::from_rgb(0.3, 0.3, 0.3)),
+                space().height(15),
+                text("Preview (first 100 bytes as hex):")
+                    .size(14)
+                    .color(Color::from_rgb(0.3, 0.3, 0.3)),
+                space().height(5),
+                scrollable(
+                    container(
+                        text(resp.body.as_str())
+                            .size(12)
+                            .color(Color::from_rgb(0.5, 0.5, 0.5))
+                    )
+                    .style(|_theme| Style {
+                        background: Some(Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
+                        border: Border {
+                            radius: 4.0.into(),
+                            width: 1.0,
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                        },
+                        ..Style::default()
+                    })
+                    .padding(10)
+                )
+                .height(Length::Fill)
+            ]
+            .spacing(5);
+
+            scrollable(binary_info).height(Length::Fill).into()
+        } else {
+            let syntax_language = get_syntax_from_content_type(&resp.content_type);
+            let editor = text_editor(content)
+                .font(iced::Font::MONOSPACE)
+                .size(14)
+                .padding(5.0)
+                .highlight(syntax_language, highlighter::Theme::Base16Mocha)
+                .on_action(Message::ResponseBodyAction)
+                .style(
+                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
+                        background: Background::Color(theme.palette().background),
+                        border: Border {
+                            color: Color::from_rgb(0.9, 0.9, 0.9),
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                        value: theme.palette().text,
+                        selection: theme.palette().primary,
+                    },
+                );
+
+            let cursor = content.cursor();
+            let selection = cursor.selection.map(|start| {
+                let end = cursor.position;
+                if start.line > end.line || (start.line == end.line && start.column > end.column) {
+                    (end, start)
+                } else {
+                    (start, end)
+                }
+            });
+
+            let body_column = Undoable::new(editor, |action| match action {
+                UndoableAction::Find => Message::OpenSearch,
+                _ => Message::DoNothing,
+            })
+            .selection(selection);
+
+            let format_button = response_format_button();
+
+            let editor_with_format = floating_element::FloatingElement::new(
+                scrollable(body_column)
+                    .id(iced::widget::Id::new(RESPONSE_BODY_SCROLLABLE_ID))
+                    .height(Length::Fill),
+                format_button,
+            )
+            .offset(iced::Vector::new(10.0, 5.0))
+            .position(floating_element::AnchorPosition::TopRight)
+            .height(Length::Fill);
+
+            if self.show_search {
+                let search_bar = container(
+                    row![
+                        text_input("Find", &self.search_query)
+                            .id(self.search_input_id.clone())
+                            .on_input(Message::SearchQueryChanged)
+                            .on_submit(Message::SubmitSearch)
+                            .width(Length::Fixed(200.0))
+                            .padding(1)
+                            .style(|theme: &Theme, _status| text_input::Style {
+                                background: Background::Color(Color::WHITE),
+                                border: Border {
+                                    width: 0.0,
+                                    color: Color::TRANSPARENT,
+                                    radius: 6.0.into(),
+                                },
+                                icon: theme.palette().text,
+                                placeholder: Color::from_rgb(0.6, 0.6, 0.6),
+                                value: theme.palette().text,
+                                selection: theme.palette().primary,
+                            }),
+                        button(
+                            icon(IconName::ChevronDown)
+                                .size(14)
+                                .color(Color::from_rgb(0.4, 0.4, 0.4))
+                        )
+                        .on_press(Message::FindNext)
+                        .padding(1)
+                        .style(|_theme, status| {
+                            let base = button::Style {
+                                background: None,
+                                border: Border {
+                                    radius: 6.0.into(),
+                                    ..Border::default()
+                                },
+                                ..button::Style::default()
+                            };
+                            match status {
+                                button::Status::Hovered => button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(
+                                        0.85, 0.85, 0.85,
+                                    ))),
+                                    ..base
+                                },
+                                _ => base,
+                            }
+                        }),
+                        button(
+                            icon(IconName::ChevronUp)
+                                .size(14)
+                                .color(Color::from_rgb(0.4, 0.4, 0.4))
+                        )
+                        .on_press(Message::FindPrevious)
+                        .padding(1)
+                        .style(|_theme, status| {
+                            let base = button::Style {
+                                background: None,
+                                border: Border {
+                                    radius: 6.0.into(),
+                                    ..Border::default()
+                                },
+                                ..button::Style::default()
+                            };
+                            match status {
+                                button::Status::Hovered => button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(
+                                        0.85, 0.85, 0.85,
+                                    ))),
+                                    ..base
+                                },
+                                _ => base,
+                            }
+                        }),
+                        button(
+                            icon(IconName::Close)
+                                .size(14)
+                                .color(Color::from_rgb(0.4, 0.4, 0.4))
+                        )
+                        .on_press(Message::CloseSearch)
+                        .padding(1)
+                        .style(|_theme, status| {
+                            let base = button::Style {
+                                background: None,
+                                border: Border {
+                                    radius: 6.0.into(),
+                                    ..Border::default()
+                                },
+                                ..button::Style::default()
+                            };
+                            match status {
+                                button::Status::Hovered => button::Style {
+                                    background: Some(Background::Color(Color::from_rgb(
+                                        0.85, 0.85, 0.85,
+                                    ))),
+                                    ..base
+                                },
+                                _ => base,
+                            }
+                        })
+                    ]
+                    .spacing(3)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding(1)
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Color::from_rgb(0.95, 0.95, 0.95).into()),
+                    border: Border {
+                        color: Color::from_rgb(0.8, 0.8, 0.8),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..container::Style::default()
+                });
+
+                floating_element::FloatingElement::new(editor_with_format, search_bar)
+                    .offset(iced::Vector::new(10.0, 0.0))
+                    .position(floating_element::AnchorPosition::BottomRight)
+                    .height(Length::Fill)
+                    .into()
+            } else {
+                editor_with_format.into()
+            }
+        }
+    }
+
     pub fn set_selected_tab(&mut self, tab: ResponseTab) {
         self.selected_tab = tab;
     }
@@ -279,88 +586,38 @@ fn response_tab_button<'a>(
         .into()
 }
 
-fn response_body_tab<'a>(
-    resp: &'a ResponseData,
-    content: &'a text_editor::Content,
-) -> Element<'a, Message> {
-    info!("===response body content");
-    // For text responses, use the normal text editor with dynamic syntax highlighting
-    // TODO: move the syntax to main file
-
-    // let resp = response.as_ref().unwrap();
-    // Check if this is a binary response
-    if resp.is_binary {
-        // For binary responses, show metadata instead of content
-        let binary_info = column![
-            container(
-                text("Binary Response")
-                    .size(16)
-                    .color(Color::from_rgb(0.0, 0.5, 1.0))
-            )
-            .style(|_theme| Style {
-                background: Some(Background::Color(Color::from_rgba(0.0, 0.5, 1.0, 0.1))),
-                border: Border {
-                    radius: 4.0.into(),
-                    ..Border::default()
+fn response_format_button() -> Element<'static, Message> {
+    button(
+        icon(IconName::Indent)
+            .size(28)
+            .color(Color::from_rgb(0.5, 0.5, 0.5)),
+    )
+    .on_press(Message::FormatResponseBody)
+    .width(Length::Fixed(32.0))
+    .height(Length::Fixed(32.0))
+    .padding(Padding::from(6.0))
+    .style(move |_theme, status| {
+        let base = button::Style::default();
+        match status {
+            Status::Hovered => button::Style {
+                background: Some(iced::Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
                 },
-                ..Style::default()
-            })
-            .padding([8, 12]),
-            space().height(10),
-            text(format!("Content-Type: {}", resp.content_type))
-                .size(14)
-                .color(Color::from_rgb(0.3, 0.3, 0.3)),
-            text(format!("Size: {}", format_bytes(resp.size)))
-                .size(14)
-                .color(Color::from_rgb(0.3, 0.3, 0.3)),
-            space().height(15),
-            text("Preview (first 100 bytes as hex):")
-                .size(14)
-                .color(Color::from_rgb(0.3, 0.3, 0.3)),
-            space().height(5),
-            scrollable(
-                container(
-                    text(resp.body.as_str())
-                        .size(12)
-                        .color(Color::from_rgb(0.5, 0.5, 0.5))
-                )
-                .style(|_theme| Style {
-                    background: Some(Background::Color(Color::from_rgb(0.98, 0.98, 0.98))),
-                    border: Border {
-                        radius: 4.0.into(),
-                        width: 1.0,
-                        color: Color::from_rgb(0.9, 0.9, 0.9),
-                    },
-                    ..Style::default()
-                })
-                .padding(10)
-            )
-            .height(Length::Fill)
-        ]
-        .spacing(5);
-
-        scrollable(binary_info).height(Length::Fill).into()
-    } else {
-        let syntax_language = get_syntax_from_content_type(&resp.content_type);
-        let body_column = text_editor(content)
-            .highlight(syntax_language, highlighter::Theme::Base16Mocha)
-            .on_action(Message::ResponseBodyAction)
-            .style(
-                |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                    background: Background::Color(theme.palette().background),
-                    border: Border {
-                        color: Color::from_rgb(0.9, 0.9, 0.9),
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                    value: theme.palette().text,
-                    selection: theme.palette().primary,
+                ..base
+            },
+            _ => button::Style {
+                background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
                 },
-            );
-
-        scrollable(body_column).height(Length::Fill).into()
-    }
+                ..base
+            },
+        }
+    })
+    .into()
 }
 
 fn response_headers_tab<'a>(response: &'a ResponseData) -> Element<'a, Message> {
