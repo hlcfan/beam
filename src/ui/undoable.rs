@@ -388,7 +388,7 @@ where
                             shaping: text::Shaping::Basic,
                             wrapping: text::Wrapping::Word,
                         },
-                        iced::Point::new(child_bounds.x + 15.0 + self.padding, current_y),
+                        iced::Point::new(child_bounds.x - 3.0, current_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
                         *viewport,
                     );
