@@ -445,6 +445,18 @@ where
             let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
             let start_x = child_layout.bounds().x + offset_x + (start.column as f32) * char_width;
 
+            log::info!(
+                "Undoable::draw highlight - selection: {:?} -> {:?}, bounds: {:?}, child_bounds: {:?}, start_x: {}, current_y: {}, line_height: {}, char_width: {}",
+                start,
+                end,
+                bounds,
+                child_layout.bounds(),
+                start_x,
+                current_y,
+                line_height,
+                char_width
+            );
+
             // If selection is on the same line
             if start.line == end.line {
                 let width = ((end.column - start.column) as f32) * char_width;

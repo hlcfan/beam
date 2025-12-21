@@ -1,6 +1,7 @@
 use crate::constant::REQUEST_BODY_EDITOR_ID;
 use crate::history::UndoHistory;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use iced::advanced::text;
 use iced::widget::text_editor;
 use iced::{Element, Length, Theme};
 
@@ -92,18 +93,14 @@ impl UndoableEditor {
         &'a self,
         content: &'a text_editor::Content,
         syntax: Option<&'a str>,
+        search_selection: Option<(text_editor::Position, text_editor::Position)>,
     ) -> Element<'a, Message> {
-        // Extract cursor and selection (common to both branches)
-        let cursor = content.cursor();
-        let selection = cursor.selection.map(|start| {
-            let end = cursor.position;
-            // Normalize start/end
-            if start.line > end.line || (start.line == end.line && start.column > end.column) {
-                (end, start)
-            } else {
-                (start, end)
-            }
-        });
+        // Add debug log for search selection
+        if let Some((start, end)) = search_selection {
+            log::info!("UndoableEditor::view - search_selection: start={:?}, end={:?}", start, end);
+        } else {
+            log::info!("UndoableEditor::view - search_selection: None");
+        }
 
         // Create editor with or without syntax highlighting
         if let Some(syntax) = syntax {
@@ -113,18 +110,22 @@ impl UndoableEditor {
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark)
                 .font(iced::Font::MONOSPACE)
                 .size(14)
+                // .wrapping(text::Wrapping::None)
+                // .height(self.height)
                 .style(Self::editor_style);
 
-            Self::wrap_in_undoable(editor, content, selection)
+            Self::wrap_in_undoable(editor, content, search_selection)
         } else {
             let editor = text_editor(content)
                 .id(REQUEST_BODY_EDITOR_ID)
                 .on_action(Message::Action)
                 .font(iced::Font::MONOSPACE)
                 .size(14)
+                // .wrapping(text::Wrapping::None)
+                // .height(self.height)
                 .style(Self::editor_style);
 
-            Self::wrap_in_undoable(editor, content, selection)
+            Self::wrap_in_undoable(editor, content, search_selection)
         }
     }
 

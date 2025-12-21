@@ -35,6 +35,8 @@ pub enum Message {
     SubmitSearch,
     CloseSearch,
     OpenSearch,
+    SearchFound(text_editor::Position, text_editor::Position),
+    SearchNotFound,
     FocusSearch,
     DoNothing, // Used to prevent event propagation
 }
@@ -46,6 +48,7 @@ pub struct ResponsePanel {
     pub show_search: bool,
     pub search_query: String,
     pub search_input_id: iced::widget::Id,
+    pub search_selection: Option<(text_editor::Position, text_editor::Position)>,
 }
 
 impl ResponsePanel {
@@ -56,6 +59,7 @@ impl ResponsePanel {
             show_search: false,
             search_query: String::new(),
             search_input_id: iced::widget::Id::unique(),
+            search_selection: None,
         }
     }
 
@@ -125,9 +129,18 @@ impl ResponsePanel {
             Message::FindNext => Action::SearchNext(self.search_input_id.clone()),
             Message::FindPrevious => Action::SearchPrevious(self.search_input_id.clone()),
             Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
+            Message::SearchFound(start, end) => {
+                self.search_selection = Some((start, end));
+                Action::None
+            }
+            Message::SearchNotFound => {
+                self.search_selection = None;
+                Action::None
+            }
             Message::CloseSearch => {
                 self.show_search = false;
                 self.search_query.clear();
+                self.search_selection = None;
                 Action::None
             }
             Message::OpenSearch => {
@@ -381,21 +394,11 @@ impl ResponsePanel {
                     },
                 );
 
-            let cursor = content.cursor();
-            let selection = cursor.selection.map(|start| {
-                let end = cursor.position;
-                if start.line > end.line || (start.line == end.line && start.column > end.column) {
-                    (end, start)
-                } else {
-                    (start, end)
-                }
-            });
-
             let body_column = Undoable::new(editor, |action| match action {
                 UndoableAction::Find => Message::OpenSearch,
                 _ => Message::DoNothing,
             })
-            .selection(selection);
+            .selection(self.search_selection);
 
             let format_button = response_format_button();
 

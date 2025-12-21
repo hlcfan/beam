@@ -1756,12 +1756,17 @@ impl BeamApp {
 
         let content = &mut self.request_body_content;
         let text = content.text();
+
         let Position {
             line: current_line,
             column: current_col,
-        } = content.cursor().position;
+        } = self
+            .request_panel
+            .search_selection
+            .map(|(_, end)| end)
+            .unwrap_or(content.cursor().position);
 
-        info!("Current cursor: line={}, col={}", current_line, current_col);
+        info!("Current search pos: line={}, col={}", current_line, current_col);
 
         let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
         info!("Current byte index: {}", current_idx);
@@ -1873,23 +1878,37 @@ impl BeamApp {
                 },
             );
 
+            let message_task = Task::perform(async move { (start_pos, end_pos) }, |(start, end)| {
+                Message::RequestPanel(request::Message::SearchFound(start, end))
+            });
+
             if let Some(id) = focus_id {
-                scroll_task
-                    .chain(operation::focus(id))
-                    .map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+                Task::batch(vec![
+                    message_task,
+                    scroll_task
+                        .chain(operation::focus(id))
+                        .map(|_: ()| Message::RequestPanel(request::Message::DoNothing)),
+                ])
             } else {
-                scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+                Task::batch(vec![
+                    message_task,
+                    scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing)),
+                ])
             }
         } else {
             info!("No match found");
             if let Some(id) = focus_id {
-                operation::focus(id).map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+                operation::focus(id)
+                    .map(|_: ()| Message::RequestPanel(request::Message::SearchNotFound))
             } else {
-                Task::none()
+                Task::perform(async {}, |_| {
+                    Message::RequestPanel(request::Message::SearchNotFound)
+                })
             }
         }
     }
 
+    // TODO: dedup the same logic with perform_request_search
     fn perform_response_search(&mut self, next: bool, focus_id: Option<iced::widget::Id>) -> Task<Message> {
         let query = &self.response_panel.search_query;
         if query.is_empty() {
@@ -1902,10 +1921,15 @@ impl BeamApp {
 
         let content = &mut self.response_body_content;
         let text = content.text();
+
         let Position {
             line: current_line,
             column: current_col,
-        } = content.cursor().position;
+        } = self
+            .response_panel
+            .search_selection
+            .map(|(_, end)| end)
+            .unwrap_or(content.cursor().position);
 
         let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
 
@@ -1974,11 +1998,6 @@ impl BeamApp {
             let start_pos = Self::byte_index_to_line_col(&text, match_start_byte);
             let end_pos = Self::byte_index_to_line_col(&text, match_end_byte);
 
-            content.move_to(text_editor::Cursor {
-                position: end_pos,
-                selection: Some(start_pos),
-            });
-
             let text_size = 14.0;
             let padding = 5.0;
             let line_height = text_size * 1.3;
@@ -1997,15 +2016,22 @@ impl BeamApp {
             if let Some(id) = focus_id {
                 scroll_task
                     .chain(operation::focus(id))
-                    .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                    .map(move |_: ()| {
+                        Message::ResponsePanel(response::Message::SearchFound(start_pos, end_pos))
+                    })
             } else {
-                scroll_task.map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                scroll_task.map(move |_: ()| {
+                    Message::ResponsePanel(response::Message::SearchFound(start_pos, end_pos))
+                })
             }
         } else {
             if let Some(id) = focus_id {
-                operation::focus(id).map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                operation::focus(id)
+                    .map(|_: ()| Message::ResponsePanel(response::Message::SearchNotFound))
             } else {
-                Task::none()
+                Task::perform(async {}, |_| {
+                    Message::ResponsePanel(response::Message::SearchNotFound)
+                })
             }
         }
     }
