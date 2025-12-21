@@ -128,6 +128,7 @@ impl UndoableEditor {
                 UndoableAction::Redo => Message::Redo,
                 UndoableAction::Find => Message::Find,
             })
+            .content_ref(content)
             .selection(selection)
             .font(iced::Font::MONOSPACE)
             .size(14.0)
@@ -167,6 +168,7 @@ impl UndoableEditor {
                 UndoableAction::Redo => Message::Redo,
                 UndoableAction::Find => Message::Find,
             })
+            .content_ref(content)
             .selection(selection)
             .font(iced::Font::MONOSPACE)
             .size(14.0)

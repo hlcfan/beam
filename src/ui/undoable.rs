@@ -1,5 +1,6 @@
+use iced::advanced::text::{self, Paragraph as _, Text};
 use iced::{
-    Element, Length, Rectangle, Vector,
+    Color, Element, Font, Length, Pixels, Rectangle, Vector,
     advanced::{
         Clipboard, Layout, Shell, Widget, layout, overlay, renderer,
         widget::{Operation, Tree},
@@ -8,9 +9,7 @@ use iced::{
     keyboard::Key,
     mouse,
     widget::text_editor::Position,
-    Color, Font, Pixels,
 };
-use iced::advanced::text::{self, Paragraph as _, Text};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -28,6 +27,7 @@ where
     content: Element<'a, Message, Theme, Renderer>,
     on_change: F,
     selection: Option<(Position, Position)>,
+    content_ref: Option<&'a iced::widget::text_editor::Content>,
     font: Font,
     text_size: Pixels,
     padding: f32,
@@ -46,6 +46,7 @@ where
             content: content.into(),
             on_change,
             selection: None,
+            content_ref: None,
             font: Font::MONOSPACE,
             text_size: Pixels(14.0),
             padding: 5.0,
@@ -54,6 +55,11 @@ where
 
     pub fn selection(mut self, selection: Option<(Position, Position)>) -> Self {
         self.selection = selection;
+        self
+    }
+
+    pub fn content_ref(mut self, content: &'a iced::widget::text_editor::Content) -> Self {
+        self.content_ref = Some(content);
         self
     }
 
@@ -110,9 +116,43 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.content
+        let gutter_width = if let Some(content) = self.content_ref {
+            let line_count = content.line_count();
+            let digits = line_count.to_string().len();
+            // Estimate width: digits * char_width + padding
+            // We use a rough estimation or measure '0' * digits
+            // For monospace, all chars are same width.
+            // Let's measure "0"
+            let paragraph = Renderer::Paragraph::with_text(Text {
+                content: "0",
+                bounds: iced::Size::INFINITE,
+                size: self.text_size,
+                line_height: text::LineHeight::default(),
+                font: self.font,
+                align_x: text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: text::Shaping::Basic,
+                wrapping: text::Wrapping::default(),
+            });
+            let min_bounds = paragraph.min_bounds();
+            let char_width = min_bounds.width;
+
+            (digits as f32 * char_width) + self.padding * 4.0
+        } else {
+            0.0
+        };
+
+        let limits = limits.shrink(iced::Size::new(gutter_width, 0.0));
+
+        let node = self
+            .content
             .as_widget_mut()
-            .layout(&mut tree.children[0], renderer, limits)
+            .layout(&mut tree.children[0], renderer, &limits);
+
+        let node = node.move_to(iced::Point::new(gutter_width, 0.0));
+        let size = node.size().expand(iced::Size::new(gutter_width, 0.0));
+
+        layout::Node::with_children(size, vec![node])
     }
 
     fn operate(
@@ -122,9 +162,12 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        self.content
-            .as_widget_mut()
-            .operate(&mut tree.children[0], layout, renderer, operation)
+        let children = layout.children();
+        if let Some(child) = children.into_iter().next() {
+            self.content
+                .as_widget_mut()
+                .operate(&mut tree.children[0], child, renderer, operation);
+        }
     }
 
     fn update(
@@ -143,17 +186,6 @@ where
             // Check if the wrapped widget is focused (text_input or text_editor)
             let is_focused =
                 if let iced::advanced::widget::tree::State::Some(state) = &tree.children[0].state {
-                    // Debug print to find out the type
-                    // println!("Undoable state type: {:?}", state.type_id());
-                    // println!(
-                    //     "Renderer::Paragraph: {}",
-                    //     std::any::type_name::<Renderer::Paragraph>()
-                    // );
-                    // println!(
-                    //     "Highlighter: {}",
-                    //     std::any::type_name::<iced::highlighter::Highlighter>()
-                    // );
-
                     if let Some(state) =
                         state.downcast_ref::<iced::widget::text_input::State<Renderer::Paragraph>>()
                     {
@@ -171,7 +203,6 @@ where
                     {
                         state.is_focused()
                     } else {
-                        println!("Undoable: Unknown state type!");
                         false
                     }
                 } else {
@@ -205,17 +236,19 @@ where
             }
         }
 
-        // Forward event to wrapped widget
-        self.content.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        )
+        let children = layout.children();
+        if let Some(child) = children.into_iter().next() {
+            self.content.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                child,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            )
+        }
     }
 
     fn mouse_interaction(
@@ -226,13 +259,18 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.content.as_widget().mouse_interaction(
-            &tree.children[0],
-            layout,
-            cursor_position,
-            viewport,
-            renderer,
-        )
+        let children = layout.children();
+        if let Some(child) = children.into_iter().next() {
+            self.content.as_widget().mouse_interaction(
+                &tree.children[0],
+                child,
+                cursor_position,
+                viewport,
+                renderer,
+            )
+        } else {
+            mouse::Interaction::default()
+        }
     }
 
     fn draw(
@@ -245,20 +283,125 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        // Draw content first
+        let bounds = layout.bounds();
+        let children = layout.children();
+        let child_layout = match children.into_iter().next() {
+            Some(l) => l,
+            None => return,
+        };
+
+        // Draw gutter if content_ref is present
+        if let Some(content) = self.content_ref {
+            let line_count = content.line_count();
+            let digits = line_count.to_string().len();
+
+            // Measure "0" for char width
+            let paragraph = Renderer::Paragraph::with_text(Text {
+                content: "0",
+                bounds: iced::Size::INFINITE,
+                size: self.text_size,
+                line_height: text::LineHeight::default(),
+                font: self.font,
+                align_x: text::Alignment::Left,
+                align_y: iced::alignment::Vertical::Center,
+                shaping: text::Shaping::Basic,
+                wrapping: text::Wrapping::default(),
+            });
+            let min_bounds = paragraph.min_bounds();
+            let char_width = min_bounds.width;
+            let line_height_factor = 1.3; // Default line height factor
+            let line_height = self.text_size.0 * line_height_factor;
+
+            let gutter_width = (digits as f32 * char_width) + self.padding * 4.0;
+            let child_bounds = child_layout.bounds();
+            let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
+
+            // Draw gutter background
+            renderer.fill_quad(
+                renderer::Quad {
+                    bounds: Rectangle {
+                        x: bounds.x,
+                        y: bounds.y,
+                        width: gutter_width,
+                        height: bounds.height,
+                    },
+                    border: iced::Border {
+                        color: Color::from_rgb(0.9, 0.9, 0.9),
+                        width: 0.0,
+                        radius: 0.0.into(),
+                    },
+                    shadow: iced::Shadow::default(),
+                    snap: true,
+                },
+                Color::from_rgb(0.97, 0.97, 0.97),
+            );
+
+            // Draw line numbers
+            let mut current_y = child_bounds.y + self.padding + 1.0;
+
+            for i in 0..line_count {
+                let line_text = match content.line(i) {
+                    Some(l) => l.text.to_string(),
+                    None => continue,
+                };
+
+                // Measure line height based on wrapping
+                let paragraph = Renderer::Paragraph::with_text(Text {
+                    content: line_text.as_str(),
+                    bounds: iced::Size::new(content_width, f32::INFINITY), // Constrain width to force wrap
+                    size: self.text_size,
+                    line_height: text::LineHeight::default(),
+                    font: self.font,
+                    align_x: text::Alignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: text::Shaping::Basic,
+                    wrapping: text::Wrapping::Word, // Match text_editor wrapping
+                });
+                let min_bounds = paragraph.min_bounds();
+                let measured_height = min_bounds.height.max(line_height); // Ensure at least one line height
+
+                // Draw number only if visible
+                if current_y + measured_height > viewport.y
+                    && current_y < viewport.y + viewport.height
+                {
+                    let number_text = (i + 1).to_string();
+
+                    renderer.fill_text(
+                        iced::advanced::text::Text {
+                            content: number_text,
+                            bounds: iced::Size::new(gutter_width - self.padding * 2.0, line_height),
+                            size: self.text_size,
+                            line_height: text::LineHeight::default(),
+                            font: self.font,
+                            align_x: text::Alignment::Right,
+                            align_y: iced::alignment::Vertical::Top,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::Word,
+                        },
+                        iced::Point::new(bounds.x + self.padding, current_y),
+                        Color::from_rgb(0.6, 0.6, 0.6),
+                        *viewport,
+                    );
+                }
+
+                current_y += measured_height;
+            }
+        }
+
+        // Draw content
         self.content.as_widget().draw(
             &tree.children[0],
             renderer,
             theme,
             style,
-            layout,
+            child_layout,
             cursor,
             viewport,
         );
 
         if let Some((start, end)) = self.selection {
             // Draw highlight ON TOP of content
-            
+
             // Measure "M" to get char width and roughly line height
             let paragraph = Renderer::Paragraph::with_text(Text {
                 content: "M",
@@ -271,7 +414,7 @@ where
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::default(),
             });
-            
+
             let min_bounds = paragraph.min_bounds();
             let char_width = min_bounds.width;
             // Line height is usually consistent.
@@ -279,23 +422,23 @@ where
             // But checking min_bounds.height might give the height of the line box if "M" is representative.
             // A safer bet for line height in text_editor is usually derived from size.
             // Default line height in Iced is 1.3
-            let line_height = self.text_size.0 * 1.3; 
+            let line_height = self.text_size.0 * 1.3;
 
             let bounds = layout.bounds();
-            
+
             // Text editor has internal padding (default 5.0) and border (1.0)
             // We assume border is 1.0 based on usage in undoable_editor.rs.
             // The padding is passed via self.padding.
             let offset_x = self.padding + 1.0;
             let offset_y = self.padding + 1.0;
-            
+
             let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
             let start_x = bounds.x + offset_x + (start.column as f32) * char_width;
-            
+
             // If selection is on the same line
             if start.line == end.line {
                 let width = ((end.column - start.column) as f32) * char_width;
-                
+
                 renderer.fill_quad(
                     renderer::Quad {
                         bounds: Rectangle {
