@@ -379,16 +379,16 @@ where
                     renderer.fill_text(
                         iced::advanced::text::Text {
                             content: number_text,
-                            bounds: iced::Size::new(gutter_width - self.padding * 2.0, line_height),
+                            bounds: iced::Size::new(gutter_width - self.padding * 1.0, line_height),
                             size: self.text_size,
                             line_height: text::LineHeight::default(),
                             font: self.font,
-                            align_x: text::Alignment::Center,
+                            align_x: text::Alignment::Right,
                             align_y: iced::alignment::Vertical::Top,
                             shaping: text::Shaping::Basic,
                             wrapping: text::Wrapping::Word,
                         },
-                        iced::Point::new(bounds.x + self.padding, current_y),
+                        iced::Point::new(child_bounds.x + 15.0 + self.padding, current_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
                         *viewport,
                     );
@@ -443,7 +443,7 @@ where
             let offset_y = self.padding + 1.0;
 
             let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
-            let start_x = bounds.x + offset_x + (start.column as f32) * char_width;
+            let start_x = child_layout.bounds().x + offset_x + (start.column as f32) * char_width;
 
             // If selection is on the same line
             if start.line == end.line {
