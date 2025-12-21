@@ -339,26 +339,36 @@ where
             // Draw line numbers
             let mut current_y = child_bounds.y + self.padding + 1.0;
 
+            // Optimization: Calculate max chars that can fit in a line to avoid measuring every line
+            let max_chars = if char_width > 0.0 {
+                (content_width / char_width).floor() as usize
+            } else {
+                0
+            };
+
             for i in 0..line_count {
-                let line_text = match content.line(i) {
-                    Some(l) => l.text.to_string(),
+                let line_text_str = match content.line(i) {
+                    Some(l) => l.text.to_string(), // Need string for measurement if wrapping
                     None => continue,
                 };
 
-                // Measure line height based on wrapping
-                let paragraph = Renderer::Paragraph::with_text(Text {
-                    content: line_text.as_str(),
-                    bounds: iced::Size::new(content_width, f32::INFINITY), // Constrain width to force wrap
-                    size: self.text_size,
-                    line_height: text::LineHeight::default(),
-                    font: self.font,
-                    align_x: text::Alignment::Left,
-                    align_y: iced::alignment::Vertical::Center,
-                    shaping: text::Shaping::Basic,
-                    wrapping: text::Wrapping::Word, // Match text_editor wrapping
-                });
-                let min_bounds = paragraph.min_bounds();
-                let measured_height = min_bounds.height.max(line_height); // Ensure at least one line height
+                let measured_height = if line_text_str.len() <= max_chars {
+                    line_height
+                } else {
+                    // Only measure if potentially wrapping
+                    let paragraph = Renderer::Paragraph::with_text(Text {
+                        content: line_text_str.as_str(),
+                        bounds: iced::Size::new(content_width, f32::INFINITY),
+                        size: self.text_size,
+                        line_height: text::LineHeight::default(),
+                        font: self.font,
+                        align_x: text::Alignment::Left,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::Word,
+                    });
+                    paragraph.min_bounds().height.max(line_height)
+                };
 
                 // Draw number only if visible
                 if current_y + measured_height > viewport.y
@@ -378,7 +388,7 @@ where
                             shaping: text::Shaping::Basic,
                             wrapping: text::Wrapping::Word,
                         },
-                        iced::Point::new(bounds.x + self.padding * 1.5, current_y),
+                        iced::Point::new(bounds.x + self.padding, current_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
                         *viewport,
                     );
