@@ -129,7 +129,7 @@ where
                 size: self.text_size,
                 line_height: text::LineHeight::default(),
                 font: self.font,
-                align_x: text::Alignment::Left,
+                align_x: text::Alignment::Center,
                 align_y: iced::alignment::Vertical::Center,
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::default(),
@@ -137,7 +137,7 @@ where
             let min_bounds = paragraph.min_bounds();
             let char_width = min_bounds.width;
 
-            (digits as f32 * char_width) + self.padding * 4.0
+            (digits as f32 * char_width) + char_width + self.padding
         } else {
             0.0
         };
@@ -312,7 +312,7 @@ where
             let line_height_factor = 1.3; // Default line height factor
             let line_height = self.text_size.0 * line_height_factor;
 
-            let gutter_width = (digits as f32 * char_width) + self.padding * 4.0;
+            let gutter_width = (digits as f32 * char_width) + char_width + self.padding;
             let child_bounds = child_layout.bounds();
             let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
 
@@ -373,12 +373,12 @@ where
                             size: self.text_size,
                             line_height: text::LineHeight::default(),
                             font: self.font,
-                            align_x: text::Alignment::Right,
+                            align_x: text::Alignment::Center,
                             align_y: iced::alignment::Vertical::Top,
                             shaping: text::Shaping::Basic,
                             wrapping: text::Wrapping::Word,
                         },
-                        iced::Point::new(bounds.x + self.padding, current_y),
+                        iced::Point::new(bounds.x + self.padding * 1.5, current_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
                         *viewport,
                     );
