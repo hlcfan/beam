@@ -16,6 +16,7 @@ pub enum Message {
 pub struct UndoableEditor {
     history: UndoHistory,
     height: Length,
+    version: usize,
 }
 
 impl UndoableEditor {
@@ -23,6 +24,7 @@ impl UndoableEditor {
         Self {
             history: UndoHistory::new(initial_text),
             height: Length::Fill,
+            version: 0,
         }
     }
 
@@ -30,6 +32,7 @@ impl UndoableEditor {
         Self {
             history: UndoHistory::new_empty(),
             height: Length::Fill,
+            version: 0,
         }
     }
 
@@ -51,6 +54,7 @@ impl UndoableEditor {
                 let text = content.text();
                 if self.history.current().as_ref() != Some(&text) {
                     self.history.push(text.clone());
+                    self.version += 1;
                     Some(text)
                 } else {
                     None
@@ -65,6 +69,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    self.version += 1;
                     Some(prev)
                 } else {
                     None
@@ -79,6 +84,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    self.version += 1;
                     Some(next)
                 } else {
                     None
@@ -116,7 +122,7 @@ impl UndoableEditor {
                 // .height(self.height)
                 .style(Self::editor_style);
 
-            Self::wrap_in_undoable(editor, content, search_selection)
+            Self::wrap_in_undoable(editor, content, search_selection, self.version)
         } else {
             let editor = text_editor(content)
                 .id(editor_id)
@@ -127,7 +133,7 @@ impl UndoableEditor {
                 // .height(self.height)
                 .style(Self::editor_style);
 
-            Self::wrap_in_undoable(editor, content, search_selection)
+            Self::wrap_in_undoable(editor, content, search_selection, self.version)
         }
     }
 
@@ -149,6 +155,7 @@ impl UndoableEditor {
         editor: impl Into<Element<'a, Message>>,
         content: &'a text_editor::Content,
         selection: Option<(text_editor::Position, text_editor::Position)>,
+        version: usize,
     ) -> Element<'a, Message> {
         Undoable::new(editor, |action| match action {
             UndoableAction::Undo => Message::Undo,
@@ -157,6 +164,7 @@ impl UndoableEditor {
         })
         .content_ref(content)
         .selection(selection)
+        .version(version)
         .font(iced::Font::MONOSPACE)
         .size(14.0)
         .padding(5.0)

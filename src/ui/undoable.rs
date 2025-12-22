@@ -11,6 +11,8 @@ use iced::{
     widget::text_editor::Position,
 };
 
+use std::cell::RefCell;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     Undo,
@@ -31,6 +33,19 @@ where
     font: Font,
     text_size: Pixels,
     padding: f32,
+    version: usize,
+}
+
+#[derive(Debug, Default)]
+struct State {
+    cache: RefCell<Cache>,
+}
+
+#[derive(Debug, Default)]
+struct Cache {
+    line_heights: Vec<f32>,
+    last_version: usize,
+    last_width: f32,
 }
 
 impl<'a, Message, Theme, Renderer, F> Undoable<'a, Message, Theme, Renderer, F>
@@ -50,6 +65,7 @@ where
             font: Font::MONOSPACE,
             text_size: Pixels(14.0),
             padding: 5.0,
+            version: 0,
         }
     }
 
@@ -75,6 +91,11 @@ where
 
     pub fn padding(mut self, padding: f32) -> Self {
         self.padding = padding;
+        self
+    }
+
+    pub fn version(mut self, version: usize) -> Self {
+        self.version = version;
         self
     }
 }
@@ -103,11 +124,11 @@ where
     }
 
     fn state(&self) -> iced::advanced::widget::tree::State {
-        self.content.as_widget().state()
+        iced::advanced::widget::tree::State::new(State::default())
     }
 
     fn tag(&self) -> iced::advanced::widget::tree::Tag {
-        self.content.as_widget().tag()
+        iced::advanced::widget::tree::Tag::of::<State>()
     }
 
     fn layout(
@@ -316,6 +337,16 @@ where
             let child_bounds = child_layout.bounds();
             let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
 
+            // Access cache
+            let state = tree.state.downcast_ref::<State>();
+            let mut cache = state.cache.borrow_mut();
+
+            if cache.last_version != self.version || (cache.last_width - content_width).abs() > 0.1 {
+                cache.line_heights.clear();
+                cache.last_version = self.version;
+                cache.last_width = content_width;
+            }
+
             // Draw gutter background
             renderer.fill_quad(
                 renderer::Quad {
@@ -347,33 +378,42 @@ where
             };
 
             for i in 0..line_count {
-                let line_text_str = match content.line(i) {
-                    Some(l) => l.text.to_string(), // Need string for measurement if wrapping
-                    None => continue,
-                };
+                // Optimization: Stop if we are below the viewport
+                if current_y > viewport.y + viewport.height {
+                    break;
+                }
 
-                let measured_height = if line_text_str.len() <= max_chars {
-                    line_height
+                let measured_height = if i < cache.line_heights.len() {
+                    cache.line_heights[i]
                 } else {
-                    // Only measure if potentially wrapping
-                    let paragraph = Renderer::Paragraph::with_text(Text {
-                        content: line_text_str.as_str(),
-                        bounds: iced::Size::new(content_width, f32::INFINITY),
-                        size: self.text_size,
-                        line_height: text::LineHeight::default(),
-                        font: self.font,
-                        align_x: text::Alignment::Left,
-                        align_y: iced::alignment::Vertical::Center,
-                        shaping: text::Shaping::Basic,
-                        wrapping: text::Wrapping::Word,
-                    });
-                    paragraph.min_bounds().height.max(line_height)
+                    let line_text = match content.line(i) {
+                        Some(l) => l.text,
+                        None => continue,
+                    };
+
+                    let height = if line_text.len() <= max_chars {
+                        line_height
+                    } else {
+                        // Only measure if potentially wrapping
+                        let paragraph = Renderer::Paragraph::with_text(Text {
+                            content: &line_text,
+                            bounds: iced::Size::new(content_width, f32::INFINITY),
+                            size: self.text_size,
+                            line_height: text::LineHeight::default(),
+                            font: self.font,
+                            align_x: text::Alignment::Left,
+                            align_y: iced::alignment::Vertical::Center,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::Word,
+                        });
+                        paragraph.min_bounds().height.max(line_height)
+                    };
+                    cache.line_heights.push(height);
+                    height
                 };
 
                 // Draw number only if visible
-                if current_y + measured_height > viewport.y
-                    && current_y < viewport.y + viewport.height
-                {
+                if current_y + measured_height > viewport.y {
                     let number_text = (i + 1).to_string();
 
                     renderer.fill_text(
@@ -437,27 +477,39 @@ where
 
             if let Some(content) = self.content_ref {
                 // Advanced calculation handling wrapping
-                let mut accumulated_y = 0.0;
 
                 // 1. Calculate accumulated height of lines before start.line
-                for i in 0..start.line {
-                    let line_text = content
-                        .line(i)
-                        .map(|l| l.text.to_string())
-                        .unwrap_or_default();
-                    let paragraph = Renderer::Paragraph::with_text(Text {
-                        content: &line_text,
-                        bounds: iced::Size::new(content_width, f32::INFINITY),
-                        size: self.text_size,
-                        line_height: text::LineHeight::default(),
-                        font: self.font,
-                        align_x: text::Alignment::Left,
-                        align_y: iced::alignment::Vertical::Center,
-                        shaping: text::Shaping::Basic,
-                        wrapping: text::Wrapping::Word,
-                    });
-                    accumulated_y += paragraph.min_bounds().height;
+                let state = tree.state.downcast_ref::<State>();
+                let mut cache = state.cache.borrow_mut();
+
+                if cache.last_version != self.version || (cache.last_width - content_width).abs() > 0.1 {
+                    cache.line_heights.clear();
+                    cache.last_version = self.version;
+                    cache.last_width = content_width;
                 }
+
+                if cache.line_heights.len() < start.line {
+                    for i in cache.line_heights.len()..start.line {
+                        let line_text = content
+                            .line(i)
+                            .map(|l| l.text.to_string())
+                            .unwrap_or_default();
+                        let paragraph = Renderer::Paragraph::with_text(Text {
+                            content: &line_text,
+                            bounds: iced::Size::new(content_width, f32::INFINITY),
+                            size: self.text_size,
+                            line_height: text::LineHeight::default(),
+                            font: self.font,
+                            align_x: text::Alignment::Left,
+                            align_y: iced::alignment::Vertical::Center,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::Word,
+                        });
+                        cache.line_heights.push(paragraph.min_bounds().height);
+                    }
+                }
+
+                let accumulated_y: f32 = cache.line_heights.iter().take(start.line).sum();
 
                 let current_y = bounds.y + offset_y + accumulated_y;
 
