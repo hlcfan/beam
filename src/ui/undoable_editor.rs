@@ -69,7 +69,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    self.version += 1;
+                    // Don't increment version - content dimensions haven't changed
                     Some(prev)
                 } else {
                     None
@@ -84,7 +84,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    self.version += 1;
+                    // Don't increment version - content dimensions haven't changed
                     Some(next)
                 } else {
                     None
@@ -105,7 +105,11 @@ impl UndoableEditor {
 
         // Add debug log for search selection
         if let Some((start, end)) = search_selection {
-            log::info!("UndoableEditor::view - search_selection: start={:?}, end={:?}", start, end);
+            log::info!(
+                "UndoableEditor::view - search_selection: start={:?}, end={:?}",
+                start,
+                end
+            );
         } else {
             log::info!("UndoableEditor::view - search_selection: None");
         }

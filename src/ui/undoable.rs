@@ -44,8 +44,12 @@ struct State {
 #[derive(Debug, Default)]
 struct Cache {
     line_heights: Vec<f32>,
-    last_version: usize,
     last_width: f32,
+    char_width: f32,
+    single_line_height: f32,
+    // Cache for highlight rendering
+    last_selection: Option<(Position, Position)>,
+    highlight_rects: Vec<Rectangle>,
 }
 
 impl<'a, Message, Theme, Renderer, F> Undoable<'a, Message, Theme, Renderer, F>
@@ -316,24 +320,6 @@ where
             let line_count = content.line_count();
             let digits = line_count.to_string().len();
 
-            // Measure "0" for char width
-            let paragraph = Renderer::Paragraph::with_text(Text {
-                content: "0",
-                bounds: iced::Size::INFINITE,
-                size: self.text_size,
-                line_height: text::LineHeight::default(),
-                font: self.font,
-                align_x: text::Alignment::Left,
-                align_y: iced::alignment::Vertical::Center,
-                shaping: text::Shaping::Basic,
-                wrapping: text::Wrapping::default(),
-            });
-            let min_bounds = paragraph.min_bounds();
-            let char_width = min_bounds.width;
-            let line_height_factor = 1.3; // Default line height factor
-            let line_height = self.text_size.0 * line_height_factor;
-
-            let gutter_width = (digits as f32 * char_width) + char_width + self.padding;
             let child_bounds = child_layout.bounds();
             let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
 
@@ -341,11 +327,35 @@ where
             let state = tree.state.downcast_ref::<State>();
             let mut cache = state.cache.borrow_mut();
 
-            if cache.last_version != self.version || (cache.last_width - content_width).abs() > 0.1 {
+            // Only invalidate cache if width changed significantly
+            let width_changed = (cache.last_width - content_width).abs() > 0.1;
+            if width_changed {
                 cache.line_heights.clear();
-                cache.last_version = self.version;
                 cache.last_width = content_width;
+                cache.char_width = 0.0; // Force remeasurement
             }
+
+            // Cache char_width and single_line_height measurements
+            if cache.char_width == 0.0 {
+                let paragraph = Renderer::Paragraph::with_text(Text {
+                    content: "0",
+                    bounds: iced::Size::INFINITE,
+                    size: self.text_size,
+                    line_height: text::LineHeight::default(),
+                    font: self.font,
+                    align_x: text::Alignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: text::Shaping::Basic,
+                    wrapping: text::Wrapping::default(),
+                });
+                let min_bounds = paragraph.min_bounds();
+                cache.char_width = min_bounds.width;
+                cache.single_line_height = self.text_size.0 * 1.3;
+            }
+
+            let char_width = cache.char_width;
+            let line_height = cache.single_line_height;
+            let gutter_width = (digits as f32 * char_width) + char_width + self.padding;
 
             // Draw gutter background
             renderer.fill_quad(
@@ -377,9 +387,13 @@ where
                 0
             };
 
+            // Calculate visible line range for viewport culling
+            let viewport_start = viewport.y;
+            let viewport_end = viewport.y + viewport.height;
+
             for i in 0..line_count {
                 // Optimization: Stop if we are below the viewport
-                if current_y > viewport.y + viewport.height {
+                if current_y > viewport_end {
                     break;
                 }
 
@@ -412,8 +426,8 @@ where
                     height
                 };
 
-                // Draw number only if visible
-                if current_y + measured_height > viewport.y {
+                // Skip rendering if line is above viewport (but still track position)
+                if current_y + measured_height > viewport_start {
                     let number_text = (i + 1).to_string();
 
                     renderer.fill_text(
@@ -482,11 +496,16 @@ where
                 let state = tree.state.downcast_ref::<State>();
                 let mut cache = state.cache.borrow_mut();
 
-                if cache.last_version != self.version || (cache.last_width - content_width).abs() > 0.1 {
-                    cache.line_heights.clear();
-                    cache.last_version = self.version;
-                    cache.last_width = content_width;
-                }
+                // Reuse cached measurements from line number rendering
+                let cached_char_width = cache.char_width;
+                let cached_single_line_height = cache.single_line_height;
+
+                // Use cached values if available, otherwise fall back to measurement
+                let (char_width, single_line_height) = if cached_char_width > 0.0 {
+                    (cached_char_width, cached_single_line_height)
+                } else {
+                    (char_width, single_line_height)
+                };
 
                 if cache.line_heights.len() < start.line {
                     for i in cache.line_heights.len()..start.line {
