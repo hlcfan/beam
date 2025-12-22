@@ -1,4 +1,4 @@
-use crate::constant::REQUEST_BODY_SCROLLABLE_ID;
+use crate::constant::{REQUEST_BODY_EDITOR_ID, REQUEST_BODY_SCROLLABLE_ID};
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::floating_element;
 use crate::ui::undoable_editor::UndoableEditor;
@@ -802,7 +802,7 @@ impl RequestPanel {
 
                 let editor_area = scrollable(
                     self.body_editor
-                        .view(request_body, syntax, self.search_selection)
+                        .view(iced::widget::Id::new(REQUEST_BODY_EDITOR_ID), request_body, syntax, self.search_selection)
                         .map(Message::EditorMessage),
                 )
                 .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))

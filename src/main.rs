@@ -2013,16 +2013,22 @@ impl BeamApp {
                 },
             );
 
+            let message_task = Task::perform(async move { (start_pos, end_pos) }, |(start, end)| {
+                Message::ResponsePanel(response::Message::SearchFound(start, end))
+            });
+
             if let Some(id) = focus_id {
-                scroll_task
-                    .chain(operation::focus(id))
-                    .map(move |_: ()| {
-                        Message::ResponsePanel(response::Message::SearchFound(start_pos, end_pos))
-                    })
+                Task::batch(vec![
+                    message_task,
+                    scroll_task
+                        .chain(operation::focus(id))
+                        .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
+                ])
             } else {
-                scroll_task.map(move |_: ()| {
-                    Message::ResponsePanel(response::Message::SearchFound(start_pos, end_pos))
-                })
+                Task::batch(vec![
+                    message_task,
+                    scroll_task.map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
+                ])
             }
         } else {
             if let Some(id) = focus_id {

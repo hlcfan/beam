@@ -1,4 +1,3 @@
-use crate::constant::REQUEST_BODY_EDITOR_ID;
 use crate::history::UndoHistory;
 use crate::ui::undoable::{Action as UndoableAction, Undoable};
 use iced::advanced::text;
@@ -91,10 +90,13 @@ impl UndoableEditor {
 
     pub fn view<'a>(
         &'a self,
+        editor_id: impl Into<iced::widget::Id>,
         content: &'a text_editor::Content,
         syntax: Option<&'a str>,
         search_selection: Option<(text_editor::Position, text_editor::Position)>,
     ) -> Element<'a, Message> {
+        let editor_id = editor_id.into();
+
         // Add debug log for search selection
         if let Some((start, end)) = search_selection {
             log::info!("UndoableEditor::view - search_selection: start={:?}, end={:?}", start, end);
@@ -105,7 +107,7 @@ impl UndoableEditor {
         // Create editor with or without syntax highlighting
         if let Some(syntax) = syntax {
             let editor = text_editor(content)
-                .id(REQUEST_BODY_EDITOR_ID)
+                .id(editor_id.clone())
                 .on_action(Message::Action)
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark)
                 .font(iced::Font::MONOSPACE)
@@ -117,7 +119,7 @@ impl UndoableEditor {
             Self::wrap_in_undoable(editor, content, search_selection)
         } else {
             let editor = text_editor(content)
-                .id(REQUEST_BODY_EDITOR_ID)
+                .id(editor_id)
                 .on_action(Message::Action)
                 .font(iced::Font::MONOSPACE)
                 .size(14)

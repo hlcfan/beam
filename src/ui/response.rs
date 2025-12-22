@@ -1,7 +1,7 @@
-use crate::constant::RESPONSE_BODY_SCROLLABLE_ID;
+use crate::constant::{RESPONSE_BODY_EDITOR_ID, RESPONSE_BODY_SCROLLABLE_ID};
 use crate::types::{ResponseData, ResponseTab};
 use crate::ui::floating_element;
-use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use crate::ui::undoable_editor::{self, UndoableEditor};
 use crate::ui::{IconName, Spinner, icon};
 use iced::highlighter::{self};
 use iced::widget::button::Status;
@@ -26,7 +26,7 @@ pub enum Action {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    ResponseBodyAction(text_editor::Action),
+    EditorMessage(undoable_editor::Message),
     TabSelected(ResponseTab),
     FormatResponseBody,
     SearchQueryChanged(String),
@@ -49,6 +49,7 @@ pub struct ResponsePanel {
     pub search_query: String,
     pub search_input_id: iced::widget::Id,
     pub search_selection: Option<(text_editor::Position, text_editor::Position)>,
+    pub body_editor: UndoableEditor,
 }
 
 impl ResponsePanel {
@@ -60,32 +61,37 @@ impl ResponsePanel {
             search_query: String::new(),
             search_input_id: iced::widget::Id::unique(),
             search_selection: None,
+            body_editor: UndoableEditor::new_empty(),
         }
     }
 
     pub fn update(&mut self, message: Message, response: &Option<ResponseData>) -> Action {
         match message {
-            Message::ResponseBodyAction(text_action) => {
-                // Filter actions to allow only read-only operations
-                // Allow: select, copy, scroll, move cursor
-                // Block: edit actions (insert, paste, delete, etc.)
-                match &text_action {
-                    text_editor::Action::Move(_)
-                    | text_editor::Action::Select(_)
-                    | text_editor::Action::SelectWord
-                    | text_editor::Action::SelectLine
-                    | text_editor::Action::SelectAll
-                    | text_editor::Action::Click(_)
-                    | text_editor::Action::Drag(_)
-                    | text_editor::Action::Scroll { .. } => {
-                        // Allow read-only actions
-                        // response_body_content.perform(text_action.clone());
-                        return Action::ResponseBodyAction(text_action);
+            Message::EditorMessage(editor_message) => {
+                match editor_message {
+                    undoable_editor::Message::Action(action) => {
+                         match &action {
+                            text_editor::Action::Move(_)
+                            | text_editor::Action::Select(_)
+                            | text_editor::Action::SelectWord
+                            | text_editor::Action::SelectLine
+                            | text_editor::Action::SelectAll
+                            | text_editor::Action::Click(_)
+                            | text_editor::Action::Drag(_)
+                            | text_editor::Action::Scroll { .. } => {
+                                // Allow read-only actions
+                                return Action::ResponseBodyAction(action);
+                            }
+                            text_editor::Action::Edit(_) => {
+                                // Block all edit actions (insert, paste, delete, etc.)
+                                // Do nothing - this prevents editing
+                            }
+                        }
                     }
-                    text_editor::Action::Edit(_) => {
-                        // Block all edit actions (insert, paste, delete, etc.)
-                        // Do nothing - this prevents editing
+                    undoable_editor::Message::Find => {
+                        return Action::Run(iced::Task::perform(async {}, |_| Message::OpenSearch));
                     }
+                    _ => {}
                 }
                 Action::None
             }
@@ -374,31 +380,10 @@ impl ResponsePanel {
             scrollable(binary_info).height(Length::Fill).into()
         } else {
             let syntax_language = get_syntax_from_content_type(&resp.content_type);
-            let editor = text_editor(content)
-                .font(iced::Font::MONOSPACE)
-                .size(14)
-                .padding(5.0)
-                .highlight(syntax_language, highlighter::Theme::Base16Mocha)
-                .on_action(Message::ResponseBodyAction)
-                .style(
-                    |theme: &Theme, _status: text_editor::Status| text_editor::Style {
-                        background: Background::Color(theme.palette().background),
-                        border: Border {
-                            color: Color::from_rgb(0.9, 0.9, 0.9),
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        placeholder: Color::from_rgb(0.6, 0.6, 0.6),
-                        value: theme.palette().text,
-                        selection: theme.palette().primary,
-                    },
-                );
 
-            let body_column = Undoable::new(editor, |action| match action {
-                UndoableAction::Find => Message::OpenSearch,
-                _ => Message::DoNothing,
-            })
-            .selection(self.search_selection);
+            let body_column = self.body_editor
+                .view(iced::widget::Id::new(RESPONSE_BODY_EDITOR_ID), content, Some(syntax_language), self.search_selection)
+                .map(Message::EditorMessage);
 
             let format_button = response_format_button();
 
