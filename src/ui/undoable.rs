@@ -412,8 +412,15 @@ where
         if let Some((start, end)) = self.selection {
             // Draw highlight ON TOP of content
 
-            // Measure "M" to get char width and roughly line height
-            let paragraph = Renderer::Paragraph::with_text(Text {
+            // Text editor has internal padding (default 5.0) and border (1.0)
+            // We assume border is 1.0 based on usage in undoable_editor.rs.
+            // The padding is passed via self.padding.
+            let offset_x = self.padding + 1.0;
+            let offset_y = self.padding + 1.0;
+            let content_width = bounds.width - 2.0 * offset_x;
+
+            // Measure "M" to get single line height and verify char width
+            let sample = Renderer::Paragraph::with_text(Text {
                 content: "M",
                 bounds: iced::Size::INFINITE,
                 size: self.text_size,
@@ -424,63 +431,230 @@ where
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::default(),
             });
-
-            let min_bounds = paragraph.min_bounds();
+            let min_bounds = sample.min_bounds();
             let char_width = min_bounds.width;
-            // Line height is usually consistent.
-            // TextEditor uses 1.3 * size for line height usually.
-            // But checking min_bounds.height might give the height of the line box if "M" is representative.
-            // A safer bet for line height in text_editor is usually derived from size.
-            // Default line height in Iced is 1.3
-            let line_height = self.text_size.0 * 1.3;
+            let single_line_height = min_bounds.height;
 
-            let bounds = layout.bounds();
+            if let Some(content) = self.content_ref {
+                // Advanced calculation handling wrapping
+                let mut accumulated_y = 0.0;
 
-            // Text editor has internal padding (default 5.0) and border (1.0)
-            // We assume border is 1.0 based on usage in undoable_editor.rs.
-            // The padding is passed via self.padding.
-            let offset_x = self.padding + 1.0;
-            let offset_y = self.padding + 1.0;
+                // 1. Calculate accumulated height of lines before start.line
+                for i in 0..start.line {
+                    let line_text = content
+                        .line(i)
+                        .map(|l| l.text.to_string())
+                        .unwrap_or_default();
+                    let paragraph = Renderer::Paragraph::with_text(Text {
+                        content: &line_text,
+                        bounds: iced::Size::new(content_width, f32::INFINITY),
+                        size: self.text_size,
+                        line_height: text::LineHeight::default(),
+                        font: self.font,
+                        align_x: text::Alignment::Left,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::Word,
+                    });
+                    accumulated_y += paragraph.min_bounds().height;
+                }
 
-            let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
-            let start_x = child_layout.bounds().x + offset_x + (start.column as f32) * char_width;
+                let current_y = bounds.y + offset_y + accumulated_y;
 
-            log::info!(
-                "Undoable::draw highlight - selection: {:?} -> {:?}, bounds: {:?}, child_bounds: {:?}, start_x: {}, current_y: {}, line_height: {}, char_width: {}",
-                start,
-                end,
-                bounds,
-                child_layout.bounds(),
-                start_x,
-                current_y,
-                line_height,
-                char_width
-            );
+                // 2. Handle the start line
+                // For now we assume start.line == end.line as per original code structure for search results
+                if start.line == end.line {
+                    let line_text = content
+                        .line(start.line)
+                        .map(|l| l.text.to_string())
+                        .unwrap_or_default();
 
-            // If selection is on the same line
-            if start.line == end.line {
-                let width = ((end.column - start.column) as f32) * char_width;
+                    // Helper to measure position (x, y_offset) of a column index
+                    let measure_pos = |col: usize| -> (f32, f32) {
+                        if col == 0 {
+                            return (0.0, 0.0);
+                        }
+                        let sub_text = &line_text[0..col];
+                        let p = Renderer::Paragraph::with_text(Text {
+                            content: sub_text,
+                            bounds: iced::Size::new(content_width, f32::INFINITY),
+                            size: self.text_size,
+                            line_height: text::LineHeight::default(),
+                            font: self.font,
+                            align_x: text::Alignment::Left,
+                            align_y: iced::alignment::Vertical::Center,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::Word,
+                        });
+                        let b = p.min_bounds();
+                        let height = b.height;
 
-                renderer.fill_quad(
-                    renderer::Quad {
-                        bounds: Rectangle {
-                            x: start_x,
-                            y: current_y,
-                            width,
-                            height: line_height,
-                        },
-                        border: iced::Border::default(),
-                        shadow: iced::Shadow::default(),
-                        snap: true,
-                    },
-                    Color::from_rgba(0.2, 0.4, 0.7, 0.5), // Semi-transparent highlight
-                );
+                        // Approximate y_offset (top of the visual line)
+                        // If height is roughly 1 line, y_offset is 0.
+                        // If height is roughly 2 lines, y_offset is 1 line height.
+                        // We use integer division approximation
+                        let lines = (height / single_line_height).round() as usize;
+                        let y_offset = if lines > 0 {
+                            (lines - 1) as f32 * single_line_height
+                        } else {
+                            0.0
+                        };
+
+                        // To get X, we need the width of the last visual line.
+                        // If it wrapped, we need to find where the last line started.
+                        let mut x = b.width;
+                        if lines > 1 {
+                            // Binary search for the wrap point
+                            let mut low = 0;
+                            let mut high = col;
+                            let target_height = height - single_line_height * 0.5; // Threshold
+
+                            while low < high {
+                                let mid = (low + high) / 2;
+                                let mid_text = &line_text[0..mid];
+                                let mid_p = Renderer::Paragraph::with_text(Text {
+                                    content: mid_text,
+                                    bounds: iced::Size::new(content_width, f32::INFINITY),
+                                    size: self.text_size,
+                                    line_height: text::LineHeight::default(),
+                                    font: self.font,
+                                    align_x: text::Alignment::Left,
+                                    align_y: iced::alignment::Vertical::Center,
+                                    shaping: text::Shaping::Basic,
+                                    wrapping: text::Wrapping::Word,
+                                });
+                                if mid_p.min_bounds().height < target_height {
+                                    low = mid + 1;
+                                } else {
+                                    high = mid;
+                                }
+                            }
+                            // low is the index where height jumps to current height
+                            // So low is the start of the new line.
+                            // Measure from low to col
+                            if low < col {
+                                let last_chunk = &line_text[low..col];
+                                let last_p = Renderer::Paragraph::with_text(Text {
+                                    content: last_chunk,
+                                    bounds: iced::Size::new(content_width, f32::INFINITY),
+                                    size: self.text_size,
+                                    line_height: text::LineHeight::default(),
+                                    font: self.font,
+                                    align_x: text::Alignment::Left,
+                                    align_y: iced::alignment::Vertical::Center,
+                                    shaping: text::Shaping::Basic,
+                                    wrapping: text::Wrapping::Word, // Should not wrap if on one line
+                                });
+                                x = last_p.min_bounds().width;
+                            } else {
+                                x = 0.0;
+                            }
+                        }
+                        (x, y_offset)
+                    };
+
+                    let (start_x, start_y_offset) = measure_pos(start.column);
+                    let (end_x, end_y_offset) = measure_pos(end.column);
+
+                    // Draw highlighting
+                    let abs_start_x = child_layout.bounds().x + offset_x + start_x;
+                    let abs_y = current_y + start_y_offset;
+
+                    if (start_y_offset - end_y_offset).abs() < 1.0 {
+                        // Same visual line
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: abs_start_x,
+                                    y: abs_y,
+                                    width: end_x - start_x,
+                                    height: single_line_height,
+                                },
+                                border: iced::Border::default(),
+                                shadow: iced::Shadow::default(),
+                                snap: true,
+                            },
+                            Color::from_rgba(0.2, 0.4, 0.7, 0.5),
+                        );
+                    } else {
+                        // Multi-visual-line selection
+                        // 1. First part
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: abs_start_x,
+                                    y: abs_y,
+                                    width: content_width - start_x,
+                                    height: single_line_height,
+                                },
+                                border: iced::Border::default(),
+                                shadow: iced::Shadow::default(),
+                                snap: true,
+                            },
+                            Color::from_rgba(0.2, 0.4, 0.7, 0.5),
+                        );
+
+                        // 2. Middle parts (full width)
+                        let mut y = start_y_offset + single_line_height;
+                        while y < end_y_offset - 0.5 {
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: Rectangle {
+                                        x: child_layout.bounds().x + offset_x,
+                                        y: current_y + y,
+                                        width: content_width,
+                                        height: single_line_height,
+                                    },
+                                    border: iced::Border::default(),
+                                    shadow: iced::Shadow::default(),
+                                    snap: true,
+                                },
+                                Color::from_rgba(0.2, 0.4, 0.7, 0.5),
+                            );
+                            y += single_line_height;
+                        }
+
+                        // 3. Last part
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle {
+                                    x: child_layout.bounds().x + offset_x,
+                                    y: current_y + end_y_offset,
+                                    width: end_x,
+                                    height: single_line_height,
+                                },
+                                border: iced::Border::default(),
+                                shadow: iced::Shadow::default(),
+                                snap: true,
+                            },
+                            Color::from_rgba(0.2, 0.4, 0.7, 0.5),
+                        );
+                    }
+                }
             } else {
-                // Multi-line selection - naive implementation
-                // Draw first line
-                // We don't know line length, so we draw a large width? No that's ugly.
-                // For now, we only support single line highlighting nicely.
-                // Or just highlight what we can.
+                // Fallback to old simple logic if content_ref is missing
+                let line_height = self.text_size.0 * 1.3;
+                let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
+                let start_x =
+                    child_layout.bounds().x + offset_x + (start.column as f32) * char_width;
+
+                if start.line == end.line {
+                    let width = ((end.column - start.column) as f32) * char_width;
+                    renderer.fill_quad(
+                        renderer::Quad {
+                            bounds: Rectangle {
+                                x: start_x,
+                                y: current_y,
+                                width,
+                                height: line_height,
+                            },
+                            border: iced::Border::default(),
+                            shadow: iced::Shadow::default(),
+                            snap: true,
+                        },
+                        Color::from_rgba(0.2, 0.4, 0.7, 0.5),
+                    );
+                }
             }
         }
     }
