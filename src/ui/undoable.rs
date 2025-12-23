@@ -471,9 +471,14 @@ where
             // The padding is passed via self.padding.
             let offset_x = self.padding + 1.0;
             let offset_y = self.padding + 1.0;
-            let content_width = bounds.width - 2.0 * offset_x;
+            let _content_width = child_layout.bounds().width - 2.0 * offset_x;
 
-            // Measure "M" to get single line height and verify char width
+            // Adjust content_width to match the text_editor's actual text area width
+            // The text_editor has a border and internal padding.
+            // We assume standard usage: 1.0 border + 5.0 padding left + 5.0 padding right
+            // Our offset_x accounts for padding + border on the left.
+            // But we need to ensure the width reflects the available space for text.
+
             let sample = Renderer::Paragraph::with_text(Text {
                 content: "M",
                 bounds: iced::Size::INFINITE,
@@ -489,6 +494,17 @@ where
             let char_width = min_bounds.width;
             let single_line_height = min_bounds.height;
 
+            // Estimate if scrollbar is needed
+            let has_scrollbar = if let Some(content) = self.content_ref {
+                let total_height = content.line_count() as f32 * single_line_height;
+                total_height > bounds.height
+            } else {
+                false
+            };
+
+            let scrollbar_width = if has_scrollbar { 35.0 } else { 0.0 };
+            let content_width = child_layout.bounds().width - 2.0 * offset_x - scrollbar_width;
+
             if let Some(content) = self.content_ref {
                 // Advanced calculation handling wrapping
 
@@ -501,7 +517,7 @@ where
                 let cached_single_line_height = cache.single_line_height;
 
                 // Use cached values if available, otherwise fall back to measurement
-                let (char_width, single_line_height) = if cached_char_width > 0.0 {
+                let (_char_width, single_line_height) = if cached_char_width > 0.0 {
                     (cached_char_width, cached_single_line_height)
                 } else {
                     (char_width, single_line_height)
@@ -541,87 +557,68 @@ where
                         .unwrap_or_default();
 
                     // Helper to measure position (x, y_offset) of a column index
+                    // using manual word-wrapping simulation to match TextEditor behavior
                     let measure_pos = |col: usize| -> (f32, f32) {
                         if col == 0 {
                             return (0.0, 0.0);
                         }
-                        let sub_text = &line_text[0..col];
-                        let p = Renderer::Paragraph::with_text(Text {
-                            content: sub_text,
-                            bounds: iced::Size::new(content_width, f32::INFINITY),
-                            size: self.text_size,
-                            line_height: text::LineHeight::default(),
-                            font: self.font,
-                            align_x: text::Alignment::Left,
-                            align_y: iced::alignment::Vertical::Center,
-                            shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Word,
-                        });
-                        let b = p.min_bounds();
-                        let height = b.height;
 
-                        // Approximate y_offset (top of the visual line)
-                        // If height is roughly 1 line, y_offset is 0.
-                        // If height is roughly 2 lines, y_offset is 1 line height.
-                        // We use integer division approximation
-                        let lines = (height / single_line_height).round() as usize;
-                        let y_offset = if lines > 0 {
-                            (lines - 1) as f32 * single_line_height
-                        } else {
-                            0.0
-                        };
+                        let mut current_x = 0.0;
+                        let mut current_y = 0.0;
+                        let mut processed_chars = 0;
 
-                        // To get X, we need the width of the last visual line.
-                        // If it wrapped, we need to find where the last line started.
-                        let mut x = b.width;
-                        if lines > 1 {
-                            // Binary search for the wrap point
-                            let mut low = 0;
-                            let mut high = col;
-                            let target_height = height - single_line_height * 0.5; // Threshold
+                        // We need to iterate char indices to correctly slice the string
+                        let mut char_indices: Vec<(usize, char)> =
+                            line_text.char_indices().collect();
+                        // Add a dummy end index to handle the last slice
+                        char_indices.push((line_text.len(), '\0'));
 
-                            while low < high {
-                                let mid = (low + high) / 2;
-                                let mid_text = &line_text[0..mid];
-                                let mid_p = Renderer::Paragraph::with_text(Text {
-                                    content: mid_text,
-                                    bounds: iced::Size::new(content_width, f32::INFINITY),
-                                    size: self.text_size,
-                                    line_height: text::LineHeight::default(),
-                                    font: self.font,
-                                    align_x: text::Alignment::Left,
-                                    align_y: iced::alignment::Vertical::Center,
-                                    shaping: text::Shaping::Basic,
-                                    wrapping: text::Wrapping::Word,
-                                });
-                                if mid_p.min_bounds().height < target_height {
-                                    low = mid + 1;
-                                } else {
-                                    high = mid;
+                        let mut i = 0;
+                        while i < char_indices.len() - 1 {
+                            // Identify next token (word or sequence of spaces)
+                            let start_idx = i;
+                            let (_, start_char) = char_indices[i];
+                            let is_whitespace = start_char.is_whitespace();
+
+                            while i < char_indices.len() - 1 {
+                                let (_, c) = char_indices[i];
+                                if c.is_whitespace() != is_whitespace {
+                                    break;
                                 }
+                                i += 1;
                             }
-                            // low is the index where height jumps to current height
-                            // So low is the start of the new line.
-                            // Measure from low to col
-                            if low < col {
-                                let last_chunk = &line_text[low..col];
-                                let last_p = Renderer::Paragraph::with_text(Text {
-                                    content: last_chunk,
-                                    bounds: iced::Size::new(content_width, f32::INFINITY),
-                                    size: self.text_size,
-                                    line_height: text::LineHeight::default(),
-                                    font: self.font,
-                                    align_x: text::Alignment::Left,
-                                    align_y: iced::alignment::Vertical::Center,
-                                    shaping: text::Shaping::Basic,
-                                    wrapping: text::Wrapping::Word, // Should not wrap if on one line
-                                });
-                                x = last_p.min_bounds().width;
-                            } else {
-                                x = 0.0;
+                            // Token is from start_idx to i (exclusive)
+                            let token_len = i - start_idx; // number of chars in token
+
+                            // Measure token width
+                            // For Monospace, simpler:
+                            let token_width = token_len as f32 * char_width;
+
+                            // Check wrap
+                            // Note: Spaces at end of line might behave differently, but usually
+                            // if a WORD fits, it stays. if not, it wraps.
+                            // If we are a word and we overflow, we wrap.
+                            if !is_whitespace && current_x + token_width > content_width {
+                                // Simple latch: if > content_width, wrap.
+                                // (Unless token is wider than single line? We assume not for now/handled by char wrap in editor)
+                                current_x = 0.0;
+                                current_y += single_line_height;
                             }
+
+                            // Check if our target col is within this token
+                            if processed_chars + token_len > col {
+                                // Target is inside this token
+                                let offset_in_token = col - processed_chars;
+                                let offset_x = offset_in_token as f32 * char_width;
+                                return (current_x + offset_x, current_y);
+                            }
+
+                            current_x += token_width;
+                            processed_chars += token_len;
                         }
-                        (x, y_offset)
+
+                        // If we fall through (e.g. col is at end of line), return current pos
+                        (current_x, current_y)
                     };
 
                     let (start_x, start_y_offset) = measure_pos(start.column);
