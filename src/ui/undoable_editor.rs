@@ -122,6 +122,12 @@ impl UndoableEditor {
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark)
                 .font(iced::Font::MONOSPACE)
                 .size(14)
+                .padding(iced::Padding {
+                    top: 5.0,
+                    right: 20.0,
+                    bottom: 5.0,
+                    left: 5.0,
+                })
                 // .wrapping(text::Wrapping::None)
                 // .height(self.height)
                 .style(Self::editor_style);
@@ -133,6 +139,12 @@ impl UndoableEditor {
                 .on_action(Message::Action)
                 .font(iced::Font::MONOSPACE)
                 .size(14)
+                .padding(iced::Padding {
+                    top: 5.0,
+                    right: 20.0,
+                    bottom: 5.0,
+                    left: 5.0,
+                })
                 // .wrapping(text::Wrapping::None)
                 // .height(self.height)
                 .style(Self::editor_style);
@@ -172,6 +184,7 @@ impl UndoableEditor {
         .font(iced::Font::MONOSPACE)
         .size(14.0)
         .padding(5.0)
+        .padding_right(20.0)
         .into()
     }
 }

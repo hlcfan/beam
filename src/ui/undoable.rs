@@ -33,6 +33,7 @@ where
     font: Font,
     text_size: Pixels,
     padding: f32,
+    padding_right: f32,
     version: usize,
 }
 
@@ -69,6 +70,7 @@ where
             font: Font::MONOSPACE,
             text_size: Pixels(14.0),
             padding: 5.0,
+            padding_right: 5.0,
             version: 0,
         }
     }
@@ -95,6 +97,12 @@ where
 
     pub fn padding(mut self, padding: f32) -> Self {
         self.padding = padding;
+        self.padding_right = padding;
+        self
+    }
+
+    pub fn padding_right(mut self, padding: f32) -> Self {
+        self.padding_right = padding;
         self
     }
 
@@ -469,9 +477,9 @@ where
             // Text editor has internal padding (default 5.0) and border (1.0)
             // We assume border is 1.0 based on usage in undoable_editor.rs.
             // The padding is passed via self.padding.
-            let offset_x = self.padding + 1.0;
+            let offset_left = self.padding + 1.0;
+            let offset_right = self.padding_right + 1.0;
             let offset_y = self.padding + 1.0;
-            let _content_width = child_layout.bounds().width - 2.0 * offset_x;
 
             // Adjust content_width to match the text_editor's actual text area width
             // The text_editor has a border and internal padding.
@@ -503,7 +511,8 @@ where
             };
 
             let scrollbar_width = if has_scrollbar { 35.0 } else { 0.0 };
-            let content_width = child_layout.bounds().width - 2.0 * offset_x - scrollbar_width;
+            let content_width =
+                child_layout.bounds().width - offset_left - offset_right - scrollbar_width;
 
             if let Some(content) = self.content_ref {
                 // Advanced calculation handling wrapping
@@ -625,7 +634,7 @@ where
                     let (end_x, end_y_offset) = measure_pos(end.column);
 
                     // Draw highlighting
-                    let abs_start_x = child_layout.bounds().x + offset_x + start_x;
+                    let abs_start_x = child_layout.bounds().x + offset_left + start_x;
                     let abs_y = current_y + start_y_offset;
 
                     if (start_y_offset - end_y_offset).abs() < 1.0 {
@@ -668,7 +677,7 @@ where
                             renderer.fill_quad(
                                 renderer::Quad {
                                     bounds: Rectangle {
-                                        x: child_layout.bounds().x + offset_x,
+                                        x: child_layout.bounds().x + offset_left,
                                         y: current_y + y,
                                         width: content_width,
                                         height: single_line_height,
@@ -686,7 +695,7 @@ where
                         renderer.fill_quad(
                             renderer::Quad {
                                 bounds: Rectangle {
-                                    x: child_layout.bounds().x + offset_x,
+                                    x: child_layout.bounds().x + offset_left,
                                     y: current_y + end_y_offset,
                                     width: end_x,
                                     height: single_line_height,
@@ -704,7 +713,7 @@ where
                 let line_height = self.text_size.0 * 1.3;
                 let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
                 let start_x =
-                    child_layout.bounds().x + offset_x + (start.column as f32) * char_width;
+                    child_layout.bounds().x + offset_left + (start.column as f32) * char_width;
 
                 if start.line == end.line {
                     let width = ((end.column - start.column) as f32) * char_width;
