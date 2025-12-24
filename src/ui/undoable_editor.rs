@@ -1,5 +1,5 @@
 use crate::history::UndoHistory;
-use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use iced::advanced::text;
 use iced::widget::text_editor;
 use iced::{Element, Length, Theme};
@@ -173,7 +173,7 @@ impl UndoableEditor {
         selection: Option<(text_editor::Position, text_editor::Position)>,
         version: usize,
     ) -> Element<'a, Message> {
-        Undoable::new(editor, |action| match action {
+        EditorView::new(editor, |action| match action {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
             UndoableAction::Find => Message::Find,

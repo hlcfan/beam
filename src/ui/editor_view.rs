@@ -21,7 +21,7 @@ pub enum Action {
 }
 
 #[allow(missing_debug_implementations)]
-pub struct Undoable<'a, Message, Theme, Renderer, F>
+pub struct EditorView<'a, Message, Theme, Renderer, F>
 where
     Message: Clone,
     F: Fn(Action) -> Message + 'a,
@@ -53,7 +53,7 @@ struct Cache {
     highlight_rects: Vec<Rectangle>,
 }
 
-impl<'a, Message, Theme, Renderer, F> Undoable<'a, Message, Theme, Renderer, F>
+impl<'a, Message, Theme, Renderer, F> EditorView<'a, Message, Theme, Renderer, F>
 where
     Message: Clone,
     F: Fn(Action) -> Message + 'a,
@@ -113,7 +113,7 @@ where
 }
 
 impl<'a, Message, Theme, Renderer, F> Widget<Message, Theme, Renderer>
-    for Undoable<'a, Message, Theme, Renderer, F>
+    for EditorView<'a, Message, Theme, Renderer, F>
 where
     Message: Clone,
     Renderer: iced::advanced::text::Renderer<Font = Font>,
@@ -755,7 +755,7 @@ where
 }
 
 #[allow(missing_debug_implementations)]
-impl<'a, Message, Theme, Renderer, F> From<Undoable<'a, Message, Theme, Renderer, F>>
+impl<'a, Message, Theme, Renderer, F> From<EditorView<'a, Message, Theme, Renderer, F>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: 'a + Clone,
@@ -763,7 +763,7 @@ where
     Renderer: iced::advanced::text::Renderer<Font = Font> + 'a,
     F: Fn(Action) -> Message + 'a,
 {
-    fn from(undoable: Undoable<'a, Message, Theme, Renderer, F>) -> Self {
-        Self::new(undoable)
+    fn from(editor_view: EditorView<'a, Message, Theme, Renderer, F>) -> Self {
+        Self::new(editor_view)
     }
 }

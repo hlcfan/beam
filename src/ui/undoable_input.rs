@@ -1,11 +1,9 @@
 use crate::constant;
 use crate::history::UndoHistory;
-use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use constant::URL_INPUT_ID;
 use iced::widget::text_input;
 use iced::{Background, Border, Color, Element, Length, Theme};
-
-
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -112,7 +110,7 @@ impl UndoableInput {
                 }
             });
 
-        Undoable::new(input, |action| match action {
+        EditorView::new(input, |action| match action {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
             UndoableAction::Find => Message::None,
