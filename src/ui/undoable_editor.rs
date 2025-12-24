@@ -1,6 +1,6 @@
-use crate::constant::REQUEST_BODY_EDITOR_ID;
 use crate::history::UndoHistory;
-use crate::ui::undoable::{Action as UndoableAction, Undoable};
+use crate::ui::editor_view::{Action as UndoableAction, EditorView};
+use iced::advanced::text;
 use iced::widget::text_editor;
 use iced::{Element, Length, Theme};
 
@@ -16,6 +16,7 @@ pub enum Message {
 pub struct UndoableEditor {
     history: UndoHistory,
     height: Length,
+    version: usize,
 }
 
 impl UndoableEditor {
@@ -23,6 +24,7 @@ impl UndoableEditor {
         Self {
             history: UndoHistory::new(initial_text),
             height: Length::Fill,
+            version: 0,
         }
     }
 
@@ -30,6 +32,7 @@ impl UndoableEditor {
         Self {
             history: UndoHistory::new_empty(),
             height: Length::Fill,
+            version: 0,
         }
     }
 
@@ -51,6 +54,7 @@ impl UndoableEditor {
                 let text = content.text();
                 if self.history.current().as_ref() != Some(&text) {
                     self.history.push(text.clone());
+                    self.version += 1;
                     Some(text)
                 } else {
                     None
@@ -65,6 +69,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    // Don't increment version - content dimensions haven't changed
                     Some(prev)
                 } else {
                     None
@@ -79,6 +84,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+                    // Don't increment version - content dimensions haven't changed
                     Some(next)
                 } else {
                     None
@@ -90,88 +96,95 @@ impl UndoableEditor {
 
     pub fn view<'a>(
         &'a self,
+        editor_id: impl Into<iced::widget::Id>,
         content: &'a text_editor::Content,
         syntax: Option<&'a str>,
+        search_selection: Option<(text_editor::Position, text_editor::Position)>,
     ) -> Element<'a, Message> {
+        let editor_id = editor_id.into();
+
+        // Add debug log for search selection
+        if let Some((start, end)) = search_selection {
+            log::info!(
+                "UndoableEditor::view - search_selection: start={:?}, end={:?}",
+                start,
+                end
+            );
+        } else {
+            log::info!("UndoableEditor::view - search_selection: None");
+        }
+
+        // Create editor with or without syntax highlighting
         if let Some(syntax) = syntax {
             let editor = text_editor(content)
-                .id(REQUEST_BODY_EDITOR_ID)
+                .id(editor_id.clone())
                 .on_action(Message::Action)
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark)
                 .font(iced::Font::MONOSPACE)
                 .size(14)
-                .style(|theme: &Theme, _status| text_editor::Style {
-                    background: iced::Background::Color(theme.palette().background),
-                    border: iced::Border {
-                        color: iced::Color::from_rgb(0.9, 0.9, 0.9),
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
-                    value: theme.palette().text,
-                    selection: theme.palette().primary,
-                });
+                .padding(iced::Padding {
+                    top: 5.0,
+                    right: 20.0,
+                    bottom: 5.0,
+                    left: 5.0,
+                })
+                // .wrapping(text::Wrapping::None)
+                // .height(self.height)
+                .style(Self::editor_style);
 
-            let cursor = content.cursor();
-            let selection = cursor.selection.map(|start| {
-                let end = cursor.position;
-                // Normalize start/end
-                if start.line > end.line || (start.line == end.line && start.column > end.column) {
-                    (end, start)
-                } else {
-                    (start, end)
-                }
-            });
-
-            Undoable::new(editor, |action| match action {
-                UndoableAction::Undo => Message::Undo,
-                UndoableAction::Redo => Message::Redo,
-                UndoableAction::Find => Message::Find,
-            })
-            .selection(selection)
-            .font(iced::Font::MONOSPACE)
-            .size(14.0)
-            .padding(5.0)
-            .into()
+            Self::wrap_in_undoable(editor, content, search_selection, self.version)
         } else {
             let editor = text_editor(content)
-                .id(REQUEST_BODY_EDITOR_ID)
+                .id(editor_id)
                 .on_action(Message::Action)
                 .font(iced::Font::MONOSPACE)
                 .size(14)
-                .style(|theme: &Theme, _status| text_editor::Style {
-                    background: iced::Background::Color(theme.palette().background),
-                    border: iced::Border {
-                        color: iced::Color::from_rgb(0.9, 0.9, 0.9),
-                        width: 1.0,
-                        radius: 4.0.into(),
-                    },
-                    placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
-                    value: theme.palette().text,
-                    selection: theme.palette().primary,
-                });
+                .padding(iced::Padding {
+                    top: 5.0,
+                    right: 20.0,
+                    bottom: 5.0,
+                    left: 5.0,
+                })
+                // .wrapping(text::Wrapping::None)
+                // .height(self.height)
+                .style(Self::editor_style);
 
-            let cursor = content.cursor();
-            let selection = cursor.selection.map(|start| {
-                let end = cursor.position;
-                // Normalize start/end
-                if start.line > end.line || (start.line == end.line && start.column > end.column) {
-                    (end, start)
-                } else {
-                    (start, end)
-                }
-            });
-
-            Undoable::new(editor, |action| match action {
-                UndoableAction::Undo => Message::Undo,
-                UndoableAction::Redo => Message::Redo,
-                UndoableAction::Find => Message::Find,
-            })
-            .selection(selection)
-            .font(iced::Font::MONOSPACE)
-            .size(14.0)
-            .padding(5.0)
-            .into()
+            Self::wrap_in_undoable(editor, content, search_selection, self.version)
         }
+    }
+
+    fn editor_style(theme: &Theme, _status: text_editor::Status) -> text_editor::Style {
+        text_editor::Style {
+            background: iced::Background::Color(theme.palette().background),
+            border: iced::Border {
+                color: iced::Color::from_rgb(0.9, 0.9, 0.9),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
+            value: theme.palette().text,
+            selection: theme.palette().primary,
+        }
+    }
+
+    fn wrap_in_undoable<'a>(
+        editor: impl Into<Element<'a, Message>>,
+        content: &'a text_editor::Content,
+        selection: Option<(text_editor::Position, text_editor::Position)>,
+        version: usize,
+    ) -> Element<'a, Message> {
+        EditorView::new(editor, |action| match action {
+            UndoableAction::Undo => Message::Undo,
+            UndoableAction::Redo => Message::Redo,
+            UndoableAction::Find => Message::Find,
+        })
+        .content_ref(content)
+        .selection(selection)
+        .version(version)
+        .font(iced::Font::MONOSPACE)
+        .size(14.0)
+        .padding(5.0)
+        .padding_right(20.0)
+        .into()
     }
 }

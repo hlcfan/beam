@@ -1,4 +1,4 @@
-use crate::constant::REQUEST_BODY_SCROLLABLE_ID;
+use crate::constant::{REQUEST_BODY_EDITOR_ID, REQUEST_BODY_SCROLLABLE_ID};
 use crate::types::{AuthType, BodyFormat, Environment, HttpMethod, RequestConfig, RequestTab};
 use crate::ui::floating_element;
 use crate::ui::undoable_editor::UndoableEditor;
@@ -90,6 +90,8 @@ pub enum Message {
     FindPrevious,
     SubmitSearch,
     CloseSearch,
+    SearchFound(text_editor::Position, text_editor::Position),
+    SearchNotFound,
     FocusSearch,
 }
 
@@ -104,6 +106,7 @@ pub struct RequestPanel {
     pub show_search: bool,
     pub search_query: String,
     pub search_input_id: iced::widget::Id,
+    pub search_selection: Option<(text_editor::Position, text_editor::Position)>,
     pub url_input: UndoableInput,
     pub body_editor: UndoableEditor,
 }
@@ -125,6 +128,7 @@ impl Default for RequestPanel {
             show_search: false,
             search_query: String::new(),
             search_input_id: iced::widget::Id::unique(),
+            search_selection: None,
         }
     }
 }
@@ -454,9 +458,19 @@ impl RequestPanel {
             Message::FindNext => Action::SearchNext(self.search_input_id.clone()),
             Message::FindPrevious => Action::SearchPrevious(self.search_input_id.clone()),
             Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
+            Message::SearchFound(start, end) => {
+                info!("===Found: {:?} -> {:?}", start, end);
+                self.search_selection = Some((start, end));
+                Action::None
+            }
+            Message::SearchNotFound => {
+                self.search_selection = None;
+                Action::None
+            }
             Message::CloseSearch => {
                 self.show_search = false;
                 self.search_query.clear();
+                self.search_selection = None;
                 Action::None
             }
             Message::FocusSearch => Action::Focus(self.search_input_id.clone()),
@@ -788,7 +802,7 @@ impl RequestPanel {
 
                 let editor_area = scrollable(
                     self.body_editor
-                        .view(request_body, syntax)
+                        .view(iced::widget::Id::new(REQUEST_BODY_EDITOR_ID), request_body, syntax, self.search_selection)
                         .map(Message::EditorMessage),
                 )
                 .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))

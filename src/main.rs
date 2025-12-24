@@ -17,7 +17,6 @@ use beam::ui::CollectionPanel;
 use beam::ui::EnvironmentPanel;
 use beam::ui::RequestPanel;
 use beam::ui::ResponsePanel;
-use iced::widget::text_editor::Position;
 use std::sync::Arc;
 
 use beam::constant::REQUEST_BODY_SCROLLABLE_ID;
@@ -447,7 +446,10 @@ impl BeamApp {
                 }
             }
             Message::ResponsePanel(view_message) => {
-                match self.response_panel.update(view_message, &self.current_request.last_response) {
+                match self
+                    .response_panel
+                    .update(view_message, &self.current_request.last_response)
+                {
                     response::Action::ResponseBodyAction(action) => {
                         self.response_body_content.perform(action);
 
@@ -474,10 +476,8 @@ impl BeamApp {
                         let is_previous = self.modifiers.shift();
                         self.perform_response_search(!is_previous, Some(focus_id))
                     }
-                    response::Action::Focus(id) => {
-                        iced::widget::operation::focus(id)
-                            .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
-                    }
+                    response::Action::Focus(id) => iced::widget::operation::focus(id)
+                        .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
                     response::Action::Run(task) => task.map(Message::ResponsePanel),
                     response::Action::None => Task::none(),
                 }
@@ -1756,14 +1756,19 @@ impl BeamApp {
 
         let content = &mut self.request_body_content;
         let text = content.text();
-        let Position {
-            line: current_line,
-            column: current_col,
-        } = content.cursor().position;
 
-        info!("Current cursor: line={}, col={}", current_line, current_col);
+        let current_pos = self
+            .request_panel
+            .search_selection
+            .map(|(_, end)| end)
+            .unwrap_or(content.cursor().position);
 
-        let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
+        info!(
+            "Current search pos: line={}, col={}",
+            current_pos.line, current_pos.column
+        );
+
+        let current_idx = Self::position_to_byte_index(content, current_pos);
         info!("Current byte index: {}", current_idx);
 
         let search_start_idx = if next {
@@ -1842,8 +1847,8 @@ impl BeamApp {
                 match_start_byte, match_end_byte
             );
 
-            let start_pos = Self::byte_index_to_line_col(&text, match_start_byte);
-            let end_pos = Self::byte_index_to_line_col(&text, match_end_byte);
+            let start_pos = Self::byte_index_to_position(content, match_start_byte);
+            let end_pos = Self::byte_index_to_position(content, match_end_byte);
 
             info!("Match start: {:?}, end: {:?}", start_pos, end_pos);
 
@@ -1854,14 +1859,14 @@ impl BeamApp {
 
             // Calculate scroll position more precisely to center the match
             // We use 14.0px size + 5.0px padding, matching the editor configuration
-            let text_size = 14.0;
-            let padding = 5.0;
+            let text_size = 14.0f32;
+            let padding = 5.0f32;
             let line_height = text_size * 1.3;
 
             // Calculate y_offset:
             // top_padding + line_index * line_height - half_viewport_height
             // We estimate viewport height as 400px (or we could try to track it, but centering is approximate anyway)
-            let viewport_height = 400.0;
+            let viewport_height = 400.0f32;
             let target_y = padding + (start_pos.line as f32) * line_height;
             let y_offset = (target_y - viewport_height / 2.0).max(0.0);
 
@@ -1873,24 +1878,43 @@ impl BeamApp {
                 },
             );
 
+            let message_task =
+                Task::perform(async move { (start_pos, end_pos) }, |(start, end)| {
+                    Message::RequestPanel(request::Message::SearchFound(start, end))
+                });
+
             if let Some(id) = focus_id {
-                scroll_task
-                    .chain(operation::focus(id))
-                    .map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+                Task::batch(vec![
+                    message_task,
+                    scroll_task
+                        .chain(operation::focus(id))
+                        .map(|_: ()| Message::RequestPanel(request::Message::DoNothing)),
+                ])
             } else {
-                scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+                Task::batch(vec![
+                    message_task,
+                    scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing)),
+                ])
             }
         } else {
             info!("No match found");
             if let Some(id) = focus_id {
-                operation::focus(id).map(|_: ()| Message::RequestPanel(request::Message::DoNothing))
+                operation::focus(id)
+                    .map(|_: ()| Message::RequestPanel(request::Message::SearchNotFound))
             } else {
-                Task::none()
+                Task::perform(async {}, |_| {
+                    Message::RequestPanel(request::Message::SearchNotFound)
+                })
             }
         }
     }
 
-    fn perform_response_search(&mut self, next: bool, focus_id: Option<iced::widget::Id>) -> Task<Message> {
+    // TODO: dedup the same logic with perform_request_search
+    fn perform_response_search(
+        &mut self,
+        next: bool,
+        focus_id: Option<iced::widget::Id>,
+    ) -> Task<Message> {
         let query = &self.response_panel.search_query;
         if query.is_empty() {
             if let Some(id) = focus_id {
@@ -1902,12 +1926,14 @@ impl BeamApp {
 
         let content = &mut self.response_body_content;
         let text = content.text();
-        let Position {
-            line: current_line,
-            column: current_col,
-        } = content.cursor().position;
 
-        let current_idx = Self::line_col_to_byte_index(&text, current_line, current_col);
+        let current_pos = self
+            .response_panel
+            .search_selection
+            .map(|(_, end)| end)
+            .unwrap_or(content.cursor().position);
+
+        let current_idx = Self::position_to_byte_index(content, current_pos);
 
         let search_start_idx = if next {
             if let Some(c) = text.get(current_idx..).and_then(|s| s.chars().next()) {
@@ -1971,18 +1997,13 @@ impl BeamApp {
         }
 
         if found_match {
-            let start_pos = Self::byte_index_to_line_col(&text, match_start_byte);
-            let end_pos = Self::byte_index_to_line_col(&text, match_end_byte);
+            let start_pos = Self::byte_index_to_position(content, match_start_byte);
+            let end_pos = Self::byte_index_to_position(content, match_end_byte);
 
-            content.move_to(text_editor::Cursor {
-                position: end_pos,
-                selection: Some(start_pos),
-            });
-
-            let text_size = 14.0;
-            let padding = 5.0;
+            let text_size = 14.0f32;
+            let padding = 5.0f32;
             let line_height = text_size * 1.3;
-            let viewport_height = 400.0;
+            let viewport_height = 400.0f32;
             let target_y = padding + (start_pos.line as f32) * line_height;
             let y_offset = (target_y - viewport_height / 2.0).max(0.0);
 
@@ -1994,55 +2015,82 @@ impl BeamApp {
                 },
             );
 
+            let message_task =
+                Task::perform(async move { (start_pos, end_pos) }, |(start, end)| {
+                    Message::ResponsePanel(response::Message::SearchFound(start, end))
+                });
+
             if let Some(id) = focus_id {
-                scroll_task
-                    .chain(operation::focus(id))
-                    .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                Task::batch(vec![
+                    message_task,
+                    scroll_task
+                        .chain(operation::focus(id))
+                        .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
+                ])
             } else {
-                scroll_task.map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                Task::batch(vec![
+                    message_task,
+                    scroll_task.map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
+                ])
             }
         } else {
             if let Some(id) = focus_id {
-                operation::focus(id).map(|_: ()| Message::ResponsePanel(response::Message::DoNothing))
+                operation::focus(id)
+                    .map(|_: ()| Message::ResponsePanel(response::Message::SearchNotFound))
             } else {
-                Task::none()
+                Task::perform(async {}, |_| {
+                    Message::ResponsePanel(response::Message::SearchNotFound)
+                })
             }
         }
     }
 
-    fn line_col_to_byte_index(text: &str, target_line: usize, target_col: usize) -> usize {
-        let mut line = 0;
-        let mut col = 0;
-        for (idx, c) in text.char_indices() {
-            if line == target_line && col == target_col {
-                return idx;
+    fn position_to_byte_index(
+        content: &text_editor::Content,
+        position: text_editor::Position,
+    ) -> usize {
+        let mut offset = 0;
+        for (i, line) in content.lines().enumerate() {
+            if i == position.line {
+                let line_len_chars = line.text.chars().count();
+                let target_col = position.column.min(line_len_chars);
+
+                // Find byte offset of target_col
+                let byte_offset = line
+                    .text
+                    .chars()
+                    .take(target_col)
+                    .map(|c| c.len_utf8())
+                    .sum::<usize>();
+                return offset + byte_offset;
             }
-            if c == '\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
+            offset += line.text.len() + line.ending.as_str().len();
         }
-        text.len()
+        offset
     }
 
-    fn index_to_position(content: &text_editor::Content, index: usize) -> text_editor::Position {
-        let mut current_index = 0;
+    fn byte_index_to_position(
+        content: &text_editor::Content,
+        index: usize,
+    ) -> text_editor::Position {
+        let mut current_offset = 0;
 
         for (line_index, line) in content.lines().enumerate() {
-            let line_len = line.text.chars().count();
-            let ending_len = line.ending.as_str().len();
-            let total_len = line_len + ending_len;
+            let line_bytes = line.text.len();
+            let ending_bytes = line.ending.as_str().len();
+            let total_bytes = line_bytes + ending_bytes;
 
-            if index < current_index + total_len {
-                let column = index - current_index;
+            if index < current_offset + total_bytes {
+                let offset_in_line = index - current_offset;
+                let effective_offset = offset_in_line.min(line_bytes);
+                let column = line.text[..effective_offset].chars().count();
+
                 return text_editor::Position {
                     line: line_index,
-                    column: column.min(line_len),
+                    column,
                 };
             }
-            current_index += total_len;
+            current_offset += total_bytes;
         }
 
         let line_count = content.line_count();
@@ -2055,31 +2103,6 @@ impl BeamApp {
             }
         } else {
             text_editor::Position { line: 0, column: 0 }
-        }
-    }
-
-    fn byte_index_to_line_col(text: &str, target_idx: usize) -> text_editor::Position {
-        let mut line = 0;
-        let mut col = 0;
-        for (idx, c) in text.char_indices() {
-            if idx == target_idx {
-                return text_editor::Position {
-                    line: line,
-                    column: col,
-                };
-            }
-
-            if c == '\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
-            }
-        }
-
-        text_editor::Position {
-            line: line,
-            column: col,
         }
     }
 
