@@ -48,6 +48,11 @@ beam/
    - `CollectionPanel`: Request collection tree view
    - `RequestPanel`: Request configuration (URL, headers, body, auth)
    - `ResponsePanel`: Response display and formatting
+   - `EditorView`: Custom widget wrapper for text editors providing:
+     - Line number gutter with automatic width calculation
+     - Keyboard shortcut interception (Cmd+Z/Redo/Cmd+F)
+     - Search result highlighting with word-wrap support
+     - Optimized rendering with viewport culling and caching
 
 4. **HTTP Module** (`src/http/`):
    - Request execution
@@ -103,6 +108,26 @@ Requests support variable substitution from active environment:
 ```rust
 let resolved_config = self.resolve_request_config_variables(&self.current_request);
 ```
+
+#### EditorView Widget Pattern
+The `EditorView` widget wraps text editors to provide enhanced functionality:
+
+**Keyboard Event Interception**:
+
+- Intercepts Cmd+Z, Cmd+Y, Cmd+Shift+Z, and Cmd+F before the wrapped editor
+
+**Line Number Rendering**:
+- Calculates gutter width based on line count digits
+- Caches line heights to avoid repeated measurements
+- Uses viewport culling to only render visible line numbers
+- Handles word-wrapped lines by measuring actual text height
+
+**Search Result Highlighting**:
+- Renders semi-transparent overlays on matching text selections
+- Uses token-based word-wrap simulation to match TextEditor behavior
+- Correctly handles multi-line wrapped selections
+- Accounts for text editor padding, borders, and scrollbar width
+
 
 ### Testing
 
