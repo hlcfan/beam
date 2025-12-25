@@ -131,10 +131,25 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 
 ### Testing
 
-- Run tests: `cargo test`
-- Run application: `cargo run`
-- Build release: `cargo build --release`
-- Build macOS app: `./build_macos_app.sh`
+Beam uses a tiered testing strategy:
+
+1. **Unit Tests**: Test core logic in isolation.
+   - Run all tests: `cargo test`
+   - Test widget calculations: `cargo test widget_calc`
+
+2. **Integration Examples**: Manual verification of UI components.
+   - Run EditorView test: `cargo run --example editor_view_test`
+   - Run Selection test: `cargo run --example selection_test`
+   - Run Undo test: `cargo run --example undo_test`
+
+3. **Macos App Bundle**:
+   - Build macOS app: `./build_macos_app.sh`
+
+#### Testing Custom Widgets
+When modifying widgets like `EditorView`, follow these steps:
+- Ensure calculation logic is kept in `widget_calc.rs` and has unit tests.
+- Verify visual changes using `examples/editor_view_test.rs`.
+- Check for performance regressions (scrolling, large selections).
 
 ### Code Style
 

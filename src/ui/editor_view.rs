@@ -11,6 +11,7 @@ use iced::{
     widget::text_editor::Position,
 };
 
+use crate::ui::widget_calc;
 use std::cell::RefCell;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,11 +152,8 @@ where
     ) -> layout::Node {
         let gutter_width = if let Some(content) = self.content_ref {
             let line_count = content.line_count();
-            let digits = line_count.to_string().len();
-            // Estimate width: digits * char_width + padding
-            // We use a rough estimation or measure '0' * digits
-            // For monospace, all chars are same width.
-            // Let's measure "0"
+
+            // Measure "0" to get character width in monospace
             let paragraph = Renderer::Paragraph::with_text(Text {
                 content: "0",
                 bounds: iced::Size::INFINITE,
@@ -167,10 +165,9 @@ where
                 shaping: text::Shaping::Basic,
                 wrapping: text::Wrapping::default(),
             });
-            let min_bounds = paragraph.min_bounds();
-            let char_width = min_bounds.width;
+            let char_width = paragraph.min_bounds().width;
 
-            (digits as f32 * char_width) + char_width + self.padding
+            widget_calc::calculate_gutter_width(line_count, char_width, self.padding)
         } else {
             0.0
         };
@@ -326,7 +323,6 @@ where
         // Draw gutter if content_ref is present
         if let Some(content) = self.content_ref {
             let line_count = content.line_count();
-            let digits = line_count.to_string().len();
 
             let child_bounds = child_layout.bounds();
             let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
@@ -363,7 +359,8 @@ where
 
             let char_width = cache.char_width;
             let line_height = cache.single_line_height;
-            let gutter_width = (digits as f32 * char_width) + char_width + self.padding;
+            let gutter_width =
+                widget_calc::calculate_gutter_width(line_count, char_width, self.padding);
 
             // Draw gutter background
             renderer.fill_quad(
@@ -434,8 +431,13 @@ where
                     height
                 };
 
-                // Skip rendering if line is above viewport (but still track position)
-                if current_y + measured_height > viewport_start {
+                // Optimization: Skip rendering if line is not in viewport
+                if widget_calc::is_line_in_viewport(
+                    current_y,
+                    measured_height,
+                    viewport_start,
+                    viewport_end,
+                ) {
                     let number_text = (i + 1).to_string();
 
                     renderer.fill_text(
@@ -526,7 +528,7 @@ where
                 let cached_single_line_height = cache.single_line_height;
 
                 // Use cached values if available, otherwise fall back to measurement
-                let (_char_width, single_line_height) = if cached_char_width > 0.0 {
+                let (char_width, single_line_height) = if cached_char_width > 0.0 {
                     (cached_char_width, cached_single_line_height)
                 } else {
                     (char_width, single_line_height)
@@ -567,71 +569,20 @@ where
 
                     // Helper to measure position (x, y_offset) of a column index
                     // using manual word-wrapping simulation to match TextEditor behavior
-                    let measure_pos = |col: usize| -> (f32, f32) {
-                        if col == 0 {
-                            return (0.0, 0.0);
-                        }
-
-                        let mut current_x = 0.0;
-                        let mut current_y = 0.0;
-                        let mut processed_chars = 0;
-
-                        // We need to iterate char indices to correctly slice the string
-                        let mut char_indices: Vec<(usize, char)> =
-                            line_text.char_indices().collect();
-                        // Add a dummy end index to handle the last slice
-                        char_indices.push((line_text.len(), '\0'));
-
-                        let mut i = 0;
-                        while i < char_indices.len() - 1 {
-                            // Identify next token (word or sequence of spaces)
-                            let start_idx = i;
-                            let (_, start_char) = char_indices[i];
-                            let is_whitespace = start_char.is_whitespace();
-
-                            while i < char_indices.len() - 1 {
-                                let (_, c) = char_indices[i];
-                                if c.is_whitespace() != is_whitespace {
-                                    break;
-                                }
-                                i += 1;
-                            }
-                            // Token is from start_idx to i (exclusive)
-                            let token_len = i - start_idx; // number of chars in token
-
-                            // Measure token width
-                            // For Monospace, simpler:
-                            let token_width = token_len as f32 * char_width;
-
-                            // Check wrap
-                            // Note: Spaces at end of line might behave differently, but usually
-                            // if a WORD fits, it stays. if not, it wraps.
-                            // If we are a word and we overflow, we wrap.
-                            if !is_whitespace && current_x + token_width > content_width {
-                                // Simple latch: if > content_width, wrap.
-                                // (Unless token is wider than single line? We assume not for now/handled by char wrap in editor)
-                                current_x = 0.0;
-                                current_y += single_line_height;
-                            }
-
-                            // Check if our target col is within this token
-                            if processed_chars + token_len > col {
-                                // Target is inside this token
-                                let offset_in_token = col - processed_chars;
-                                let offset_x = offset_in_token as f32 * char_width;
-                                return (current_x + offset_x, current_y);
-                            }
-
-                            current_x += token_width;
-                            processed_chars += token_len;
-                        }
-
-                        // If we fall through (e.g. col is at end of line), return current pos
-                        (current_x, current_y)
-                    };
-
-                    let (start_x, start_y_offset) = measure_pos(start.column);
-                    let (end_x, end_y_offset) = measure_pos(end.column);
+                    let (start_x, start_y_offset) = widget_calc::simulate_word_wrap_position(
+                        &line_text,
+                        start.column,
+                        char_width,
+                        content_width,
+                        single_line_height,
+                    );
+                    let (end_x, end_y_offset) = widget_calc::simulate_word_wrap_position(
+                        &line_text,
+                        end.column,
+                        char_width,
+                        content_width,
+                        single_line_height,
+                    );
 
                     // Draw highlighting
                     let abs_start_x = child_layout.bounds().x + offset_left + start_x;
