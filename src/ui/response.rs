@@ -70,7 +70,7 @@ impl ResponsePanel {
             Message::EditorMessage(editor_message) => {
                 match editor_message {
                     undoable_editor::Message::Action(action) => {
-                         match &action {
+                        match &action {
                             text_editor::Action::Move(_)
                             | text_editor::Action::Select(_)
                             | text_editor::Action::SelectWord
@@ -381,8 +381,14 @@ impl ResponsePanel {
         } else {
             let syntax_language = get_syntax_from_content_type(&resp.content_type);
 
-            let body_column = self.body_editor
-                .view(iced::widget::Id::new(RESPONSE_BODY_EDITOR_ID), content, Some(syntax_language), self.search_selection)
+            let body_column = self
+                .body_editor
+                .view(
+                    iced::widget::Id::new(RESPONSE_BODY_EDITOR_ID),
+                    content,
+                    Some(syntax_language),
+                    self.search_selection,
+                )
                 .map(Message::EditorMessage);
 
             let format_button = response_format_button();
@@ -390,6 +396,10 @@ impl ResponsePanel {
             let editor_with_format = floating_element::FloatingElement::new(
                 scrollable(body_column)
                     .id(iced::widget::Id::new(RESPONSE_BODY_SCROLLABLE_ID))
+                    .direction(iced::widget::scrollable::Direction::Both {
+                        vertical: iced::widget::scrollable::Scrollbar::new(),
+                        horizontal: iced::widget::scrollable::Scrollbar::new(),
+                    })
                     .height(Length::Fill),
                 format_button,
             )

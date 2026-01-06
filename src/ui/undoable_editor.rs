@@ -41,6 +41,10 @@ impl UndoableEditor {
         self
     }
 
+    pub fn increment_version(&mut self) {
+        self.version += 1;
+    }
+
     /// Update the component with a message.
     /// Returns Some(new_text) if the text changed (for parent notification).
     pub fn update(
@@ -69,7 +73,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    // Don't increment version - content dimensions haven't changed
+                    self.version += 1;
                     Some(prev)
                 } else {
                     None
@@ -84,7 +88,7 @@ impl UndoableEditor {
                     )));
                     // Move cursor to end
                     content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    // Don't increment version - content dimensions haven't changed
+                    self.version += 1;
                     Some(next)
                 } else {
                     None
@@ -128,7 +132,7 @@ impl UndoableEditor {
                     bottom: 5.0,
                     left: 5.0,
                 })
-                // .wrapping(text::Wrapping::None)
+                .wrapping(iced::advanced::text::Wrapping::None)
                 // .height(self.height)
                 .style(Self::editor_style);
 
@@ -145,7 +149,7 @@ impl UndoableEditor {
                     bottom: 5.0,
                     left: 5.0,
                 })
-                // .wrapping(text::Wrapping::None)
+                .wrapping(iced::advanced::text::Wrapping::None)
                 // .height(self.height)
                 .style(Self::editor_style);
 

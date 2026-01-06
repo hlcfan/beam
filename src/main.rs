@@ -542,6 +542,7 @@ impl BeamApp {
                                         &mut self.response_body_content,
                                         formatted_resp,
                                     );
+                                    self.response_panel.body_editor.increment_version();
                                 }
 
                                 // Update the last opened request state and save to storage
@@ -767,6 +768,7 @@ impl BeamApp {
                             &mut self.response_body_content,
                             formatted_body,
                         );
+                        self.response_panel.body_editor.increment_version();
 
                         // Update the request in the collections as well
                         if let Some(collection) = self
@@ -1850,30 +1852,48 @@ impl BeamApp {
             let start_pos = Self::byte_index_to_position(content, match_start_byte);
             let end_pos = Self::byte_index_to_position(content, match_end_byte);
 
-            info!("Match start: {:?}, end: {:?}", start_pos, end_pos);
+            // info!("Match start: {:?}, end: {:?}", start_pos, end_pos);
 
             content.move_to(text_editor::Cursor {
                 position: end_pos,
                 selection: Some(start_pos),
             });
 
-            // Calculate scroll position more precisely to center the match
-            // We use 14.0px size + 5.0px padding, matching the editor configuration
+            // Calculate scroll position to ensure the match is visible
+            // Editor config: size 14.0, padding 5.0
             let text_size = 14.0f32;
             let padding = 5.0f32;
+
+            // Char width estimate. Standard Mono is ~0.6, but we want to be safe.
+            // If we underestimate, we scroll too little (still off-screen right).
+            // If we overestimate, we scroll too much (match moves left).
+            // Better to overestimate slightly for "Align Left" logic.
+            let char_width = text_size * 0.7; // safer estimate than 0.6
             let line_height = text_size * 1.3;
 
-            // Calculate y_offset:
-            // top_padding + line_index * line_height - half_viewport_height
-            // We estimate viewport height as 400px (or we could try to track it, but centering is approximate anyway)
-            let viewport_height = 400.0f32;
+            // Target Y (Align Top with padding):
+            // We want the match to be at Y = 50px physically
             let target_y = padding + (start_pos.line as f32) * line_height;
-            let y_offset = (target_y - viewport_height / 2.0).max(0.0);
+            let y_offset = (target_y - 50.0).max(0.0);
+
+            // Target X (Align Left with padding):
+            // We want the match to be at X = 100px physically
+            let target_x = padding + (start_pos.column as f32) * char_width;
+            let x_offset = (target_x - 100.0).max(0.0);
+
+            info!(
+                "Scroll To Match: line={}, col={}, target_x={}, x_offset={}",
+                start_pos.line, start_pos.column, target_x, x_offset
+            );
+
+            // Determine which scrollable to target
+            // Currently we default to REQUEST_BODY_SCROLLABLE_ID as it's the main use case
+            let scroll_id = iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID);
 
             let scroll_task = iced::widget::operation::scroll_to(
-                iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID),
+                scroll_id,
                 iced::widget::scrollable::AbsoluteOffset {
-                    x: Some(0.0),
+                    x: Some(x_offset),
                     y: Some(y_offset),
                 },
             );
@@ -2049,61 +2069,54 @@ impl BeamApp {
         content: &text_editor::Content,
         position: text_editor::Position,
     ) -> usize {
-        let mut offset = 0;
-        for (i, line) in content.lines().enumerate() {
-            if i == position.line {
-                let line_len_chars = line.text.chars().count();
-                let target_col = position.column.min(line_len_chars);
+        let text = content.text();
+        let mut line = 0;
+        let mut column = 0;
+        let mut current_byte = 0;
 
-                // Find byte offset of target_col
-                let byte_offset = line
-                    .text
-                    .chars()
-                    .take(target_col)
-                    .map(|c| c.len_utf8())
-                    .sum::<usize>();
-                return offset + byte_offset;
+        for c in text.chars() {
+            if line == position.line && column == position.column {
+                return current_byte;
             }
-            offset += line.text.len() + line.ending.as_str().len();
+
+            if c == '\n' {
+                line += 1;
+                column = 0;
+            } else {
+                column += 1;
+            }
+
+            current_byte += c.len_utf8();
         }
-        offset
+
+        current_byte
     }
 
     fn byte_index_to_position(
         content: &text_editor::Content,
         index: usize,
     ) -> text_editor::Position {
-        let mut current_offset = 0;
+        let text = content.text();
+        let mut line = 0;
+        let mut column = 0;
+        let mut current_byte = 0;
 
-        for (line_index, line) in content.lines().enumerate() {
-            let line_bytes = line.text.len();
-            let ending_bytes = line.ending.as_str().len();
-            let total_bytes = line_bytes + ending_bytes;
-
-            if index < current_offset + total_bytes {
-                let offset_in_line = index - current_offset;
-                let effective_offset = offset_in_line.min(line_bytes);
-                let column = line.text[..effective_offset].chars().count();
-
-                return text_editor::Position {
-                    line: line_index,
-                    column,
-                };
+        for c in text.chars() {
+            if current_byte >= index {
+                break;
             }
-            current_offset += total_bytes;
+
+            if c == '\n' {
+                line += 1;
+                column = 0;
+            } else {
+                column += 1;
+            }
+
+            current_byte += c.len_utf8();
         }
 
-        let line_count = content.line_count();
-        if line_count > 0 {
-            let last_line_idx = line_count - 1;
-            let last_line = content.line(last_line_idx).unwrap();
-            text_editor::Position {
-                line: last_line_idx,
-                column: last_line.text.chars().count(),
-            }
-        } else {
-            text_editor::Position { line: 0, column: 0 }
-        }
+        text_editor::Position { line, column }
     }
 
     fn view(&self) -> Element<'_, Message> {

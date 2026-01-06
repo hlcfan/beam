@@ -73,52 +73,20 @@ pub fn simulate_word_wrap_position(
 
     let mut current_x = 0.0;
     let mut current_y = 0.0;
-    let mut processed_chars = 0;
 
-    // Collect character indices for proper string slicing
-    let mut char_indices: Vec<(usize, char)> = text.char_indices().collect();
-    // Add a dummy end index to handle the last slice
-    char_indices.push((text.len(), '\0'));
+    // Character wrapping (Glyph) simulation.
+    // We return the position (current_x, current_y) for the character AT 'column' index.
+    for _ in text.chars().take(column) {
+        current_x += char_width;
 
-    let mut i = 0;
-    while i < char_indices.len() - 1 {
-        // Identify next token (word or sequence of spaces)
-        let start_idx = i;
-        let (_, start_char) = char_indices[i];
-        let is_whitespace = start_char.is_whitespace();
-
-        while i < char_indices.len() - 1 {
-            let (_, c) = char_indices[i];
-            if c.is_whitespace() != is_whitespace {
-                break;
-            }
-            i += 1;
-        }
-        // Token is from start_idx to i (exclusive)
-        let token_len = i - start_idx; // number of chars in token
-
-        // Measure token width
-        let token_width = token_len as f32 * char_width;
-
-        // Check wrap - if a word doesn't fit, wrap to next line
-        if !is_whitespace && current_x + token_width > content_width && current_x > 0.0 {
+        // If the NEXT character position would exceed content_width, wrap.
+        // We use a small epsilon to avoid floating point precision issues.
+        if current_x + char_width > content_width + 0.01 {
             current_x = 0.0;
             current_y += single_line_height;
         }
-
-        // Check if our target column is within this token
-        if processed_chars + token_len > column {
-            // Target is inside this token
-            let offset_in_token = column - processed_chars;
-            let offset_x = offset_in_token as f32 * char_width;
-            return (current_x + offset_x, current_y);
-        }
-
-        current_x += token_width;
-        processed_chars += token_len;
     }
 
-    // If we fall through (e.g. column is at end of line), return current pos
     (current_x, current_y)
 }
 

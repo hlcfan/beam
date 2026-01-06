@@ -802,10 +802,19 @@ impl RequestPanel {
 
                 let editor_area = scrollable(
                     self.body_editor
-                        .view(iced::widget::Id::new(REQUEST_BODY_EDITOR_ID), request_body, syntax, self.search_selection)
+                        .view(
+                            iced::widget::Id::new(REQUEST_BODY_EDITOR_ID),
+                            request_body,
+                            syntax,
+                            self.search_selection,
+                        )
                         .map(Message::EditorMessage),
                 )
                 .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))
+                .direction(iced::widget::scrollable::Direction::Both {
+                    vertical: iced::widget::scrollable::Scrollbar::new(),
+                    horizontal: iced::widget::scrollable::Scrollbar::new(),
+                })
                 .height(Length::Fill);
 
                 let format_button = body_format_button();
