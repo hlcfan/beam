@@ -423,7 +423,7 @@ where
                             align_x: text::Alignment::Left,
                             align_y: iced::alignment::Vertical::Center,
                             shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Word,
+                            wrapping: text::Wrapping::Glyph,
                         });
                         paragraph.min_bounds().height.max(line_height)
                     };
@@ -450,7 +450,7 @@ where
                             align_x: text::Alignment::Right,
                             align_y: iced::alignment::Vertical::Top,
                             shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Word,
+                            wrapping: text::Wrapping::Glyph,
                         },
                         iced::Point::new(child_bounds.x - 3.0, current_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
@@ -549,7 +549,7 @@ where
                             align_x: text::Alignment::Left,
                             align_y: iced::alignment::Vertical::Center,
                             shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Word,
+                            wrapping: text::Wrapping::Glyph,
                         });
                         cache.line_heights.push(paragraph.min_bounds().height);
                     }

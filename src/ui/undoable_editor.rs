@@ -128,7 +128,7 @@ impl UndoableEditor {
                     bottom: 5.0,
                     left: 5.0,
                 })
-                // .wrapping(text::Wrapping::None)
+                .wrapping(text::Wrapping::Glyph)
                 // .height(self.height)
                 .style(Self::editor_style);
 
@@ -145,7 +145,7 @@ impl UndoableEditor {
                     bottom: 5.0,
                     left: 5.0,
                 })
-                // .wrapping(text::Wrapping::None)
+                .wrapping(text::Wrapping::Glyph)
                 // .height(self.height)
                 .style(Self::editor_style);
 
