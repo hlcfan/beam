@@ -269,7 +269,6 @@ mod tests {
         // Should be on a wrapped line (y > 0)
         assert!(y >= single_line_height);
     }
-
     #[test]
     fn test_is_line_in_viewport_fully_visible() {
         let line_y = 100.0;

@@ -12,6 +12,7 @@ use iced::{
 };
 
 use crate::ui::widget_calc;
+use log::info;
 use std::cell::RefCell;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,9 +50,6 @@ struct Cache {
     last_width: f32,
     char_width: f32,
     single_line_height: f32,
-    // Cache for highlight rendering
-    last_selection: Option<(Position, Position)>,
-    highlight_rects: Vec<Rectangle>,
 }
 
 impl<'a, Message, Theme, Renderer, F> EditorView<'a, Message, Theme, Renderer, F>
@@ -323,6 +321,7 @@ where
         // Draw gutter if content_ref is present
         if let Some(content) = self.content_ref {
             let line_count = content.line_count();
+            info!("===line_count: {:?}", line_count);
 
             let child_bounds = child_layout.bounds();
             let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
@@ -361,6 +360,7 @@ where
             let line_height = cache.single_line_height;
             let gutter_width =
                 widget_calc::calculate_gutter_width(line_count, char_width, self.padding);
+            // info!("===gutter width: {:?}", gutter_width);
 
             // Draw gutter background
             renderer.fill_quad(
@@ -373,32 +373,25 @@ where
                     },
                     border: iced::Border {
                         color: Color::from_rgb(0.9, 0.9, 0.9),
-                        width: 0.0,
+                        width: 1.0,
                         radius: 0.0.into(),
                     },
                     shadow: iced::Shadow::default(),
                     snap: true,
                 },
-                Color::from_rgb(0.97, 0.97, 0.97),
+                Color::from_rgb8(184, 230, 254),
             );
 
             // Draw line numbers
-            let mut current_y = child_bounds.y + self.padding + 1.0;
-
-            // Optimization: Calculate max chars that can fit in a line to avoid measuring every line
-            let max_chars = if char_width > 0.0 {
-                (content_width / char_width).floor() as usize
-            } else {
-                0
-            };
+            let mut current_y = bounds.y + self.padding;
 
             // Calculate visible line range for viewport culling
             let viewport_start = viewport.y;
             let viewport_end = viewport.y + viewport.height;
-
             for i in 0..line_count {
                 // Optimization: Stop if we are below the viewport
                 if current_y > viewport_end {
+                    info!("===break:a {:?}, {:?}", current_y, viewport_end);
                     break;
                 }
 
@@ -410,23 +403,25 @@ where
                         None => continue,
                     };
 
-                    let height = if line_text.len() <= max_chars {
-                        line_height
+                    // Always measure using paragraph for accurate wrapped height
+                    // Use space for empty lines to ensure they occupy one row
+                    let measure_content = if line_text.is_empty() {
+                        " "
                     } else {
-                        // Only measure if potentially wrapping
-                        let paragraph = Renderer::Paragraph::with_text(Text {
-                            content: &line_text,
-                            bounds: iced::Size::new(content_width, f32::INFINITY),
-                            size: self.text_size,
-                            line_height: text::LineHeight::default(),
-                            font: self.font,
-                            align_x: text::Alignment::Left,
-                            align_y: iced::alignment::Vertical::Center,
-                            shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Glyph,
-                        });
-                        paragraph.min_bounds().height.max(line_height)
+                        &line_text
                     };
+                    let paragraph = Renderer::Paragraph::with_text(Text {
+                        content: measure_content,
+                        bounds: iced::Size::new(content_width, f32::INFINITY),
+                        size: self.text_size,
+                        line_height: text::LineHeight::default(),
+                        font: self.font,
+                        align_x: text::Alignment::Left,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::Glyph,
+                    });
+                    let height = paragraph.min_bounds().height.max(line_height);
                     cache.line_heights.push(height);
                     height
                 };
@@ -438,12 +433,12 @@ where
                     viewport_start,
                     viewport_end,
                 ) {
-                    let number_text = (i + 1).to_string();
+                    let number_text = (i + 0).to_string();
 
                     renderer.fill_text(
                         iced::advanced::text::Text {
                             content: number_text,
-                            bounds: iced::Size::new(gutter_width - self.padding * 1.0, line_height),
+                            bounds: iced::Size::new(gutter_width, line_height),
                             size: self.text_size,
                             line_height: text::LineHeight::default(),
                             font: self.font,
@@ -452,7 +447,7 @@ where
                             shaping: text::Shaping::Basic,
                             wrapping: text::Wrapping::Glyph,
                         },
-                        iced::Point::new(child_bounds.x - 3.0, current_y),
+                        iced::Point::new(bounds.x, current_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
                         *viewport,
                     );
@@ -524,14 +519,13 @@ where
                 let mut cache = state.cache.borrow_mut();
 
                 // Reuse cached measurements from line number rendering
-                let cached_char_width = cache.char_width;
                 let cached_single_line_height = cache.single_line_height;
 
                 // Use cached values if available, otherwise fall back to measurement
-                let (char_width, single_line_height) = if cached_char_width > 0.0 {
-                    (cached_char_width, cached_single_line_height)
+                let single_line_height = if cached_single_line_height > 0.0 {
+                    cached_single_line_height
                 } else {
-                    (char_width, single_line_height)
+                    single_line_height
                 };
 
                 if cache.line_heights.len() < start.line {
@@ -567,22 +561,33 @@ where
                         .map(|l| l.text.to_string())
                         .unwrap_or_default();
 
-                    // Helper to measure position (x, y_offset) of a column index
-                    // using manual word-wrapping simulation to match TextEditor behavior
-                    let (start_x, start_y_offset) = widget_calc::simulate_word_wrap_position(
-                        &line_text,
-                        start.column,
-                        char_width,
-                        content_width,
-                        single_line_height,
-                    );
-                    let (end_x, end_y_offset) = widget_calc::simulate_word_wrap_position(
-                        &line_text,
-                        end.column,
-                        char_width,
-                        content_width,
-                        single_line_height,
-                    );
+                    // Use paragraph grapheme_position for precise overlay positioning
+                    // This delegates positioning to iced's text layout engine
+                    let measure_content = if line_text.is_empty() {
+                        " ".to_string()
+                    } else {
+                        line_text.clone()
+                    };
+                    let paragraph = Renderer::Paragraph::with_text(Text {
+                        content: &measure_content,
+                        bounds: iced::Size::new(content_width, f32::INFINITY),
+                        size: self.text_size,
+                        line_height: text::LineHeight::default(),
+                        font: self.font,
+                        align_x: text::Alignment::Left,
+                        align_y: iced::alignment::Vertical::Top,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::Glyph,
+                    });
+
+                    let start_pos = paragraph
+                        .grapheme_position(0, start.column)
+                        .unwrap_or(iced::Point::new(0.0, 0.0));
+                    let (start_x, start_y_offset) = (start_pos.x, start_pos.y);
+                    let end_pos = paragraph
+                        .grapheme_position(0, end.column)
+                        .unwrap_or(iced::Point::new(0.0, 0.0));
+                    let (end_x, end_y_offset) = (end_pos.x, end_pos.y);
 
                     // Draw highlighting
                     let abs_start_x = child_layout.bounds().x + offset_left + start_x;
