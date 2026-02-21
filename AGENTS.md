@@ -118,6 +118,7 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 
 **Line Number Rendering**:
 - Computes `Vec<VisualRow>` via `widget_calc::compute_visual_rows()` — the **single source of truth** for all Y coordinates
+- Execution delegates height measurement completely to `iced::advanced::text::Paragraph` via closure to natively track exact wrapped visual line counts and wrap heights
 - Each `VisualRow` carries `{ logical_line_index, is_first_visual_row, y, height }`
 - Gutter renders a 1-based line number **only** on rows where `is_first_visual_row == true`; wrapped continuation rows render blank
 - Cache is invalidated when `content_width` changes **or** the content `version` changes (edit occurred)
@@ -126,9 +127,9 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 **Search Result Highlighting**:
 - Renders semi-transparent overlays on matching text selections
 - Looks up the target logical line's Y offset directly from the shared `Vec<VisualRow>` cache
-- Uses `grapheme_position()` with glyph-wrap column decomposition to place the highlight precisely
+- Uses `grapheme_position()` with native `iced` paragraph layout bounds to place the highlight precisely aligned to the original editor widget offsets
 - Correctly handles multi-visual-row selections (first fragment, middle full-width rows, last fragment)
-- Accounts for text editor padding and border via a consistent `content_width` formula
+- Evaluates `content_width` consistently with the `iced::widget::text_editor` inner size by exclusively trimming component `padding` to evaluate layout boundary (no arbitrary border sizing offsets)
 
 
 ### Testing
