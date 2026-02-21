@@ -117,16 +117,18 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 - Intercepts Cmd+Z, Cmd+Y, Cmd+Shift+Z, and Cmd+F before the wrapped editor
 
 **Line Number Rendering**:
-- Calculates gutter width based on line count digits
-- Caches line heights to avoid repeated measurements
-- Uses viewport culling to only render visible line numbers
-- Handles word-wrapped lines by measuring actual text height
+- Computes `Vec<VisualRow>` via `widget_calc::compute_visual_rows()` — the **single source of truth** for all Y coordinates
+- Each `VisualRow` carries `{ logical_line_index, is_first_visual_row, y, height }`
+- Gutter renders a 1-based line number **only** on rows where `is_first_visual_row == true`; wrapped continuation rows render blank
+- Cache is invalidated when `content_width` changes **or** the content `version` changes (edit occurred)
+- Uses viewport culling to skip rows outside the visible scroll area
 
 **Search Result Highlighting**:
 - Renders semi-transparent overlays on matching text selections
-- Uses token-based word-wrap simulation to match TextEditor behavior
-- Correctly handles multi-line wrapped selections
-- Accounts for text editor padding, borders, and scrollbar width
+- Looks up the target logical line's Y offset directly from the shared `Vec<VisualRow>` cache
+- Uses `grapheme_position()` with glyph-wrap column decomposition to place the highlight precisely
+- Correctly handles multi-visual-row selections (first fragment, middle full-width rows, last fragment)
+- Accounts for text editor padding and border via a consistent `content_width` formula
 
 
 ### Testing
