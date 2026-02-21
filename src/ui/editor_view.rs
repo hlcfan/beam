@@ -333,11 +333,10 @@ where
             let child_bounds = child_layout.bounds();
 
             // ── Single content-width formula used everywhere ──────────────────────
-            // The text editor renders text in a sub-area that excludes its border (1 px)
-            // and internal padding on left and right.  We must use exactly this width
-            // when computing visual rows so wrap points match the actual rendering.
-            let text_left_pad = self.padding + 1.0; // left_padding + border
-            let text_right_pad = self.padding_right + 1.0; // right_padding + border
+            // The text editor renders text in a sub-area that excludes its internal padding
+            // on left and right. We must use exactly this width when computing visual rows.
+            let text_left_pad = self.padding;
+            let text_right_pad = self.padding_right;
             let content_width = child_bounds.width - text_left_pad - text_right_pad;
 
             // ── Access cache ──────────────────────────────────────────────────────
@@ -359,7 +358,7 @@ where
                 });
                 let min_bounds = paragraph.min_bounds();
                 cache.char_width = min_bounds.width;
-                cache.single_line_height = self.text_size.0 * 1.3;
+                cache.single_line_height = min_bounds.height;
             }
 
             let char_width = cache.char_width;
@@ -386,8 +385,27 @@ where
                     .collect();
                 let line_strs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
 
+                let measure_line = |text: &str| -> usize {
+                    let measure_text = if text.is_empty() { " " } else { text };
+                    let paragraph = Renderer::Paragraph::with_text(Text {
+                        content: measure_text,
+                        bounds: iced::Size::new(content_width, f32::INFINITY),
+                        size: self.text_size,
+                        line_height: text::LineHeight::default(),
+                        font: self.font,
+                        align_x: text::Alignment::Left,
+                        align_y: iced::alignment::Vertical::Top,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::Glyph,
+                    });
+
+                    let min_height = paragraph.min_bounds().height;
+                    let num_visual = (min_height / single_line_height).round() as usize;
+                    num_visual.max(1)
+                };
+
                 cache.visual_rows =
-                    compute_visual_rows(&line_strs, content_width, char_width, single_line_height);
+                    compute_visual_rows(&line_strs, single_line_height, measure_line);
                 cache.last_width = content_width;
                 cache.last_version = self.version;
             }
@@ -476,39 +494,14 @@ where
         if let Some((start, end)) = self.selection {
             // Draw highlight ON TOP of content
 
-            // Text editor has internal padding (default 5.0) and border (1.0)
-            // We assume border is 1.0 based on usage in undoable_editor.rs.
-            // The padding is passed via self.padding.
-            let offset_left = self.padding + 1.0;
-            let offset_right = self.padding_right + 1.0;
-            let offset_y = self.padding + 1.0;
+            // Text editor has internal padding (default 5.0)
+            let offset_left = self.padding;
+            let offset_right = self.padding_right;
+            let offset_y = self.padding;
 
             // Adjust content_width to match the text_editor's actual text area width
-            // The text_editor has a border and internal padding.
-            // We assume standard usage: 1.0 border + 5.0 padding left + 5.0 padding right
-            // Our offset_x accounts for padding + border on the left.
-            // But we need to ensure the width reflects the available space for text.
-
-            let sample = Renderer::Paragraph::with_text(Text {
-                content: "M",
-                bounds: iced::Size::INFINITE,
-                size: self.text_size,
-                line_height: text::LineHeight::default(),
-                font: self.font,
-                align_x: text::Alignment::Left,
-                align_y: iced::alignment::Vertical::Center,
-                shaping: text::Shaping::Basic,
-                wrapping: text::Wrapping::default(),
-            });
-            let min_bounds = sample.min_bounds();
-            let char_width = min_bounds.width;
-            let single_line_height = min_bounds.height;
-
-            // Do NOT subtract a scrollbar width: the text_editor lays out text
-            // in its full child area minus its own internal padding; the scrollbar
-            // is an overlay and does not affect the paragraph's text-layout width.
-            // Subtracting it here would shift the Glyph-wrap point, causing
-            // grapheme_position to return wrong X offsets for wrapped lines.
+            // The text_editor lays out text in its full child area minus its own internal padding;
+            // the scrollbar is an overlay and does not affect the paragraph's text-layout width.
             let content_width = child_layout.bounds().width - offset_left - offset_right;
 
             if let Some(content) = self.content_ref {
@@ -532,10 +525,10 @@ where
                     });
                     let mb = p.min_bounds();
                     cache.char_width = mb.width;
-                    cache.single_line_height = self.text_size.0 * 1.3;
+                    cache.single_line_height = mb.height;
                 }
                 let single_line_height = cache.single_line_height;
-                let char_width_cached = cache.char_width;
+                let char_width = cache.char_width;
 
                 let needs_rebuild_sel = (cache.last_width - content_width).abs() > 0.1
                     || cache.last_version != self.version
@@ -552,12 +545,28 @@ where
                         })
                         .collect();
                     let line_strs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-                    cache.visual_rows = compute_visual_rows(
-                        &line_strs,
-                        content_width,
-                        char_width_cached,
-                        single_line_height,
-                    );
+
+                    let measure_line = |text: &str| -> usize {
+                        let measure_text = if text.is_empty() { " " } else { text };
+                        let paragraph = Renderer::Paragraph::with_text(Text {
+                            content: measure_text,
+                            bounds: iced::Size::new(content_width, f32::INFINITY),
+                            size: self.text_size,
+                            line_height: text::LineHeight::default(),
+                            font: self.font,
+                            align_x: text::Alignment::Left,
+                            align_y: iced::alignment::Vertical::Top,
+                            shaping: text::Shaping::Basic,
+                            wrapping: text::Wrapping::Glyph,
+                        });
+
+                        let min_height = paragraph.min_bounds().height;
+                        let num_visual = (min_height / single_line_height).round() as usize;
+                        num_visual.max(1)
+                    };
+
+                    cache.visual_rows =
+                        compute_visual_rows(&line_strs, single_line_height, measure_line);
                     cache.last_width = content_width;
                     cache.last_version = self.version;
                 }
@@ -714,6 +723,19 @@ where
                 }
             } else {
                 // Fallback to old simple logic if content_ref is missing
+                let sample = Renderer::Paragraph::with_text(Text {
+                    content: "0",
+                    bounds: iced::Size::INFINITE,
+                    size: self.text_size,
+                    line_height: text::LineHeight::default(),
+                    font: self.font,
+                    align_x: text::Alignment::Center,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: text::Shaping::Basic,
+                    wrapping: text::Wrapping::default(),
+                });
+                let char_width = sample.min_bounds().width;
+
                 let line_height = self.text_size.0 * 1.3;
                 let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
                 let start_x =

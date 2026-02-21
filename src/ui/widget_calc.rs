@@ -22,44 +22,28 @@ pub struct VisualRow {
     pub height: f32,
 }
 
-/// Break every logical line into its visual (screen) rows using glyph-wrap rules.
+/// Break every logical line into its visual (screen) rows using a provided line measurement closure.
 ///
 /// # Arguments
 /// - `lines`               – the logical lines (split on `\n`), as string slices.
-/// - `content_width`       – exact pixel width available for text
-///                           (widget width − border − left_padding − right_padding).
-/// - `char_width`          – pixel width of one monospace glyph.
 /// - `single_line_height`  – pixel height of one unwrapped visual row.
+/// - `measure_line`        – a closure that takes a single logical line string and returns
+///                           the number of visual rows it will occupy when wrapped.
 ///
 /// # Returns
 /// A `Vec<VisualRow>` listing every visual row in document order.
 /// An empty line always produces exactly one `VisualRow`.
 pub fn compute_visual_rows(
     lines: &[&str],
-    content_width: f32,
-    char_width: f32,
     single_line_height: f32,
+    measure_line: impl Fn(&str) -> usize,
 ) -> Vec<VisualRow> {
     let mut rows = Vec::new();
     let mut current_y = 0.0f32;
 
-    let chars_per_row = if char_width > 0.0 && content_width > 0.0 {
-        (content_width / char_width).floor() as usize
-    } else {
-        usize::MAX
-    };
-
     for (logical_line_index, line) in lines.iter().enumerate() {
-        // Count visual rows needed for this logical line.
-        // An empty line still occupies exactly one visual row.
-        let char_count = line.chars().count();
-        let num_visual = if chars_per_row == 0 || char_count == 0 {
-            1
-        } else {
-            ((char_count as f32) / (chars_per_row as f32)).ceil() as usize
-        };
-        // Clamp to at least 1
-        let num_visual = num_visual.max(1);
+        // Measure how many visual rows this logical line needs.
+        let num_visual = measure_line(line).max(1);
 
         for sub in 0..num_visual {
             rows.push(VisualRow {
@@ -87,107 +71,6 @@ pub fn compute_visual_rows(
 pub fn calculate_gutter_width(line_count: usize, char_width: f32, padding: f32) -> f32 {
     let digits = line_count.to_string().len();
     (digits as f32 * char_width) + char_width + padding
-}
-
-/// Calculate the total rendered height of a single logical line, accounting for glyph-wrap.
-///
-/// This is a convenience wrapper around `compute_visual_rows` for a single line.
-///
-/// # Arguments
-/// * `text` - The text content of the line
-/// * `content_width` - Available width for text content
-/// * `char_width` - Width of a single monospace character
-/// * `single_line_height` - Height of a single unwrapped line
-///
-/// # Returns
-/// The total height of the line in pixels (may span multiple visual rows if wrapped)
-pub fn calculate_line_height(
-    text: &str,
-    content_width: f32,
-    char_width: f32,
-    single_line_height: f32,
-) -> f32 {
-    let rows = compute_visual_rows(&[text], content_width, char_width, single_line_height);
-    rows.iter()
-        .map(|r| r.height)
-        .sum::<f32>()
-        .max(single_line_height)
-}
-
-/// Simulate word-wrap positioning to find the (x, y) offset of a column within wrapped text
-///
-/// This function simulates how the text editor wraps text at word boundaries to determine
-/// the visual position of a character at a given column index.
-///
-/// # Arguments
-/// * `text` - The text content of the line
-/// * `column` - The column index (character position) to find
-/// * `char_width` - Width of a single monospace character
-/// * `content_width` - Available width for text content
-/// * `single_line_height` - Height of a single line
-///
-/// # Returns
-/// A tuple of (x_offset, y_offset) representing the visual position
-pub fn simulate_word_wrap_position(
-    text: &str,
-    column: usize,
-    char_width: f32,
-    content_width: f32,
-    single_line_height: f32,
-) -> (f32, f32) {
-    if column == 0 {
-        return (0.0, 0.0);
-    }
-
-    let mut current_x = 0.0;
-    let mut current_y = 0.0;
-    let mut processed_chars = 0;
-
-    // Collect character indices for proper string slicing
-    let mut char_indices: Vec<(usize, char)> = text.char_indices().collect();
-    // Add a dummy end index to handle the last slice
-    char_indices.push((text.len(), '\0'));
-
-    let mut i = 0;
-    while i < char_indices.len() - 1 {
-        // Identify next token (word or sequence of spaces)
-        let start_idx = i;
-        let (_, start_char) = char_indices[i];
-        let is_whitespace = start_char.is_whitespace();
-
-        while i < char_indices.len() - 1 {
-            let (_, c) = char_indices[i];
-            if c.is_whitespace() != is_whitespace {
-                break;
-            }
-            i += 1;
-        }
-        // Token is from start_idx to i (exclusive)
-        let token_len = i - start_idx; // number of chars in token
-
-        // Measure token width
-        let token_width = token_len as f32 * char_width;
-
-        // Check wrap - if a word doesn't fit, wrap to next line
-        if !is_whitespace && current_x + token_width > content_width && current_x > 0.0 {
-            current_x = 0.0;
-            current_y += single_line_height;
-        }
-
-        // Check if our target column is within this token
-        if processed_chars + token_len > column {
-            // Target is inside this token
-            let offset_in_token = column - processed_chars;
-            let offset_x = offset_in_token as f32 * char_width;
-            return (current_x + offset_x, current_y);
-        }
-
-        current_x += token_width;
-        processed_chars += token_len;
-    }
-
-    // If we fall through (e.g. column is at end of line), return current pos
-    (current_x, current_y)
 }
 
 /// Check if a line is visible within the viewport
@@ -220,7 +103,7 @@ mod tests {
     #[test]
     fn test_compute_visual_rows_empty_line() {
         // An empty logical line must produce exactly one VisualRow.
-        let rows = compute_visual_rows(&[""], 800.0, 8.0, 20.0);
+        let rows = compute_visual_rows(&[""], 20.0, |_| 1);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].logical_line_index, 0);
         assert!(rows[0].is_first_visual_row);
@@ -231,26 +114,15 @@ mod tests {
     #[test]
     fn test_compute_visual_rows_short_line() {
         // A line that fits entirely within one row.
-        let rows = compute_visual_rows(&["Hello"], 800.0, 8.0, 20.0);
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].is_first_visual_row);
-    }
-
-    #[test]
-    fn test_compute_visual_rows_exact_fit() {
-        // A line whose character count exactly equals chars_per_row.
-        // 800 / 8 = 100 chars per row; a 100-char line → still 1 row.
-        let text = "a".repeat(100);
-        let rows = compute_visual_rows(&[&text], 800.0, 8.0, 20.0);
+        let rows = compute_visual_rows(&["Hello"], 20.0, |_| 1);
         assert_eq!(rows.len(), 1);
         assert!(rows[0].is_first_visual_row);
     }
 
     #[test]
     fn test_compute_visual_rows_wraps_to_two() {
-        // 101 chars with 100 chars/row → 2 visual rows.
-        let text = "a".repeat(101);
-        let rows = compute_visual_rows(&[&text], 800.0, 8.0, 20.0);
+        // Mock a line measuring 2 visual rows
+        let rows = compute_visual_rows(&["long line wrapping"], 20.0, |_| 2);
         assert_eq!(rows.len(), 2);
         assert!(rows[0].is_first_visual_row);
         assert!(!rows[1].is_first_visual_row);
@@ -263,9 +135,10 @@ mod tests {
     #[test]
     fn test_compute_visual_rows_multiple_logical_lines() {
         // Two logical lines: first wraps into 2 rows, second fits in 1.
-        let long_line = "a".repeat(101);
-        let short_line = "hi";
-        let rows = compute_visual_rows(&[&long_line, short_line], 800.0, 8.0, 20.0);
+        let mock_measure = |text: &str| {
+            if text == "long line" { 2 } else { 1 }
+        };
+        let rows = compute_visual_rows(&["long line", "short"], 20.0, mock_measure);
         assert_eq!(rows.len(), 3);
         // Row 0: first visual row of logical line 0
         assert_eq!(rows[0].logical_line_index, 0);
@@ -283,7 +156,7 @@ mod tests {
 
     #[test]
     fn test_compute_visual_rows_no_lines() {
-        let rows = compute_visual_rows(&[], 800.0, 8.0, 20.0);
+        let rows = compute_visual_rows(&[], 20.0, |_| 1);
         assert!(rows.is_empty());
     }
 
@@ -294,111 +167,17 @@ mod tests {
         let char_width = 8.0;
         let padding = 5.0;
 
-        // 1-9 lines: 1 digit
         assert_eq!(calculate_gutter_width(5, char_width, padding), 21.0);
         assert_eq!(calculate_gutter_width(9, char_width, padding), 21.0);
-
-        // 10-99 lines: 2 digits
         assert_eq!(calculate_gutter_width(10, char_width, padding), 29.0);
         assert_eq!(calculate_gutter_width(99, char_width, padding), 29.0);
-
-        // 100-999 lines: 3 digits
         assert_eq!(calculate_gutter_width(100, char_width, padding), 37.0);
         assert_eq!(calculate_gutter_width(999, char_width, padding), 37.0);
-
-        // 1000+ lines: 4 digits
         assert_eq!(calculate_gutter_width(1000, char_width, padding), 45.0);
     }
 
     #[test]
-    fn test_calculate_line_height_no_wrap() {
-        let char_width = 8.0f32;
-        let content_width = 800.0f32;
-        let single_line_height = 20.0f32;
-
-        // Short text that fits in one line
-        let text = "Hello, world!";
-        let height = calculate_line_height(text, content_width, char_width, single_line_height);
-        assert_eq!(height, single_line_height);
-    }
-
-    #[test]
-    fn test_calculate_line_height_with_wrap() {
-        let char_width = 8.0f32;
-        let content_width = 800.0f32;
-        let single_line_height = 20.0f32;
-
-        // Long text that exceeds 100 chars per row (800/8)
-        let text = "a".repeat(150);
-        let height = calculate_line_height(&text, content_width, char_width, single_line_height);
-        // Should be at least 2 rows worth of height
-        assert!(height >= single_line_height * 2.0);
-    }
-
-    #[test]
-    fn test_simulate_word_wrap_position_start() {
-        let char_width = 8.0;
-        let content_width = 800.0;
-        let single_line_height = 20.0;
-
-        let text = "Hello world";
-        let (x, y) =
-            simulate_word_wrap_position(text, 0, char_width, content_width, single_line_height);
-        assert_eq!(x, 0.0);
-        assert_eq!(y, 0.0);
-    }
-
-    #[test]
-    fn test_simulate_word_wrap_position_same_line() {
-        let char_width = 8.0;
-        let content_width = 800.0;
-        let single_line_height = 20.0;
-
-        let text = "Hello world";
-        // Position at 'w' (column 6)
-        let (x, y) =
-            simulate_word_wrap_position(text, 6, char_width, content_width, single_line_height);
-        assert_eq!(x, 6.0 * char_width);
-        assert_eq!(y, 0.0);
-    }
-
-    #[test]
-    fn test_simulate_word_wrap_position_wrapped() {
-        let char_width = 8.0;
-        let content_width = 80.0; // Only 10 chars fit
-        let single_line_height = 20.0;
-
-        // "Hello world" - "world" should wrap to next line
-        let text = "Hello world";
-        // Position at 'w' (column 6) - should be on second line
-        let (x, y) =
-            simulate_word_wrap_position(text, 6, char_width, content_width, single_line_height);
-        assert_eq!(x, 0.0); // Start of wrapped line
-        assert_eq!(y, single_line_height); // Second line
-    }
-
-    #[test]
-    fn test_simulate_word_wrap_position_long_text() {
-        let char_width = 8.0;
-        let content_width = 80.0; // 10 chars fit
-        let single_line_height = 20.0;
-
-        let text = "This is a very long line that will definitely wrap multiple times";
-        // Find position of 'v' in "very" (around column 10)
-        let column = text.find('v').unwrap();
-        let (_x, y) = simulate_word_wrap_position(
-            text,
-            column,
-            char_width,
-            content_width,
-            single_line_height,
-        );
-
-        // Should be on a wrapped line (y > 0)
-        assert!(y >= single_line_height);
-    }
-    #[test]
-    fn test_is_line_in_viewport_fully_visible() {
+    fn test_is_line_in_viewport() {
         let line_y = 100.0;
         let line_height = 20.0;
         let viewport_start = 50.0;
@@ -410,69 +189,9 @@ mod tests {
             viewport_start,
             viewport_end
         ));
-    }
-
-    #[test]
-    fn test_is_line_in_viewport_partially_visible_top() {
-        let line_y = 40.0;
-        let line_height = 20.0;
-        let viewport_start = 50.0;
-        let viewport_end = 200.0;
-
-        // Line bottom (60.0) is below viewport start
-        assert!(is_line_in_viewport(
-            line_y,
-            line_height,
-            viewport_start,
-            viewport_end
-        ));
-    }
-
-    #[test]
-    fn test_is_line_in_viewport_partially_visible_bottom() {
-        let line_y = 190.0;
-        let line_height = 20.0;
-        let viewport_start = 50.0;
-        let viewport_end = 200.0;
-
-        // Line top (190.0) is above viewport end
-        assert!(is_line_in_viewport(
-            line_y,
-            line_height,
-            viewport_start,
-            viewport_end
-        ));
-    }
-
-    #[test]
-    fn test_is_line_in_viewport_not_visible_above() {
-        let line_y = 10.0;
-        let line_height = 20.0;
-        let viewport_start = 50.0;
-        let viewport_end = 200.0;
-
-        // Line bottom (30.0) is above viewport start
-        assert!(!is_line_in_viewport(
-            line_y,
-            line_height,
-            viewport_start,
-            viewport_end
-        ));
-    }
-
-    #[test]
-    fn test_is_line_in_viewport_not_visible_below() {
-        let line_y = 250.0;
-        let line_height = 20.0;
-        let viewport_start = 50.0;
-        let viewport_end = 200.0;
-
-        // Line top (250.0) is below viewport end
-        assert!(!is_line_in_viewport(
-            line_y,
-            line_height,
-            viewport_start,
-            viewport_end
-        ));
+        assert!(is_line_in_viewport(40.0, 20.0, 50.0, 200.0));
+        assert!(is_line_in_viewport(190.0, 20.0, 50.0, 200.0));
+        assert!(!is_line_in_viewport(10.0, 20.0, 50.0, 200.0));
+        assert!(!is_line_in_viewport(250.0, 20.0, 50.0, 200.0));
     }
 }
