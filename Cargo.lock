@@ -6565,3 +6565,13 @@ dependencies = [
  "syn",
  "winnow",
 ]
+
+[[patch.unused]]
+name = "iced"
+version = "0.15.0-dev"
+source = "git+https://github.com/hlcfan/iced?branch=fix-text-alignment#43e8d5cd0c4d118d41d1460de7fd4a003dd1da14"
+
+[[patch.unused]]
+name = "iced_aw"
+version = "0.13.0-dev"
+source = "git+https://github.com/iced-rs/iced_aw?rev=0efedc7187dc5c87a104be33a4f230d28790a865#0efedc7187dc5c87a104be33a4f230d28790a865"

@@ -35,21 +35,8 @@ rquickjs = "0.10.0"
 lazy_static = "1.4"
 
 [patch.crates-io]
-# iced = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
-# iced_core = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
-# iced_widget = { git = "https://github.com/iced-rs/iced.git", rev = "6279590" }
-
-[features]
-default = ["iced/debug"]
-
-[profile.release]
-codegen-units = 1
-debug = false
-lto = true
-incremental = false
-opt-level = 3
-overflow-checks = false
-strip = "debuginfo"
+iced = { git = "https://github.com/hlcfan/iced", branch = "fix-text-alignment" }
+iced_aw = { git = "https://github.com/iced-rs/iced_aw", rev = "0efedc7187dc5c87a104be33a4f230d28790a865", features = ["context_menu", "menu"] }
 
 [package.metadata.bundle]
 name = "Beam"
