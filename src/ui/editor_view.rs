@@ -11,7 +11,7 @@ use iced::{
     widget::text_editor::Position,
 };
 
-use crate::ui::widget_calc;
+use crate::ui::widget_calc::{self, compute_visual_rows};
 use log::info;
 use std::cell::RefCell;
 
@@ -46,9 +46,16 @@ struct State {
 
 #[derive(Debug, Default)]
 struct Cache {
-    line_heights: Vec<f32>,
+    /// Pre-computed visual-row layout. This is the single source of truth
+    /// for all Y-coordinate decisions in both the gutter and the highlight overlay.
+    visual_rows: Vec<crate::ui::widget_calc::VisualRow>,
+    /// Content width at which visual_rows was computed. Invalidated when this changes.
     last_width: f32,
+    /// Editor content version at which visual_rows was computed. Invalidated when this changes.
+    last_version: usize,
+    /// Cached monospace character width.
     char_width: f32,
+    /// Height of a single unwrapped visual row.
     single_line_height: f32,
 }
 
@@ -324,21 +331,20 @@ where
             info!("===line_count: {:?}", line_count);
 
             let child_bounds = child_layout.bounds();
-            let content_width = child_bounds.width - 2.0; // Subtract approximate border/padding of text_editor
 
-            // Access cache
+            // ── Single content-width formula used everywhere ──────────────────────
+            // The text editor renders text in a sub-area that excludes its border (1 px)
+            // and internal padding on left and right.  We must use exactly this width
+            // when computing visual rows so wrap points match the actual rendering.
+            let text_left_pad = self.padding + 1.0; // left_padding + border
+            let text_right_pad = self.padding_right + 1.0; // right_padding + border
+            let content_width = child_bounds.width - text_left_pad - text_right_pad;
+
+            // ── Access cache ──────────────────────────────────────────────────────
             let state = tree.state.downcast_ref::<State>();
             let mut cache = state.cache.borrow_mut();
 
-            // Only invalidate cache if width changed significantly
-            let width_changed = (cache.last_width - content_width).abs() > 0.1;
-            if width_changed {
-                cache.line_heights.clear();
-                cache.last_width = content_width;
-                cache.char_width = 0.0; // Force remeasurement
-            }
-
-            // Cache char_width and single_line_height measurements
+            // Measure char metrics once (invalidated when char_width is zero).
             if cache.char_width == 0.0 {
                 let paragraph = Renderer::Paragraph::with_text(Text {
                     content: "0",
@@ -357,10 +363,34 @@ where
             }
 
             let char_width = cache.char_width;
-            let line_height = cache.single_line_height;
+            let single_line_height = cache.single_line_height;
             let gutter_width =
                 widget_calc::calculate_gutter_width(line_count, char_width, self.padding);
-            // info!("===gutter width: {:?}", gutter_width);
+
+            // Invalidate visual-row cache when content_width or version changed.
+            let needs_rebuild = (cache.last_width - content_width).abs() > 0.1
+                || cache.last_version != self.version
+                || cache.visual_rows.is_empty();
+
+            if needs_rebuild {
+                // Collect all logical lines into owned Strings first (content.line() returns
+                // Cow<str> with a lifetime bound to the iterator, so we materialise them before
+                // building the &str slice).
+                let owned: Vec<String> = (0..line_count)
+                    .map(|i| {
+                        content
+                            .line(i)
+                            .map(|l| l.text.to_string())
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                let line_strs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+
+                cache.visual_rows =
+                    compute_visual_rows(&line_strs, content_width, char_width, single_line_height);
+                cache.last_width = content_width;
+                cache.last_version = self.version;
+            }
 
             // Draw gutter background
             renderer.fill_quad(
@@ -382,78 +412,53 @@ where
                 Color::from_rgb8(184, 230, 254),
             );
 
-            // Draw line numbers
-            let mut current_y = bounds.y + self.padding;
+            // Y offset to the top of the text content area inside the child widget.
+            // child_bounds.y is already past the gutter strip; adding border+padding
+            // brings us to the exact row where text is rendered.
+            let text_top = child_bounds.y + text_left_pad;
 
-            // Calculate visible line range for viewport culling
             let viewport_start = viewport.y;
             let viewport_end = viewport.y + viewport.height;
-            for i in 0..line_count {
-                // Optimization: Stop if we are below the viewport
-                if current_y > viewport_end {
-                    info!("===break:a {:?}, {:?}", current_y, viewport_end);
-                    break;
-                }
 
-                let measured_height = if i < cache.line_heights.len() {
-                    cache.line_heights[i]
-                } else {
-                    let line_text = match content.line(i) {
-                        Some(l) => l.text,
-                        None => continue,
-                    };
+            // ── Gutter draw loop (VisualRow-based) ──────────────────────────────
+            for row in &cache.visual_rows {
+                let abs_y = text_top + row.y;
 
-                    // Always measure using paragraph for accurate wrapped height
-                    // Use space for empty lines to ensure they occupy one row
-                    let measure_content = if line_text.is_empty() {
-                        " "
-                    } else {
-                        &line_text
-                    };
-                    let paragraph = Renderer::Paragraph::with_text(Text {
-                        content: measure_content,
-                        bounds: iced::Size::new(content_width, f32::INFINITY),
-                        size: self.text_size,
-                        line_height: text::LineHeight::default(),
-                        font: self.font,
-                        align_x: text::Alignment::Left,
-                        align_y: iced::alignment::Vertical::Center,
-                        shaping: text::Shaping::Basic,
-                        wrapping: text::Wrapping::Glyph,
-                    });
-                    let height = paragraph.min_bounds().height.max(line_height);
-                    cache.line_heights.push(height);
-                    height
-                };
-
-                // Optimization: Skip rendering if line is not in viewport
-                if widget_calc::is_line_in_viewport(
-                    current_y,
-                    measured_height,
+                // Viewport culling
+                if !widget_calc::is_line_in_viewport(
+                    abs_y,
+                    row.height,
                     viewport_start,
                     viewport_end,
                 ) {
-                    let number_text = (i + 0).to_string();
+                    // Optimisation: once we are below the viewport we can stop.
+                    if abs_y > viewport_end {
+                        break;
+                    }
+                    continue;
+                }
 
+                if row.is_first_visual_row {
+                    // Render the 1-based line number right-aligned in the gutter.
+                    let number_text = (row.logical_line_index + 1).to_string();
                     renderer.fill_text(
                         iced::advanced::text::Text {
                             content: number_text,
-                            bounds: iced::Size::new(gutter_width, line_height),
+                            bounds: iced::Size::new(gutter_width, single_line_height),
                             size: self.text_size,
                             line_height: text::LineHeight::default(),
                             font: self.font,
                             align_x: text::Alignment::Right,
                             align_y: iced::alignment::Vertical::Top,
                             shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Glyph,
+                            wrapping: text::Wrapping::None,
                         },
-                        iced::Point::new(bounds.x, current_y),
+                        iced::Point::new(child_bounds.x - 3.0, abs_y),
                         Color::from_rgb(0.6, 0.6, 0.6),
                         *viewport,
                     );
                 }
-
-                current_y += measured_height;
+                // Soft-wrap continuation rows: render blank (no line number).
             }
         }
 
@@ -499,62 +504,79 @@ where
             let char_width = min_bounds.width;
             let single_line_height = min_bounds.height;
 
-            // Estimate if scrollbar is needed
-            let has_scrollbar = if let Some(content) = self.content_ref {
-                let total_height = content.line_count() as f32 * single_line_height;
-                total_height > bounds.height
-            } else {
-                false
-            };
-
-            let scrollbar_width = if has_scrollbar { 35.0 } else { 0.0 };
-            let content_width =
-                child_layout.bounds().width - offset_left - offset_right - scrollbar_width;
+            // Do NOT subtract a scrollbar width: the text_editor lays out text
+            // in its full child area minus its own internal padding; the scrollbar
+            // is an overlay and does not affect the paragraph's text-layout width.
+            // Subtracting it here would shift the Glyph-wrap point, causing
+            // grapheme_position to return wrong X offsets for wrapped lines.
+            let content_width = child_layout.bounds().width - offset_left - offset_right;
 
             if let Some(content) = self.content_ref {
-                // Advanced calculation handling wrapping
-
-                // 1. Calculate accumulated height of lines before start.line
+                // Advanced calculation handling wrapping.
+                // Reuse the VisualRow cache built during gutter rendering.
                 let state = tree.state.downcast_ref::<State>();
                 let mut cache = state.cache.borrow_mut();
 
-                // Reuse cached measurements from line number rendering
-                let cached_single_line_height = cache.single_line_height;
+                // Ensure cache is populated (it may not be if gutter was not rendered).
+                if cache.char_width == 0.0 {
+                    let p = Renderer::Paragraph::with_text(Text {
+                        content: "0",
+                        bounds: iced::Size::INFINITE,
+                        size: self.text_size,
+                        line_height: text::LineHeight::default(),
+                        font: self.font,
+                        align_x: text::Alignment::Left,
+                        align_y: iced::alignment::Vertical::Center,
+                        shaping: text::Shaping::Basic,
+                        wrapping: text::Wrapping::default(),
+                    });
+                    let mb = p.min_bounds();
+                    cache.char_width = mb.width;
+                    cache.single_line_height = self.text_size.0 * 1.3;
+                }
+                let single_line_height = cache.single_line_height;
+                let char_width_cached = cache.char_width;
 
-                // Use cached values if available, otherwise fall back to measurement
-                let single_line_height = if cached_single_line_height > 0.0 {
-                    cached_single_line_height
-                } else {
-                    single_line_height
-                };
+                let needs_rebuild_sel = (cache.last_width - content_width).abs() > 0.1
+                    || cache.last_version != self.version
+                    || cache.visual_rows.is_empty();
 
-                if cache.line_heights.len() < start.line {
-                    for i in cache.line_heights.len()..start.line {
-                        let line_text = content
-                            .line(i)
-                            .map(|l| l.text.to_string())
-                            .unwrap_or_default();
-                        let paragraph = Renderer::Paragraph::with_text(Text {
-                            content: &line_text,
-                            bounds: iced::Size::new(content_width, f32::INFINITY),
-                            size: self.text_size,
-                            line_height: text::LineHeight::default(),
-                            font: self.font,
-                            align_x: text::Alignment::Left,
-                            align_y: iced::alignment::Vertical::Center,
-                            shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Glyph,
-                        });
-                        cache.line_heights.push(paragraph.min_bounds().height);
-                    }
+                if needs_rebuild_sel {
+                    let line_count = content.line_count();
+                    let owned: Vec<String> = (0..line_count)
+                        .map(|i| {
+                            content
+                                .line(i)
+                                .map(|l| l.text.to_string())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    let line_strs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+                    cache.visual_rows = compute_visual_rows(
+                        &line_strs,
+                        content_width,
+                        char_width_cached,
+                        single_line_height,
+                    );
+                    cache.last_width = content_width;
+                    cache.last_version = self.version;
                 }
 
-                let accumulated_y: f32 = cache.line_heights.iter().take(start.line).sum();
+                // Find the Y offset of the first visual row for start.line.
+                // VisualRow.y is relative to text content top; add border+padding to get absolute.
+                let text_top = child_layout.bounds().y + offset_left; // border(1)+padding(left)
+                let row_y = cache
+                    .visual_rows
+                    .iter()
+                    .find(|r| r.logical_line_index == start.line && r.is_first_visual_row)
+                    .map(|r| r.y)
+                    .unwrap_or(0.0);
 
-                let current_y = bounds.y + offset_y + accumulated_y;
+                let accumulated_y = row_y;
+                let current_y = text_top + accumulated_y;
 
-                // 2. Handle the start line
                 // For now we assume start.line == end.line as per original code structure for search results
+
                 if start.line == end.line {
                     let line_text = content
                         .line(start.line)
@@ -580,12 +602,38 @@ where
                         wrapping: text::Wrapping::Glyph,
                     });
 
+                    // --- Glyph-wrap aware grapheme_position ---
+                    // grapheme_position(line, index) expects:
+                    //   line  = *visual* (wrapped) line index within the paragraph
+                    //   index = grapheme index *within that visual line*
+                    //
+                    // For monospace Glyph-wrapping every character is the same width, so:
+                    //   chars_per_row = floor(content_width / char_width)
+                    //   visual_line   = logical_col / chars_per_row
+                    //   col_in_row    = logical_col % chars_per_row
+                    let chars_per_row = if char_width > 0.0 {
+                        (content_width / char_width).floor() as usize
+                    } else {
+                        usize::MAX
+                    };
+
+                    let (start_visual_line, start_col_in_row) = if chars_per_row > 0 {
+                        (start.column / chars_per_row, start.column % chars_per_row)
+                    } else {
+                        (0, start.column)
+                    };
+                    let (end_visual_line, end_col_in_row) = if chars_per_row > 0 {
+                        (end.column / chars_per_row, end.column % chars_per_row)
+                    } else {
+                        (0, end.column)
+                    };
+
                     let start_pos = paragraph
-                        .grapheme_position(0, start.column)
+                        .grapheme_position(start_visual_line, start_col_in_row)
                         .unwrap_or(iced::Point::new(0.0, 0.0));
                     let (start_x, start_y_offset) = (start_pos.x, start_pos.y);
                     let end_pos = paragraph
-                        .grapheme_position(0, end.column)
+                        .grapheme_position(end_visual_line, end_col_in_row)
                         .unwrap_or(iced::Point::new(0.0, 0.0));
                     let (end_x, end_y_offset) = (end_pos.x, end_pos.y);
 
