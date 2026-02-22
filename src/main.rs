@@ -1750,8 +1750,6 @@ impl BeamApp {
             return Task::none();
         }
 
-        info!("perform_search: query='{}', next={}", query, next);
-
         let content = &mut self.request_body_content;
         let text = content.text();
 
@@ -1761,13 +1759,7 @@ impl BeamApp {
             .map(|(_, end)| end)
             .unwrap_or(content.cursor().position);
 
-        info!(
-            "Current search pos: line={}, col={}",
-            current_pos.line, current_pos.column
-        );
-
         let current_idx = Self::position_to_byte_index(content, current_pos);
-        info!("Current byte index: {}", current_idx);
 
         let search_start_idx = if next {
             // Start search from current cursor position + char length to find the "next" match
@@ -1840,15 +1832,8 @@ impl BeamApp {
         }
 
         if found_match {
-            info!(
-                "Match found at byte range: {}..{}",
-                match_start_byte, match_end_byte
-            );
-
             let start_pos = Self::byte_index_to_position(content, match_start_byte);
             let end_pos = Self::byte_index_to_position(content, match_end_byte);
-
-            info!("Match start: {:?}, end: {:?}", start_pos, end_pos);
 
             // Do NOT modify the user's cursor or selection!
             // The highlight will be driven independently by `SearchFound` -> `search_selection`.
@@ -1872,7 +1857,6 @@ impl BeamApp {
                 message_task
             }
         } else {
-            info!("No match found");
             if let Some(id) = focus_id {
                 operation::focus(id)
                     .map(|_: ()| Message::RequestPanel(request::Message::SearchNotFound))

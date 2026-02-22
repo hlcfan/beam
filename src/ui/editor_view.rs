@@ -12,7 +12,6 @@ use iced::{
 };
 
 use crate::ui::widget_calc::{self, compute_visual_rows};
-use log::info;
 use std::cell::RefCell;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -368,7 +367,6 @@ where
         // Draw gutter if content_ref is present
         if let Some(content) = self.content_ref {
             let line_count = content.line_count();
-            info!("===line_count: {:?}", line_count);
 
             let child_bounds = child_layout.bounds();
 

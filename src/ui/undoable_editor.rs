@@ -106,17 +106,6 @@ impl UndoableEditor {
     ) -> Element<'a, Message> {
         let editor_id = editor_id.into();
 
-        // Add debug log for search active match
-        if let Some((start, end)) = search_active_match {
-            log::info!(
-                "UndoableEditor::view - search_active_match: start={:?}, end={:?}",
-                start,
-                end
-            );
-        } else {
-            log::info!("UndoableEditor::view - search_active_match: None");
-        }
-
         // Create editor with or without syntax highlighting
         if let Some(syntax) = syntax {
             let editor = text_editor(content)

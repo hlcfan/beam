@@ -460,7 +460,6 @@ impl RequestPanel {
             Message::FindPrevious => Action::SearchPrevious(self.search_input_id.clone()),
             Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
             Message::SearchFound(start, end) => {
-                info!("===Found: {:?} -> {:?}", start, end);
                 self.search_selection = Some((start, end));
                 Action::Run(
                     iced::advanced::widget::operate(crate::ui::editor_view::QueryScrollY::new(
