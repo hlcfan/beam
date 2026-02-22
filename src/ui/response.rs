@@ -39,6 +39,7 @@ pub enum Message {
     SearchNotFound,
     FocusSearch,
     DoNothing, // Used to prevent event propagation
+    ScrollToMatchResponse(f32),
 }
 
 #[derive(Debug)]
@@ -70,7 +71,7 @@ impl ResponsePanel {
             Message::EditorMessage(editor_message) => {
                 match editor_message {
                     undoable_editor::Message::Action(action) => {
-                         match &action {
+                        match &action {
                             text_editor::Action::Move(_)
                             | text_editor::Action::Select(_)
                             | text_editor::Action::SelectWord
@@ -137,7 +138,26 @@ impl ResponsePanel {
             Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
             Message::SearchFound(start, end) => {
                 self.search_selection = Some((start, end));
-                Action::None
+                Action::Run(
+                    iced::advanced::widget::operate(crate::ui::editor_view::QueryScrollY::new(
+                        start.line,
+                    ))
+                    .map(Message::ScrollToMatchResponse),
+                )
+            }
+            Message::ScrollToMatchResponse(y) => {
+                let viewport_height = 400.0;
+                let offset_y = (y - viewport_height / 2.0).max(0.0);
+                Action::Run(
+                    iced::widget::operation::scroll_to(
+                        iced::widget::Id::new(crate::constant::RESPONSE_BODY_SCROLLABLE_ID),
+                        iced::widget::scrollable::AbsoluteOffset {
+                            x: None,
+                            y: Some(offset_y),
+                        },
+                    )
+                    .map(|_: ()| Message::DoNothing),
+                )
             }
             Message::SearchNotFound => {
                 self.search_selection = None;
@@ -381,8 +401,15 @@ impl ResponsePanel {
         } else {
             let syntax_language = get_syntax_from_content_type(&resp.content_type);
 
-            let body_column = self.body_editor
-                .view(iced::widget::Id::new(RESPONSE_BODY_EDITOR_ID), content, Some(syntax_language), self.search_selection)
+            let body_column = self
+                .body_editor
+                .view(
+                    iced::widget::Id::new(RESPONSE_BODY_EDITOR_ID),
+                    content,
+                    Some(syntax_language),
+                    Some(self.search_query.as_str()),
+                    self.search_selection,
+                )
                 .map(Message::EditorMessage);
 
             let format_button = response_format_button();

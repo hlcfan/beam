@@ -2,7 +2,7 @@ use crate::history::UndoHistory;
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use iced::advanced::text;
 use iced::widget::text_editor;
-use iced::{Element, Length, Theme};
+use iced::{Color, Element, Length, Theme};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -10,6 +10,7 @@ pub enum Message {
     Undo,
     Redo,
     Find,
+    ScrollToMatch(f32),
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,7 @@ impl UndoableEditor {
                 }
             }
             Message::Find => None,
+            Message::ScrollToMatch(_) => None,
         }
     }
 
@@ -99,20 +101,10 @@ impl UndoableEditor {
         editor_id: impl Into<iced::widget::Id>,
         content: &'a text_editor::Content,
         syntax: Option<&'a str>,
-        search_selection: Option<(text_editor::Position, text_editor::Position)>,
+        search_query: Option<&'a str>,
+        search_active_match: Option<(text_editor::Position, text_editor::Position)>,
     ) -> Element<'a, Message> {
         let editor_id = editor_id.into();
-
-        // Add debug log for search selection
-        if let Some((start, end)) = search_selection {
-            log::info!(
-                "UndoableEditor::view - search_selection: start={:?}, end={:?}",
-                start,
-                end
-            );
-        } else {
-            log::info!("UndoableEditor::view - search_selection: None");
-        }
 
         // Create editor with or without syntax highlighting
         if let Some(syntax) = syntax {
@@ -128,11 +120,17 @@ impl UndoableEditor {
                     bottom: 5.0,
                     left: 5.0,
                 })
-                // .wrapping(text::Wrapping::None)
+                .wrapping(text::Wrapping::Glyph)
                 // .height(self.height)
                 .style(Self::editor_style);
 
-            Self::wrap_in_undoable(editor, content, search_selection, self.version)
+            Self::wrap_in_undoable(
+                editor,
+                content,
+                search_query,
+                search_active_match,
+                self.version,
+            )
         } else {
             let editor = text_editor(content)
                 .id(editor_id)
@@ -145,17 +143,23 @@ impl UndoableEditor {
                     bottom: 5.0,
                     left: 5.0,
                 })
-                // .wrapping(text::Wrapping::None)
+                .wrapping(text::Wrapping::Glyph)
                 // .height(self.height)
                 .style(Self::editor_style);
 
-            Self::wrap_in_undoable(editor, content, search_selection, self.version)
+            Self::wrap_in_undoable(
+                editor,
+                content,
+                search_query,
+                search_active_match,
+                self.version,
+            )
         }
     }
 
     fn editor_style(theme: &Theme, _status: text_editor::Status) -> text_editor::Style {
         text_editor::Style {
-            background: iced::Background::Color(theme.palette().background),
+            background: iced::Background::Color(Color::TRANSPARENT), // Use transparent so we can draw custom highlights underneath
             border: iced::Border {
                 color: iced::Color::from_rgb(0.9, 0.9, 0.9),
                 width: 1.0,
@@ -170,21 +174,28 @@ impl UndoableEditor {
     fn wrap_in_undoable<'a>(
         editor: impl Into<Element<'a, Message>>,
         content: &'a text_editor::Content,
-        selection: Option<(text_editor::Position, text_editor::Position)>,
+        search_query: Option<&'a str>,
+        search_active_match: Option<(text_editor::Position, text_editor::Position)>,
         version: usize,
     ) -> Element<'a, Message> {
-        EditorView::new(editor, |action| match action {
+        let mut view = EditorView::new(editor, |action| match action {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
             UndoableAction::Find => Message::Find,
+            UndoableAction::ScrollToMatch(y) => Message::ScrollToMatch(y),
         })
         .content_ref(content)
-        .selection(selection)
+        .search_active_match(search_active_match)
         .version(version)
         .font(iced::Font::MONOSPACE)
         .size(14.0)
         .padding(5.0)
-        .padding_right(20.0)
-        .into()
+        .padding_right(20.0);
+
+        if let Some(query) = search_query {
+            view = view.search_query(query.to_string());
+        }
+
+        view.into()
     }
 }
