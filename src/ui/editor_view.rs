@@ -684,20 +684,14 @@ where
                         // but since search query logic in main.rs operates on exact string matches,
                         // we can do a simplified span match here.
                         // But grapheme/col calculation works for monospace:
-                        let before_len = line_text
-                            .chars()
-                            .take(start_pos.column)
-                            .map(|c| c.len_utf8())
-                            .sum::<usize>();
-                        let match_len = line_text
-                            .chars()
-                            .skip(start_pos.column)
-                            .take(end_pos.column - start_pos.column)
-                            .map(|c| c.len_utf8())
-                            .sum::<usize>();
-
-                        // boundary check
-                        if before_len + match_len <= line_text.len() {
+                        // grapheme/col calculation properly maps columns to byte offsets
+                        if let Some((before_len, match_len)) =
+                            crate::ui::widget_calc::get_byte_offsets_for_columns(
+                                line_text.as_ref(),
+                                start_pos.column,
+                                end_pos.column,
+                            )
+                        {
                             let span_before = &line_text[0..before_len];
                             let span_match = &line_text[before_len..before_len + match_len];
                             let span_after = &line_text[before_len + match_len..];
@@ -881,5 +875,79 @@ impl iced::advanced::widget::Operation<f32> for QueryScrollY {
         } else {
             iced::advanced::widget::operation::Outcome::None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::widget_calc::VisualRow;
+    use std::cell::RefCell;
+
+    #[test]
+    fn test_query_scroll_y_finds_row() {
+        // Build mock cache with some visual rows
+        let cache = Cache {
+            visual_rows: vec![
+                VisualRow {
+                    logical_line_index: 0,
+                    y: 0.0,
+                    is_first_visual_row: true,
+                    height: 20.0,
+                },
+                VisualRow {
+                    logical_line_index: 10,
+                    y: 125.0,
+                    is_first_visual_row: true,
+                    height: 20.0,
+                },
+            ],
+            search_matches: vec![],
+            last_search_query: None,
+            last_width: 0.0,
+            last_version: 0,
+            char_width: 0.0,
+            single_line_height: 0.0,
+        };
+
+        let state = State {
+            cache: RefCell::new(cache),
+            last_active_match: None,
+        };
+
+        let mut tree_state = iced::advanced::widget::tree::State::new(state);
+
+        // Test querying an existing line
+        let mut op = QueryScrollY::new(10);
+        op.custom(
+            None,
+            iced::Rectangle::default(),
+            &mut tree_state as &mut dyn std::any::Any,
+        );
+
+        if let iced::advanced::widget::operation::Outcome::Some(y) = op.finish() {
+            assert_eq!(y, 125.0);
+        } else {
+            panic!("Expected Outcome::Some(125.0)");
+        }
+    }
+
+    #[test]
+    fn test_query_scroll_y_not_found() {
+        let state = State::default();
+        let mut tree_state = iced::advanced::widget::tree::State::new(state);
+
+        // Test querying a non-existent line
+        let mut op = QueryScrollY::new(99);
+        op.custom(
+            None,
+            iced::Rectangle::default(),
+            &mut tree_state as &mut dyn std::any::Any,
+        );
+
+        assert!(matches!(
+            op.finish(),
+            iced::advanced::widget::operation::Outcome::None
+        ));
     }
 }

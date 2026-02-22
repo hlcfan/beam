@@ -94,6 +94,43 @@ pub fn is_line_in_viewport(
     line_bottom > viewport_start && line_y < viewport_end
 }
 
+/// Converts character column indices (0-indexed) to exact UTF-8 byte bounds for slicing.
+///
+/// Returns `Option<(before_len, match_len)>` mapped safely to valid UTF-8 indices,
+/// or `None` if the column indices exceed the string's character length.
+pub fn get_byte_offsets_for_columns(
+    line_text: &str,
+    start_col: usize,
+    end_col: usize,
+) -> Option<(usize, usize)> {
+    let char_count = line_text.chars().count();
+    if start_col > end_col || end_col > char_count {
+        return None;
+    }
+
+    let before_len = line_text
+        .chars()
+        .take(start_col)
+        .map(|c| c.len_utf8())
+        .sum::<usize>();
+
+    let match_len = line_text
+        .chars()
+        .skip(start_col)
+        .take(end_col - start_col)
+        .map(|c| c.len_utf8())
+        .sum::<usize>();
+
+    let total_len = before_len + match_len;
+
+    // Boundary check
+    if total_len <= line_text.len() {
+        Some((before_len, match_len))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,5 +230,53 @@ mod tests {
         assert!(is_line_in_viewport(190.0, 20.0, 50.0, 200.0));
         assert!(!is_line_in_viewport(10.0, 20.0, 50.0, 200.0));
         assert!(!is_line_in_viewport(250.0, 20.0, 50.0, 200.0));
+    }
+
+    // ---- get_byte_offsets_for_columns tests ----
+
+    #[test]
+    fn test_ascii_offsets() {
+        let text = "hello world";
+        // Extract "world" -> columns (6, 11)
+        let (before, match_len) = get_byte_offsets_for_columns(text, 6, 11).unwrap();
+        assert_eq!(before, 6); // bytes: 6
+        assert_eq!(match_len, 5); // bytes: 5
+        let extracted = &text[before..before + match_len];
+        assert_eq!(extracted, "world");
+
+        // Out of bounds
+        assert!(get_byte_offsets_for_columns(text, 0, 99).is_none());
+        // Invalid range
+        assert!(get_byte_offsets_for_columns(text, 5, 2).is_none());
+    }
+
+    #[test]
+    fn test_unicode_multibyte_offsets() {
+        // CJK characters take 3 bytes each
+        let text = "你好世界";
+        // Extract "好世" -> columns (1, 3)
+        let (before, match_len) = get_byte_offsets_for_columns(text, 1, 3).unwrap();
+
+        assert_eq!(before, 3); // "你" is 3 bytes
+        assert_eq!(match_len, 6); // "好世" is 6 bytes
+        let extracted = &text[before..before + match_len];
+        assert_eq!(extracted, "好世");
+    }
+
+    #[test]
+    fn test_emoji_offsets() {
+        // Emojis typically take 4 bytes each
+        let text = "🚀 rust is 🦀 awesome 🌟";
+
+        // Extract "rust" -> columns (2, 6)
+        let (before, match_len) = get_byte_offsets_for_columns(text, 2, 6).unwrap();
+        let extracted = &text[before..before + match_len];
+        assert_eq!(extracted, "rust");
+
+        // Extract "🦀" -> column (10, 11)
+        let (before, match_len) = get_byte_offsets_for_columns(text, 10, 11).unwrap();
+        let extracted = &text[before..before + match_len];
+        assert_eq!(extracted, "🦀");
+        assert_eq!(match_len, 4); // The emoji takes 4 bytes
     }
 }
