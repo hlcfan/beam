@@ -30,7 +30,8 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     on_change: F,
-    selection: Option<(Position, Position)>,
+    search_active_match: Option<(Position, Position)>,
+    search_query: Option<String>,
     content_ref: Option<&'a iced::widget::text_editor::Content>,
     font: Font,
     text_size: Pixels,
@@ -49,6 +50,10 @@ struct Cache {
     /// Pre-computed visual-row layout. This is the single source of truth
     /// for all Y-coordinate decisions in both the gutter and the highlight overlay.
     visual_rows: Vec<crate::ui::widget_calc::VisualRow>,
+    /// Pre-computed search matches bounds cache.
+    search_matches: Vec<iced::Rectangle>,
+    /// Search query at which search_matches was computed. Invalidated on changes.
+    last_search_query: Option<String>,
     /// Content width at which visual_rows was computed. Invalidated when this changes.
     last_width: f32,
     /// Editor content version at which visual_rows was computed. Invalidated when this changes.
@@ -71,7 +76,8 @@ where
         Self {
             content: content.into(),
             on_change,
-            selection: None,
+            search_active_match: None,
+            search_query: None,
             content_ref: None,
             font: Font::MONOSPACE,
             text_size: Pixels(14.0),
@@ -81,8 +87,16 @@ where
         }
     }
 
-    pub fn selection(mut self, selection: Option<(Position, Position)>) -> Self {
-        self.selection = selection;
+    pub fn search_active_match(
+        mut self,
+        search_active_match: Option<(Position, Position)>,
+    ) -> Self {
+        self.search_active_match = search_active_match;
+        self
+    }
+
+    pub fn search_query(mut self, search_query: String) -> Self {
+        self.search_query = Some(search_query);
         self
     }
 
@@ -480,127 +494,60 @@ where
             }
         }
 
-        // Draw content
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            style,
-            child_layout,
-            cursor,
-            viewport,
-        );
+        // The text_editor's background is natively handled by the framework when it draws,
+        // BUT we set text_editor's background to TRANSPARENT so we could draw highlights underneath text.
+        // Iced widget drawing happens bottom up, so if we don't draw the background here, it will be blank if the parent doesn't have a background.
+        // `EditorView`'s parent `Container` in `UndoableEditor` can draw the background instead!
+        // So we just skip drawing background here to avoid generic `Theme` trait bound issues.
 
-        if let Some((start, end)) = self.selection {
-            // Draw highlight ON TOP of content
+        let offset_left = self.padding;
+        let offset_right = self.padding_right;
+        let content_width = child_layout.bounds().width - offset_left - offset_right;
 
-            // Text editor has internal padding (default 5.0)
-            let offset_left = self.padding;
-            let offset_right = self.padding_right;
-            let offset_y = self.padding;
+        // Populate Cache
+        if let Some(content) = self.content_ref {
+            let state = tree.state.downcast_ref::<State>();
+            let mut cache = state.cache.borrow_mut();
 
-            // Adjust content_width to match the text_editor's actual text area width
-            // The text_editor lays out text in its full child area minus its own internal padding;
-            // the scrollbar is an overlay and does not affect the paragraph's text-layout width.
-            let content_width = child_layout.bounds().width - offset_left - offset_right;
+            // Populate char metrics
+            if cache.char_width == 0.0 {
+                let p = Renderer::Paragraph::with_text(Text {
+                    content: "0",
+                    bounds: iced::Size::INFINITE,
+                    size: self.text_size,
+                    line_height: text::LineHeight::default(),
+                    font: self.font,
+                    align_x: text::Alignment::Left,
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: text::Shaping::Basic,
+                    wrapping: text::Wrapping::default(),
+                });
+                let mb = p.min_bounds();
+                cache.char_width = mb.width;
+                cache.single_line_height = mb.height;
+            }
+            let single_line_height = cache.single_line_height;
 
-            if let Some(content) = self.content_ref {
-                // Advanced calculation handling wrapping.
-                // Reuse the VisualRow cache built during gutter rendering.
-                let state = tree.state.downcast_ref::<State>();
-                let mut cache = state.cache.borrow_mut();
+            let needs_rebuild = (cache.last_width - content_width).abs() > 0.1
+                || cache.last_version != self.version;
 
-                // Ensure cache is populated (it may not be if gutter was not rendered).
-                if cache.char_width == 0.0 {
-                    let p = Renderer::Paragraph::with_text(Text {
-                        content: "0",
-                        bounds: iced::Size::INFINITE,
-                        size: self.text_size,
-                        line_height: text::LineHeight::default(),
-                        font: self.font,
-                        align_x: text::Alignment::Left,
-                        align_y: iced::alignment::Vertical::Center,
-                        shaping: text::Shaping::Basic,
-                        wrapping: text::Wrapping::default(),
-                    });
-                    let mb = p.min_bounds();
-                    cache.char_width = mb.width;
-                    cache.single_line_height = mb.height;
-                }
-                let single_line_height = cache.single_line_height;
-                let char_width = cache.char_width;
+            if needs_rebuild {
+                // ... same calculation for visual_rows ...
+                let line_count = content.line_count();
+                let owned: Vec<String> = (0..line_count)
+                    .map(|i| {
+                        content
+                            .line(i)
+                            .map(|l| l.text.to_string())
+                            .unwrap_or_default()
+                    })
+                    .collect();
+                let line_strs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
 
-                let needs_rebuild_sel = (cache.last_width - content_width).abs() > 0.1
-                    || cache.last_version != self.version
-                    || cache.visual_rows.is_empty();
-
-                if needs_rebuild_sel {
-                    let line_count = content.line_count();
-                    let owned: Vec<String> = (0..line_count)
-                        .map(|i| {
-                            content
-                                .line(i)
-                                .map(|l| l.text.to_string())
-                                .unwrap_or_default()
-                        })
-                        .collect();
-                    let line_strs: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
-
-                    let measure_line = |text: &str| -> usize {
-                        let measure_text = if text.is_empty() { " " } else { text };
-                        let paragraph = Renderer::Paragraph::with_text(Text {
-                            content: measure_text,
-                            bounds: iced::Size::new(content_width, f32::INFINITY),
-                            size: self.text_size,
-                            line_height: text::LineHeight::default(),
-                            font: self.font,
-                            align_x: text::Alignment::Left,
-                            align_y: iced::alignment::Vertical::Top,
-                            shaping: text::Shaping::Basic,
-                            wrapping: text::Wrapping::Glyph,
-                        });
-
-                        let min_height = paragraph.min_bounds().height;
-                        let num_visual = (min_height / single_line_height).round() as usize;
-                        num_visual.max(1)
-                    };
-
-                    cache.visual_rows =
-                        compute_visual_rows(&line_strs, single_line_height, measure_line);
-                    cache.last_width = content_width;
-                    cache.last_version = self.version;
-                }
-
-                // Find the Y offset of the first visual row for start.line.
-                // VisualRow.y is relative to text content top; add border+padding to get absolute.
-                let text_top = child_layout.bounds().y + offset_left; // border(1)+padding(left)
-                let row_y = cache
-                    .visual_rows
-                    .iter()
-                    .find(|r| r.logical_line_index == start.line && r.is_first_visual_row)
-                    .map(|r| r.y)
-                    .unwrap_or(0.0);
-
-                let accumulated_y = row_y;
-                let current_y = text_top + accumulated_y;
-
-                // For now we assume start.line == end.line as per original code structure for search results
-
-                if start.line == end.line {
-                    let line_text = content
-                        .line(start.line)
-                        .map(|l| l.text.to_string())
-                        .unwrap_or_default();
-
-                    // Use paragraph grapheme_position for precise overlay positioning
-                    // This delegates positioning to iced's text layout engine
-                    let measure_content = if line_text.is_empty() {
-                        " ".to_string()
-                    } else {
-                        line_text.clone()
-                    };
+                let measure_line = |text: &str| -> usize {
+                    let measure_text = if text.is_empty() { " " } else { text };
                     let paragraph = Renderer::Paragraph::with_text(Text {
-                        content: &measure_content,
+                        content: measure_text,
                         bounds: iced::Size::new(content_width, f32::INFINITY),
                         size: self.text_size,
                         line_height: text::LineHeight::default(),
@@ -611,155 +558,221 @@ where
                         wrapping: text::Wrapping::Glyph,
                     });
 
-                    // --- Glyph-wrap aware grapheme_position ---
-                    // grapheme_position(line, index) expects:
-                    //   line  = *visual* (wrapped) line index within the paragraph
-                    //   index = grapheme index *within that visual line*
-                    //
-                    // For monospace Glyph-wrapping every character is the same width, so:
-                    //   chars_per_row = floor(content_width / char_width)
-                    //   visual_line   = logical_col / chars_per_row
-                    //   col_in_row    = logical_col % chars_per_row
-                    let chars_per_row = if char_width > 0.0 {
-                        (content_width / char_width).floor() as usize
-                    } else {
-                        usize::MAX
-                    };
+                    let min_height = paragraph.min_bounds().height;
+                    let num_visual = (min_height / single_line_height).round() as usize;
+                    num_visual.max(1)
+                };
 
-                    let (start_visual_line, start_col_in_row) = if chars_per_row > 0 {
-                        (start.column / chars_per_row, start.column % chars_per_row)
-                    } else {
-                        (0, start.column)
-                    };
-                    let (end_visual_line, end_col_in_row) = if chars_per_row > 0 {
-                        (end.column / chars_per_row, end.column % chars_per_row)
-                    } else {
-                        (0, end.column)
-                    };
+                cache.visual_rows =
+                    compute_visual_rows(&line_strs, single_line_height, measure_line);
+                cache.last_width = content_width;
+                cache.last_version = self.version;
+            }
 
-                    let start_pos = paragraph
-                        .grapheme_position(start_visual_line, start_col_in_row)
-                        .unwrap_or(iced::Point::new(0.0, 0.0));
-                    let (start_x, start_y_offset) = (start_pos.x, start_pos.y);
-                    let end_pos = paragraph
-                        .grapheme_position(end_visual_line, end_col_in_row)
-                        .unwrap_or(iced::Point::new(0.0, 0.0));
-                    let (end_x, end_y_offset) = (end_pos.x, end_pos.y);
+            // Always recalculate search highlights if content/query changed
+            let search_query_changed =
+                cache.last_search_query.as_deref() != self.search_query.as_deref();
+            if needs_rebuild || search_query_changed {
+                cache.last_search_query = self.search_query.clone();
+                cache.search_matches.clear();
 
-                    // Draw highlighting
-                    let abs_start_x = child_layout.bounds().x + offset_left + start_x;
-                    let abs_y = current_y + start_y_offset;
+                if let Some(query) = &self.search_query {
+                    if !query.is_empty() {
+                        // Scan content line by line instead of whole text to build per-line paragraph geometry easily
+                        let line_count = content.line_count();
+                        for i in 0..line_count {
+                            if let Some(line) = content.line(i) {
+                                let line_text = line.text;
+                                let mut start_idx = 0;
+                                while let Some(match_idx) = line_text[start_idx..].find(query) {
+                                    let absolute_idx = start_idx + match_idx;
+                                    let match_len = query.len();
 
-                    if (start_y_offset - end_y_offset).abs() < 1.0 {
-                        // Same visual line
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: abs_start_x,
-                                    y: abs_y,
-                                    width: end_x - start_x,
-                                    height: single_line_height,
-                                },
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                                snap: true,
-                            },
-                            Color::from_rgba(0.2, 0.4, 0.7, 0.5),
-                        );
-                    } else {
-                        // Multi-visual-line selection
-                        // 1. First part
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: abs_start_x,
-                                    y: abs_y,
-                                    width: content_width - start_x,
-                                    height: single_line_height,
-                                },
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                                snap: true,
-                            },
-                            Color::from_rgba(0.2, 0.4, 0.7, 0.5),
-                        );
+                                    // Build spans to measure the exact bounding boxes of the match
+                                    let span_before = &line_text[0..absolute_idx];
+                                    let span_match =
+                                        &line_text[absolute_idx..absolute_idx + match_len];
+                                    let span_after = &line_text[absolute_idx + match_len..];
 
-                        // 2. Middle parts (full width)
-                        let mut y = start_y_offset + single_line_height;
-                        while y < end_y_offset - 0.5 {
-                            renderer.fill_quad(
-                                renderer::Quad {
-                                    bounds: Rectangle {
-                                        x: child_layout.bounds().x + offset_left,
-                                        y: current_y + y,
-                                        width: content_width,
-                                        height: single_line_height,
-                                    },
-                                    border: iced::Border::default(),
-                                    shadow: iced::Shadow::default(),
-                                    snap: true,
-                                },
-                                Color::from_rgba(0.2, 0.4, 0.7, 0.5),
-                            );
-                            y += single_line_height;
+                                    use iced::advanced::text::Span;
+                                    let spans = vec![
+                                        Span::<()>::new(span_before),
+                                        Span::<()>::new(span_match),
+                                        Span::<()>::new(span_after),
+                                    ];
+
+                                    let paragraph = Renderer::Paragraph::with_spans(Text {
+                                        content: spans.as_slice(),
+                                        bounds: iced::Size::new(content_width, f32::INFINITY),
+                                        size: self.text_size,
+                                        line_height: text::LineHeight::default(),
+                                        font: self.font,
+                                        align_x: text::Alignment::Left,
+                                        align_y: iced::alignment::Vertical::Top,
+                                        shaping: text::Shaping::Basic,
+                                        wrapping: text::Wrapping::Glyph,
+                                    });
+
+                                    // Get bounding boxes of the match span (index 1)
+                                    let bounds = paragraph.span_bounds(1);
+
+                                    // Y offset for the current line
+                                    let line_y = cache
+                                        .visual_rows
+                                        .iter()
+                                        .find(|r| {
+                                            r.logical_line_index == i && r.is_first_visual_row
+                                        })
+                                        .map(|r| r.y)
+                                        .unwrap_or(0.0);
+
+                                    for rect in bounds {
+                                        cache.search_matches.push(Rectangle {
+                                            x: rect.x,
+                                            y: rect.y + line_y,
+                                            width: rect.width,
+                                            height: rect.height,
+                                        });
+                                    }
+
+                                    start_idx = absolute_idx + match_len;
+                                }
+                            }
                         }
-
-                        // 3. Last part
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: Rectangle {
-                                    x: child_layout.bounds().x + offset_left,
-                                    y: current_y + end_y_offset,
-                                    width: end_x,
-                                    height: single_line_height,
-                                },
-                                border: iced::Border::default(),
-                                shadow: iced::Shadow::default(),
-                                snap: true,
-                            },
-                            Color::from_rgba(0.2, 0.4, 0.7, 0.5),
-                        );
                     }
                 }
-            } else {
-                // Fallback to old simple logic if content_ref is missing
-                let sample = Renderer::Paragraph::with_text(Text {
-                    content: "0",
-                    bounds: iced::Size::INFINITE,
-                    size: self.text_size,
-                    line_height: text::LineHeight::default(),
-                    font: self.font,
-                    align_x: text::Alignment::Center,
-                    align_y: iced::alignment::Vertical::Center,
-                    shaping: text::Shaping::Basic,
-                    wrapping: text::Wrapping::default(),
-                });
-                let char_width = sample.min_bounds().width;
+            }
 
-                let line_height = self.text_size.0 * 1.3;
-                let current_y = bounds.y + offset_y + (start.line as f32) * line_height;
-                let start_x =
-                    child_layout.bounds().x + offset_left + (start.column as f32) * char_width;
+            // Draw Search Highlights
+            let text_top = child_layout.bounds().y + offset_left; // border(1)+padding(left)
+            let base_x = child_layout.bounds().x + offset_left;
 
-                if start.line == end.line {
-                    let width = ((end.column - start.column) as f32) * char_width;
+            // Calculate active match bounds exactly as we did the passive ones if it is set.
+            let mut active_rects = Vec::new();
+            if let Some((start_pos, end_pos)) = self.search_active_match {
+                if start_pos.line == end_pos.line {
+                    if let Some(line) = content.line(start_pos.line) {
+                        let line_text = line.text;
+                        // Note: iced positions use cursor positions, but indices in text
+                        // To properly highlight the active span we could convert columns to byte indices,
+                        // but since search query logic in main.rs operates on exact string matches,
+                        // we can do a simplified span match here.
+                        // But grapheme/col calculation works for monospace:
+                        let before_len = line_text
+                            .chars()
+                            .take(start_pos.column)
+                            .map(|c| c.len_utf8())
+                            .sum::<usize>();
+                        let match_len = line_text
+                            .chars()
+                            .skip(start_pos.column)
+                            .take(end_pos.column - start_pos.column)
+                            .map(|c| c.len_utf8())
+                            .sum::<usize>();
+
+                        // boundary check
+                        if before_len + match_len <= line_text.len() {
+                            let span_before = &line_text[0..before_len];
+                            let span_match = &line_text[before_len..before_len + match_len];
+                            let span_after = &line_text[before_len + match_len..];
+
+                            use iced::advanced::text::Span;
+                            let spans = vec![
+                                Span::<()>::new(span_before),
+                                Span::<()>::new(span_match),
+                                Span::<()>::new(span_after),
+                            ];
+
+                            let paragraph = Renderer::Paragraph::with_spans(Text {
+                                content: spans.as_slice(),
+                                bounds: iced::Size::new(content_width, f32::INFINITY),
+                                size: self.text_size,
+                                line_height: text::LineHeight::default(),
+                                font: self.font,
+                                align_x: text::Alignment::Left,
+                                align_y: iced::alignment::Vertical::Top,
+                                shaping: text::Shaping::Basic,
+                                wrapping: text::Wrapping::Glyph,
+                            });
+
+                            let bounds = paragraph.span_bounds(1);
+
+                            let line_y = cache
+                                .visual_rows
+                                .iter()
+                                .find(|r| {
+                                    r.logical_line_index == start_pos.line && r.is_first_visual_row
+                                })
+                                .map(|r| r.y)
+                                .unwrap_or(0.0);
+
+                            for rect in bounds {
+                                active_rects.push(Rectangle {
+                                    x: rect.x + base_x,
+                                    y: rect.y + line_y + text_top,
+                                    width: rect.width,
+                                    height: rect.height,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            let passive_color = Color::from_rgba(1.0, 0.85, 0.0, 0.4);
+            let active_color = Color::from_rgba(1.0, 0.55, 0.0, 0.7);
+
+            // Draw passive
+            for rect in &cache.search_matches {
+                let abs_x = rect.x + base_x;
+                let abs_y = rect.y + text_top;
+
+                // Skip drawing this one if it exactly overlaps an active match
+                let is_active = active_rects
+                    .iter()
+                    .any(|ar| (ar.x - abs_x).abs() < 1.0 && (ar.y - abs_y).abs() < 1.0);
+                if !is_active {
                     renderer.fill_quad(
                         renderer::Quad {
                             bounds: Rectangle {
-                                x: start_x,
-                                y: current_y,
-                                width,
-                                height: line_height,
+                                x: abs_x,
+                                y: abs_y,
+                                width: rect.width,
+                                height: rect.height,
                             },
                             border: iced::Border::default(),
                             shadow: iced::Shadow::default(),
                             snap: true,
                         },
-                        Color::from_rgba(0.2, 0.4, 0.7, 0.5),
+                        passive_color,
                     );
                 }
             }
+
+            // Draw active
+            for rect in active_rects {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: rect,
+                        border: iced::Border::default(),
+                        shadow: iced::Shadow::default(),
+                        snap: true,
+                    },
+                    active_color,
+                );
+            }
         }
+
+        // Now draw the text content on top so the highlight appears *behind* it!
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            child_layout,
+            cursor,
+            viewport,
+        );
     }
 
     fn overlay<'b>(

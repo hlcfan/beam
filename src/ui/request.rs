@@ -802,7 +802,13 @@ impl RequestPanel {
 
                 let editor_area = scrollable(
                     self.body_editor
-                        .view(iced::widget::Id::new(REQUEST_BODY_EDITOR_ID), request_body, syntax, self.search_selection)
+                        .view(
+                            REQUEST_BODY_EDITOR_ID,
+                            request_body,
+                            syntax,
+                            Some(self.search_query.as_str()),
+                            self.search_selection,
+                        )
                         .map(Message::EditorMessage),
                 )
                 .id(iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID))

@@ -1852,10 +1852,8 @@ impl BeamApp {
 
             info!("Match start: {:?}, end: {:?}", start_pos, end_pos);
 
-            content.move_to(text_editor::Cursor {
-                position: end_pos,
-                selection: Some(start_pos),
-            });
+            // Do NOT modify the user's cursor or selection!
+            // The highlight will be driven independently by `SearchFound` -> `search_selection`.
 
             // Calculate scroll position more precisely to center the match
             // We use 14.0px size + 5.0px padding, matching the editor configuration
@@ -1999,6 +1997,9 @@ impl BeamApp {
         if found_match {
             let start_pos = Self::byte_index_to_position(content, match_start_byte);
             let end_pos = Self::byte_index_to_position(content, match_end_byte);
+
+            // Do NOT modify the user's cursor or selection!
+            // The highlight will be driven independently by `SearchFound` -> `search_selection`.
 
             let text_size = 14.0f32;
             let padding = 5.0f32;
