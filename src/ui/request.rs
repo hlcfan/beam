@@ -26,6 +26,7 @@ pub enum Action {
     SendRequest(Instant),
     CancelRequest(),
     UpdateActiveEnvironment(usize),
+    UpdateCurrentRequestAndRun(RequestConfig, iced::Task<Message>),
     // The components needs to run a task
     Run(iced::Task<Message>),
     EditRequestBody(text_editor::Action),
@@ -165,12 +166,14 @@ impl RequestPanel {
     ) -> Action {
         match message {
             Message::UrlInputMessage(msg) => {
-                if let Some(new_url) = self.url_input.update(msg, &mut self.history_registry) {
+                let (new_url, task) = self.url_input.update(msg, &mut self.history_registry);
+                let mapped_task = task.map(Message::UrlInputMessage);
+                if let Some(new_url) = new_url {
                     let mut request = current_request.clone();
                     request.url = new_url;
-                    Action::UpdateCurrentRequest(request)
+                    Action::UpdateCurrentRequestAndRun(request, mapped_task)
                 } else {
-                    Action::None
+                    Action::Run(mapped_task)
                 }
             }
             Message::EditorMessage(msg) => {

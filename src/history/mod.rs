@@ -149,21 +149,42 @@ impl HistoryRegistry {
 #[derive(Debug, Clone)]
 pub enum TextInputCommand {
     Insert {
-        at: usize,
+        at: usize,      // byte offset
+        at_char: usize, // char offset
         text: String,
         timestamp: Instant,
     },
     Delete {
-        at: usize,
+        at: usize,      // byte offset
+        at_char: usize, // char offset
         text: String,
         timestamp: Instant,
     },
     Replace {
-        at: usize,
+        at: usize,      // byte offset
+        at_char: usize, // char offset
         old: String,
         new: String,
         timestamp: Instant,
     },
+}
+
+impl TextInputCommand {
+    pub fn cursor_undo(&self) -> usize {
+        match self {
+            Self::Insert { at_char, .. } => *at_char,
+            Self::Delete { at_char, text, .. } => *at_char + text.chars().count(),
+            Self::Replace { at_char, old, .. } => *at_char + old.chars().count(),
+        }
+    }
+
+    pub fn cursor_redo(&self) -> usize {
+        match self {
+            Self::Insert { at_char, text, .. } => *at_char + text.chars().count(),
+            Self::Delete { at_char, .. } => *at_char,
+            Self::Replace { at_char, new, .. } => *at_char + new.chars().count(),
+        }
+    }
 }
 
 impl Command<String> for TextInputCommand {
@@ -198,11 +219,13 @@ impl Command<String> for TextInputCommand {
             (
                 Self::Insert {
                     at: at1,
+                    at_char: _ac1,
                     text: text1,
                     timestamp: ts1,
                 },
                 Self::Insert {
                     at: at2,
+                    at_char: _ac2,
                     text: text2,
                     timestamp: ts2,
                 },
@@ -229,11 +252,13 @@ impl Command<String> for TextInputCommand {
             (
                 Self::Delete {
                     at: at1,
+                    at_char: ac1,
                     text: text1,
                     timestamp: ts1,
                 },
                 Self::Delete {
                     at: at2,
+                    at_char: ac2,
                     text: text2,
                     timestamp: ts2,
                 },
@@ -255,6 +280,7 @@ impl Command<String> for TextInputCommand {
                         new_text.push_str(text2);
                         new_text.push_str(text1);
                         *at1 = *at2;
+                        *ac1 = *ac2;
                         *text1 = new_text;
                         *ts1 = *ts2;
                         return true;
@@ -312,16 +338,19 @@ pub fn diff_to_command(old: &str, new: &str) -> Option<TextInputCommand> {
     match (deleted.is_empty(), inserted.is_empty()) {
         (true, false) => Some(TextInputCommand::Insert {
             at: byte_prefix,
+            at_char: prefix_len,
             text: inserted,
             timestamp: Instant::now(),
         }),
         (false, true) => Some(TextInputCommand::Delete {
             at: byte_prefix,
+            at_char: prefix_len,
             text: deleted,
             timestamp: Instant::now(),
         }),
         (false, false) => Some(TextInputCommand::Replace {
             at: byte_prefix,
+            at_char: prefix_len,
             old: deleted,
             new: inserted,
             timestamp: Instant::now(),

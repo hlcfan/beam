@@ -281,47 +281,12 @@ impl BeamApp {
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
-                        // If the user hasn't made any edits yet, ensure the URL baseline is synced.
-                        // This prevents undo from clearing the entire input on the first edit.
-                        if !self
-                            .request_panel
-                            .url_input
-                            .has_history(&self.request_panel.history_registry)
-                        {
-                            self.request_panel
-                                .url_input
-                                .set_value(request_config.url.clone());
-                        }
-                        self.current_request = request_config.clone();
-
-                        if self.request_body_content.text() != self.current_request.body {
-                            Self::update_editor_content(
-                                &mut self.request_body_content,
-                                self.current_request.body.to_string(),
-                            );
-                        }
-
-                        if let Some(collection) = self
-                            .collections
-                            .get_mut(self.current_request.collection_index)
-                        {
-                            if let Some(request) = collection
-                                .requests
-                                .get_mut(self.current_request.request_index)
-                            {
-                                *request = self.current_request.clone();
-                            }
-                        }
-
-                        // Send to debounce channel if available
-                        if let Some(tx) = &self.debounce_tx {
-                            if let Err(_) = tx.try_send(request_config) {
-                                // Channel is full or closed, ignore for now
-                                info!("Debounce channel is full or closed");
-                            }
-                        }
-
+                        self.update_request_state(request_config);
                         Task::none()
+                    }
+                    request::Action::UpdateCurrentRequestAndRun(request_config, task) => {
+                        self.update_request_state(request_config);
+                        task.map(Message::RequestPanel)
                     }
                     request::Action::UpdateActiveEnvironment(index) => {
                         self.active_environment = Some(index);
@@ -2476,6 +2441,45 @@ impl BeamApp {
             Err(e) => {
                 error!("Failed to create storage manager: {}", e);
             }
+        }
+    }
+
+    fn update_request_state(&mut self, request_config: RequestConfig) {
+        // If the user hasn't made any edits yet, ensure the URL baseline is synced.
+        // This prevents undo from clearing the entire input on the first edit.
+        if !self
+            .request_panel
+            .url_input
+            .has_history(&self.request_panel.history_registry)
+        {
+            self.request_panel
+                .url_input
+                .set_value(request_config.url.clone());
+        }
+        self.current_request = request_config.clone();
+
+        if self.request_body_content.text() != self.current_request.body {
+            Self::update_editor_content(
+                &mut self.request_body_content,
+                self.current_request.body.to_string(),
+            );
+        }
+
+        if let Some(collection) = self
+            .collections
+            .get_mut(self.current_request.collection_index)
+        {
+            if let Some(request) = collection
+                .requests
+                .get_mut(self.current_request.request_index)
+            {
+                *request = self.current_request.clone();
+            }
+        }
+
+        // Send to debounce channel if available
+        if let Some(tx) = &self.debounce_tx {
+            let _ = tx.try_send(request_config);
         }
     }
 

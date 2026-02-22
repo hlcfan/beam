@@ -69,12 +69,12 @@ impl UndoableInput {
     }
 
     /// Update the component with a message.
-    /// Returns Some(new_value) if the value changed (for parent notification).
+    /// Returns (Some(new_value), Task) if the value changed.
     pub fn update(
         &mut self,
         message: Message,
         history_registry: &mut crate::history::HistoryRegistry,
-    ) -> Option<String> {
+    ) -> (Option<String>, iced::Task<Message>) {
         let history = history_registry.get_or_create_input(self.id.clone());
 
         match message {
@@ -82,26 +82,36 @@ impl UndoableInput {
                 if let Some(cmd) = diff_to_command(&self.value, &new_value) {
                     history.push(cmd);
                     self.value = new_value.clone();
-                    Some(new_value)
+                    (Some(new_value), iced::Task::none())
                 } else {
-                    None
+                    (None, iced::Task::none())
                 }
             }
             Message::Undo => {
-                if history.undo(&mut self.value) {
-                    Some(self.value.clone())
-                } else {
-                    None
+                if let Some(cmd) = history.undo_stack.back().cloned() {
+                    let cursor_pos = cmd.cursor_undo();
+                    if history.undo(&mut self.value) {
+                        return (
+                            Some(self.value.clone()),
+                            iced::widget::operation::move_cursor_to(self.id.clone(), cursor_pos),
+                        );
+                    }
                 }
+                (None, iced::Task::none())
             }
             Message::Redo => {
-                if history.redo(&mut self.value) {
-                    Some(self.value.clone())
-                } else {
-                    None
+                if let Some(cmd) = history.redo_stack.back().cloned() {
+                    let cursor_pos = cmd.cursor_redo();
+                    if history.redo(&mut self.value) {
+                        return (
+                            Some(self.value.clone()),
+                            iced::widget::operation::move_cursor_to(self.id.clone(), cursor_pos),
+                        );
+                    }
                 }
+                (None, iced::Task::none())
             }
-            Message::None => None,
+            Message::None => (None, iced::Task::none()),
         }
     }
 
