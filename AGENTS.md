@@ -125,11 +125,12 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 - Uses viewport culling to skip rows outside the visible scroll area
 
 **Search Result Highlighting**:
-- Renders semi-transparent overlays on matching text selections
-- Looks up the target logical line's Y offset directly from the shared `Vec<VisualRow>` cache
-- Uses `grapheme_position()` with native `iced` paragraph layout bounds to place the highlight precisely aligned to the original editor widget offsets
-- Correctly handles multi-visual-row selections (first fragment, middle full-width rows, last fragment)
-- Evaluates `content_width` consistently with the `iced::widget::text_editor` inner size by exclusively trimming component `padding` to evaluate layout boundary (no arbitrary border sizing offsets)
+- Highlighting is entirely decoupled from the editor's cursor selection state.
+- Finds exact byte-offset boundaries using `widget_calc::get_byte_offsets_for_columns` to safely handle multi-byte Unicode strings (e.g. CJK, Emojis).
+- Computes exact match geometry (even across wrapped lines) natively via `iced::advanced::text::Renderer::Paragraph::with_spans(...)`.
+- Caches the passive highlight `Rectangle`s in `EditorView::State` preventing redundant recalculations on every frame.
+- Paints active and passive highlights natively below the text `draw()` routine for readability.
+- Provides precise scrolling to matches via `QueryScrollY`—a custom asynchronous `iced::advanced::widget::Operation<f32>` that fetches the exact `y` layout position from the `visual_rows` cache.
 
 
 ### Testing
