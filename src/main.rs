@@ -523,7 +523,7 @@ impl BeamApp {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
                                 self.request_panel
-                                    .reset_undo_histories(&self.current_request.url);
+                                    .reset_undo_histories(&self.current_request.url, &self.current_request.body);
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1448,7 +1448,7 @@ impl BeamApp {
 
                                 self.current_request = request_config.clone();
                                 self.request_panel
-                                    .reset_undo_histories(&self.current_request.url);
+                                    .reset_undo_histories(&self.current_request.url, &self.current_request.body);
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,

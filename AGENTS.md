@@ -59,6 +59,14 @@ beam/
    - Authentication handling
    - Response parsing
 
+5. **Undo/Redo System** (`src/history/mod.rs`):
+   - **Command Pattern**: Implements a generic `History<C: Command>` manager.
+   - **TextInputCommand**: Handles plain string diffs for the URL input.
+   - **TextEditorCommand**: Handles `Rope`-based edits (Insert, Delete, Replace) for large text bodies.
+   - **Scoped Dispatch**: Handled by `EditorView` wrappers which intercept Cmd+Z/Y only when the specific component is focused.
+   - **Coalescing**: Merges sequential edits into single history entries using time-based (1s window) and logical boundary (whitespace) rules.
+   - **Baseline Initialization**: Prevents "clear-to-empty" bugs by syncing the initial state as a baseline via `has_history()` checks before starting a history track.
+
 ## Development Guidelines
 
 ### Making Code Changes
@@ -114,7 +122,8 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 
 **Keyboard Event Interception**:
 
-- Intercepts Cmd+Z, Cmd+Y, Cmd+Shift+Z, and Cmd+F before the wrapped editor
+- Intercepts Cmd+Z, Cmd+Y, Cmd+Shift+Z, and Cmd+F before the wrapped editor.
+- Dispatches `Action::Undo` and `Action::Redo` which are mapped to component-specific messages (e.g., `Message::Undo`), ensuring undo/redo is **scoped to the focused component**.
 
 **Line Number Rendering**:
 - Computes `Vec<VisualRow>` via `widget_calc::compute_visual_rows()` — the **single source of truth** for all Y coordinates

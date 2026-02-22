@@ -15,8 +15,8 @@ pub trait Command<State> {
 /// Generic history manager parameterized by the Command type and State type it applies to
 #[derive(Debug, Clone)]
 pub struct History<C> {
-    undo_stack: VecDeque<C>,
-    redo_stack: VecDeque<C>,
+    pub undo_stack: VecDeque<C>,
+    pub redo_stack: VecDeque<C>,
     max_size: usize,
 }
 
@@ -288,24 +288,52 @@ pub enum TextEditorCommand {
     Insert {
         at: usize, // char offset
         text: String,
+        cursor_before: usize,
+        cursor_after: usize,
         timestamp: Instant,
     },
     Delete {
         at: usize, // char offset
         text: String,
+        cursor_before: usize,
+        cursor_after: usize,
         timestamp: Instant,
     },
     Replace {
         at: usize, // char offset
         old: String,
         new: String,
+        cursor_before: usize,
+        cursor_after: usize,
         timestamp: Instant,
     },
     IndentLines {
         lines: Vec<usize>,
         added: String,
+        cursor_before: usize,
+        cursor_after: usize,
         timestamp: Instant,
     },
+}
+
+impl TextEditorCommand {
+    pub fn cursor_before(&self) -> usize {
+        match self {
+            Self::Insert { cursor_before, .. } => *cursor_before,
+            Self::Delete { cursor_before, .. } => *cursor_before,
+            Self::Replace { cursor_before, .. } => *cursor_before,
+            Self::IndentLines { cursor_before, .. } => *cursor_before,
+        }
+    }
+
+    pub fn cursor_after(&self) -> usize {
+        match self {
+            Self::Insert { cursor_after, .. } => *cursor_after,
+            Self::Delete { cursor_after, .. } => *cursor_after,
+            Self::Replace { cursor_after, .. } => *cursor_after,
+            Self::IndentLines { cursor_after, .. } => *cursor_after,
+        }
+    }
 }
 
 impl Command<Rope> for TextEditorCommand {
@@ -366,21 +394,24 @@ impl Command<Rope> for TextEditorCommand {
                 Self::Insert {
                     at: at1,
                     text: text1,
+                    cursor_after: ca1,
                     timestamp: ts1,
+                    ..
                 },
                 Self::Insert {
                     at: at2,
                     text: text2,
+                    cursor_after: ca2,
                     timestamp: ts2,
+                    ..
                 },
             ) => {
-                // Don't coalesce newlines
                 if text1.contains('\n') || text2.contains('\n') {
                     return false;
                 }
-                // Coalesce contiguous appends
                 if *at2 == *at1 + text1.chars().count() && ts2.duration_since(*ts1) < max_delay {
                     text1.push_str(text2);
+                    *ca1 = *ca2;
                     *ts1 = *ts2;
                     return true;
                 }
@@ -389,18 +420,21 @@ impl Command<Rope> for TextEditorCommand {
                 Self::Delete {
                     at: at1,
                     text: text1,
+                    cursor_after: ca1,
                     timestamp: ts1,
+                    ..
                 },
                 Self::Delete {
                     at: at2,
                     text: text2,
+                    cursor_after: ca2,
                     timestamp: ts2,
+                    ..
                 },
             ) => {
                 if text1.contains('\n') || text2.contains('\n') {
                     return false;
                 }
-                // Coalesce contiguous backward deletes (backspace)
                 let chars2 = text2.chars().count();
                 if *at2 + chars2 == *at1 && ts2.duration_since(*ts1) < max_delay {
                     let mut new_text = String::with_capacity(text1.len() + text2.len());
@@ -408,12 +442,13 @@ impl Command<Rope> for TextEditorCommand {
                     new_text.push_str(text1);
                     *at1 = *at2;
                     *text1 = new_text;
+                    *ca1 = *ca2;
                     *ts1 = *ts2;
                     return true;
                 }
-                // Coalesce forward deletes (delete key)
                 if *at1 == *at2 && ts2.duration_since(*ts1) < max_delay {
                     text1.push_str(text2);
+                    *ca1 = *ca2;
                     *ts1 = *ts2;
                     return true;
                 }
