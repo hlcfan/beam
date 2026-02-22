@@ -38,7 +38,7 @@ impl<C: Clone> History<C> {
     }
 
     /// Pushes a new command, attempting to merge it with the previous command
-    pub fn push<State>(&mut self, mut cmd: C)
+    pub fn push<State>(&mut self, cmd: C)
     where
         C: Command<State>,
     {
@@ -88,6 +88,57 @@ impl<C: Clone> History<C> {
 
     pub fn can_redo(&self) -> bool {
         !self.redo_stack.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+    }
+}
+
+/// A centralized registry for multiple History stacks, keyed by widget ID.
+#[derive(Debug, Clone, Default)]
+pub struct HistoryRegistry {
+    text_input_histories: std::collections::HashMap<iced::widget::Id, History<TextInputCommand>>,
+    text_editor_histories: std::collections::HashMap<iced::widget::Id, History<TextEditorCommand>>,
+}
+
+impl HistoryRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Access or create a history for a text input.
+    pub fn get_or_create_input(&mut self, id: iced::widget::Id) -> &mut History<TextInputCommand> {
+        self.text_input_histories
+            .entry(id)
+            .or_insert_with(History::new)
+    }
+
+    /// Access a history for a text input if it exists.
+    pub fn get_input(&self, id: &iced::widget::Id) -> Option<&History<TextInputCommand>> {
+        self.text_input_histories.get(id)
+    }
+
+    /// Access a history for a text editor if it exists.
+    pub fn get_editor(&self, id: &iced::widget::Id) -> Option<&History<TextEditorCommand>> {
+        self.text_editor_histories.get(id)
+    }
+
+    /// Access or create a history for a text editor.
+    pub fn get_or_create_editor(
+        &mut self,
+        id: iced::widget::Id,
+    ) -> &mut History<TextEditorCommand> {
+        self.text_editor_histories
+            .entry(id)
+            .or_insert_with(History::new)
+    }
+
+    /// Clear all history stacks in the registry.
+    pub fn clear(&mut self) {
+        self.text_input_histories.clear();
+        self.text_editor_histories.clear();
     }
 }
 

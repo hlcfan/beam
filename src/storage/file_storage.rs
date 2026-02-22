@@ -1,11 +1,9 @@
 use super::{
-    CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentCollection,
-    PersistentEnvironments, PersistentRequest, StorageError,
+    CollectionMetadata, CollectionStorage, EnvironmentsMetadata, PersistentEnvironments,
+    PersistentRequest, StorageError,
 };
 use crate::storage::RequestMetadata;
-use crate::types::{
-    BodyFormat, Environment, RequestCollection, RequestConfig, SerializableRequestConfig,
-};
+use crate::types::{Environment, RequestCollection, RequestConfig, SerializableRequestConfig};
 use log::{error, info};
 use serde::Serialize;
 use std::ffi::OsStr;
@@ -318,7 +316,7 @@ impl TomlFileStorage {
             let metadata_path = collection_path.join("collection.toml");
 
             // Try to determine the collection name from existing data
-            let collection_name = if let Ok(content) = fs::read_to_string(&metadata_path) {
+            let _collection_name = if let Ok(content) = fs::read_to_string(&metadata_path) {
                 if let Ok(mut metadata) = toml::from_str::<CollectionMetadata>(&content) {
                     // If name is missing or default, use folder name or "My Requests"
                     if metadata.name.is_empty() || metadata.name == "New Collection" {

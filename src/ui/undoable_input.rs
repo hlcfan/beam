@@ -1,7 +1,5 @@
-use crate::constant;
-use crate::history::{History, TextInputCommand, diff_to_command};
+use crate::history::diff_to_command;
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
-use constant::URL_INPUT_ID;
 use iced::widget::text_input;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
@@ -15,28 +13,28 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct UndoableInput {
+    id: iced::widget::Id,
     value: String,
-    history: History<TextInputCommand>,
     placeholder: String,
     size: f32,
     padding: f32,
 }
 
 impl UndoableInput {
-    pub fn new(initial_value: String, placeholder: String) -> Self {
+    pub fn new(id: iced::widget::Id, initial_value: String, placeholder: String) -> Self {
         Self {
+            id,
             value: initial_value,
-            history: History::new(),
             placeholder,
             size: 14.0,
             padding: 8.0,
         }
     }
 
-    pub fn new_empty(placeholder: String) -> Self {
+    pub fn new_empty(id: iced::widget::Id, placeholder: String) -> Self {
         Self {
+            id,
             value: String::new(),
-            history: History::new(),
             placeholder,
             size: 14.0,
             padding: 8.0,
@@ -57,26 +55,32 @@ impl UndoableInput {
         &self.value
     }
 
-    /// Sync the internal baseline value without recording a history entry.
-    /// Call this whenever the URL is set externally (e.g. loading a saved request).
-    /// This also clears the undo history (the new value is the new baseline).
-    pub fn set_value(&mut self, value: String) {
-        self.value = value;
-        self.history = crate::history::History::new();
+    pub fn has_history(&self, history_registry: &crate::history::HistoryRegistry) -> bool {
+        history_registry
+            .get_input(&self.id)
+            .map(|h| h.can_undo())
+            .unwrap_or(false)
     }
 
-    /// Returns true if the user has made edits (history stack is not empty).
-    pub fn has_history(&self) -> bool {
-        self.history.can_undo()
+    /// Sync the internal baseline value without recording a history entry.
+    /// Call this whenever the URL is set externally (e.g. loading a saved request).
+    pub fn set_value(&mut self, value: String) {
+        self.value = value;
     }
 
     /// Update the component with a message.
     /// Returns Some(new_value) if the value changed (for parent notification).
-    pub fn update(&mut self, message: Message) -> Option<String> {
+    pub fn update(
+        &mut self,
+        message: Message,
+        history_registry: &mut crate::history::HistoryRegistry,
+    ) -> Option<String> {
+        let history = history_registry.get_or_create_input(self.id.clone());
+
         match message {
             Message::Changed(new_value) => {
                 if let Some(cmd) = diff_to_command(&self.value, &new_value) {
-                    self.history.push(cmd);
+                    history.push(cmd);
                     self.value = new_value.clone();
                     Some(new_value)
                 } else {
@@ -84,14 +88,14 @@ impl UndoableInput {
                 }
             }
             Message::Undo => {
-                if self.history.undo(&mut self.value) {
+                if history.undo(&mut self.value) {
                     Some(self.value.clone())
                 } else {
                     None
                 }
             }
             Message::Redo => {
-                if self.history.redo(&mut self.value) {
+                if history.redo(&mut self.value) {
                     Some(self.value.clone())
                 } else {
                     None
@@ -103,7 +107,7 @@ impl UndoableInput {
 
     pub fn view<'a>(&'a self, value: &'a str) -> Element<'a, Message> {
         let input = text_input(&self.placeholder, value)
-            .id(URL_INPUT_ID)
+            .id(self.id.clone())
             .on_input(Message::Changed)
             .size(self.size)
             .padding(self.padding)

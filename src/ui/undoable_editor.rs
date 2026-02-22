@@ -1,4 +1,4 @@
-use crate::history::{Command, History, TextEditorCommand};
+use crate::history::{Command, TextEditorCommand};
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use iced::advanced::text;
 use iced::widget::text_editor;
@@ -15,7 +15,7 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct UndoableEditor {
-    history: History<TextEditorCommand>,
+    id: iced::widget::Id,
     rope: ropey::Rope,
     height: Length,
     version: usize,
@@ -25,10 +25,10 @@ pub struct UndoableEditor {
 }
 
 impl UndoableEditor {
-    pub fn new(initial_text: String) -> Self {
+    pub fn new(id: iced::widget::Id, initial_text: String) -> Self {
         let pos = text_editor::Position { line: 0, column: 0 };
         Self {
-            history: History::new(),
+            id,
             rope: ropey::Rope::from_str(&initial_text),
             height: Length::Fill,
             version: 0,
@@ -37,10 +37,10 @@ impl UndoableEditor {
         }
     }
 
-    pub fn new_empty() -> Self {
+    pub fn new_empty(id: iced::widget::Id) -> Self {
         let pos = text_editor::Position { line: 0, column: 0 };
         Self {
-            history: History::new(),
+            id,
             rope: ropey::Rope::new(),
             height: Length::Fill,
             version: 0,
@@ -80,7 +80,10 @@ impl UndoableEditor {
         &mut self,
         message: Message,
         content: &mut text_editor::Content,
+        history_registry: &mut crate::history::HistoryRegistry,
     ) -> Option<String> {
+        let history = history_registry.get_or_create_editor(self.id.clone());
+
         match message {
             Message::Action(action) => {
                 // Determine what type of action it is
@@ -246,7 +249,7 @@ impl UndoableEditor {
 
                         if let Some(mut c) = cmd {
                             c.execute(&mut self.rope);
-                            self.history.push(c);
+                            history.push(c);
                             self.version += 1;
                             return Some(self.rope.to_string());
                         }
@@ -255,7 +258,7 @@ impl UndoableEditor {
                 None
             }
             Message::Undo => {
-                if let Some(mut cmd) = self.history.undo_stack.pop_back() {
+                if let Some(mut cmd) = history.undo_stack.pop_back() {
                     cmd.undo(&mut self.rope);
 
                     let pos = self.char_to_pos(cmd.cursor_before());
@@ -271,7 +274,7 @@ impl UndoableEditor {
                     self.cursor = pos;
                     self.anchor = pos;
 
-                    self.history.redo_stack.push_back(cmd);
+                    history.redo_stack.push_back(cmd);
                     self.version += 1;
                     Some(rope_str)
                 } else {
@@ -279,7 +282,7 @@ impl UndoableEditor {
                 }
             }
             Message::Redo => {
-                if let Some(mut cmd) = self.history.redo_stack.pop_back() {
+                if let Some(mut cmd) = history.redo_stack.pop_back() {
                     cmd.execute(&mut self.rope);
 
                     let pos = self.char_to_pos(cmd.cursor_after());
@@ -295,7 +298,7 @@ impl UndoableEditor {
                     self.cursor = pos;
                     self.anchor = pos;
 
-                    self.history.undo_stack.push_back(cmd);
+                    history.undo_stack.push_back(cmd);
                     self.version += 1;
                     Some(rope_str)
                 } else {

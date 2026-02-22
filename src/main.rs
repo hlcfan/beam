@@ -23,7 +23,6 @@ use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
 use beam::ui::response;
-use beam::ui::undoable_editor;
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
@@ -284,7 +283,11 @@ impl BeamApp {
                     request::Action::UpdateCurrentRequest(request_config) => {
                         // If the user hasn't made any edits yet, ensure the URL baseline is synced.
                         // This prevents undo from clearing the entire input on the first edit.
-                        if !self.request_panel.url_input.has_history() {
+                        if !self
+                            .request_panel
+                            .url_input
+                            .has_history(&self.request_panel.history_registry)
+                        {
                             self.request_panel
                                 .url_input
                                 .set_value(request_config.url.clone());
@@ -522,8 +525,10 @@ impl BeamApp {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
-                                self.request_panel
-                                    .reset_undo_histories(&self.current_request.url, &self.current_request.body);
+                                self.request_panel.reset_undo_histories(
+                                    &self.current_request.url,
+                                    &self.current_request.body,
+                                );
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1447,8 +1452,10 @@ impl BeamApp {
                                 self.last_opened_request = Some((collection_index, request_index));
 
                                 self.current_request = request_config.clone();
-                                self.request_panel
-                                    .reset_undo_histories(&self.current_request.url, &self.current_request.body);
+                                self.request_panel.reset_undo_histories(
+                                    &self.current_request.url,
+                                    &self.current_request.body,
+                                );
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1546,7 +1553,7 @@ impl BeamApp {
                     "=== SaveRequestDebounced - collection_index: {}, request_index: {}",
                     collection_index, request_index
                 );
-                let key = (collection_index, request_index);
+                let _key = (collection_index, request_index);
 
                 // Check if this save is still valid (no newer changes)
                 // if let Some(last_change_time) = self.debounce_timers.get(&key) {

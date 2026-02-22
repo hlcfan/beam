@@ -1,7 +1,6 @@
 use crate::storage::persistent_types::RequestMetadata;
 use iced::Color;
 use iced::advanced::text::Highlighter;
-use log::info;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

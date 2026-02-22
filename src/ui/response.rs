@@ -3,7 +3,6 @@ use crate::types::{ResponseData, ResponseTab};
 use crate::ui::floating_element;
 use crate::ui::undoable_editor::{self, UndoableEditor};
 use crate::ui::{IconName, Spinner, icon};
-use iced::highlighter::{self};
 use iced::widget::button::Status;
 use iced::widget::container::Style;
 use iced::widget::{
@@ -62,7 +61,7 @@ impl ResponsePanel {
             search_query: String::new(),
             search_input_id: iced::widget::Id::unique(),
             search_selection: None,
-            body_editor: UndoableEditor::new_empty(),
+            body_editor: UndoableEditor::new_empty(iced::widget::Id::new(RESPONSE_BODY_EDITOR_ID)),
         }
     }
 

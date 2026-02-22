@@ -243,7 +243,7 @@ fn setup_global_objects(
     ctx.eval::<(), _>(wrapper_eval)?;
 
     // Clean up the temporary global
-    ctx.globals().remove("__tempEnvObj");
+    let _ = ctx.globals().remove("__tempEnvObj");
     info!("Set property added to env_obj");
 
     // Add pm.environment.get method
@@ -333,7 +333,7 @@ fn setup_global_objects(
     "#;
     ctx.eval::<(), _>(json_fn_eval)?;
 
-    ctx.globals().remove("__tempJsonData");
+    let _ = ctx.globals().remove("__tempJsonData");
     info!("json() method added to pm.response");
 
     info!("pm.response object setup complete");
