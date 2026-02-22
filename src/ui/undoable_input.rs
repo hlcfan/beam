@@ -1,5 +1,5 @@
 use crate::constant;
-use crate::history::UndoHistory;
+use crate::history::{History, TextInputCommand, diff_to_command};
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use constant::URL_INPUT_ID;
 use iced::widget::text_input;
@@ -16,7 +16,7 @@ pub enum Message {
 #[derive(Debug, Clone)]
 pub struct UndoableInput {
     value: String,
-    history: UndoHistory,
+    history: History<TextInputCommand>,
     placeholder: String,
     size: f32,
     padding: f32,
@@ -25,8 +25,8 @@ pub struct UndoableInput {
 impl UndoableInput {
     pub fn new(initial_value: String, placeholder: String) -> Self {
         Self {
-            value: initial_value.clone(),
-            history: UndoHistory::new(initial_value),
+            value: initial_value,
+            history: History::new(),
             placeholder,
             size: 14.0,
             padding: 8.0,
@@ -36,7 +36,7 @@ impl UndoableInput {
     pub fn new_empty(placeholder: String) -> Self {
         Self {
             value: String::new(),
-            history: UndoHistory::new_empty(),
+            history: History::new(),
             placeholder,
             size: 14.0,
             padding: 8.0,
@@ -57,27 +57,42 @@ impl UndoableInput {
         &self.value
     }
 
+    /// Sync the internal baseline value without recording a history entry.
+    /// Call this whenever the URL is set externally (e.g. loading a saved request).
+    /// This also clears the undo history (the new value is the new baseline).
+    pub fn set_value(&mut self, value: String) {
+        self.value = value;
+        self.history = crate::history::History::new();
+    }
+
+    /// Returns true if the user has made edits (history stack is not empty).
+    pub fn has_history(&self) -> bool {
+        self.history.can_undo()
+    }
+
     /// Update the component with a message.
     /// Returns Some(new_value) if the value changed (for parent notification).
     pub fn update(&mut self, message: Message) -> Option<String> {
         match message {
             Message::Changed(new_value) => {
-                self.history.push(new_value.clone());
-                self.value = new_value.clone();
-                Some(new_value)
+                if let Some(cmd) = diff_to_command(&self.value, &new_value) {
+                    self.history.push(cmd);
+                    self.value = new_value.clone();
+                    Some(new_value)
+                } else {
+                    None
+                }
             }
             Message::Undo => {
-                if let Some(prev) = self.history.undo() {
-                    self.value = prev.clone();
-                    Some(prev)
+                if self.history.undo(&mut self.value) {
+                    Some(self.value.clone())
                 } else {
                     None
                 }
             }
             Message::Redo => {
-                if let Some(next) = self.history.redo() {
-                    self.value = next.clone();
-                    Some(next)
+                if self.history.redo(&mut self.value) {
+                    Some(self.value.clone())
                 } else {
                     None
                 }

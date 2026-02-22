@@ -23,6 +23,7 @@ use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
 use beam::ui::response;
+use beam::ui::undoable_editor;
 
 use iced::color;
 use iced::widget::pane_grid::{self, Axis, PaneGrid};
@@ -281,6 +282,13 @@ impl BeamApp {
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
+                        // If the user hasn't made any edits yet, ensure the URL baseline is synced.
+                        // This prevents undo from clearing the entire input on the first edit.
+                        if !self.request_panel.url_input.has_history() {
+                            self.request_panel
+                                .url_input
+                                .set_value(request_config.url.clone());
+                        }
                         self.current_request = request_config.clone();
 
                         if self.request_body_content.text() != self.current_request.body {
@@ -514,7 +522,8 @@ impl BeamApp {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
-                                self.request_panel.reset_undo_histories();
+                                self.request_panel
+                                    .reset_undo_histories(&self.current_request.url);
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1153,26 +1162,19 @@ impl BeamApp {
                     environment::Action::None => Task::none(),
                 }
             }
-            Message::KeyPressed(key) => {
-                match key {
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
-                        if self.show_environment_popup {
-                            self.show_environment_popup = false;
-                        } else if self.show_rename_modal {
-                            self.show_rename_modal = false;
-                            self.rename_input.clear();
-                            self.rename_target = None;
-                        }
-                        Task::none()
+            Message::KeyPressed(key) => match key {
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                    if self.show_environment_popup {
+                        self.show_environment_popup = false;
+                    } else if self.show_rename_modal {
+                        self.show_rename_modal = false;
+                        self.rename_input.clear();
+                        self.rename_target = None;
                     }
-                    iced::keyboard::Key::Character(ref c) if c == "z" => {
-                        // Check if this is Cmd+Z (undo) or Cmd+Shift+Z (redo)
-                        // For now, we'll handle this in the subscription with modifiers
-                        Task::none()
-                    }
-                    _ => Task::none(),
+                    Task::none()
                 }
-            }
+                _ => Task::none(),
+            },
             Message::TimerTick => {
                 if let Some(start_time) = self.request_start_time {
                     self.current_elapsed_time = start_time.elapsed().as_millis() as u64;
@@ -1445,8 +1447,8 @@ impl BeamApp {
                                 self.last_opened_request = Some((collection_index, request_index));
 
                                 self.current_request = request_config.clone();
-                                // self.request_panel
-                                //     .reset_undo_histories(&self.current_request);
+                                self.request_panel
+                                    .reset_undo_histories(&self.current_request.url);
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,

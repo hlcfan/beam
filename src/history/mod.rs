@@ -1,78 +1,425 @@
+use ropey::Rope;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-#[derive(Debug, Clone)]
-pub struct UndoHistory {
-    past: Vec<String>,
-    future: Vec<String>,
-    current: Option<String>,
-    last_snapshot_time: Instant,
-    debounce_duration: Duration,
+/// Trait defining a generic command that mutates state
+pub trait Command<State> {
+    fn execute(&mut self, state: &mut State);
+    fn undo(&mut self, state: &mut State);
+    /// Attempt to merge the `next` command into `self`. Returns true if merged successfully.
+    fn try_merge(&mut self, _next: &Self) -> bool {
+        false
+    }
 }
 
-impl UndoHistory {
-    pub fn new(initial: String) -> Self {
+/// Generic history manager parameterized by the Command type and State type it applies to
+#[derive(Debug, Clone)]
+pub struct History<C> {
+    undo_stack: VecDeque<C>,
+    redo_stack: VecDeque<C>,
+    max_size: usize,
+}
+
+impl<C: Clone> History<C> {
+    pub fn new() -> Self {
         Self {
-            past: Vec::new(),
-            future: Vec::new(),
-            current: Some(initial),
-            last_snapshot_time: Instant::now(),
-            debounce_duration: Duration::from_millis(500),
+            undo_stack: VecDeque::new(),
+            redo_stack: VecDeque::new(),
+            max_size: 1000,
         }
     }
 
-    pub fn new_empty() -> Self {
+    pub fn with_capacity(max_size: usize) -> Self {
         Self {
-            past: Vec::new(),
-            future: Vec::new(),
-            current: None,
-            last_snapshot_time: Instant::now(),
-            debounce_duration: Duration::from_millis(500),
+            undo_stack: VecDeque::new(),
+            redo_stack: VecDeque::new(),
+            max_size,
         }
     }
 
-    pub fn push(&mut self, new_state: String) {
-        // Bug: first keyword can't be undo
-        if self.current.as_ref() == Some(&new_state) {
-            return;
-        }
+    /// Pushes a new command, attempting to merge it with the previous command
+    pub fn push<State>(&mut self, mut cmd: C)
+    where
+        C: Command<State>,
+    {
+        self.redo_stack.clear();
 
-        let now = Instant::now();
-        let time_since_last = now.duration_since(self.last_snapshot_time);
-
-        // If enough time passed or past is empty, save current to past
-        if time_since_last >= self.debounce_duration || self.past.is_empty() {
-            if let Some(current) = &self.current {
-                self.past.push(current.clone());
-                self.last_snapshot_time = now;
+        if let Some(top) = self.undo_stack.back_mut() {
+            if top.try_merge(&cmd) {
+                return;
             }
         }
 
-        self.current = Some(new_state);
-        self.future.clear();
+        if self.undo_stack.len() >= self.max_size {
+            self.undo_stack.pop_front();
+        }
+        self.undo_stack.push_back(cmd);
     }
 
-    pub fn undo(&mut self) -> Option<String> {
-        if let Some(prev) = self.past.pop() {
-            self.future.push(self.current.clone().unwrap_or_default());
-            self.current = Some(prev.clone());
-            Some(prev)
+    pub fn undo<State>(&mut self, state: &mut State) -> bool
+    where
+        C: Command<State>,
+    {
+        if let Some(mut cmd) = self.undo_stack.pop_back() {
+            cmd.undo(state);
+            self.redo_stack.push_back(cmd);
+            true
         } else {
-            None
+            false
         }
     }
 
-    pub fn redo(&mut self) -> Option<String> {
-        if let Some(next) = self.future.pop() {
-            self.past.push(self.current.clone().unwrap_or_default());
-            self.current = Some(next.clone());
-            Some(next)
+    pub fn redo<State>(&mut self, state: &mut State) -> bool
+    where
+        C: Command<State>,
+    {
+        if let Some(mut cmd) = self.redo_stack.pop_back() {
+            cmd.execute(state);
+            self.undo_stack.push_back(cmd);
+            true
         } else {
-            None
+            false
         }
     }
 
-    pub fn current(&self) -> &Option<String> {
-        &self.current
+    pub fn can_undo(&self) -> bool {
+        !self.undo_stack.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo_stack.is_empty()
     }
 }
 
+// -----------------------------------------------------------------------------
+// TextInput Implementation
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum TextInputCommand {
+    Insert {
+        at: usize,
+        text: String,
+        timestamp: Instant,
+    },
+    Delete {
+        at: usize,
+        text: String,
+        timestamp: Instant,
+    },
+    Replace {
+        at: usize,
+        old: String,
+        new: String,
+        timestamp: Instant,
+    },
+}
+
+impl Command<String> for TextInputCommand {
+    fn execute(&mut self, state: &mut String) {
+        match self {
+            Self::Insert { at, text, .. } => state.insert_str(*at, text),
+            Self::Delete { at, text, .. } => {
+                state.replace_range(*at..*at + text.len(), "");
+            }
+            Self::Replace { at, old, new, .. } => {
+                state.replace_range(*at..*at + old.len(), new);
+            }
+        }
+    }
+
+    fn undo(&mut self, state: &mut String) {
+        match self {
+            Self::Insert { at, text, .. } => {
+                state.replace_range(*at..*at + text.len(), "");
+            }
+            Self::Delete { at, text, .. } => state.insert_str(*at, text),
+            Self::Replace { at, old, new, .. } => {
+                state.replace_range(*at..*at + new.len(), old);
+            }
+        }
+    }
+
+    fn try_merge(&mut self, next: &Self) -> bool {
+        let max_delay = Duration::from_millis(300);
+
+        match (self, next) {
+            (
+                Self::Insert {
+                    at: at1,
+                    text: text1,
+                    timestamp: ts1,
+                },
+                Self::Insert {
+                    at: at2,
+                    text: text2,
+                    timestamp: ts2,
+                },
+            ) => {
+                // Only merge single-character inserts (not pastes/multi-char).
+                // Stop at word boundaries (space, newline, punctuation) like VSCode does.
+                let is_single_char = text2.chars().count() == 1;
+                let is_delimiter = text2
+                    .chars()
+                    .next()
+                    .map(|c| c.is_whitespace() || c.is_ascii_punctuation())
+                    .unwrap_or(false);
+
+                if is_single_char
+                    && !is_delimiter
+                    && *at2 == *at1 + text1.chars().count()
+                    && ts2.duration_since(*ts1) < max_delay
+                {
+                    text1.push_str(text2);
+                    *ts1 = *ts2;
+                    return true;
+                }
+            }
+            (
+                Self::Delete {
+                    at: at1,
+                    text: text1,
+                    timestamp: ts1,
+                },
+                Self::Delete {
+                    at: at2,
+                    text: text2,
+                    timestamp: ts2,
+                },
+            ) => {
+                let chars2 = text2.chars().count();
+                // Only merge single-char deletes (backspace/delete key), not multi-char deletions
+                let is_single_char_del = text2.chars().count() == 1;
+                // Stop merging at whitespace/delimiter boundaries
+                let is_delimiter = text2
+                    .chars()
+                    .next()
+                    .map(|c| c.is_whitespace() || c.is_ascii_punctuation())
+                    .unwrap_or(false);
+
+                if is_single_char_del && !is_delimiter && ts2.duration_since(*ts1) < max_delay {
+                    // Merge backward deletes (backspace) within short interval
+                    if *at2 + chars2 == *at1 {
+                        let mut new_text = String::with_capacity(text1.len() + text2.len());
+                        new_text.push_str(text2);
+                        new_text.push_str(text1);
+                        *at1 = *at2;
+                        *text1 = new_text;
+                        *ts1 = *ts2;
+                        return true;
+                    }
+                    // Also merge forward deletes (delete key)
+                    if *at1 == *at2 {
+                        text1.push_str(text2);
+                        *ts1 = *ts2;
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+}
+
+/// Compute differences between old and new state for single line inputs
+pub fn diff_to_command(old: &str, new: &str) -> Option<TextInputCommand> {
+    if old == new {
+        return None;
+    }
+
+    // Work with character boundaries
+    let old_chars: Vec<char> = old.chars().collect();
+    let new_chars: Vec<char> = new.chars().collect();
+
+    let mut prefix_len = 0;
+    while prefix_len < old_chars.len()
+        && prefix_len < new_chars.len()
+        && old_chars[prefix_len] == new_chars[prefix_len]
+    {
+        prefix_len += 1;
+    }
+
+    let mut suffix_len = 0;
+    let max_suffix = old_chars.len().min(new_chars.len()) - prefix_len;
+    while suffix_len < max_suffix
+        && old_chars[old_chars.len() - 1 - suffix_len]
+            == new_chars[new_chars.len() - 1 - suffix_len]
+    {
+        suffix_len += 1;
+    }
+
+    let deleted_chars = &old_chars[prefix_len..old_chars.len() - suffix_len];
+    let inserted_chars = &new_chars[prefix_len..new_chars.len() - suffix_len];
+
+    let deleted: String = deleted_chars.iter().collect();
+    let inserted: String = inserted_chars.iter().collect();
+
+    // Map char prefix len back to byte offset for insertion
+    let byte_prefix = old.chars().take(prefix_len).map(|c| c.len_utf8()).sum();
+
+    match (deleted.is_empty(), inserted.is_empty()) {
+        (true, false) => Some(TextInputCommand::Insert {
+            at: byte_prefix,
+            text: inserted,
+            timestamp: Instant::now(),
+        }),
+        (false, true) => Some(TextInputCommand::Delete {
+            at: byte_prefix,
+            text: deleted,
+            timestamp: Instant::now(),
+        }),
+        (false, false) => Some(TextInputCommand::Replace {
+            at: byte_prefix,
+            old: deleted,
+            new: inserted,
+            timestamp: Instant::now(),
+        }),
+        _ => None,
+    }
+}
+
+// -----------------------------------------------------------------------------
+// TextEditor Implementation
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub enum TextEditorCommand {
+    Insert {
+        at: usize, // char offset
+        text: String,
+        timestamp: Instant,
+    },
+    Delete {
+        at: usize, // char offset
+        text: String,
+        timestamp: Instant,
+    },
+    Replace {
+        at: usize, // char offset
+        old: String,
+        new: String,
+        timestamp: Instant,
+    },
+    IndentLines {
+        lines: Vec<usize>,
+        added: String,
+        timestamp: Instant,
+    },
+}
+
+impl Command<Rope> for TextEditorCommand {
+    fn execute(&mut self, rope: &mut Rope) {
+        match self {
+            Self::Insert { at, text, .. } => {
+                rope.insert(*at, text);
+            }
+            Self::Delete { at, text, .. } => {
+                let chars_len = text.chars().count();
+                rope.remove(*at..(*at + chars_len));
+            }
+            Self::Replace { at, old, new, .. } => {
+                let old_chars_len = old.chars().count();
+                rope.remove(*at..(*at + old_chars_len));
+                rope.insert(*at, new);
+            }
+            Self::IndentLines { lines, added, .. } => {
+                // Loop reverse so early insertions don't invalidate later line char offsets
+                for &line_idx in lines.iter().rev() {
+                    let char_idx = rope.line_to_char(line_idx);
+                    rope.insert(char_idx, added);
+                }
+            }
+        }
+    }
+
+    fn undo(&mut self, rope: &mut Rope) {
+        match self {
+            Self::Insert { at, text, .. } => {
+                let chars_len = text.chars().count();
+                rope.remove(*at..(*at + chars_len));
+            }
+            Self::Delete { at, text, .. } => {
+                rope.insert(*at, text);
+            }
+            Self::Replace { at, old, new, .. } => {
+                let new_chars_len = new.chars().count();
+                rope.remove(*at..(*at + new_chars_len));
+                rope.insert(*at, old);
+            }
+            Self::IndentLines { lines, added, .. } => {
+                let added_len = added.chars().count();
+                // Loop reverse so early deletions don't invalidate later line char offsets
+                for &line_idx in lines.iter().rev() {
+                    let char_idx = rope.line_to_char(line_idx);
+                    rope.remove(char_idx..(char_idx + added_len));
+                }
+            }
+        }
+    }
+
+    fn try_merge(&mut self, next: &Self) -> bool {
+        let max_delay = Duration::from_millis(300);
+
+        match (self, next) {
+            (
+                Self::Insert {
+                    at: at1,
+                    text: text1,
+                    timestamp: ts1,
+                },
+                Self::Insert {
+                    at: at2,
+                    text: text2,
+                    timestamp: ts2,
+                },
+            ) => {
+                // Don't coalesce newlines
+                if text1.contains('\n') || text2.contains('\n') {
+                    return false;
+                }
+                // Coalesce contiguous appends
+                if *at2 == *at1 + text1.chars().count() && ts2.duration_since(*ts1) < max_delay {
+                    text1.push_str(text2);
+                    *ts1 = *ts2;
+                    return true;
+                }
+            }
+            (
+                Self::Delete {
+                    at: at1,
+                    text: text1,
+                    timestamp: ts1,
+                },
+                Self::Delete {
+                    at: at2,
+                    text: text2,
+                    timestamp: ts2,
+                },
+            ) => {
+                if text1.contains('\n') || text2.contains('\n') {
+                    return false;
+                }
+                // Coalesce contiguous backward deletes (backspace)
+                let chars2 = text2.chars().count();
+                if *at2 + chars2 == *at1 && ts2.duration_since(*ts1) < max_delay {
+                    let mut new_text = String::with_capacity(text1.len() + text2.len());
+                    new_text.push_str(text2);
+                    new_text.push_str(text1);
+                    *at1 = *at2;
+                    *text1 = new_text;
+                    *ts1 = *ts2;
+                    return true;
+                }
+                // Coalesce forward deletes (delete key)
+                if *at1 == *at2 && ts2.duration_since(*ts1) < max_delay {
+                    text1.push_str(text2);
+                    *ts1 = *ts2;
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
+}

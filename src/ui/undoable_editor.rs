@@ -1,4 +1,4 @@
-use crate::history::UndoHistory;
+use crate::history::{History, TextEditorCommand};
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use iced::advanced::text;
 use iced::widget::text_editor;
@@ -15,7 +15,8 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct UndoableEditor {
-    history: UndoHistory,
+    history: History<TextEditorCommand>,
+    rope: ropey::Rope,
     height: Length,
     version: usize,
 }
@@ -23,7 +24,8 @@ pub struct UndoableEditor {
 impl UndoableEditor {
     pub fn new(initial_text: String) -> Self {
         Self {
-            history: UndoHistory::new(initial_text),
+            history: History::new(),
+            rope: ropey::Rope::from_str(&initial_text),
             height: Length::Fill,
             version: 0,
         }
@@ -31,7 +33,8 @@ impl UndoableEditor {
 
     pub fn new_empty() -> Self {
         Self {
-            history: UndoHistory::new_empty(),
+            history: History::new(),
+            rope: ropey::Rope::new(),
             height: Length::Fill,
             version: 0,
         }
@@ -40,6 +43,28 @@ impl UndoableEditor {
     pub fn height(mut self, height: Length) -> Self {
         self.height = height;
         self
+    }
+
+    /// Helper to convert a byte offset in `text_editor::Content` to a char offset in `ropey::Rope`.
+    fn map_char_offset(content: &text_editor::Content, line: usize, column: usize) -> usize {
+        let mut char_offset = 0;
+        for (i, l) in content.lines().enumerate() {
+            if i == line {
+                // column in iced is byte offset, we need char offset.
+                // We'll iterate chars up to column boundary.
+                let mut current_byte = 0;
+                for c in l.text.chars() {
+                    if current_byte == column {
+                        break;
+                    }
+                    current_byte += c.len_utf8();
+                    char_offset += 1;
+                }
+                break;
+            }
+            char_offset += l.text.chars().count() + 1; // +1 for newline
+        }
+        char_offset
     }
 
     /// Update the component with a message.
@@ -51,42 +76,82 @@ impl UndoableEditor {
     ) -> Option<String> {
         match message {
             Message::Action(action) => {
+                // Unforunately `Content` doesn't expose `cursor_position()` directly.
+                // But we know what the edit is doing. But to know WHERE to do it on the Rope
+                // we have to diff it vs the previous state or look at the rope state.
+                // ACTUALLY `action` is passed to `Content::perform(action)` first, THEN we
+                // can just rebuild the rope if text changed.
+                // Or if we rebuild rope, we just track full texts for undo? No, we need
+                // granular diffs.
+                // Let's implement diffing for TextEditor command here too just like we did
+                // for TextInput, to infer the edit point.
+                let old_text = content.text();
                 content.perform(action);
-                let text = content.text();
-                if self.history.current().as_ref() != Some(&text) {
-                    self.history.push(text.clone());
+                let new_text = content.text();
+
+                if old_text != new_text {
+                    if let Some(cmd) =
+                        crate::history::diff_to_command(&old_text, &new_text).map(|c| match c {
+                            crate::history::TextInputCommand::Insert {
+                                at,
+                                text,
+                                timestamp,
+                            } => TextEditorCommand::Insert {
+                                at,
+                                text,
+                                timestamp,
+                            },
+                            crate::history::TextInputCommand::Delete {
+                                at,
+                                text,
+                                timestamp,
+                            } => TextEditorCommand::Delete {
+                                at,
+                                text,
+                                timestamp,
+                            },
+                            crate::history::TextInputCommand::Replace {
+                                at,
+                                old,
+                                new,
+                                timestamp,
+                            } => TextEditorCommand::Replace {
+                                at,
+                                old,
+                                new,
+                                timestamp,
+                            },
+                        })
+                    {
+                        self.history.push(cmd);
+                    }
+                    self.rope = ropey::Rope::from_str(&new_text);
                     self.version += 1;
-                    Some(text)
+                    Some(self.rope.to_string())
                 } else {
                     None
                 }
             }
             Message::Undo => {
-                if let Some(prev) = self.history.undo() {
-                    // Use perform to update content while preserving cursor position
+                if self.history.undo(&mut self.rope) {
+                    let rope_str = self.rope.to_string();
                     content.perform(text_editor::Action::SelectAll);
                     content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                        std::sync::Arc::new(prev.clone()),
+                        std::sync::Arc::new(rope_str.clone()),
                     )));
-                    // Move cursor to end
-                    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    // Don't increment version - content dimensions haven't changed
-                    Some(prev)
+                    Some(rope_str)
                 } else {
                     None
                 }
             }
             Message::Redo => {
-                if let Some(next) = self.history.redo() {
-                    // Use perform to update content while preserving cursor position
+                if self.history.redo(&mut self.rope) {
+                    let rope_str = self.rope.to_string();
                     content.perform(text_editor::Action::SelectAll);
                     content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                        std::sync::Arc::new(next.clone()),
+                        std::sync::Arc::new(rope_str.clone()),
                     )));
-                    // Move cursor to end
-                    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    // Don't increment version - content dimensions haven't changed
-                    Some(next)
+                    Some(rope_str)
                 } else {
                     None
                 }

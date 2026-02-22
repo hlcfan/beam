@@ -139,8 +139,9 @@ impl RequestPanel {
         Self::default()
     }
 
-    pub fn reset_undo_histories<'a>(&mut self) {
+    pub fn reset_undo_histories(&mut self, current_url: &str) {
         self.url_input = UndoableInput::new_empty("Enter URL...".to_string());
+        self.url_input.set_value(current_url.to_string());
         self.body_editor = UndoableEditor::new_empty();
     }
 
@@ -513,11 +514,6 @@ impl RequestPanel {
             }
             Message::ScriptChanged(action) => {
                 return Action::EditRequestPostRequestScript(action);
-                // // Update the script editor content and sync to request
-                // self.script_editor_content.perform(action);
-                // let mut request = current_request.clone();
-                // request.post_request_script = Some(self.script_editor_content.text());
-                // Action::UpdateCurrentRequest(request)
             }
             Message::DoNothing => Action::None,
         }

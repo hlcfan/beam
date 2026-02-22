@@ -33,6 +33,7 @@ log = "0.4"
 env_logger = "0.10"
 rquickjs = "0.10.0"
 lazy_static = "1.4"
+ropey = "1"
 
 [patch.crates-io]
 iced = { git = "https://github.com/hlcfan/iced", branch = "fix-text-alignment" }
