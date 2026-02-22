@@ -39,6 +39,7 @@ pub enum Message {
     SearchNotFound,
     FocusSearch,
     DoNothing, // Used to prevent event propagation
+    ScrollToMatchResponse(f32),
 }
 
 #[derive(Debug)]
@@ -137,7 +138,26 @@ impl ResponsePanel {
             Message::SubmitSearch => Action::SubmitSearch(self.search_input_id.clone()),
             Message::SearchFound(start, end) => {
                 self.search_selection = Some((start, end));
-                Action::None
+                Action::Run(
+                    iced::advanced::widget::operate(crate::ui::editor_view::QueryScrollY::new(
+                        start.line,
+                    ))
+                    .map(Message::ScrollToMatchResponse),
+                )
+            }
+            Message::ScrollToMatchResponse(y) => {
+                let viewport_height = 400.0;
+                let offset_y = (y - viewport_height / 2.0).max(0.0);
+                Action::Run(
+                    iced::widget::operation::scroll_to(
+                        iced::widget::Id::new(crate::constant::RESPONSE_BODY_SCROLLABLE_ID),
+                        iced::widget::scrollable::AbsoluteOffset {
+                            x: None,
+                            y: Some(offset_y),
+                        },
+                    )
+                    .map(|_: ()| Message::DoNothing),
+                )
             }
             Message::SearchNotFound => {
                 self.search_selection = None;

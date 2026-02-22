@@ -19,8 +19,6 @@ use beam::ui::RequestPanel;
 use beam::ui::ResponsePanel;
 use std::sync::Arc;
 
-use beam::constant::REQUEST_BODY_SCROLLABLE_ID;
-use beam::constant::RESPONSE_BODY_SCROLLABLE_ID;
 use beam::ui::collections;
 use beam::ui::environment;
 use beam::ui::request;
@@ -1856,25 +1854,8 @@ impl BeamApp {
             // The highlight will be driven independently by `SearchFound` -> `search_selection`.
 
             // Calculate scroll position more precisely to center the match
-            // We use 14.0px size + 5.0px padding, matching the editor configuration
-            let text_size = 14.0f32;
-            let padding = 5.0f32;
-            let line_height = text_size * 1.3;
-
-            // Calculate y_offset:
-            // top_padding + line_index * line_height - half_viewport_height
-            // We estimate viewport height as 400px (or we could try to track it, but centering is approximate anyway)
-            let viewport_height = 400.0f32;
-            let target_y = padding + (start_pos.line as f32) * line_height;
-            let y_offset = (target_y - viewport_height / 2.0).max(0.0);
-
-            let scroll_task = iced::widget::operation::scroll_to(
-                iced::widget::Id::new(REQUEST_BODY_SCROLLABLE_ID),
-                iced::widget::scrollable::AbsoluteOffset {
-                    x: Some(0.0),
-                    y: Some(y_offset),
-                },
-            );
+            // The overlay highlight and scroll operation is now driven precisely by
+            // `EditorView` detecting the active match change and dispatching a `ScrollTo` action.
 
             let message_task =
                 Task::perform(async move { (start_pos, end_pos) }, |(start, end)| {
@@ -1884,15 +1865,11 @@ impl BeamApp {
             if let Some(id) = focus_id {
                 Task::batch(vec![
                     message_task,
-                    scroll_task
-                        .chain(operation::focus(id))
+                    operation::focus(id)
                         .map(|_: ()| Message::RequestPanel(request::Message::DoNothing)),
                 ])
             } else {
-                Task::batch(vec![
-                    message_task,
-                    scroll_task.map(|_: ()| Message::RequestPanel(request::Message::DoNothing)),
-                ])
+                message_task
             }
         } else {
             info!("No match found");
@@ -2000,21 +1977,7 @@ impl BeamApp {
 
             // Do NOT modify the user's cursor or selection!
             // The highlight will be driven independently by `SearchFound` -> `search_selection`.
-
-            let text_size = 14.0f32;
-            let padding = 5.0f32;
-            let line_height = text_size * 1.3;
-            let viewport_height = 400.0f32;
-            let target_y = padding + (start_pos.line as f32) * line_height;
-            let y_offset = (target_y - viewport_height / 2.0).max(0.0);
-
-            let scroll_task = iced::widget::operation::scroll_to(
-                iced::widget::Id::new(RESPONSE_BODY_SCROLLABLE_ID),
-                iced::widget::scrollable::AbsoluteOffset {
-                    x: Some(0.0),
-                    y: Some(y_offset),
-                },
-            );
+            // The scroll operation is driven directly by `EditorView` detecting the active match change.
 
             let message_task =
                 Task::perform(async move { (start_pos, end_pos) }, |(start, end)| {
@@ -2024,15 +1987,11 @@ impl BeamApp {
             if let Some(id) = focus_id {
                 Task::batch(vec![
                     message_task,
-                    scroll_task
-                        .chain(operation::focus(id))
+                    operation::focus(id)
                         .map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
                 ])
             } else {
-                Task::batch(vec![
-                    message_task,
-                    scroll_task.map(|_: ()| Message::ResponsePanel(response::Message::DoNothing)),
-                ])
+                message_task
             }
         } else {
             if let Some(id) = focus_id {

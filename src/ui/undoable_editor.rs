@@ -10,6 +10,7 @@ pub enum Message {
     Undo,
     Redo,
     Find,
+    ScrollToMatch(f32),
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,7 @@ impl UndoableEditor {
                 }
             }
             Message::Find => None,
+            Message::ScrollToMatch(_) => None,
         }
     }
 
@@ -191,6 +193,7 @@ impl UndoableEditor {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
             UndoableAction::Find => Message::Find,
+            UndoableAction::ScrollToMatch(y) => Message::ScrollToMatch(y),
         })
         .content_ref(content)
         .search_active_match(search_active_match)

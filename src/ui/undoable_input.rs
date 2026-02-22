@@ -114,6 +114,7 @@ impl UndoableInput {
             UndoableAction::Undo => Message::Undo,
             UndoableAction::Redo => Message::Redo,
             UndoableAction::Find => Message::None,
+            UndoableAction::ScrollToMatch(_) => Message::None,
         })
         .into()
     }

@@ -15,11 +15,12 @@ use crate::ui::widget_calc::{self, compute_visual_rows};
 use log::info;
 use std::cell::RefCell;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Action {
     Undo,
     Redo,
     Find,
+    ScrollToMatch(f32),
 }
 
 #[allow(missing_debug_implementations)]
@@ -43,6 +44,7 @@ where
 #[derive(Debug, Default)]
 struct State {
     cache: RefCell<Cache>,
+    last_active_match: Option<(Position, Position)>,
 }
 
 #[derive(Debug, Default)]
@@ -211,6 +213,12 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
+        operation.custom(
+            None,
+            layout.bounds(),
+            &mut tree.state as &mut dyn std::any::Any,
+        );
+
         let children = layout.children();
         if let Some(child) = children.into_iter().next() {
             self.content
@@ -230,6 +238,24 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        {
+            let state = tree.state.downcast_mut::<State>();
+            if state.last_active_match != self.search_active_match {
+                state.last_active_match = self.search_active_match;
+                if let Some(active) = self.search_active_match {
+                    if let Some(row) = state
+                        .cache
+                        .borrow()
+                        .visual_rows
+                        .iter()
+                        .find(|r| r.logical_line_index == active.0.line)
+                    {
+                        shell.publish((self.on_change)(Action::ScrollToMatch(row.y)));
+                    }
+                }
+            }
+        }
+
         // Intercept Cmd+Z and Cmd+Shift+Z BEFORE the wrapped widget sees them
         if let Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
             // Check if the wrapped widget is focused (text_input or text_editor)
@@ -804,5 +830,56 @@ where
 {
     fn from(editor_view: EditorView<'a, Message, Theme, Renderer, F>) -> Self {
         Self::new(editor_view)
+    }
+}
+// Custom operation to query the visual Y position of a matching line
+pub struct QueryScrollY {
+    pub logical_line: usize,
+    pub result: Option<f32>,
+}
+
+impl QueryScrollY {
+    pub fn new(logical_line: usize) -> Self {
+        Self {
+            logical_line,
+            result: None,
+        }
+    }
+}
+
+impl iced::advanced::widget::Operation<f32> for QueryScrollY {
+    fn traverse(
+        &mut self,
+        operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<f32>),
+    ) {
+        operate(self)
+    }
+
+    fn custom(
+        &mut self,
+        _id: Option<&iced::widget::Id>,
+        _bounds: iced::Rectangle,
+        state: &mut dyn std::any::Any,
+    ) {
+        if let Some(tree_state) = state.downcast_mut::<iced::advanced::widget::tree::State>() {
+            let editor_state = tree_state.downcast_mut::<State>();
+            if let Some(row) = editor_state
+                .cache
+                .borrow()
+                .visual_rows
+                .iter()
+                .find(|r| r.logical_line_index == self.logical_line)
+            {
+                self.result = Some(row.y);
+            }
+        }
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<f32> {
+        if let Some(y) = self.result {
+            iced::advanced::widget::operation::Outcome::Some(y)
+        } else {
+            iced::advanced::widget::operation::Outcome::None
+        }
     }
 }
