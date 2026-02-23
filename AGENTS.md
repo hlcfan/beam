@@ -61,11 +61,13 @@ beam/
 
 5. **Undo/Redo System** (`src/history/mod.rs`):
    - **Command Pattern**: Implements a generic `History<C: Command>` manager.
-   - **TextInputCommand**: Handles plain string diffs for the URL input.
+   - **HistoryRegistry**: Centralized registry that manages multiple history stacks (inputs and editors) keyed by widget IDs.
+   - **TextInputCommand**: Handles plain string diffs for inputs, now including **character offset tracking** (`at_char`) for accurate cursor recovery.
    - **TextEditorCommand**: Handles `Rope`-based edits (Insert, Delete, Replace) for large text bodies.
-   - **Scoped Dispatch**: Handled by `EditorView` wrappers which intercept Cmd+Z/Y only when the specific component is focused.
-   - **Coalescing**: Merges sequential edits into single history entries using time-based (1s window) and logical boundary (whitespace) rules.
-   - **Baseline Initialization**: Prevents "clear-to-empty" bugs by syncing the initial state as a baseline via `has_history()` checks before starting a history track.
+   - **Cursor Tasks**: `UndoableInput` emits `iced::widget::operation::move_cursor_to` tasks after undo/redo to ensure the cursor moves to the restoration point.
+   - **Coalescing**: Merges sequential edits into single history entries using time-based (300ms window) and logical boundary (whitespace/punctuation) rules.
+   - **Baseline Initialization**: Prevents "clear-to-empty" bugs by syncing the initial state as a baseline via `has_history()` checks.
+   - **Centralized State Sync**: `BeamApp::update_request_state` ensures that URL, body, and collection state are kept in sync whenever a history-tracked update occurs.
 
 ## Development Guidelines
 
