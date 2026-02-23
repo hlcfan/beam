@@ -2374,7 +2374,11 @@ impl BeamApp {
             iced::Subscription::none()
         };
 
-        let keyboard_subscription = iced::event::listen_with(|event, _status, _id| {
+        let keyboard_subscription = iced::event::listen_with(|event, status, _id| {
+            if status == iced::event::Status::Captured {
+                return None;
+            }
+
             match event {
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
                     // Forward all key presses to the KeyPressed handler
