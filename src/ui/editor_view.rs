@@ -459,13 +459,13 @@ where
                     },
                     border: iced::Border {
                         color: Color::from_rgb(0.9, 0.9, 0.9),
-                        width: 1.0,
+                        width: 0.0,
                         radius: 0.0.into(),
                     },
                     shadow: iced::Shadow::default(),
                     snap: true,
                 },
-                Color::from_rgb8(184, 230, 254),
+                Color::from_rgb(0.98, 0.98, 0.98),
             );
 
             // Y offset to the top of the text content area inside the child widget.
