@@ -143,6 +143,25 @@ The `EditorView` widget wraps text editors to provide enhanced functionality:
 - Paints active and passive highlights natively below the text `draw()` routine for readability.
 - Provides precise scrolling to matches via `QueryScrollY`—a custom asynchronous `iced::advanced::widget::Operation<f32>` that fetches the exact `y` layout position from the `visual_rows` cache.
 
+**Search Bar (Cmd+F)**:
+- `show_search: bool` on each panel controls visibility; `search_query: String` is preserved even when hidden (cleared only on explicit X-button close via `CloseSearch`).
+- When `show_search` is false, `None` is passed as the search query to the editor view, so highlights disappear immediately.
+- `CloseSearch` hides the bar, clears `search_selection`, and returns `Action::Focus(editor_id)` to restore the editor cursor.
+- **Intercepting Escape from a focused `text_input`**: Iced's `text_input` consumes the Escape key (`Status::Captured`), so the global `listen_with` subscription normally never sees it. The workaround is to check for Escape *before* the `Status::Captured` guard in the subscription, forwarding it unconditionally:
+  ```rust
+  iced::event::listen_with(|event, status, _id| {
+      // Let Escape through even when captured by text_input
+      if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = &event {
+          if *key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) {
+              return Some(Message::KeyPressed(key.clone()));
+          }
+      }
+      if status == iced::event::Status::Captured { return None; }
+      // ... rest of subscription
+  })
+  ```
+  The `KeyPressed(Escape)` handler then delegates via the message system: `self.update(Message::RequestPanel(request::Message::CloseSearch))`.
+
 
 ### Testing
 
