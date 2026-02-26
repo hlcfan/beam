@@ -1158,19 +1158,12 @@ impl BeamApp {
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
                         if self.show_environment_popup {
                             self.show_environment_popup = false;
-                            Task::none()
                         } else if self.show_rename_modal {
                             self.show_rename_modal = false;
                             self.rename_input.clear();
                             self.rename_target = None;
-                            Task::none()
-                        } else if self.request_panel.show_search {
-                            self.update(Message::RequestPanel(request::Message::CloseSearch))
-                        } else if self.response_panel.show_search {
-                            self.update(Message::ResponsePanel(response::Message::CloseSearch))
-                        } else {
-                            Task::none()
                         }
+                        Task::none()
                     }
                     iced::keyboard::Key::Character(ref c) if c == "z" => {
                         // Check if this is Cmd+Z (undo) or Cmd+Shift+Z (redo)

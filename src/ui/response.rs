@@ -165,11 +165,9 @@ impl ResponsePanel {
             }
             Message::CloseSearch => {
                 self.show_search = false;
+                self.search_query.clear();
                 self.search_selection = None;
-
-                Action::Focus(iced::widget::Id::new(
-                    crate::constant::RESPONSE_BODY_EDITOR_ID,
-                ))
+                Action::None
             }
             Message::OpenSearch => {
                 self.show_search = true;
