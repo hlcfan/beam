@@ -4,7 +4,7 @@ use crate::ui::floating_element;
 use crate::ui::undoable_editor::UndoableEditor;
 use crate::ui::undoable_input::UndoableInput;
 use crate::ui::{IconName, icon, undoable_editor, undoable_input};
-use iced::highlighter::{self};
+use iced::highlighter;
 use iced::widget::button::Status;
 use iced::widget::{
     Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
@@ -13,9 +13,7 @@ use iced::widget::{
 use iced::{
     Background, Border, Color, Element, Fill, Length, Padding, Shadow, Task, Theme, Vector,
 };
-use log::info;
 use std::time::Instant;
-use tokio;
 
 // Action is returned from update function, to trigger a side effect, used in the main
 
@@ -28,6 +26,7 @@ pub enum Action {
     SendRequest(Instant),
     CancelRequest(),
     UpdateActiveEnvironment(usize),
+    UpdateCurrentRequestAndRun(RequestConfig, iced::Task<Message>),
     // The components needs to run a task
     Run(iced::Task<Message>),
     EditRequestBody(text_editor::Action),
@@ -96,6 +95,8 @@ pub enum Message {
     ScrollToMatchResponse(f32),
 }
 
+use crate::history::HistoryRegistry;
+
 #[derive(Debug, Clone)]
 pub struct RequestPanel {
     pub method_menu_open: bool,
@@ -110,16 +111,23 @@ pub struct RequestPanel {
     pub search_selection: Option<(text_editor::Position, text_editor::Position)>,
     pub url_input: UndoableInput,
     pub body_editor: UndoableEditor,
+    pub history_registry: HistoryRegistry,
 }
 
 impl Default for RequestPanel {
     fn default() -> Self {
         Self {
             selected_tab: RequestTab::Body,
-            url_input: UndoableInput::new_empty("Enter URL...".to_string())
-                .size(14.0)
-                .padding(8.0),
-            body_editor: UndoableEditor::new_empty().height(iced::Length::Fixed(200.0)),
+            url_input: UndoableInput::new_empty(
+                iced::widget::Id::new(crate::constant::URL_INPUT_ID),
+                "Enter URL...".to_string(),
+            )
+            .size(14.0)
+            .padding(8.0),
+            body_editor: UndoableEditor::new_empty(iced::widget::Id::new(
+                crate::constant::REQUEST_BODY_EDITOR_ID,
+            ))
+            .height(iced::Length::Fixed(200.0)),
             method_menu_open: false,
             body_format_menu_open: false,
             send_button_hovered: false,
@@ -130,6 +138,7 @@ impl Default for RequestPanel {
             search_query: String::new(),
             search_input_id: iced::widget::Id::unique(),
             search_selection: None,
+            history_registry: HistoryRegistry::new(),
         }
     }
 }
@@ -139,9 +148,13 @@ impl RequestPanel {
         Self::default()
     }
 
-    pub fn reset_undo_histories<'a>(&mut self) {
-        self.url_input = UndoableInput::new_empty("Enter URL...".to_string());
-        self.body_editor = UndoableEditor::new_empty();
+    pub fn reset_undo_histories(&mut self, current_url: &str, current_body: &str) {
+        self.history_registry.clear();
+        self.url_input.set_value(current_url.to_string());
+        self.body_editor = UndoableEditor::new(
+            iced::widget::Id::new(crate::constant::REQUEST_BODY_EDITOR_ID),
+            current_body.to_string(),
+        );
     }
 
     pub fn update<'a>(
@@ -152,103 +165,41 @@ impl RequestPanel {
         request_body_content: &mut text_editor::Content,
     ) -> Action {
         match message {
-            // Message::UrlInputChanged(url) => {
-            //     let mut request = current_request.clone();
-            //     request.url = url;
-
-            //     Action::UpdateCurrentRequest(request)
-            // }
-            // Message::UrlInputFocused => {
-            //     // TODO: Implement focus handling for UrlInput
-            //     Action::None
-            // }
-            // Message::UrlInputUnfocused => {
-            //     // TODO: Implement unfocus handling for UrlInput
-            //     Action::None
-            // }
-            // Message::SetProcessingCmdZ(processing) => {
-            //     // self.processing_cmd_z = processing;
-            //     Action::None
-            // }
-            Message::EditorMessage(message) => {
-                if let undoable_editor::Message::Find = message {
+            Message::UrlInputMessage(msg) => {
+                let (new_url, task) = self.url_input.update(msg, &mut self.history_registry);
+                let mapped_task = task.map(Message::UrlInputMessage);
+                if let Some(new_url) = new_url {
+                    let mut request = current_request.clone();
+                    request.url = new_url;
+                    Action::UpdateCurrentRequestAndRun(request, mapped_task)
+                } else {
+                    Action::Run(mapped_task)
+                }
+            }
+            Message::EditorMessage(msg) => {
+                if let undoable_editor::Message::Find = msg {
                     self.show_search = true;
-                    return Action::Run(Task::perform(
-                        async {
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        },
-                        |_| Message::FocusSearch,
-                    ));
+                    return Action::Run(Task::perform(async {}, |_: ()| Message::FocusSearch));
                 }
 
-                if let Some(new_text) = self.body_editor.update(message, request_body_content) {
-                    // println!("Editor changed to: {:?}", new_text);
+                if let Some(new_text) =
+                    self.body_editor
+                        .update(msg, request_body_content, &mut self.history_registry)
+                {
                     let mut request = current_request.clone();
                     request.body = new_text;
-
-                    return Action::UpdateCurrentRequest(request);
+                    Action::UpdateCurrentRequest(request)
+                } else {
+                    Action::None
                 }
-                Action::None
-
-                // match message {
-                //     undoable_editor::EditorMessage::Action(action) => {
-                //         info!("===Action: {:?}", action);
-                //         // match action {
-                //         //     text_editor::Ch
-                //         // }
-                //         // self.url_undo_history.push(url.clone());
-                //         // request.url = url;
-
-                //         // Action::UpdateCurrentRequest(request)
-
-                //         Action::EditRequestBody(action)
-                //     }
-                //     undoable_editor::EditorMessage::Undo => {
-                //         // if let Some(prev) = self.body_undo_history.undo() {
-                //         //     info!("===editor message: {:?}", message);
-                //         //     request.body = prev;
-
-                //         //     return Action::UpdateCurrentRequest(request);
-                //         // }
-
-                //         info!("===no prev");
-                //         Action::None
-                //     }
-                //     undoable_editor::EditorMessage::Redo => {
-                //         // if let Some(next) = self.body_undo_history.redo() {
-                //         //     request.body = next;
-
-                //         //     return Action::UpdateCurrentRequest(request);
-                //         // }
-
-                //         Action::None
-                //     }
-                // }
-            }
-            Message::UrlInputMessage(message) => {
-                info!("====UrlInputMessage: {:?}", message);
-                if let Some(new_value) = self.url_input.update(message) {
-                    println!("URL Input changed to: {:?}", new_value);
-                    let mut request = current_request.clone();
-                    request.url = new_value;
-
-                    return Action::UpdateCurrentRequest(request);
-                }
-
-                Action::None
             }
             Message::MethodChanged(method) => {
                 let mut request = current_request.clone();
                 request.method = method;
-                self.method_menu_open = false; // Close menu after selection
-
+                self.method_menu_open = false;
                 Action::UpdateCurrentRequest(request)
             }
-            Message::ClickSendRequest => {
-                // TODO: Parent to check this action
-                // Action::MonitorRequest(current_request.clone(), std::time::Instant::now())
-                Action::SendRequest(std::time::Instant::now())
-            }
+            Message::ClickSendRequest => Action::SendRequest(std::time::Instant::now()),
             Message::CancelRequest => Action::CancelRequest(),
             Message::SendButtonHovered(hovered) => {
                 self.send_button_hovered = hovered;
@@ -256,87 +207,68 @@ impl RequestPanel {
             }
             Message::CancelButtonHovered(hovered) => {
                 self.cancel_button_hovered = hovered;
-
                 Action::None
             }
             Message::TabSelected(tab) => {
                 self.selected_tab = tab;
-
                 Action::None
             }
             Message::HeaderKeyChanged(index, key) => {
                 let mut request = current_request.clone();
-
                 if let Some(header) = request.headers.get_mut(index) {
                     header.0 = key;
                 }
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::HeaderValueChanged(index, value) => {
                 let mut request = current_request.clone();
-
                 if let Some(header) = request.headers.get_mut(index) {
                     header.1 = value;
                 }
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::AddHeader => {
                 let mut request = current_request.clone();
-
                 request.headers.push((String::new(), String::new()));
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::RemoveHeader(index) => {
                 let mut request = current_request.clone();
-
-                if index < request.clone().headers.len() {
+                if index < request.headers.len() {
                     request.headers.remove(index);
                 }
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::ParamKeyChanged(index, key) => {
                 let mut request = current_request.clone();
-
                 if let Some(param) = request.params.get_mut(index) {
                     param.0 = key;
                 }
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::ParamValueChanged(index, value) => {
                 let mut request = current_request.clone();
-
                 if let Some(param) = request.params.get_mut(index) {
                     param.1 = value;
                 }
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::AddParam => {
                 let mut request = current_request.clone();
-
                 request.params.push((String::new(), String::new()));
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::RemoveParam(index) => {
                 let mut request = current_request.clone();
-
-                if index < request.clone().params.len() {
+                if index < request.params.len() {
                     request.params.remove(index);
                 }
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::BodyChanged(action) => Action::EditRequestBody(action),
             Message::BodyFormatChanged(format) => {
                 let mut request = current_request.clone();
                 request.body_format = format;
-                // Update Content-Type based on selected body format
                 request.content_type = match format {
                     BodyFormat::Json => "application/json".to_string(),
                     BodyFormat::Xml => "application/xml".to_string(),
@@ -344,62 +276,27 @@ impl RequestPanel {
                     BodyFormat::GraphQL => "application/graphql".to_string(),
                     BodyFormat::None => request.content_type,
                 };
-                // Dismiss the dropdown after selecting a format
                 self.body_format_menu_open = false;
-                // Keep focus on Body tab when changing format
                 self.selected_tab = RequestTab::Body;
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::FormatRequestBody => {
                 let request = current_request.clone();
                 let mut formatted_body = None;
-
-                // Format the body based on the current format
                 match request.body_format {
                     BodyFormat::Json => {
                         if let Ok(json_value) =
                             serde_json::from_str::<serde_json::Value>(&request.body)
                         {
-                            let formatted = serde_json::to_string_pretty(&json_value).unwrap();
-
-                            log::info!(
-                                "JSON formatting: original length={}, formatted length={}",
-                                request.body.len(),
-                                formatted.len()
-                            );
-                            formatted_body = Some(formatted);
-                        } else {
-                            log::info!("JSON formatting failed: invalid JSON input");
+                            formatted_body =
+                                Some(serde_json::to_string_pretty(&json_value).unwrap());
                         }
                     }
-                    BodyFormat::Xml => {
-                        // For XML, we'll just trim whitespace for now
-                        // In a real implementation, you'd use an XML formatter
-                        let trimmed = request.body.trim().to_string();
-                        log::info!(
-                            "XML formatting: original length={}, trimmed length={}",
-                            request.body.len(),
-                            trimmed.len()
-                        );
-                        formatted_body = Some(trimmed);
+                    BodyFormat::Xml | BodyFormat::Text => {
+                        formatted_body = Some(request.body.trim().to_string());
                     }
-                    BodyFormat::Text => {
-                        // For text, trim leading/trailing whitespace
-                        let trimmed = request.body.trim().to_string();
-                        log::info!(
-                            "Text formatting: original length={}, trimmed length={}",
-                            request.body.len(),
-                            trimmed.len()
-                        );
-                        formatted_body = Some(trimmed);
-                    }
-                    BodyFormat::GraphQL | BodyFormat::None => {
-                        // No formatting for GraphQL or None
-                        log::info!("No formatting applied for {:?}", request.body_format);
-                    }
+                    _ => {}
                 }
-
                 if let Some(formatted) = formatted_body {
                     Action::FormatRequestBody(formatted)
                 } else {
@@ -408,42 +305,34 @@ impl RequestPanel {
             }
             Message::AuthTypeChanged(auth_type) => {
                 let mut request = current_request.clone();
-
                 request.auth_type = auth_type;
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::BearerTokenChanged(token) => {
                 let mut request = current_request.clone();
                 request.bearer_token = token;
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::BasicUsernameChanged(username) => {
                 let mut request = current_request.clone();
                 request.basic_username = username;
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::BasicPasswordChanged(password) => {
                 let mut request = current_request.clone();
                 request.basic_password = password;
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::ApiKeyChanged(api_key) => {
                 let mut request = current_request.clone();
                 request.api_key = api_key;
-
                 Action::UpdateCurrentRequest(request)
             }
             Message::ApiKeyHeaderChanged(header) => {
                 let mut request = current_request.clone();
                 request.api_key_header = header;
-
                 Action::UpdateCurrentRequest(request)
             }
-            // Environment message handlers
             Message::OpenEnvironmentPopup => Action::OpenEnvironmentPopup,
             Message::EnvironmentSelected(index) => {
                 if index < environments.len() {
@@ -493,7 +382,6 @@ impl RequestPanel {
                 Action::None
             }
             Message::FocusSearch => Action::Focus(self.search_input_id.clone()),
-
             Message::ToggleMethodMenu => {
                 self.method_menu_open = !self.method_menu_open;
                 Action::None
@@ -504,25 +392,16 @@ impl RequestPanel {
             }
             Message::ToggleBodyFormatMenu => {
                 self.body_format_menu_open = !self.body_format_menu_open;
-                self.selected_tab = RequestTab::Body; // Always select Body tab when toggling dropdown
+                self.selected_tab = RequestTab::Body;
                 Action::None
             }
             Message::CloseBodyFormatMenu => {
                 self.body_format_menu_open = false;
                 Action::None
             }
-            Message::ScriptChanged(action) => {
-                return Action::EditRequestPostRequestScript(action);
-                // // Update the script editor content and sync to request
-                // self.script_editor_content.perform(action);
-                // let mut request = current_request.clone();
-                // request.post_request_script = Some(self.script_editor_content.text());
-                // Action::UpdateCurrentRequest(request)
-            }
+            Message::ScriptChanged(action) => Action::EditRequestPostRequestScript(action),
             Message::DoNothing => Action::None,
         }
-
-        // Action::None
     }
 
     pub fn view<'a>(

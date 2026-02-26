@@ -1,4 +1,4 @@
-use crate::history::UndoHistory;
+use crate::history::{Command, TextEditorCommand};
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
 use iced::advanced::text;
 use iced::widget::text_editor;
@@ -15,25 +15,37 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct UndoableEditor {
-    history: UndoHistory,
+    id: iced::widget::Id,
+    rope: ropey::Rope,
     height: Length,
     version: usize,
+    /// Track cursor and anchor as positions
+    cursor: text_editor::Position,
+    anchor: text_editor::Position,
 }
 
 impl UndoableEditor {
-    pub fn new(initial_text: String) -> Self {
+    pub fn new(id: iced::widget::Id, initial_text: String) -> Self {
+        let pos = text_editor::Position { line: 0, column: 0 };
         Self {
-            history: UndoHistory::new(initial_text),
+            id,
+            rope: ropey::Rope::from_str(&initial_text),
             height: Length::Fill,
             version: 0,
+            cursor: pos,
+            anchor: pos,
         }
     }
 
-    pub fn new_empty() -> Self {
+    pub fn new_empty(id: iced::widget::Id) -> Self {
+        let pos = text_editor::Position { line: 0, column: 0 };
         Self {
-            history: UndoHistory::new_empty(),
+            id,
+            rope: ropey::Rope::new(),
             height: Length::Fill,
             version: 0,
+            cursor: pos,
+            anchor: pos,
         }
     }
 
@@ -42,51 +54,253 @@ impl UndoableEditor {
         self
     }
 
+    /// Helper to convert a `text_editor::Position` to a char offset in the `Rope`.
+    fn pos_to_char(&self, pos: text_editor::Position) -> usize {
+        let n_lines = self.rope.len_lines();
+        let line = pos.line.min(n_lines.saturating_sub(1));
+        let line_offset = self.rope.line_to_char(line);
+        let line_len = self.rope.line(line).len_chars();
+        line_offset + pos.column.min(line_len)
+    }
+
+    /// Helper to convert a char offset to a `text_editor::Position`.
+    fn char_to_pos(&self, offset: usize) -> text_editor::Position {
+        let offset = offset.min(self.rope.len_chars());
+        let line = self.rope.char_to_line(offset);
+        let line_offset = self.rope.line_to_char(line);
+        text_editor::Position {
+            line,
+            column: offset - line_offset,
+        }
+    }
+
     /// Update the component with a message.
     /// Returns Some(new_text) if the text changed (for parent notification).
     pub fn update(
         &mut self,
         message: Message,
         content: &mut text_editor::Content,
+        history_registry: &mut crate::history::HistoryRegistry,
     ) -> Option<String> {
+        let history = history_registry.get_or_create_editor(self.id.clone());
+
         match message {
             Message::Action(action) => {
-                content.perform(action);
-                let text = content.text();
-                if self.history.current().as_ref() != Some(&text) {
-                    self.history.push(text.clone());
-                    self.version += 1;
-                    Some(text)
-                } else {
-                    None
+                // Determine what type of action it is
+                let is_edit = action.is_edit();
+
+                // Capture state before action
+                let cursor_before_struct = content.cursor();
+                let cursor_before = cursor_before_struct.position;
+                let anchor_before = cursor_before_struct
+                    .selection
+                    .unwrap_or(cursor_before_struct.position);
+
+                let offset_before = self.pos_to_char(cursor_before);
+                let anchor_offset_before = self.pos_to_char(anchor_before);
+
+                content.perform(action.clone());
+
+                // Sync state after action
+                let cursor_after_struct = content.cursor();
+                self.cursor = cursor_after_struct.position;
+                self.anchor = cursor_after_struct
+                    .selection
+                    .unwrap_or(cursor_after_struct.position);
+
+                if is_edit {
+                    if let text_editor::Action::Edit(edit) = action {
+                        let mut cmd = None;
+                        let offset_after = self.pos_to_char(self.cursor);
+
+                        match edit {
+                            text_editor::Edit::Insert(c) => {
+                                let text = c.to_string();
+                                let at = offset_before.min(anchor_offset_before);
+
+                                if offset_before != anchor_offset_before {
+                                    let start = offset_before.min(anchor_offset_before);
+                                    let end = offset_before.max(anchor_offset_before);
+                                    let old_text = self.rope.slice(start..end).to_string();
+                                    cmd = Some(TextEditorCommand::Replace {
+                                        at,
+                                        old: old_text,
+                                        new: text,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                } else {
+                                    cmd = Some(TextEditorCommand::Insert {
+                                        at,
+                                        text,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                }
+                            }
+                            text_editor::Edit::Paste(text) => {
+                                let text_str = (*text).to_string();
+                                let at = offset_before.min(anchor_offset_before);
+
+                                if offset_before != anchor_offset_before {
+                                    let start = offset_before.min(anchor_offset_before);
+                                    let end = offset_before.max(anchor_offset_before);
+                                    let old_text = self.rope.slice(start..end).to_string();
+                                    cmd = Some(TextEditorCommand::Replace {
+                                        at,
+                                        old: old_text,
+                                        new: text_str,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                } else {
+                                    cmd = Some(TextEditorCommand::Insert {
+                                        at,
+                                        text: text_str,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                }
+                            }
+                            text_editor::Edit::Enter => {
+                                let at = offset_before.min(anchor_offset_before);
+                                let text = "\n".to_string();
+
+                                if offset_before != anchor_offset_before {
+                                    let start = offset_before.min(anchor_offset_before);
+                                    let end = offset_before.max(anchor_offset_before);
+                                    let old_text = self.rope.slice(start..end).to_string();
+                                    cmd = Some(TextEditorCommand::Replace {
+                                        at,
+                                        old: old_text,
+                                        new: text,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                } else {
+                                    cmd = Some(TextEditorCommand::Insert {
+                                        at,
+                                        text,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                }
+                            }
+                            text_editor::Edit::Backspace => {
+                                if offset_before != anchor_offset_before {
+                                    let start = offset_before.min(anchor_offset_before);
+                                    let end = offset_before.max(anchor_offset_before);
+                                    let old_text = self.rope.slice(start..end).to_string();
+                                    cmd = Some(TextEditorCommand::Delete {
+                                        at: start,
+                                        text: old_text,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                } else if offset_before > 0 {
+                                    let start = offset_before - 1;
+                                    let deleted = self.rope.char(start).to_string();
+                                    cmd = Some(TextEditorCommand::Delete {
+                                        at: start,
+                                        text: deleted,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                }
+                            }
+                            text_editor::Edit::Delete => {
+                                if offset_before != anchor_offset_before {
+                                    let start = offset_before.min(anchor_offset_before);
+                                    let end = offset_before.max(anchor_offset_before);
+                                    let old_text = self.rope.slice(start..end).to_string();
+                                    cmd = Some(TextEditorCommand::Delete {
+                                        at: start,
+                                        text: old_text,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                } else if offset_before < self.rope.len_chars() {
+                                    let deleted = self.rope.char(offset_before).to_string();
+                                    cmd = Some(TextEditorCommand::Delete {
+                                        at: offset_before,
+                                        text: deleted,
+                                        cursor_before: offset_before,
+                                        cursor_after: offset_after,
+                                        timestamp: std::time::Instant::now(),
+                                    });
+                                }
+                            }
+                            _ => {
+                                let new_text = content.text();
+                                self.rope = ropey::Rope::from_str(&new_text);
+                                self.version += 1;
+                                return Some(new_text);
+                            }
+                        }
+
+                        if let Some(mut c) = cmd {
+                            c.execute(&mut self.rope);
+                            history.push(c);
+                            self.version += 1;
+                            return Some(self.rope.to_string());
+                        }
+                    }
                 }
+                None
             }
             Message::Undo => {
-                if let Some(prev) = self.history.undo() {
-                    // Use perform to update content while preserving cursor position
+                if let Some(mut cmd) = history.undo_stack.pop_back() {
+                    cmd.undo(&mut self.rope);
+
+                    let pos = self.char_to_pos(cmd.cursor_before());
+                    let rope_str = self.rope.to_string();
                     content.perform(text_editor::Action::SelectAll);
                     content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                        std::sync::Arc::new(prev.clone()),
+                        std::sync::Arc::new(rope_str.clone()),
                     )));
-                    // Move cursor to end
-                    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    // Don't increment version - content dimensions haven't changed
-                    Some(prev)
+                    content.move_to(text_editor::Cursor {
+                        position: pos,
+                        selection: None,
+                    });
+                    self.cursor = pos;
+                    self.anchor = pos;
+
+                    history.redo_stack.push_back(cmd);
+                    self.version += 1;
+                    Some(rope_str)
                 } else {
                     None
                 }
             }
             Message::Redo => {
-                if let Some(next) = self.history.redo() {
-                    // Use perform to update content while preserving cursor position
+                if let Some(mut cmd) = history.redo_stack.pop_back() {
+                    cmd.execute(&mut self.rope);
+
+                    let pos = self.char_to_pos(cmd.cursor_after());
+                    let rope_str = self.rope.to_string();
                     content.perform(text_editor::Action::SelectAll);
                     content.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                        std::sync::Arc::new(next.clone()),
+                        std::sync::Arc::new(rope_str.clone()),
                     )));
-                    // Move cursor to end
-                    content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
-                    // Don't increment version - content dimensions haven't changed
-                    Some(next)
+                    content.move_to(text_editor::Cursor {
+                        position: pos,
+                        selection: None,
+                    });
+                    self.cursor = pos;
+                    self.anchor = pos;
+
+                    history.undo_stack.push_back(cmd);
+                    self.version += 1;
+                    Some(rope_str)
                 } else {
                     None
                 }
@@ -98,18 +312,17 @@ impl UndoableEditor {
 
     pub fn view<'a>(
         &'a self,
-        editor_id: impl Into<iced::widget::Id>,
+        _editor_id: impl Into<iced::widget::Id>,
         content: &'a text_editor::Content,
         syntax: Option<&'a str>,
         search_query: Option<&'a str>,
         search_active_match: Option<(text_editor::Position, text_editor::Position)>,
     ) -> Element<'a, Message> {
-        let editor_id = editor_id.into();
+        let editor_id = _editor_id.into();
 
-        // Create editor with or without syntax highlighting
-        if let Some(syntax) = syntax {
-            let editor = text_editor(content)
-                .id(editor_id.clone())
+        let editor: Element<'a, Message> = if let Some(syntax) = syntax {
+            text_editor(content)
+                .id(editor_id)
                 .on_action(Message::Action)
                 .highlight(syntax, iced::highlighter::Theme::SolarizedDark)
                 .font(iced::Font::MONOSPACE)
@@ -121,18 +334,10 @@ impl UndoableEditor {
                     left: 5.0,
                 })
                 .wrapping(text::Wrapping::Glyph)
-                // .height(self.height)
-                .style(Self::editor_style);
-
-            Self::wrap_in_undoable(
-                editor,
-                content,
-                search_query,
-                search_active_match,
-                self.version,
-            )
+                .style(Self::editor_style)
+                .into()
         } else {
-            let editor = text_editor(content)
+            text_editor(content)
                 .id(editor_id)
                 .on_action(Message::Action)
                 .font(iced::Font::MONOSPACE)
@@ -144,22 +349,22 @@ impl UndoableEditor {
                     left: 5.0,
                 })
                 .wrapping(text::Wrapping::Glyph)
-                // .height(self.height)
-                .style(Self::editor_style);
+                .style(Self::editor_style)
+                .into()
+        };
 
-            Self::wrap_in_undoable(
-                editor,
-                content,
-                search_query,
-                search_active_match,
-                self.version,
-            )
-        }
+        Self::wrap_in_undoable(
+            editor,
+            content,
+            search_query,
+            search_active_match,
+            self.version,
+        )
     }
 
     fn editor_style(theme: &Theme, _status: text_editor::Status) -> text_editor::Style {
         text_editor::Style {
-            background: iced::Background::Color(Color::TRANSPARENT), // Use transparent so we can draw custom highlights underneath
+            background: iced::Background::Color(Color::TRANSPARENT),
             border: iced::Border {
                 color: iced::Color::from_rgb(0.9, 0.9, 0.9),
                 width: 1.0,

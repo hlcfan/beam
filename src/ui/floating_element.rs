@@ -4,7 +4,7 @@ use iced::{
         Clipboard, Shell, Widget,
         layout::{self, Layout},
         overlay, renderer,
-        widget::{self, Operation, Tree},
+        widget::{Operation, Tree},
     },
     mouse,
 };
@@ -107,11 +107,10 @@ where
 
         let (content_tree, anchor_tree) = tree.children.split_at_mut(1);
 
-        let content_node = self.content.as_widget_mut().layout(
-            &mut content_tree[0],
-            renderer,
-            &limits
-        );
+        let content_node =
+            self.content
+                .as_widget_mut()
+                .layout(&mut content_tree[0], renderer, &limits);
 
         let content_size = content_node.size();
 
@@ -119,11 +118,10 @@ where
         // We use the same limits as the container, but relaxed to min size 0.
         let anchor_limits = layout::Limits::new(Size::ZERO, limits.max());
 
-        let mut anchor_node = self.anchor.as_widget_mut().layout(
-            &mut anchor_tree[0],
-            renderer,
-            &anchor_limits
-        );
+        let mut anchor_node =
+            self.anchor
+                .as_widget_mut()
+                .layout(&mut anchor_tree[0], renderer, &anchor_limits);
 
         let anchor_size = anchor_node.size();
 
@@ -285,7 +283,7 @@ where
         );
 
         if anchor_interaction != mouse::Interaction::None {
-             return anchor_interaction;
+            return anchor_interaction;
         }
 
         let is_over_anchor = cursor.is_over(anchor_layout.bounds());

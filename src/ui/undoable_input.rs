@@ -1,7 +1,5 @@
-use crate::constant;
-use crate::history::UndoHistory;
+use crate::history::diff_to_command;
 use crate::ui::editor_view::{Action as UndoableAction, EditorView};
-use constant::URL_INPUT_ID;
 use iced::widget::text_input;
 use iced::{Background, Border, Color, Element, Length, Theme};
 
@@ -15,28 +13,28 @@ pub enum Message {
 
 #[derive(Debug, Clone)]
 pub struct UndoableInput {
+    id: iced::widget::Id,
     value: String,
-    history: UndoHistory,
     placeholder: String,
     size: f32,
     padding: f32,
 }
 
 impl UndoableInput {
-    pub fn new(initial_value: String, placeholder: String) -> Self {
+    pub fn new(id: iced::widget::Id, initial_value: String, placeholder: String) -> Self {
         Self {
-            value: initial_value.clone(),
-            history: UndoHistory::new(initial_value),
+            id,
+            value: initial_value,
             placeholder,
             size: 14.0,
             padding: 8.0,
         }
     }
 
-    pub fn new_empty(placeholder: String) -> Self {
+    pub fn new_empty(id: iced::widget::Id, placeholder: String) -> Self {
         Self {
+            id,
             value: String::new(),
-            history: UndoHistory::new_empty(),
             placeholder,
             size: 14.0,
             padding: 8.0,
@@ -57,38 +55,69 @@ impl UndoableInput {
         &self.value
     }
 
+    pub fn has_history(&self, history_registry: &crate::history::HistoryRegistry) -> bool {
+        history_registry
+            .get_input(&self.id)
+            .map(|h| h.can_undo())
+            .unwrap_or(false)
+    }
+
+    /// Sync the internal baseline value without recording a history entry.
+    /// Call this whenever the URL is set externally (e.g. loading a saved request).
+    pub fn set_value(&mut self, value: String) {
+        self.value = value;
+    }
+
     /// Update the component with a message.
-    /// Returns Some(new_value) if the value changed (for parent notification).
-    pub fn update(&mut self, message: Message) -> Option<String> {
+    /// Returns (Some(new_value), Task) if the value changed.
+    pub fn update(
+        &mut self,
+        message: Message,
+        history_registry: &mut crate::history::HistoryRegistry,
+    ) -> (Option<String>, iced::Task<Message>) {
+        let history = history_registry.get_or_create_input(self.id.clone());
+
         match message {
             Message::Changed(new_value) => {
-                self.history.push(new_value.clone());
-                self.value = new_value.clone();
-                Some(new_value)
+                if let Some(cmd) = diff_to_command(&self.value, &new_value) {
+                    history.push(cmd);
+                    self.value = new_value.clone();
+                    (Some(new_value), iced::Task::none())
+                } else {
+                    (None, iced::Task::none())
+                }
             }
             Message::Undo => {
-                if let Some(prev) = self.history.undo() {
-                    self.value = prev.clone();
-                    Some(prev)
-                } else {
-                    None
+                if let Some(cmd) = history.undo_stack.back().cloned() {
+                    let cursor_pos = cmd.cursor_undo();
+                    if history.undo(&mut self.value) {
+                        return (
+                            Some(self.value.clone()),
+                            iced::widget::operation::move_cursor_to(self.id.clone(), cursor_pos),
+                        );
+                    }
                 }
+                (None, iced::Task::none())
             }
             Message::Redo => {
-                if let Some(next) = self.history.redo() {
-                    self.value = next.clone();
-                    Some(next)
-                } else {
-                    None
+                if let Some(cmd) = history.redo_stack.back().cloned() {
+                    let cursor_pos = cmd.cursor_redo();
+                    if history.redo(&mut self.value) {
+                        return (
+                            Some(self.value.clone()),
+                            iced::widget::operation::move_cursor_to(self.id.clone(), cursor_pos),
+                        );
+                    }
                 }
+                (None, iced::Task::none())
             }
-            Message::None => None,
+            Message::None => (None, iced::Task::none()),
         }
     }
 
     pub fn view<'a>(&'a self, value: &'a str) -> Element<'a, Message> {
         let input = text_input(&self.placeholder, value)
-            .id(URL_INPUT_ID)
+            .id(self.id.clone())
             .on_input(Message::Changed)
             .size(self.size)
             .padding(self.padding)

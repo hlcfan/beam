@@ -281,36 +281,12 @@ impl BeamApp {
                     }
                     request::Action::Run(task) => return task.map(Message::RequestPanel),
                     request::Action::UpdateCurrentRequest(request_config) => {
-                        self.current_request = request_config.clone();
-
-                        if self.request_body_content.text() != self.current_request.body {
-                            Self::update_editor_content(
-                                &mut self.request_body_content,
-                                self.current_request.body.to_string(),
-                            );
-                        }
-
-                        if let Some(collection) = self
-                            .collections
-                            .get_mut(self.current_request.collection_index)
-                        {
-                            if let Some(request) = collection
-                                .requests
-                                .get_mut(self.current_request.request_index)
-                            {
-                                *request = self.current_request.clone();
-                            }
-                        }
-
-                        // Send to debounce channel if available
-                        if let Some(tx) = &self.debounce_tx {
-                            if let Err(_) = tx.try_send(request_config) {
-                                // Channel is full or closed, ignore for now
-                                info!("Debounce channel is full or closed");
-                            }
-                        }
-
+                        self.update_request_state(request_config);
                         Task::none()
+                    }
+                    request::Action::UpdateCurrentRequestAndRun(request_config, task) => {
+                        self.update_request_state(request_config);
+                        task.map(Message::RequestPanel)
                     }
                     request::Action::UpdateActiveEnvironment(index) => {
                         self.active_environment = Some(index);
@@ -514,7 +490,10 @@ impl BeamApp {
                         if let Some(collection) = self.collections.get(collection_index) {
                             if let Some(request_config) = collection.requests.get(request_index) {
                                 self.current_request = request_config.clone();
-                                self.request_panel.reset_undo_histories();
+                                self.request_panel.reset_undo_histories(
+                                    &self.current_request.url,
+                                    &self.current_request.body,
+                                );
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1153,26 +1132,19 @@ impl BeamApp {
                     environment::Action::None => Task::none(),
                 }
             }
-            Message::KeyPressed(key) => {
-                match key {
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
-                        if self.show_environment_popup {
-                            self.show_environment_popup = false;
-                        } else if self.show_rename_modal {
-                            self.show_rename_modal = false;
-                            self.rename_input.clear();
-                            self.rename_target = None;
-                        }
-                        Task::none()
+            Message::KeyPressed(key) => match key {
+                iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                    if self.show_environment_popup {
+                        self.show_environment_popup = false;
+                    } else if self.show_rename_modal {
+                        self.show_rename_modal = false;
+                        self.rename_input.clear();
+                        self.rename_target = None;
                     }
-                    iced::keyboard::Key::Character(ref c) if c == "z" => {
-                        // Check if this is Cmd+Z (undo) or Cmd+Shift+Z (redo)
-                        // For now, we'll handle this in the subscription with modifiers
-                        Task::none()
-                    }
-                    _ => Task::none(),
+                    Task::none()
                 }
-            }
+                _ => Task::none(),
+            },
             Message::TimerTick => {
                 if let Some(start_time) = self.request_start_time {
                     self.current_elapsed_time = start_time.elapsed().as_millis() as u64;
@@ -1445,8 +1417,10 @@ impl BeamApp {
                                 self.last_opened_request = Some((collection_index, request_index));
 
                                 self.current_request = request_config.clone();
-                                // self.request_panel
-                                //     .reset_undo_histories(&self.current_request);
+                                self.request_panel.reset_undo_histories(
+                                    &self.current_request.url,
+                                    &self.current_request.body,
+                                );
 
                                 Self::update_editor_content(
                                     &mut self.request_body_content,
@@ -1544,7 +1518,7 @@ impl BeamApp {
                     "=== SaveRequestDebounced - collection_index: {}, request_index: {}",
                     collection_index, request_index
                 );
-                let key = (collection_index, request_index);
+                let _key = (collection_index, request_index);
 
                 // Check if this save is still valid (no newer changes)
                 // if let Some(last_change_time) = self.debounce_timers.get(&key) {
@@ -2400,7 +2374,11 @@ impl BeamApp {
             iced::Subscription::none()
         };
 
-        let keyboard_subscription = iced::event::listen_with(|event, _status, _id| {
+        let keyboard_subscription = iced::event::listen_with(|event, status, _id| {
+            if status == iced::event::Status::Captured {
+                return None;
+            }
+
             match event {
                 iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) => {
                     // Forward all key presses to the KeyPressed handler
@@ -2467,6 +2445,45 @@ impl BeamApp {
             Err(e) => {
                 error!("Failed to create storage manager: {}", e);
             }
+        }
+    }
+
+    fn update_request_state(&mut self, request_config: RequestConfig) {
+        // If the user hasn't made any edits yet, ensure the URL baseline is synced.
+        // This prevents undo from clearing the entire input on the first edit.
+        if !self
+            .request_panel
+            .url_input
+            .has_history(&self.request_panel.history_registry)
+        {
+            self.request_panel
+                .url_input
+                .set_value(request_config.url.clone());
+        }
+        self.current_request = request_config.clone();
+
+        if self.request_body_content.text() != self.current_request.body {
+            Self::update_editor_content(
+                &mut self.request_body_content,
+                self.current_request.body.to_string(),
+            );
+        }
+
+        if let Some(collection) = self
+            .collections
+            .get_mut(self.current_request.collection_index)
+        {
+            if let Some(request) = collection
+                .requests
+                .get_mut(self.current_request.request_index)
+            {
+                *request = self.current_request.clone();
+            }
+        }
+
+        // Send to debounce channel if available
+        if let Some(tx) = &self.debounce_tx {
+            let _ = tx.try_send(request_config);
         }
     }
 

@@ -8,7 +8,6 @@ pub mod response;
 pub mod spinner;
 pub mod undoable_editor;
 pub mod undoable_input;
-pub mod url_input;
 pub mod widget_calc;
 
 pub use collections::CollectionPanel;
