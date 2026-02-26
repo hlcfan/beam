@@ -1136,12 +1136,19 @@ impl BeamApp {
                 iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
                     if self.show_environment_popup {
                         self.show_environment_popup = false;
+                        Task::none()
                     } else if self.show_rename_modal {
                         self.show_rename_modal = false;
                         self.rename_input.clear();
                         self.rename_target = None;
+                        Task::none()
+                    } else if self.request_panel.show_search {
+                        self.update(Message::RequestPanel(request::Message::CloseSearch))
+                    } else if self.response_panel.show_search {
+                        self.update(Message::ResponsePanel(response::Message::CloseSearch))
+                    } else {
+                        Task::none()
                     }
-                    Task::none()
                 }
                 _ => Task::none(),
             },
@@ -2375,6 +2382,14 @@ impl BeamApp {
         };
 
         let keyboard_subscription = iced::event::listen_with(|event, status, _id| {
+            // For Escape key, allow it through even when captured by a widget (e.g. text_input
+            // in the search bar), so we can close the search bar with Esc.
+            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = &event {
+                if *key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) {
+                    return Some(Message::KeyPressed(key.clone()));
+                }
+            }
+
             if status == iced::event::Status::Captured {
                 return None;
             }

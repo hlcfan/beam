@@ -377,9 +377,10 @@ impl RequestPanel {
             }
             Message::CloseSearch => {
                 self.show_search = false;
-                self.search_query.clear();
                 self.search_selection = None;
-                Action::None
+                Action::Focus(iced::widget::Id::new(
+                    crate::constant::REQUEST_BODY_EDITOR_ID,
+                ))
             }
             Message::FocusSearch => Action::Focus(self.search_input_id.clone()),
             Message::ToggleMethodMenu => {
@@ -704,7 +705,11 @@ impl RequestPanel {
                             REQUEST_BODY_EDITOR_ID,
                             request_body,
                             syntax,
-                            Some(self.search_query.as_str()),
+                            if self.show_search {
+                                Some(self.search_query.as_str())
+                            } else {
+                                None
+                            },
                             self.search_selection,
                         )
                         .map(Message::EditorMessage),
