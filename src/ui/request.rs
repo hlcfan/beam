@@ -1035,12 +1035,14 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         let key_input = text_input("Parameter name", key)
             .id(iced::widget::Id::from(format!("param_{}_key", index)))
             .on_input(move |input| Message::ParamKeyChanged(index, input))
-            .width(Length::FillPortion(2));
+            .width(Length::FillPortion(2))
+            .style(custom_input_style);
 
         let value_input = text_input("Parameter value", value)
             .id(iced::widget::Id::from(format!("param_{}_value", index)))
             .on_input(move |input| Message::ParamValueChanged(index, input))
-            .width(Length::FillPortion(3));
+            .width(Length::FillPortion(3))
+            .style(custom_input_style);
 
         let delete_button: Element<'_, Message> = if index < config.params.len() && index > 0 {
             button(
@@ -1107,12 +1109,14 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         let key_input = text_input("Header name", key)
             .id(iced::widget::Id::from(format!("header_{}_key", index)))
             .on_input(move |input| Message::HeaderKeyChanged(index, input))
-            .width(Length::FillPortion(2));
+            .width(Length::FillPortion(2))
+            .style(custom_input_style);
 
         let value_input = text_input("Header value", value)
             .id(iced::widget::Id::from(format!("header_{}_value", index)))
             .on_input(move |input| Message::HeaderValueChanged(index, input))
-            .width(Length::FillPortion(3));
+            .width(Length::FillPortion(3))
+            .style(custom_input_style);
 
         let delete_button: Element<'_, Message> = if index < config.headers.len() && index > 0 {
             button(
@@ -1471,4 +1475,60 @@ fn post_script_tab<'a>(script_content: &'a text_editor::Content) -> Element<'a, 
         );
 
     scrollable(script_editor_widget).height(Length::Fill).into()
+}
+fn custom_input_style(
+    theme: &Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    let palette = theme.palette();
+    match status {
+        iced::widget::text_input::Status::Active => iced::widget::text_input::Style {
+            background: iced::Background::Color(iced::Color::WHITE),
+            border: iced::Border {
+                width: 1.0,
+                color: iced::Color::from_rgb(0.8, 0.8, 0.8),
+                radius: 4.0.into(),
+            },
+            icon: palette.text,
+            placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
+            value: palette.text,
+            selection: palette.primary,
+        },
+        iced::widget::text_input::Status::Hovered => iced::widget::text_input::Style {
+            background: iced::Background::Color(iced::Color::WHITE),
+            border: iced::Border {
+                width: 1.0,
+                color: iced::Color::from_rgb(0.6, 0.6, 0.6),
+                radius: 4.0.into(),
+            },
+            icon: palette.text,
+            placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
+            value: palette.text,
+            selection: palette.primary,
+        },
+        iced::widget::text_input::Status::Focused { .. } => iced::widget::text_input::Style {
+            background: iced::Background::Color(iced::Color::WHITE),
+            border: iced::Border {
+                width: 1.0,
+                color: palette.primary,
+                radius: 4.0.into(),
+            },
+            icon: palette.text,
+            placeholder: iced::Color::from_rgb(0.6, 0.6, 0.6),
+            value: palette.text,
+            selection: palette.primary,
+        },
+        iced::widget::text_input::Status::Disabled => iced::widget::text_input::Style {
+            background: iced::Background::Color(iced::Color::from_rgb(0.95, 0.95, 0.95)),
+            border: iced::Border {
+                width: 1.0,
+                color: iced::Color::from_rgb(0.9, 0.9, 0.9),
+                radius: 4.0.into(),
+            },
+            icon: palette.text,
+            placeholder: iced::Color::from_rgb(0.7, 0.7, 0.7),
+            value: palette.text,
+            selection: palette.primary,
+        },
+    }
 }
