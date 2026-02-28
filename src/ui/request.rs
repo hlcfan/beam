@@ -1035,12 +1035,12 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         let key_input = text_input("Parameter name", key)
             .id(iced::widget::Id::from(format!("param_{}_key", index)))
             .on_input(move |input| Message::ParamKeyChanged(index, input))
-            .width(Length::FillPortion(1));
+            .width(Length::FillPortion(2));
 
         let value_input = text_input("Parameter value", value)
             .id(iced::widget::Id::from(format!("param_{}_value", index)))
             .on_input(move |input| Message::ParamValueChanged(index, input))
-            .width(Length::FillPortion(1));
+            .width(Length::FillPortion(3));
 
         let delete_button: Element<'_, Message> = if index < config.params.len() && index > 0 {
             button(
@@ -1107,12 +1107,12 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         let key_input = text_input("Header name", key)
             .id(iced::widget::Id::from(format!("header_{}_key", index)))
             .on_input(move |input| Message::HeaderKeyChanged(index, input))
-            .width(Length::FillPortion(1));
+            .width(Length::FillPortion(2));
 
         let value_input = text_input("Header value", value)
             .id(iced::widget::Id::from(format!("header_{}_value", index)))
             .on_input(move |input| Message::HeaderValueChanged(index, input))
-            .width(Length::FillPortion(1));
+            .width(Length::FillPortion(3));
 
         let delete_button: Element<'_, Message> = if index < config.headers.len() && index > 0 {
             button(
