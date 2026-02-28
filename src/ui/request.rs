@@ -7,7 +7,7 @@ use crate::ui::{IconName, icon, undoable_editor, undoable_input};
 use iced::highlighter;
 use iced::widget::button::Status;
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, row, scrollable, space, stack, text,
+    Space, button, column, container, mouse_area, pick_list, row, scrollable, space, text,
     text_editor, text_input,
 };
 use iced::{
@@ -628,7 +628,11 @@ impl RequestPanel {
             right_border
         ];
 
-        let base_layout = if self.method_menu_open || self.body_format_menu_open {
+        // Always use stack! so the widget tree structure is stable regardless of menu state.
+        // This avoids a full subtree rebuild (and the associated lag) when toggling dropdowns.
+        let mut layers: Vec<Element<'_, Message>> = vec![main_content.into()];
+
+        if self.method_menu_open || self.body_format_menu_open {
             let overlay_message = if self.method_menu_open {
                 Message::CloseMethodMenu
             } else {
@@ -644,12 +648,11 @@ impl RequestPanel {
             let dropdown_padding = if self.method_menu_open {
                 iced::Padding::new(12.0).top(100.0)
             } else {
-                iced::Padding::new(12.0).top(150.0) // Position body format dropdown lower
+                iced::Padding::new(12.0).top(150.0)
             };
 
-            stack![
-                main_content,
-                // Transparent overlay to detect clicks outside the menu
+            // Transparent overlay to detect clicks outside the menu
+            layers.push(
                 button(Space::new().width(Length::Fill).height(Length::Fill))
                     .on_press(overlay_message)
                     .width(Length::Fill)
@@ -659,20 +662,22 @@ impl RequestPanel {
                         border: Border::default(),
                         shadow: Shadow::default(),
                         text_color: Color::TRANSPARENT,
-                        snap: true
-                    }),
-                // The actual dropdown menu
+                        snap: true,
+                    })
+                    .into(),
+            );
+
+            // The actual dropdown menu
+            layers.push(
                 container(dropdown_content)
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .padding(dropdown_padding)
-            ]
-            .into()
-        } else {
-            main_content.into()
-        };
+                    .into(),
+            );
+        }
 
-        base_layout
+        iced::widget::Stack::with_children(layers).into()
     }
 
     fn body_tab<'a>(
