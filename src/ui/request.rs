@@ -859,9 +859,16 @@ impl RequestPanel {
 }
 
 fn tab_button<'a>(label: String, is_active: bool, tab: RequestTab) -> Element<'a, Message> {
-    // Special handling for Body tab - clicking it should toggle the format dropdown
+    // - If the Body tab is already active, clicking it toggles the format dropdown.
+    // - If another tab is active, clicking Body simply switches to it (no dropdown).
     let message = match tab {
-        RequestTab::Body => Message::ToggleBodyFormatMenu,
+        RequestTab::Body => {
+            if is_active {
+                Message::ToggleBodyFormatMenu
+            } else {
+                Message::TabSelected(RequestTab::Body)
+            }
+        }
         _ => Message::TabSelected(tab.clone()),
     };
 
