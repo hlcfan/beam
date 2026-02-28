@@ -280,23 +280,21 @@ impl RequestPanel {
             }
             Message::AddParamFocusKey(index) => {
                 let mut request = current_request.clone();
-                // Only add a new row if this is currently the last one
-                let is_last =
-                    index == request.params.len().saturating_sub(1) || request.params.is_empty();
-                if is_last {
+                while request.params.len() <= index {
                     request.params.push((String::new(), String::new()));
                 }
+
+                request.params.push((String::new(), String::new()));
                 let id = iced::widget::Id::from(format!("param_{}_key", index));
                 let task = iced::widget::operation::focus(id).map(|_: ()| Message::DoNothing);
                 Action::UpdateCurrentRequestAndRun(request, task)
             }
             Message::AddParamFocusValue(index) => {
                 let mut request = current_request.clone();
-                let is_last =
-                    index == request.params.len().saturating_sub(1) || request.params.is_empty();
-                if is_last {
+                while request.params.len() <= index {
                     request.params.push((String::new(), String::new()));
                 }
+                request.params.push((String::new(), String::new()));
                 let id = iced::widget::Id::from(format!("param_{}_value", index));
                 let task = iced::widget::operation::focus(id).map(|_: ()| Message::DoNothing);
                 Action::UpdateCurrentRequestAndRun(request, task)
