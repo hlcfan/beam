@@ -1043,12 +1043,19 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
             .width(Length::FillPortion(1));
 
         let delete_button: Element<'_, Message> = if index < config.params.len() && index > 0 {
-            button(text("×"))
-                .on_press(Message::RemoveParam(index))
-                .width(50)
-                .into()
+            button(
+                icon(IconName::Trash)
+                    .size(24)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+            )
+            .on_press(Message::RemoveParam(index))
+            .width(Length::Fixed(30.0))
+            .height(Length::Fixed(30.0))
+            .padding(Padding::from(6.0))
+            .style(icon_button_style(true))
+            .into()
         } else {
-            Space::new().width(50).into()
+            Space::new().width(30).into()
         };
 
         let param_row: Element<'_, Message> = row![key_input, value_input, delete_button]
@@ -1108,12 +1115,19 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
             .width(Length::FillPortion(1));
 
         let delete_button: Element<'_, Message> = if index < config.headers.len() && index > 0 {
-            button(text("×"))
-                .on_press(Message::RemoveHeader(index))
-                .width(50)
-                .into()
+            button(
+                icon(IconName::Trash)
+                    .size(24)
+                    .color(Color::from_rgb(0.5, 0.5, 0.5)),
+            )
+            .on_press(Message::RemoveHeader(index))
+            .width(Length::Fixed(30.0))
+            .height(Length::Fixed(30.0))
+            .padding(Padding::from(6.0))
+            .style(icon_button_style(true))
+            .into()
         } else {
-            Space::new().width(50).into()
+            Space::new().width(30).into()
         };
 
         let header_row: Element<'_, Message> = row![key_input, value_input, delete_button]

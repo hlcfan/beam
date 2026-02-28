@@ -1,6 +1,6 @@
 use crate::icons;
 use iced::widget::svg;
-use iced::{Element, Length, Color};
+use iced::{Color, Element, Length};
 
 /// Available icon names that can be used with the icon component
 #[derive(Debug, Clone, Copy)]
@@ -13,6 +13,7 @@ pub enum IconName {
     Close,
     Add,
     Indent,
+    Trash,
 }
 
 impl IconName {
@@ -27,6 +28,7 @@ impl IconName {
             IconName::Close => "close.svg",
             IconName::Add => "add.svg",
             IconName::Indent => "indent.svg",
+            IconName::Trash => "trash.svg",
         }
     }
 }
@@ -86,17 +88,13 @@ impl<'a, Message> Icon<'a, Message> {
 
 impl<'a, Message: 'a> From<Icon<'a, Message>> for Element<'a, Message> {
     fn from(icon: Icon<'a, Message>) -> Self {
-        let handle = icons::Assets::get_svg_handle(icon.name.filename())
-            .expect("Failed to load SVG icon");
+        let handle =
+            icons::Assets::get_svg_handle(icon.name.filename()).expect("Failed to load SVG icon");
 
-        let mut svg_widget = svg(handle)
-            .width(icon.width)
-            .height(icon.height);
+        let mut svg_widget = svg(handle).width(icon.width).height(icon.height);
 
         if let Some(color) = icon.color {
-            svg_widget = svg_widget.style(move |_theme, _status| svg::Style {
-                color: Some(color),
-            });
+            svg_widget = svg_widget.style(move |_theme, _status| svg::Style { color: Some(color) });
         }
 
         svg_widget.into()
