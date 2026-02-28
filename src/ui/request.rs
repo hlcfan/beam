@@ -60,6 +60,8 @@ pub enum Message {
     HeaderKeyChanged(usize, String),
     HeaderValueChanged(usize, String),
     AddHeader,
+    AddHeaderFocusKey(usize),
+    AddHeaderFocusValue(usize),
     RemoveHeader(usize),
     ParamKeyChanged(usize, String),
     ParamValueChanged(usize, String),
@@ -220,6 +222,14 @@ impl RequestPanel {
                 if let Some(header) = request.headers.get_mut(index) {
                     header.0 = key;
                 }
+                // Auto-append a new empty row when the user starts typing in the last row.
+                let last = request.headers.len().saturating_sub(1);
+                if index == last {
+                    let (k, v) = &request.headers[last];
+                    if !k.is_empty() || !v.is_empty() {
+                        request.headers.push((String::new(), String::new()));
+                    }
+                }
                 Action::UpdateCurrentRequest(request)
             }
             Message::HeaderValueChanged(index, value) => {
@@ -227,12 +237,39 @@ impl RequestPanel {
                 if let Some(header) = request.headers.get_mut(index) {
                     header.1 = value;
                 }
+                let last = request.headers.len().saturating_sub(1);
+                if index == last {
+                    let (k, v) = &request.headers[last];
+                    if !k.is_empty() || !v.is_empty() {
+                        request.headers.push((String::new(), String::new()));
+                    }
+                }
                 Action::UpdateCurrentRequest(request)
             }
             Message::AddHeader => {
                 let mut request = current_request.clone();
                 request.headers.push((String::new(), String::new()));
                 Action::UpdateCurrentRequest(request)
+            }
+            Message::AddHeaderFocusKey(index) => {
+                let mut request = current_request.clone();
+                while request.headers.len() <= index {
+                    request.headers.push((String::new(), String::new()));
+                }
+                request.headers.push((String::new(), String::new()));
+                let id = iced::widget::Id::from(format!("header_{}_key", index));
+                let task = iced::widget::operation::focus(id).map(|_: ()| Message::DoNothing);
+                Action::UpdateCurrentRequestAndRun(request, task)
+            }
+            Message::AddHeaderFocusValue(index) => {
+                let mut request = current_request.clone();
+                while request.headers.len() <= index {
+                    request.headers.push((String::new(), String::new()));
+                }
+                request.headers.push((String::new(), String::new()));
+                let id = iced::widget::Id::from(format!("header_{}_value", index));
+                let task = iced::widget::operation::focus(id).map(|_: ()| Message::DoNothing);
+                Action::UpdateCurrentRequestAndRun(request, task)
             }
             Message::RemoveHeader(index) => {
                 let mut request = current_request.clone();
@@ -1058,43 +1095,65 @@ fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         row![
             text("Key").width(Length::FillPortion(1)),
             text("Value").width(Length::FillPortion(1)),
-            text("").width(50) // For delete button
+            text("").width(50)
         ]
         .spacing(10)
     ];
 
-    for (index, (key, value)) in config.headers.iter().enumerate() {
-        let header_row = row![
-            text_input("Header name", key)
-                .on_input(move |input| Message::HeaderKeyChanged(index, input))
-                .width(Length::FillPortion(1)),
-            text_input("Header value", value)
-                .on_input(move |input| Message::HeaderValueChanged(index, input))
-                .width(Length::FillPortion(1)),
+    let row_count = config.headers.len().max(1);
+
+    for index in 0..row_count {
+        let (key, value) = config
+            .headers
+            .get(index)
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .unwrap_or(("", ""));
+
+        let is_last = index == row_count - 1;
+
+        let key_input = text_input("Header name", key)
+            .id(iced::widget::Id::from(format!("header_{}_key", index)))
+            .on_input(move |input| Message::HeaderKeyChanged(index, input))
+            .width(Length::FillPortion(1));
+
+        let value_input = text_input("Header value", value)
+            .id(iced::widget::Id::from(format!("header_{}_value", index)))
+            .on_input(move |input| Message::HeaderValueChanged(index, input))
+            .width(Length::FillPortion(1));
+
+        let delete_button: Element<'_, Message> = if index < config.headers.len() && index > 0 {
             button(text("×"))
                 .on_press(Message::RemoveHeader(index))
                 .width(50)
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center);
+                .into()
+        } else {
+            Space::new().width(50).into()
+        };
 
-        content = content.push(header_row);
+        let header_row: Element<'_, Message> = row![key_input, value_input, delete_button]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .into();
+
+        let row_element: Element<'_, Message> = if is_last {
+            let overlay = row![
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(Message::AddHeaderFocusKey(index)),
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(Message::AddHeaderFocusValue(index)),
+                Space::new().width(50),
+            ]
+            .spacing(10)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+            iced::widget::Stack::with_children(vec![header_row, overlay.into()]).into()
+        } else {
+            header_row
+        };
+
+        content = content.push(row_element);
     }
-
-    content = content.push(
-        button(text("Add Header"))
-            .on_press(Message::AddHeader)
-            .style(move |_theme, status| {
-                let base = button::Style::default();
-                match status {
-                    Status::Hovered => button::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                        ..base
-                    },
-                    _ => base,
-                }
-            }),
-    );
 
     scrollable(content.spacing(10)).height(Length::Fill).into()
 }
