@@ -64,6 +64,8 @@ pub enum Message {
     ParamKeyChanged(usize, String),
     ParamValueChanged(usize, String),
     AddParam,
+    AddParamFocusKey(usize),
+    AddParamFocusValue(usize),
     RemoveParam(usize),
     BodyChanged(text_editor::Action),
     BodyFormatChanged(BodyFormat),
@@ -244,6 +246,15 @@ impl RequestPanel {
                 if let Some(param) = request.params.get_mut(index) {
                     param.0 = key;
                 }
+                // Auto-append a new empty row when the user starts typing in the last row.
+                let last = request.params.len().saturating_sub(1);
+                if index == last {
+                    let (k, v) = &request.params[last];
+                    let last_is_empty = k.is_empty() && v.is_empty();
+                    if !last_is_empty {
+                        request.params.push((String::new(), String::new()));
+                    }
+                }
                 Action::UpdateCurrentRequest(request)
             }
             Message::ParamValueChanged(index, value) => {
@@ -251,12 +262,44 @@ impl RequestPanel {
                 if let Some(param) = request.params.get_mut(index) {
                     param.1 = value;
                 }
+                // Auto-append a new empty row when the user starts typing in the last row.
+                let last = request.params.len().saturating_sub(1);
+                if index == last {
+                    let (k, v) = &request.params[last];
+                    let last_is_empty = k.is_empty() && v.is_empty();
+                    if !last_is_empty {
+                        request.params.push((String::new(), String::new()));
+                    }
+                }
                 Action::UpdateCurrentRequest(request)
             }
             Message::AddParam => {
                 let mut request = current_request.clone();
                 request.params.push((String::new(), String::new()));
                 Action::UpdateCurrentRequest(request)
+            }
+            Message::AddParamFocusKey(index) => {
+                let mut request = current_request.clone();
+                // Only add a new row if this is currently the last one
+                let is_last =
+                    index == request.params.len().saturating_sub(1) || request.params.is_empty();
+                if is_last {
+                    request.params.push((String::new(), String::new()));
+                }
+                let id = iced::widget::Id::from(format!("param_{}_key", index));
+                let task = iced::widget::operation::focus(id).map(|_: ()| Message::DoNothing);
+                Action::UpdateCurrentRequestAndRun(request, task)
+            }
+            Message::AddParamFocusValue(index) => {
+                let mut request = current_request.clone();
+                let is_last =
+                    index == request.params.len().saturating_sub(1) || request.params.is_empty();
+                if is_last {
+                    request.params.push((String::new(), String::new()));
+                }
+                let id = iced::widget::Id::from(format!("param_{}_value", index));
+                let task = iced::widget::operation::focus(id).map(|_: ()| Message::DoNothing);
+                Action::UpdateCurrentRequestAndRun(request, task)
             }
             Message::RemoveParam(index) => {
                 let mut request = current_request.clone();
@@ -942,43 +985,73 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
         row![
             text("Key").width(Length::FillPortion(1)),
             text("Value").width(Length::FillPortion(1)),
-            text("").width(50) // For delete button
+            text("").width(50) // For delete button column
         ]
         .spacing(10)
     ];
 
-    for (index, (key, value)) in config.params.iter().enumerate() {
-        let param_row = row![
-            text_input("Key", key)
-                .on_input(move |input| Message::ParamKeyChanged(index, input))
-                .width(Length::FillPortion(1)),
-            text_input("Value", value)
-                .on_input(move |input| Message::ParamValueChanged(index, input))
-                .width(Length::FillPortion(1)),
+    // Determine how many rows to render. We always show at least one empty row.
+    let row_count = config.params.len().max(1);
+
+    for index in 0..row_count {
+        let (key, value) = config
+            .params
+            .get(index)
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .unwrap_or(("", ""));
+
+        let is_last = index == row_count - 1;
+
+        // Assign stable IDs to every row so focus always finds the right widget,
+        // regardless of which row becomes "last" after AddParam fires.
+        let key_input = text_input("Key", key)
+            .id(iced::widget::Id::from(format!("param_{}_key", index)))
+            .on_input(move |input| Message::ParamKeyChanged(index, input))
+            .width(Length::FillPortion(1));
+
+        let value_input = text_input("Value", value)
+            .id(iced::widget::Id::from(format!("param_{}_value", index)))
+            .on_input(move |input| Message::ParamValueChanged(index, input))
+            .width(Length::FillPortion(1));
+
+        // Only show a delete button for rows that exist in params (not the phantom empty last row).
+        let delete_button: Element<'_, Message> = if index < config.params.len() {
             button(text("×"))
                 .on_press(Message::RemoveParam(index))
                 .width(50)
-        ]
-        .spacing(10)
-        .align_y(iced::Alignment::Center);
+                .into()
+        } else {
+            Space::new().width(50).into()
+        };
 
-        content = content.push(param_row);
+        let param_row: Element<'_, Message> = row![key_input, value_input, delete_button]
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+            .into();
+
+        // For the last row, layer a transparent split overlay on top via Stack.
+        // Left half (key area) → AddParamFocusKey, right half (value area) → AddParamFocusValue.
+        // Once the new row appears this row is no longer last, so the overlay disappears.
+        let row_element: Element<'_, Message> = if is_last {
+            let overlay = row![
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(Message::AddParamFocusKey(index)),
+                mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+                    .on_press(Message::AddParamFocusValue(index)),
+                // Spacer matching the delete-button column — no overlay here.
+                Space::new().width(50),
+            ]
+            .spacing(10)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+            iced::widget::Stack::with_children(vec![param_row, overlay.into()]).into()
+        } else {
+            param_row
+        };
+
+        content = content.push(row_element);
     }
-
-    content = content.push(
-        button(text("Add Parameter"))
-            .on_press(Message::AddParam)
-            .style(move |_theme, status| {
-                let base = button::Style::default();
-                match status {
-                    Status::Hovered => button::Style {
-                        background: Some(Background::Color(Color::from_rgb(0.9, 0.9, 0.9))),
-                        ..base
-                    },
-                    _ => base,
-                }
-            }),
-    );
 
     scrollable(content.spacing(10)).height(Length::Fill).into()
 }
