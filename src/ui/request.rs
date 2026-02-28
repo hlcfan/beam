@@ -352,7 +352,7 @@ impl RequestPanel {
                     BodyFormat::Xml => "application/xml".to_string(),
                     BodyFormat::Text => "text/plain".to_string(),
                     BodyFormat::GraphQL => "application/graphql".to_string(),
-                    BodyFormat::None => request.content_type,
+                    BodyFormat::None => String::new(),
                 };
                 self.body_format_menu_open = false;
                 self.selected_tab = RequestTab::Body;
