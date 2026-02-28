@@ -1012,8 +1012,7 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
             .on_input(move |input| Message::ParamValueChanged(index, input))
             .width(Length::FillPortion(1));
 
-        // Only show a delete button for rows that exist in params (not the phantom empty last row).
-        let delete_button: Element<'_, Message> = if index < config.params.len() {
+        let delete_button: Element<'_, Message> = if index < config.params.len() && index > 0 {
             button(text("×"))
                 .on_press(Message::RemoveParam(index))
                 .width(50)
