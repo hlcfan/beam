@@ -1016,14 +1016,7 @@ fn tab_button<'a>(label: String, is_active: bool, tab: RequestTab) -> Element<'a
 }
 
 fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
-    let mut content = column![
-        row![
-            text("Key").width(Length::FillPortion(1)),
-            text("Value").width(Length::FillPortion(1)),
-            text("").width(50) // For delete button column
-        ]
-        .spacing(10)
-    ];
+    let mut content = column![];
 
     // Determine how many rows to render. We always show at least one empty row.
     let row_count = config.params.len().max(1);
@@ -1039,12 +1032,12 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 
         // Assign stable IDs to every row so focus always finds the right widget,
         // regardless of which row becomes "last" after AddParam fires.
-        let key_input = text_input("Key", key)
+        let key_input = text_input("Parameter name", key)
             .id(iced::widget::Id::from(format!("param_{}_key", index)))
             .on_input(move |input| Message::ParamKeyChanged(index, input))
             .width(Length::FillPortion(1));
 
-        let value_input = text_input("Value", value)
+        let value_input = text_input("Parameter value", value)
             .id(iced::widget::Id::from(format!("param_{}_value", index)))
             .on_input(move |input| Message::ParamValueChanged(index, input))
             .width(Length::FillPortion(1));
@@ -1091,14 +1084,7 @@ fn params_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
 }
 
 fn headers_tab<'a>(config: &'a RequestConfig) -> Element<'a, Message> {
-    let mut content = column![
-        row![
-            text("Key").width(Length::FillPortion(1)),
-            text("Value").width(Length::FillPortion(1)),
-            text("").width(50)
-        ]
-        .spacing(10)
-    ];
+    let mut content = column![];
 
     let row_count = config.headers.len().max(1);
 
