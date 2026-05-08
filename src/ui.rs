@@ -70,6 +70,9 @@ struct BeamView {
     response_size: String,
     environment_manager_selected_id: Option<Ulid>,
     environment_manager_variables: Vec<EnvironmentVariable>,
+    request_param_name_inputs: Vec<Entity<InputState>>,
+    request_param_value_inputs: Vec<Entity<InputState>>,
+    request_param_input_subscriptions: Vec<Subscription>,
     environment_manager_name_input: Entity<InputState>,
     environment_manager_value_input: Entity<InputState>,
     environment_manager_error: Option<String>,
@@ -1061,6 +1064,17 @@ impl BeamView {
 
     fn sync_request_editor_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         Self::hydrate_request_from_selection(&mut self.request, &self.shell);
+        if self.request.query_params.is_empty() {
+            self.request
+                .query_params
+                .push(crate::models::QueryParamField {
+                    name: String::new(),
+                    value: String::new(),
+                    enabled: true,
+                    description: None,
+                });
+        }
+        self.rebuild_request_param_inputs(window, cx);
         let next_url = self.request.url.clone();
         let next_body = Self::body_editor_text(&self.request.body);
         let next_script = self.request.post_script.clone().unwrap_or_default();
@@ -1073,6 +1087,136 @@ impl BeamView {
         self.post_script_editor.update(cx, |input, cx| {
             input.set_value(next_script, window, cx);
         });
+    }
+
+    fn clear_request_param_inputs(&mut self) {
+        self.request_param_name_inputs.clear();
+        self.request_param_value_inputs.clear();
+        self.request_param_input_subscriptions.clear();
+    }
+
+    fn rebuild_request_param_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_request_param_inputs();
+        for index in 0..self.request.query_params.len() {
+            let param_name = self.request.query_params[index].name.clone();
+            let param_value = self.request.query_params[index].value.clone();
+
+            let key_input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("Param key")
+                    .default_value(param_name)
+            });
+            let value_input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("Param value")
+                    .default_value(param_value)
+            });
+
+            let key_input_handle = key_input.clone();
+            let key_subscription = cx.subscribe_in(
+                &key_input,
+                window,
+                move |this, _, ev: &InputEvent, window, cx| match ev {
+                    InputEvent::Change => {
+                        let name = key_input_handle.read(cx).value().to_string();
+                        let value = this
+                            .request
+                            .query_params
+                            .get(index)
+                            .map(|param| param.value.clone())
+                            .unwrap_or_default();
+                        this.request.set_param_value(index, name, value);
+                        if this.request_param_name_inputs.len() != this.request.query_params.len() {
+                            this.rebuild_request_param_inputs(window, cx);
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if index + 1 == this.request.query_params.len() {
+                            this.request
+                                .query_params
+                                .push(crate::models::QueryParamField {
+                                    name: String::new(),
+                                    value: String::new(),
+                                    enabled: true,
+                                    description: None,
+                                });
+                            this.rebuild_request_param_inputs(window, cx);
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            );
+
+            let value_input_handle = value_input.clone();
+            let value_subscription = cx.subscribe_in(
+                &value_input,
+                window,
+                move |this, _, ev: &InputEvent, window, cx| match ev {
+                    InputEvent::Change => {
+                        let name = this
+                            .request
+                            .query_params
+                            .get(index)
+                            .map(|param| param.name.clone())
+                            .unwrap_or_default();
+                        let value = value_input_handle.read(cx).value().to_string();
+                        this.request.set_param_value(index, name, value);
+                        if this.request_param_name_inputs.len() != this.request.query_params.len() {
+                            this.rebuild_request_param_inputs(window, cx);
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if index + 1 == this.request.query_params.len() {
+                            this.request
+                                .query_params
+                                .push(crate::models::QueryParamField {
+                                    name: String::new(),
+                                    value: String::new(),
+                                    enabled: true,
+                                    description: None,
+                                });
+                            this.rebuild_request_param_inputs(window, cx);
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            );
+
+            self.request_param_name_inputs.push(key_input);
+            self.request_param_value_inputs.push(value_input);
+            self.request_param_input_subscriptions
+                .push(key_subscription);
+            self.request_param_input_subscriptions
+                .push(value_subscription);
+        }
+    }
+
+    fn delete_request_param_row(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.request.query_params.len() {
+            return;
+        }
+        self.request.query_params.remove(index);
+        if self.request.query_params.is_empty() {
+            self.request
+                .query_params
+                .push(crate::models::QueryParamField {
+                    name: String::new(),
+                    value: String::new(),
+                    enabled: true,
+                    description: None,
+                });
+        }
+        self.rebuild_request_param_inputs(window, cx);
+        cx.notify();
     }
 
     fn collection_ancestor_for_node(&self, mut node_id: Ulid) -> Option<Ulid> {
@@ -2007,6 +2151,14 @@ impl BeamView {
     ) -> Self {
         let mut request = RequestAuthoringState::default();
         Self::hydrate_request_from_selection(&mut request, &shell);
+        if request.query_params.is_empty() {
+            request.query_params.push(crate::models::QueryParamField {
+                name: String::new(),
+                value: String::new(),
+                enabled: true,
+                description: None,
+            });
+        }
         let url_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("https://api.example.com/resource")
@@ -2075,7 +2227,7 @@ impl BeamView {
             }
         })];
 
-        Self {
+        let mut view = Self {
             shell,
             request,
             startup_messages,
@@ -2090,11 +2242,16 @@ impl BeamView {
             response_size: "—".to_string(),
             environment_manager_selected_id: None,
             environment_manager_variables: Vec::new(),
+            request_param_name_inputs: Vec::new(),
+            request_param_value_inputs: Vec::new(),
+            request_param_input_subscriptions: Vec::new(),
             environment_manager_name_input,
             environment_manager_value_input,
             environment_manager_error: None,
             _subscriptions,
-        }
+        };
+        view.rebuild_request_param_inputs(window, cx);
+        view
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3069,18 +3226,72 @@ impl BeamView {
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_size(cx.theme().mono_font_size)
                 .into_any_element(),
-            RequestTab::Params => div()
-                .h_full()
-                .w_full()
-                .child(Self::render_key_value_lines(
-                    self.request
-                        .query_params
-                        .iter()
-                        .filter(|param| param.enabled)
-                        .map(|param| format!("{} = {}", param.name, param.value))
-                        .collect(),
-                ))
-                .into_any_element(),
+            RequestTab::Params => {
+                let mut table = v_flex().h_full().w_full().gap_2();
+
+                for (index, param) in self.request.query_params.iter().enumerate() {
+                    let key_input = self.request_param_name_inputs[index].clone();
+                    let value_input = self.request_param_value_inputs[index].clone();
+                    table =
+                        table.child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(rgb(0xe5e7eb))
+                                .child(
+                                    div().w(px(28.0)).child(
+                                        gpui_component::checkbox::Checkbox::new(format!(
+                                            "request-param-enabled-{index}"
+                                        ))
+                                        .small()
+                                        .checked(param.enabled)
+                                        .on_click(
+                                            cx.listener(move |this, checked: &bool, _, cx| {
+                                                if let Some(item) =
+                                                    this.request.query_params.get_mut(index)
+                                                {
+                                                    item.enabled = *checked;
+                                                    cx.notify();
+                                                }
+                                            }),
+                                        ),
+                                    ),
+                                )
+                                .child(div().flex_1().child(
+                                    Input::new(&key_input).small().w_full().appearance(false),
+                                ))
+                                .child(div().flex_1().child(
+                                    Input::new(&value_input).small().w_full().appearance(false),
+                                ))
+                                .child(if self.request.query_params.len() > 1 {
+                                    div().w(px(28.0)).child(
+                                        Button::new(format!("delete-request-param-{index}"))
+                                            .small()
+                                            .ghost()
+                                            .cursor_pointer()
+                                            .icon(
+                                                Icon::default()
+                                                    .path("icons/delete.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(rgb(0x6b7280)),
+                                            )
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.delete_request_param_row(index, window, cx);
+                                            })),
+                                    )
+                                } else {
+                                    div().w(px(28.0))
+                                }),
+                        );
+                }
+
+                table.into_any_element()
+            }
             RequestTab::Headers => div()
                 .h_full()
                 .w_full()
