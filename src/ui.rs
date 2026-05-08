@@ -45,14 +45,12 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
 
         let state = state.clone();
         let startup_messages = startup_messages.clone();
-        cx.spawn(async move |cx| {
-            cx.open_window(window_options, |window, cx| {
-                let view = cx.new(|cx| BeamView::new(state, startup_messages, window, cx));
-                cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
-            })
-            .expect("Failed to open Beam window");
+        cx.open_window(window_options, |window, cx| {
+            let view = cx.new(|cx| BeamView::new(state, startup_messages, window, cx));
+            cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
         })
-        .detach();
+        .expect("Failed to open Beam window");
+        cx.activate(true);
     });
 }
 
