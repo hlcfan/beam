@@ -22,6 +22,7 @@ use crate::app_shell::{AppShellState, StartupLoad, StartupMessage, TreeNodeKind,
 use crate::assets::Assets;
 use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable, HttpMethod,
+    LocalStateFile,
 };
 use crate::paths::BeamPaths;
 use crate::request_authoring::{
@@ -1311,6 +1312,25 @@ impl BeamView {
         }
     }
 
+    fn persist_last_opened_request_id(&self, request_id: Ulid) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        let mut local_state = match storage.load_local_state() {
+            Ok(state) => state,
+            Err(_) => LocalStateFile::default(),
+        };
+
+        if local_state.local_state.last_opened_request_id == Some(request_id) {
+            return Ok(());
+        }
+
+        local_state.local_state.last_opened_request_id = Some(request_id);
+        local_state.local_state.updated_at = Utc::now();
+        storage
+            .save_local_state(&local_state)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
     fn add_request_from_tree_node(
         &mut self,
         node_id: Ulid,
@@ -2169,6 +2189,9 @@ impl BeamView {
                             }
                             TreeNodeKind::Request => {
                                 this.shell.collections.select_request(row_id);
+                                if let Err(error) = this.persist_last_opened_request_id(row_id) {
+                                    window.push_notification(error, cx);
+                                }
                                 this.sync_request_editor_from_selection(window, cx);
                             }
                         }))
