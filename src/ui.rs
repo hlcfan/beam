@@ -1331,6 +1331,26 @@ impl BeamView {
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 
+    fn persist_tree_expansion_state(&self) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        let mut local_state = match storage.load_local_state() {
+            Ok(state) => state,
+            Err(_) => LocalStateFile::default(),
+        };
+
+        let expanded_item_ids: Vec<Ulid> = self.shell.collections.expanded().iter().copied().collect();
+        if local_state.tree_state.expanded_item_ids == expanded_item_ids {
+            return Ok(());
+        }
+
+        local_state.tree_state.expanded_item_ids = expanded_item_ids;
+        local_state.local_state.updated_at = Utc::now();
+        storage
+            .save_local_state(&local_state)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
     fn add_request_from_tree_node(
         &mut self,
         node_id: Ulid,
@@ -1384,6 +1404,9 @@ impl BeamView {
                 self.shell
                     .collections
                     .toggle_expanded(folder_file.folder.folder_id);
+                if let Err(error) = self.persist_tree_expansion_state() {
+                    window.push_notification(error, cx);
+                }
                 window.push_notification("Folder added.", cx);
                 cx.notify();
             }
@@ -2148,12 +2171,12 @@ impl BeamView {
                     .map(|n| n.name.clone())
                     .unwrap_or_else(|| "Unknown".to_string());
 
-                let caret = match row.kind {
+                let chevron_icon = match row.kind {
                     TreeNodeKind::Collection | TreeNodeKind::Folder => {
                         if self.shell.collections.is_expanded(row.id) {
-                            Some("▾")
+                            Some("icons/chevron-down.svg")
                         } else {
-                            Some("▸")
+                            Some("icons/chevron-right.svg")
                         }
                     }
                     TreeNodeKind::Request => None,
@@ -2161,8 +2184,13 @@ impl BeamView {
                 let indent = px((row.depth as f32) * 14.0);
 
                 let mut row_content = h_flex().w_full().items_center().justify_start().gap_2();
-                if let Some(caret) = caret {
-                    row_content = row_content.child(caret);
+                if let Some(icon_path) = chevron_icon {
+                    row_content = row_content.child(
+                        Icon::default()
+                            .path(icon_path)
+                            .size(px(14.0))
+                            .text_color(rgb(0x6b7280)),
+                    );
                 }
                 if let Some(method) = node.as_ref().and_then(|n| n.request_method) {
                     row_content = row_content.child(Self::render_method_badge(method));
@@ -2186,6 +2214,9 @@ impl BeamView {
                         .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                             TreeNodeKind::Collection | TreeNodeKind::Folder => {
                                 this.shell.collections.toggle_expanded(row_id);
+                                if let Err(error) = this.persist_tree_expansion_state() {
+                                    window.push_notification(error, cx);
+                                }
                             }
                             TreeNodeKind::Request => {
                                 this.shell.collections.select_request(row_id);

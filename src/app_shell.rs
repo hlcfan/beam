@@ -494,9 +494,6 @@ fn load_collection_tree(
     if let Some(request_id) = local_state.local_state.last_opened_request_id {
         if tree.request_exists(request_id) {
             tree.set_selected_request(Some(request_id));
-            for ancestor in tree.ancestors(request_id) {
-                tree.expanded.insert(ancestor);
-            }
         }
     }
 
@@ -983,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_restores_last_request_and_expands_ancestors() {
+    fn startup_restores_last_request_without_overriding_tree_expansion_state() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
@@ -1054,8 +1051,8 @@ order = 0
         };
 
         assert_eq!(state.collections.selected_request_id(), Some(request_id));
-        assert!(state.collections.expanded().contains(&folder_id));
-        assert!(state.collections.expanded().contains(&collection_id));
+        assert!(!state.collections.expanded().contains(&folder_id));
+        assert!(!state.collections.expanded().contains(&collection_id));
     }
 
     #[test]
