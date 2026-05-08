@@ -514,7 +514,6 @@ impl TomlWorkspaceStorage {
         exclude_path: Option<&Path>,
     ) -> Result<PathBuf> {
         let preferred_stem = slugify(request_name);
-        let extension = "toml";
         let excluded = exclude_path.and_then(|path| path.file_name().map(|name| name.to_owned()));
         let mut used_names = HashSet::new();
 
@@ -543,9 +542,9 @@ impl TomlWorkspaceStorage {
         let mut suffix = 1;
         loop {
             let file_name = if suffix == 1 {
-                format!("{preferred_stem}.{extension}")
+                format!("{preferred_stem}.request.toml")
             } else {
-                format!("{preferred_stem}-{suffix}.{extension}")
+                format!("{preferred_stem}-{suffix}.request.toml")
             };
             if !used_names.contains(&file_name) {
                 return Ok(request_dir.join(file_name));
@@ -1508,7 +1507,7 @@ environment_id = "{environment_id}"
         fs::create_dir_all(&request_dir).expect("create requests dir");
 
         // Reserve the default file name to force numeric suffix allocation.
-        fs::write(request_dir.join("sample.toml"), "reserved").expect("seed collision");
+        fs::write(request_dir.join("sample.request.toml"), "reserved").expect("seed collision");
 
         let created = storage
             .create_request(CreateRequestInput {
@@ -1525,7 +1524,7 @@ environment_id = "{environment_id}"
         let created_path = storage
             .find_request_file_by_id(created.meta.request_id)
             .expect("find request path");
-        assert!(created_path.to_string_lossy().contains("sample-2.toml"));
+        assert!(created_path.to_string_lossy().contains("sample-2.request.toml"));
 
         let renamed = storage
             .rename_request(created.meta.request_id, "Sample")
