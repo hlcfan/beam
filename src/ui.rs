@@ -1339,7 +1339,8 @@ impl BeamView {
             Err(_) => LocalStateFile::default(),
         };
 
-        let expanded_item_ids: Vec<Ulid> = self.shell.collections.expanded().iter().copied().collect();
+        let expanded_item_ids: Vec<Ulid> =
+            self.shell.collections.expanded().iter().copied().collect();
         if local_state.tree_state.expanded_item_ids == expanded_item_ids {
             return Ok(());
         }
@@ -2201,229 +2202,397 @@ impl BeamView {
                 let row_kind = row.kind;
                 let view = cx.entity();
 
-                panel = panel.child(
-                    Button::new(format!("tree-row-{}", row_id))
-                        .ghost()
-                        .selected(row.selected)
-                        .cursor_pointer()
-                        .w_full()
-                        .rounded(px(8.0))
-                        .pl(indent)
-                        .px_1()
-                        .py(px(1.0))
-                        .on_click(cx.listener(move |this, _, window, cx| match row_kind {
-                            TreeNodeKind::Collection | TreeNodeKind::Folder => {
-                                this.shell.collections.toggle_expanded(row_id);
-                                if let Err(error) = this.persist_tree_expansion_state() {
-                                    window.push_notification(error, cx);
-                                }
-                            }
-                            TreeNodeKind::Request => {
-                                this.shell.collections.select_request(row_id);
-                                if let Err(error) = this.persist_last_opened_request_id(row_id) {
-                                    window.push_notification(error, cx);
-                                }
-                                this.sync_request_editor_from_selection(window, cx);
-                            }
-                        }))
-                        .child(row_content)
-                        .context_menu(move |menu, window, _| {
-                            let mut menu = menu.min_w(px(180.0));
-                            match row_kind {
-                                TreeNodeKind::Collection => {
-                                    menu = menu.item(PopupMenuItem::new("Add Request").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.add_request_from_tree_node(row_id, window, cx);
-                                        }),
-                                    ));
-                                    menu = menu.item(PopupMenuItem::new("Add Folder").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.add_folder_from_tree_node(row_id, window, cx);
-                                        }),
-                                    ));
-                                    menu = menu.separator();
-                                    menu = menu.item(PopupMenuItem::new("Rename").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.open_rename_dialog_for_tree_node(
-                                                row_id,
-                                                TreeNodeKind::Collection,
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    ));
-                                    menu = menu.item(PopupMenuItem::new("Delete").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.delete_collection_from_tree_node(
-                                                row_id, window, cx,
-                                            );
-                                        }),
-                                    ));
-                                }
-                                TreeNodeKind::Folder => {
-                                    menu = menu.item(PopupMenuItem::new("Add Request").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.add_request_from_tree_node(row_id, window, cx);
-                                        }),
-                                    ));
-                                    menu = menu.item(PopupMenuItem::new("Add Folder").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.add_folder_from_tree_node(row_id, window, cx);
-                                        }),
-                                    ));
-                                    menu = menu.separator();
-                                    menu = menu.item(PopupMenuItem::new("Rename").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.open_rename_dialog_for_tree_node(
-                                                row_id,
-                                                TreeNodeKind::Folder,
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    ));
-                                    menu = menu.item(PopupMenuItem::new("Delete").on_click(
-                                        window.listener_for(&view, move |this, _, window, cx| {
-                                            this.delete_folder_from_tree_node(row_id, window, cx);
-                                        }),
-                                    ));
+                panel =
+                    panel.child(
+                        Button::new(format!("tree-row-{}", row_id))
+                            .ghost()
+                            .selected(row.selected)
+                            .cursor_pointer()
+                            .w_full()
+                            .rounded(px(8.0))
+                            .pl(indent)
+                            .px_1()
+                            .py(px(1.0))
+                            .on_click(cx.listener(move |this, _, window, cx| match row_kind {
+                                TreeNodeKind::Collection | TreeNodeKind::Folder => {
+                                    this.shell.collections.toggle_expanded(row_id);
+                                    if let Err(error) = this.persist_tree_expansion_state() {
+                                        window.push_notification(error, cx);
+                                    }
                                 }
                                 TreeNodeKind::Request => {
-                                    menu = menu.item(
-                                        PopupMenuItem::element(move |_, _| {
-                                            h_flex()
-                                                .w_full()
-                                                .cursor_pointer()
-                                                .items_center()
-                                                .gap_2()
-                                                .px_2()
-                                                .py_1()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/send.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Send Request")
-                                        })
-                                        .on_click(window.listener_for(
-                                            &view,
-                                            move |this, _, window, cx| {
-                                                this.send_request_from_tree_node(row_id, window, cx);
-                                            },
-                                        )),
-                                    );
-                                    menu = menu.item(
-                                        PopupMenuItem::element(move |_, _| {
-                                            h_flex()
-                                                .w_full()
-                                                .cursor_pointer()
-                                                .items_center()
-                                                .gap_2()
-                                                .px_2()
-                                                .py_1()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/copy.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Copy as cURL")
-                                        })
-                                        .on_click(window.listener_for(
-                                            &view,
-                                            move |this, _, window, cx| {
-                                                this.copy_request_as_curl_from_tree_node(
-                                                    row_id, window, cx,
-                                                );
-                                            },
-                                        )),
-                                    );
-                                    menu = menu.separator();
-                                    menu = menu.item(
-                                        PopupMenuItem::element(move |_, _| {
-                                            h_flex()
-                                                .w_full()
-                                                .cursor_pointer()
-                                                .items_center()
-                                                .gap_2()
-                                                .px_2()
-                                                .py_1()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/edit.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Rename")
-                                        })
-                                        .on_click(window.listener_for(
-                                            &view,
-                                            move |this, _, window, cx| {
-                                                this.open_rename_dialog_for_tree_node(
-                                                    row_id,
-                                                    TreeNodeKind::Request,
-                                                    window,
-                                                    cx,
-                                                );
-                                            },
-                                        )),
-                                    );
-                                    menu = menu.item(
-                                        PopupMenuItem::element(move |_, _| {
-                                            h_flex()
-                                                .w_full()
-                                                .cursor_pointer()
-                                                .items_center()
-                                                .gap_2()
-                                                .px_2()
-                                                .py_1()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/duplicate.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Duplicate")
-                                        })
-                                        .on_click(window.listener_for(
-                                            &view,
-                                            move |this, _, window, cx| {
-                                                this.duplicate_request_from_tree_node(
-                                                    row_id, window, cx,
-                                                );
-                                            },
-                                        )),
-                                    );
-                                    menu = menu.item(
-                                        PopupMenuItem::element(move |_, _| {
-                                            h_flex()
-                                                .w_full()
-                                                .cursor_pointer()
-                                                .items_center()
-                                                .gap_2()
-                                                .px_2()
-                                                .py_1()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/trash.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Delete")
-                                        })
-                                        .on_click(window.listener_for(
-                                            &view,
-                                            move |this, _, window, cx| {
-                                                this.delete_request_from_tree_node(row_id, window, cx);
-                                            },
-                                        )),
-                                    );
+                                    this.shell.collections.select_request(row_id);
+                                    if let Err(error) = this.persist_last_opened_request_id(row_id)
+                                    {
+                                        window.push_notification(error, cx);
+                                    }
+                                    this.sync_request_editor_from_selection(window, cx);
                                 }
-                            }
-                            menu
-                        }),
-                );
+                            }))
+                            .child(row_content)
+                            .context_menu(move |menu, window, _| {
+                                let mut menu = menu.min_w(px(180.0));
+                                match row_kind {
+                                    TreeNodeKind::Collection => {
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/add.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Add Request")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.add_request_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/folder-add.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Add Folder")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.add_folder_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.separator();
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/edit.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Rename")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.open_rename_dialog_for_tree_node(
+                                                        row_id,
+                                                        TreeNodeKind::Collection,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/trash.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Delete")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.delete_collection_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                    }
+                                    TreeNodeKind::Folder => {
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/add.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Add Request")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.add_request_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/folder-add.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Add Folder")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.add_folder_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.separator();
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/edit.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Rename")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.open_rename_dialog_for_tree_node(
+                                                        row_id,
+                                                        TreeNodeKind::Folder,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/trash.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Delete")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.delete_folder_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                    }
+                                    TreeNodeKind::Request => {
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/send.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Send Request")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.send_request_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/copy.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Copy as cURL")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.copy_request_as_curl_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.separator();
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/edit.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Rename")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.open_rename_dialog_for_tree_node(
+                                                        row_id,
+                                                        TreeNodeKind::Request,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/duplicate.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Duplicate")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.duplicate_request_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                        menu = menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/trash.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Delete")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                move |this, _, window, cx| {
+                                                    this.delete_request_from_tree_node(
+                                                        row_id, window, cx,
+                                                    );
+                                                },
+                                            )),
+                                        );
+                                    }
+                                }
+                                menu
+                            }),
+                    );
             }
         }
 
@@ -3148,10 +3317,7 @@ fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
         .collect();
 
     let mut builder = client
-        .request(
-            http_method_to_reqwest(request.method),
-            request.url.trim(),
-        )
+        .request(http_method_to_reqwest(request.method), request.url.trim())
         .query(&query_pairs);
 
     for header in request
