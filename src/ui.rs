@@ -8,7 +8,7 @@ use gpui_component::{
     ActiveTheme, Disableable, Icon, Root, Selectable, Sizable, StyledExt, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState, TabSize},
+    input::{Input, InputEvent, InputState, Position, TabSize},
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
@@ -692,6 +692,21 @@ impl TreeRenameDialogView {
         }
     }
 
+    fn focus_name_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.name_input.update(cx, |state, cx| {
+            state.focus(window, cx);
+            let cursor_end = state.value().encode_utf16().count() as u32;
+            state.set_cursor_position(Position::new(0, cursor_end), window, cx);
+        });
+    }
+
+    fn submit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let next_name = self.name_input.read(cx).value().to_string();
+        let _ = self.target_view.update(cx, |this, cx| {
+            this.rename_tree_node_from_modal(self.node_id, self.node_kind, next_name, window, cx);
+        });
+    }
+
     fn title(&self) -> &'static str {
         match self.node_kind {
             TreeNodeKind::Collection => "Rename collection",
@@ -750,7 +765,6 @@ impl Render for TreeRenameDialogView {
                             .label("Rename")
                             .on_click(move |_, window, cx| {
                                 let next_name = name_input.read(cx).value().to_string();
-                                eprintln!("rename-dialog-submit clicked");
                                 let _ = target_view.update(cx, |this, cx| {
                                     this.rename_tree_node_from_modal(
                                         node_id, node_kind, next_name, window, cx,
@@ -1441,13 +1455,28 @@ impl BeamView {
         });
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let focus_dialog_view = dialog_view.clone();
                 let _ = root_window.update(cx, |_, window, cx| {
                     window.defer(cx, move |window, cx| {
+                        let submit_dialog_view = dialog_view.clone();
                         window.open_dialog(cx, move |dialog, _, _| {
+                            let submit_dialog_view_for_ok = submit_dialog_view.clone();
                             dialog
                                 .title("Rename item")
                                 .w(px(460.0))
                                 .child(dialog_view.clone())
+                                .on_ok(move |_, window, cx| {
+                                    let submit_dialog_view = submit_dialog_view_for_ok.clone();
+                                    let _ = submit_dialog_view.update(cx, |this, cx| {
+                                        this.submit_rename(window, cx);
+                                    });
+                                    false
+                                })
+                        });
+                        window.defer(cx, move |window, cx| {
+                            let _ = focus_dialog_view.update(cx, |this, cx| {
+                                this.focus_name_input(window, cx);
+                            });
                         });
                     });
                 });
