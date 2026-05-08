@@ -2138,7 +2138,7 @@ impl BeamView {
         let mut panel = v_flex()
             .h_full()
             .w_full()
-            .gap_1()
+            .gap(px(2.0))
             .p_2()
             .bg(rgb(0xf5f7fb))
             .text_color(rgb(0x1f2937));
@@ -2210,7 +2210,7 @@ impl BeamView {
                         .rounded(px(8.0))
                         .pl(indent)
                         .px_1()
-                        .py_1()
+                        .py(px(1.0))
                         .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                             TreeNodeKind::Collection | TreeNodeKind::Folder => {
                                 this.shell.collections.toggle_expanded(row_id);
