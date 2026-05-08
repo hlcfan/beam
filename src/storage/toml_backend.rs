@@ -262,6 +262,77 @@ impl TomlWorkspaceStorage {
         self.write_toml_file(&path, &collection_file)
     }
 
+    fn insert_request_to_parent_manifest_after(
+        &self,
+        parent: RequestParentRef,
+        source_request_id: Ulid,
+        request_id: Ulid,
+        name: &str,
+    ) -> Result<()> {
+        if let Some(folder_id) = parent.folder_id {
+            let folder_dir = self.find_folder_dir_by_id(folder_id)?;
+            let path = folder_dir.join("folder.toml");
+            let mut folder_file = self.read_folder_file(&path)?;
+            let source_order = folder_file
+                .items
+                .iter()
+                .find(|item| {
+                    item.item_id == source_request_id && item.item_type == ItemType::Request
+                })
+                .map(|item| item.order);
+            let next_order = folder_file
+                .items
+                .iter()
+                .map(|item| item.order)
+                .max()
+                .unwrap_or(-1)
+                + 1;
+            let inserted_order = source_order.map_or(next_order, |order| order + 1);
+            for item in &mut folder_file.items {
+                if item.order >= inserted_order {
+                    item.order += 1;
+                }
+            }
+            folder_file.items.push(CollectionItemRef {
+                item_id: request_id,
+                item_type: ItemType::Request,
+                name: name.to_string(),
+                order: inserted_order,
+            });
+            self.write_toml_file(&path, &folder_file)?;
+            return Ok(());
+        }
+
+        let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
+        let path = collection_dir.join("collection.toml");
+        let mut collection_file = self.read_collection_file(&path)?;
+        let source_order = collection_file
+            .items
+            .iter()
+            .find(|item| item.item_id == source_request_id && item.item_type == ItemType::Request)
+            .map(|item| item.order);
+        let next_order = collection_file
+            .items
+            .iter()
+            .map(|item| item.order)
+            .max()
+            .unwrap_or(-1)
+            + 1;
+        let inserted_order = source_order.map_or(next_order, |order| order + 1);
+        for item in &mut collection_file.items {
+            if item.order >= inserted_order {
+                item.order += 1;
+            }
+        }
+        collection_file.items.push(CollectionItemRef {
+            item_id: request_id,
+            item_type: ItemType::Request,
+            name: name.to_string(),
+            order: inserted_order,
+        });
+        self.write_toml_file(&path, &collection_file)
+    }
+
     fn update_folder_name_in_parent_manifest(&self, folder_id: Ulid, new_name: &str) -> Result<()> {
         let parent = self.find_folder_parent(folder_id)?;
         if let Some(parent_folder_id) = parent.parent_folder_id {
@@ -1014,8 +1085,9 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         duplicated.meta.updated_at = now;
 
         self.write_request_new_path(&duplicated, parent)?;
-        self.append_request_to_parent_manifest(
+        self.insert_request_to_parent_manifest_after(
             parent,
+            request_id,
             duplicated.meta.request_id,
             &duplicated.meta.name,
         )?;
@@ -1347,6 +1419,17 @@ environment_id = "{environment_id}"
                 url: "https://api.example.com/users/1".to_string(),
             })
             .expect("create request");
+        let next_created = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                name: "List Users".to_string(),
+                method: HttpMethod::Get,
+                url: "https://api.example.com/users".to_string(),
+            })
+            .expect("create second request");
 
         let duplicated = storage
             .duplicate_request(created.meta.request_id, "Get User (Copy)")
@@ -1358,6 +1441,32 @@ environment_id = "{environment_id}"
             .load_request(duplicated.meta.request_id)
             .expect("load duplicated request");
         assert_eq!(duplicated_loaded.meta.name, "Get User (Copy)");
+
+        let collection_dir = storage
+            .find_collection_dir_by_id(collection_id)
+            .expect("find collection dir");
+        let mut ordered_items = storage
+            .read_collection_file(&collection_dir.join("collection.toml"))
+            .expect("load collection")
+            .items;
+        ordered_items.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| a.item_id.to_string().cmp(&b.item_id.to_string()))
+        });
+        let request_ids: Vec<Ulid> = ordered_items
+            .into_iter()
+            .filter(|item| item.item_type == ItemType::Request)
+            .map(|item| item.item_id)
+            .collect();
+        assert_eq!(
+            request_ids,
+            vec![
+                created.meta.request_id,
+                duplicated.meta.request_id,
+                next_created.meta.request_id
+            ]
+        );
     }
 
     #[test]
