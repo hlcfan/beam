@@ -18,7 +18,9 @@ use gpui_component::{
 use reqwest::{Method, blocking::Client};
 use ulid::Ulid;
 
-use crate::app_shell::{AppShellState, StartupLoad, StartupMessage, TreeNodeKind, startup_preload};
+use crate::app_shell::{
+    AppShellState, RequestPaneData, StartupLoad, StartupMessage, TreeNodeKind, startup_preload,
+};
 use crate::assets::Assets;
 use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable, HttpMethod,
@@ -73,9 +75,15 @@ struct BeamView {
     request_param_name_inputs: Vec<Entity<InputState>>,
     request_param_value_inputs: Vec<Entity<InputState>>,
     request_param_input_subscriptions: Vec<Subscription>,
+    request_header_name_inputs: Vec<Entity<InputState>>,
+    request_header_value_inputs: Vec<Entity<InputState>>,
+    request_header_input_subscriptions: Vec<Subscription>,
     environment_manager_name_input: Entity<InputState>,
     environment_manager_value_input: Entity<InputState>,
     environment_manager_error: Option<String>,
+    pending_request_save_due_at: Option<Instant>,
+    request_save_tick_scheduled: bool,
+    request_save_in_flight: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1074,7 +1082,17 @@ impl BeamView {
                     description: None,
                 });
         }
+        if self.request.headers.is_empty() {
+            self.request.headers.push(crate::models::HeaderField {
+                name: String::new(),
+                value: String::new(),
+                enabled: true,
+                description: None,
+                secret: false,
+            });
+        }
         self.rebuild_request_param_inputs(window, cx);
+        self.rebuild_request_header_inputs(window, cx);
         let next_url = self.request.url.clone();
         let next_body = Self::body_editor_text(&self.request.body);
         let next_script = self.request.post_script.clone().unwrap_or_default();
@@ -1093,6 +1111,120 @@ impl BeamView {
         self.request_param_name_inputs.clear();
         self.request_param_value_inputs.clear();
         self.request_param_input_subscriptions.clear();
+    }
+
+    fn clear_request_header_inputs(&mut self) {
+        self.request_header_name_inputs.clear();
+        self.request_header_value_inputs.clear();
+        self.request_header_input_subscriptions.clear();
+    }
+
+    fn sync_selected_request_pane_data(&mut self) -> Option<(Ulid, RequestPaneData)> {
+        let Some(request_id) = self.shell.collections.selected_request_id() else {
+            return None;
+        };
+        let pane_data = RequestPaneData {
+            method: self.request.method,
+            url: self.request.url.clone(),
+            headers: self.request.headers.clone(),
+            query_params: self.request.query_params.clone(),
+            auth: self.request.auth.clone(),
+            body: self.request.body.clone(),
+            post_script: self.request.post_script.clone(),
+        };
+        self.shell
+            .request_pane_data
+            .insert(request_id, pane_data.clone());
+        Some((request_id, pane_data))
+    }
+
+    fn schedule_request_save_with_delay(&mut self, delay: Duration, cx: &mut Context<Self>) {
+        if self.sync_selected_request_pane_data().is_none() {
+            return;
+        }
+        self.pending_request_save_due_at = Some(Instant::now() + delay);
+        if self.request_save_tick_scheduled {
+            return;
+        }
+        self.request_save_tick_scheduled = true;
+        self.schedule_request_save_tick(cx);
+    }
+
+    fn schedule_request_save(&mut self, cx: &mut Context<Self>) {
+        self.schedule_request_save_with_delay(Duration::from_millis(350), cx);
+    }
+
+    fn schedule_request_save_tick(&self, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .spawn(async move {
+                    std::thread::sleep(Duration::from_millis(25));
+                })
+                .await;
+            let _ = view.update(cx, |this, cx| {
+                this.process_pending_request_save(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn save_request_snapshot_to_disk(request_id: Ulid, pane_data: RequestPaneData) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        let mut request_file = storage
+            .load_request(request_id)
+            .map_err(|error| format!("Failed to load request for save: {error}"))?;
+        request_file.request.method = pane_data.method;
+        request_file.request.url = pane_data.url;
+        request_file.request.headers = pane_data.headers;
+        request_file.request.query_params = pane_data.query_params;
+        request_file.auth = pane_data.auth;
+        request_file.body = pane_data.body;
+        request_file.scripts.post_response = pane_data.post_script;
+        request_file.meta.updated_at = Utc::now();
+        storage
+            .save_request(&request_file)
+            .map_err(|error| format!("Failed to save request: {error}"))
+    }
+
+    fn process_pending_request_save(&mut self, cx: &mut Context<Self>) {
+        if self.request_save_in_flight {
+            self.request_save_tick_scheduled = false;
+            return;
+        }
+        let Some(due_at) = self.pending_request_save_due_at else {
+            self.request_save_tick_scheduled = false;
+            return;
+        };
+        if Instant::now() < due_at {
+            self.schedule_request_save_tick(cx);
+            return;
+        }
+        self.pending_request_save_due_at = None;
+        self.request_save_tick_scheduled = false;
+        let Some((request_id, pane_data)) = self.sync_selected_request_pane_data() else {
+            return;
+        };
+        self.request_save_in_flight = true;
+        let view = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { Self::save_request_snapshot_to_disk(request_id, pane_data) })
+                .await;
+            let _ = view.update(cx, move |this, cx| {
+                this.request_save_in_flight = false;
+                if let Err(error) = result {
+                    eprintln!("{error}");
+                }
+                if this.pending_request_save_due_at.is_some() && !this.request_save_tick_scheduled {
+                    this.request_save_tick_scheduled = true;
+                    this.schedule_request_save_tick(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn rebuild_request_param_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1129,6 +1261,7 @@ impl BeamView {
                         if this.request_param_name_inputs.len() != this.request.query_params.len() {
                             this.rebuild_request_param_inputs(window, cx);
                         }
+                        this.schedule_request_save(cx);
                         cx.notify();
                     }
                     InputEvent::Focus => {
@@ -1142,6 +1275,12 @@ impl BeamView {
                                     description: None,
                                 });
                             this.rebuild_request_param_inputs(window, cx);
+                            if let Some(input) = this.request_param_name_inputs.get(index).cloned()
+                            {
+                                input.update(cx, |state, cx| {
+                                    state.focus(window, cx);
+                                });
+                            }
                             cx.notify();
                         }
                     }
@@ -1166,6 +1305,7 @@ impl BeamView {
                         if this.request_param_name_inputs.len() != this.request.query_params.len() {
                             this.rebuild_request_param_inputs(window, cx);
                         }
+                        this.schedule_request_save(cx);
                         cx.notify();
                     }
                     InputEvent::Focus => {
@@ -1179,6 +1319,12 @@ impl BeamView {
                                     description: None,
                                 });
                             this.rebuild_request_param_inputs(window, cx);
+                            if let Some(input) = this.request_param_value_inputs.get(index).cloned()
+                            {
+                                input.update(cx, |state, cx| {
+                                    state.focus(window, cx);
+                                });
+                            }
                             cx.notify();
                         }
                     }
@@ -1192,6 +1338,116 @@ impl BeamView {
                 .push(key_subscription);
             self.request_param_input_subscriptions
                 .push(value_subscription);
+        }
+    }
+
+    fn rebuild_request_header_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_request_header_inputs();
+        for index in 0..self.request.headers.len() {
+            let header_name = self.request.headers[index].name.clone();
+            let header_value = self.request.headers[index].value.clone();
+
+            let key_input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("Header key")
+                    .default_value(header_name)
+            });
+            let value_input = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .placeholder("Header value")
+                    .default_value(header_value)
+            });
+
+            let key_input_handle = key_input.clone();
+            let key_subscription = cx.subscribe_in(
+                &key_input,
+                window,
+                move |this, _, ev: &InputEvent, window, cx| match ev {
+                    InputEvent::Change => {
+                        let name = key_input_handle.read(cx).value().to_string();
+                        let value = this
+                            .request
+                            .headers
+                            .get(index)
+                            .map(|header| header.value.clone())
+                            .unwrap_or_default();
+                        this.request.set_header_value(index, name, value);
+                        if this.request_header_name_inputs.len() != this.request.headers.len() {
+                            this.rebuild_request_header_inputs(window, cx);
+                        }
+                        this.schedule_request_save(cx);
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if index + 1 == this.request.headers.len() {
+                            this.request.headers.push(crate::models::HeaderField {
+                                name: String::new(),
+                                value: String::new(),
+                                enabled: true,
+                                description: None,
+                                secret: false,
+                            });
+                            this.rebuild_request_header_inputs(window, cx);
+                            if let Some(input) = this.request_header_name_inputs.get(index).cloned()
+                            {
+                                input.update(cx, |state, cx| {
+                                    state.focus(window, cx);
+                                });
+                            }
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            );
+
+            let value_input_handle = value_input.clone();
+            let value_subscription = cx.subscribe_in(
+                &value_input,
+                window,
+                move |this, _, ev: &InputEvent, window, cx| match ev {
+                    InputEvent::Change => {
+                        let name = this
+                            .request
+                            .headers
+                            .get(index)
+                            .map(|header| header.name.clone())
+                            .unwrap_or_default();
+                        let value = value_input_handle.read(cx).value().to_string();
+                        this.request.set_header_value(index, name, value);
+                        if this.request_header_name_inputs.len() != this.request.headers.len() {
+                            this.rebuild_request_header_inputs(window, cx);
+                        }
+                        this.schedule_request_save(cx);
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if index + 1 == this.request.headers.len() {
+                            this.request.headers.push(crate::models::HeaderField {
+                                name: String::new(),
+                                value: String::new(),
+                                enabled: true,
+                                description: None,
+                                secret: false,
+                            });
+                            this.rebuild_request_header_inputs(window, cx);
+                            if let Some(input) = this.request_header_value_inputs.get(index).cloned()
+                            {
+                                input.update(cx, |state, cx| {
+                                    state.focus(window, cx);
+                                });
+                            }
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            );
+
+            self.request_header_name_inputs.push(key_input);
+            self.request_header_value_inputs.push(value_input);
+            self.request_header_input_subscriptions.push(key_subscription);
+            self.request_header_input_subscriptions.push(value_subscription);
         }
     }
 
@@ -1216,6 +1472,31 @@ impl BeamView {
                 });
         }
         self.rebuild_request_param_inputs(window, cx);
+        self.schedule_request_save(cx);
+        cx.notify();
+    }
+
+    fn delete_request_header_row(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if index >= self.request.headers.len() {
+            return;
+        }
+        self.request.headers.remove(index);
+        if self.request.headers.is_empty() {
+            self.request.headers.push(crate::models::HeaderField {
+                name: String::new(),
+                value: String::new(),
+                enabled: true,
+                description: None,
+                secret: false,
+            });
+        }
+        self.rebuild_request_header_inputs(window, cx);
+        self.schedule_request_save(cx);
         cx.notify();
     }
 
@@ -2159,6 +2440,15 @@ impl BeamView {
                 description: None,
             });
         }
+        if request.headers.is_empty() {
+            request.headers.push(crate::models::HeaderField {
+                name: String::new(),
+                value: String::new(),
+                enabled: true,
+                description: None,
+                secret: false,
+            });
+        }
         let url_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("https://api.example.com/resource")
@@ -2245,12 +2535,19 @@ impl BeamView {
             request_param_name_inputs: Vec::new(),
             request_param_value_inputs: Vec::new(),
             request_param_input_subscriptions: Vec::new(),
+            request_header_name_inputs: Vec::new(),
+            request_header_value_inputs: Vec::new(),
+            request_header_input_subscriptions: Vec::new(),
             environment_manager_name_input,
             environment_manager_value_input,
             environment_manager_error: None,
+            pending_request_save_due_at: None,
+            request_save_tick_scheduled: false,
+            request_save_in_flight: false,
             _subscriptions,
         };
         view.rebuild_request_param_inputs(window, cx);
+        view.rebuild_request_header_inputs(window, cx);
         view
     }
 
@@ -3256,6 +3553,7 @@ impl BeamView {
                                                     this.request.query_params.get_mut(index)
                                                 {
                                                     item.enabled = *checked;
+                                                    this.schedule_request_save(cx);
                                                     cx.notify();
                                                 }
                                             }),
@@ -3292,18 +3590,72 @@ impl BeamView {
 
                 table.into_any_element()
             }
-            RequestTab::Headers => div()
-                .h_full()
-                .w_full()
-                .child(Self::render_key_value_lines(
-                    self.request
-                        .headers
-                        .iter()
-                        .filter(|header| header.enabled)
-                        .map(|header| format!("{}: {}", header.name, header.value))
-                        .collect(),
-                ))
-                .into_any_element(),
+            RequestTab::Headers => {
+                let mut table = v_flex().h_full().w_full().gap_2();
+
+                for (index, header) in self.request.headers.iter().enumerate() {
+                    let key_input = self.request_header_name_inputs[index].clone();
+                    let value_input = self.request_header_value_inputs[index].clone();
+                    table =
+                        table.child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(rgb(0xe5e7eb))
+                                .child(
+                                    div().w(px(28.0)).child(
+                                        gpui_component::checkbox::Checkbox::new(format!(
+                                            "request-header-enabled-{index}"
+                                        ))
+                                        .small()
+                                        .checked(header.enabled)
+                                        .on_click(
+                                            cx.listener(move |this, checked: &bool, _, cx| {
+                                                if let Some(item) = this.request.headers.get_mut(index)
+                                                {
+                                                    item.enabled = *checked;
+                                                    this.schedule_request_save(cx);
+                                                    cx.notify();
+                                                }
+                                            }),
+                                        ),
+                                    ),
+                                )
+                                .child(div().flex_1().child(
+                                    Input::new(&key_input).small().w_full().appearance(false),
+                                ))
+                                .child(div().flex_1().child(
+                                    Input::new(&value_input).small().w_full().appearance(false),
+                                ))
+                                .child(if self.request.headers.len() > 1 {
+                                    div().w(px(28.0)).child(
+                                        Button::new(format!("delete-request-header-{index}"))
+                                            .small()
+                                            .ghost()
+                                            .cursor_pointer()
+                                            .icon(
+                                                Icon::default()
+                                                    .path("icons/delete.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(rgb(0x6b7280)),
+                                            )
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.delete_request_header_row(index, window, cx);
+                                            })),
+                                    )
+                                } else {
+                                    div().w(px(28.0))
+                                }),
+                        );
+                }
+
+                table.into_any_element()
+            }
             RequestTab::Auth => div()
                 .h_full()
                 .w_full()
