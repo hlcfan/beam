@@ -402,42 +402,6 @@ impl TomlWorkspaceStorage {
         self.write_toml_file(&path, &collection_file)
     }
 
-    fn sibling_request_names(
-        &self,
-        parent: RequestParentRef,
-        request_id_to_skip: Option<Ulid>,
-    ) -> Result<Vec<String>> {
-        if let Some(folder_id) = parent.folder_id {
-            let folder_dir = self.find_folder_dir_by_id(folder_id)?;
-            let path = folder_dir.join("folder.toml");
-            let folder_file = self.read_folder_file(&path)?;
-            let names = folder_file
-                .items
-                .iter()
-                .filter(|item| {
-                    item.item_type == ItemType::Request
-                        && request_id_to_skip.is_none_or(|skip_id| item.item_id != skip_id)
-                })
-                .map(|item| item.name.clone())
-                .collect();
-            return Ok(names);
-        }
-
-        let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
-        let path = collection_dir.join("collection.toml");
-        let collection_file = self.read_collection_file(&path)?;
-        let names = collection_file
-            .items
-            .iter()
-            .filter(|item| {
-                item.item_type == ItemType::Request
-                    && request_id_to_skip.is_none_or(|skip_id| item.item_id != skip_id)
-            })
-            .map(|item| item.name.clone())
-            .collect();
-        Ok(names)
-    }
-
     fn sibling_collection_names(&self, skip_collection_id: Option<Ulid>) -> Result<Vec<String>> {
         let mut names = Vec::new();
         self.walk_files_recursive(&self.paths.collections_dir, |path| {
@@ -497,12 +461,20 @@ impl TomlWorkspaceStorage {
         parent: RequestParentRef,
     ) -> Result<PathBuf> {
         let request_dir = self.request_dir_for_parent(parent)?;
-        fs::create_dir_all(&request_dir).map_err(|source| BeamError::Io {
-            path: request_dir.clone(),
+        self.write_request_new_path_with_dir(request_file, &request_dir)
+    }
+
+    fn write_request_new_path_with_dir(
+        &self,
+        request_file: &RequestFile,
+        request_dir: &Path,
+    ) -> Result<PathBuf> {
+        fs::create_dir_all(request_dir).map_err(|source| BeamError::Io {
+            path: request_dir.to_path_buf(),
             source,
         })?;
         let file_path =
-            self.request_file_path_for_name(&request_dir, &request_file.meta.name, None)?;
+            self.request_file_path_for_name(request_dir, &request_file.meta.name, None)?;
         self.write_toml_file(&file_path, request_file)?;
         Ok(file_path)
     }
@@ -570,6 +542,35 @@ impl TomlWorkspaceStorage {
             }
         })?;
         found.ok_or_else(|| BeamError::NotFound {
+            entity: "request",
+            id: request_id.to_string(),
+        })
+    }
+
+    fn find_request_file_in_dir(&self, dir: &Path, request_id: Ulid) -> Result<PathBuf> {
+        for entry in fs::read_dir(dir).map_err(|source| BeamError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| BeamError::Io {
+                path: dir.to_path_buf(),
+                source,
+            })?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                continue;
+            }
+            let Ok(file) = self.read_request_meta_by_path(&path) else {
+                continue;
+            };
+            if file.meta.request_id == request_id {
+                return Ok(path);
+            }
+        }
+        Err(BeamError::NotFound {
             entity: "request",
             id: request_id.to_string(),
         })
@@ -1119,20 +1120,13 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         duplicate_name: &str,
         parent: RequestParentRef,
     ) -> Result<RequestFile> {
-        let source = self.load_request(request_id)?;
+        let request_dir = self.request_dir_for_parent(parent)?;
+        let source_path = self.find_request_file_in_dir(&request_dir, request_id)?;
+        let source = self.read_request_file(&source_path)?;
         let name = duplicate_name.trim();
         if name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Duplicate request name cannot be empty".to_string(),
-            });
-        }
-        let sibling_names = self.sibling_request_names(parent, None)?;
-        if sibling_names
-            .iter()
-            .any(|item| item.eq_ignore_ascii_case(name))
-        {
-            return Err(BeamError::Validation {
-                message: format!("A request named '{name}' already exists in this scope"),
             });
         }
         let now = Utc::now();
@@ -1142,7 +1136,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         duplicated.meta.created_at = now;
         duplicated.meta.updated_at = now;
 
-        self.write_request_new_path(&duplicated, parent)?;
+        self.write_request_new_path_with_dir(&duplicated, &request_dir)?;
         self.insert_request_to_parent_manifest_after(
             parent,
             request_id,
