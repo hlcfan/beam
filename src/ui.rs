@@ -4560,23 +4560,6 @@ impl BeamView {
                         v_flex()
                             .w_full()
                             .gap_2()
-                            .child(div().text_xs().text_color(rgb(0x6b7280)).child("Key Value"))
-                            .child(
-                                Input::new(&self.request_auth_api_key_value_input)
-                                    .small()
-                                    .w_full(),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(rgb(0x6b7280))
-                                    .child("Header / Query Name"),
-                            )
-                            .child(
-                                Input::new(&self.request_auth_api_key_name_input)
-                                    .small()
-                                    .w_full(),
-                            )
                             .child(
                                 h_flex()
                                     .items_center()
@@ -4623,6 +4606,23 @@ impl BeamView {
                                                 }
                                             })),
                                     ),
+                            )
+                            .child(div().text_xs().text_color(rgb(0x6b7280)).child("Key Value"))
+                            .child(
+                                Input::new(&self.request_auth_api_key_value_input)
+                                    .small()
+                                    .w_full(),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0x6b7280))
+                                    .child("Header / Query Name"),
+                            )
+                            .child(
+                                Input::new(&self.request_auth_api_key_name_input)
+                                    .small()
+                                    .w_full(),
                             )
                             .into_any_element()
                     }
