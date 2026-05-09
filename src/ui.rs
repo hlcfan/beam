@@ -3907,7 +3907,6 @@ impl BeamView {
                                         window.push_notification(error, cx);
                                     }
                                     this.sync_request_editor_from_selection(window, cx);
-                                    window.blur();
                                 }
                             }))
                             .child(row_content)
