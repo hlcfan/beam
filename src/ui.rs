@@ -3919,6 +3919,7 @@ impl BeamView {
         let body_tab_button = Button::new("tab-Body")
             .small()
             .ghost()
+            .cursor_pointer()
             .selected(self.request.active_tab == RequestTab::Body)
             .child(
                 h_flex().items_center().gap_1().child("Body").child(
@@ -3971,6 +3972,7 @@ impl BeamView {
                 Button::new(format!("tab-{label}"))
                     .small()
                     .ghost()
+                    .cursor_pointer()
                     .selected(self.request.active_tab == tab)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.request.active_tab = tab;
@@ -4460,6 +4462,7 @@ impl BeamView {
                 Button::new(format!("response-tab-{label}"))
                     .small()
                     .ghost()
+                    .cursor_pointer()
                     .selected(self.active_response_tab == tab)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.active_response_tab = tab;
