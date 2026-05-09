@@ -3686,7 +3686,16 @@ impl BeamView {
                             .text_color(cx.theme().muted_foreground),
                     );
                 }
-                if let Some(method) = node.as_ref().and_then(|n| n.request_method) {
+                let request_row_method = if row.kind == TreeNodeKind::Request {
+                    self.shell
+                        .request_pane_data
+                        .get(&row.id)
+                        .map(|pane_data| pane_data.method)
+                        .or_else(|| node.as_ref().and_then(|n| n.request_method))
+                } else {
+                    None
+                };
+                if let Some(method) = request_row_method {
                     row_content = row_content.child(Self::render_method_badge(method, cx));
                 }
                 row_content = row_content.child(label);
