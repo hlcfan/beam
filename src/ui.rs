@@ -561,6 +561,11 @@ impl EnvironmentManagerDialogView {
 
 impl Render for EnvironmentManagerDialogView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let environment_name_has_selection = !self
+            .environment_name_input
+            .read(cx)
+            .selected_range()
+            .is_empty();
         let selected_label = self.selected_id.and_then(|id| {
             self.options
                 .iter()
@@ -591,7 +596,15 @@ impl Render for EnvironmentManagerDialogView {
                         Input::new(&self.environment_name_input)
                             .small()
                             .w_full()
-                            .appearance(false),
+                            .appearance(false)
+                            .context_menu({
+                                move |menu, _, _| {
+                                    BeamView::build_text_edit_context_menu(
+                                        menu,
+                                        environment_name_has_selection,
+                                    )
+                                }
+                            }),
                     ),
             ),
         );
@@ -633,6 +646,8 @@ impl Render for EnvironmentManagerDialogView {
             variables_rows.children(self.variables.iter().enumerate().map(|(index, variable)| {
                 let key_input = self.variable_name_inputs[index].clone();
                 let value_input = self.variable_value_inputs[index].clone();
+                let key_has_selection = !key_input.read(cx).selected_range().is_empty();
+                let value_has_selection = !value_input.read(cx).selected_range().is_empty();
                 h_flex()
                     .w_full()
                     .items_center()
@@ -661,14 +676,36 @@ impl Render for EnvironmentManagerDialogView {
                         ),
                     )
                     .child(
-                        div()
-                            .w(px(180.0))
-                            .child(Input::new(&key_input).small().w_full().appearance(false)),
+                        div().w(px(180.0)).child(
+                            Input::new(&key_input)
+                                .small()
+                                .w_full()
+                                .appearance(false)
+                                .context_menu({
+                                    move |menu, _, _| {
+                                        BeamView::build_text_edit_context_menu(
+                                            menu,
+                                            key_has_selection,
+                                        )
+                                    }
+                                }),
+                        ),
                     )
                     .child(
-                        div()
-                            .flex_1()
-                            .child(Input::new(&value_input).small().w_full().appearance(false)),
+                        div().flex_1().child(
+                            Input::new(&value_input)
+                                .small()
+                                .w_full()
+                                .appearance(false)
+                                .context_menu({
+                                    move |menu, _, _| {
+                                        BeamView::build_text_edit_context_menu(
+                                            menu,
+                                            value_has_selection,
+                                        )
+                                    }
+                                }),
+                        ),
                     )
                     .child(
                         div().w(px(28.0)).child(
@@ -4222,7 +4259,18 @@ impl BeamView {
         &self,
         environment_view: Entity<Self>,
         window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Div {
+        let environment_manager_name_has_selection = !self
+            .environment_manager_name_input
+            .read(cx)
+            .selected_range()
+            .is_empty();
+        let environment_manager_value_has_selection = !self
+            .environment_manager_value_input
+            .read(cx)
+            .selected_range()
+            .is_empty();
         let environment_options = self.environment_manager_options();
         let selected_id = self.environment_manager_selected_id;
         let selected_label = selected_id.and_then(|id| {
@@ -4272,13 +4320,29 @@ impl BeamView {
                     Input::new(&self.environment_manager_name_input)
                         .small()
                         .flex_1()
-                        .appearance(false),
+                        .appearance(false)
+                        .context_menu({
+                            move |menu, _, _| {
+                                Self::build_text_edit_context_menu(
+                                    menu,
+                                    environment_manager_name_has_selection,
+                                )
+                            }
+                        }),
                 )
                 .child(
                     Input::new(&self.environment_manager_value_input)
                         .small()
                         .flex_1()
-                        .appearance(false),
+                        .appearance(false)
+                        .context_menu({
+                            move |menu, _, _| {
+                                Self::build_text_edit_context_menu(
+                                    menu,
+                                    environment_manager_value_has_selection,
+                                )
+                            }
+                        }),
                 )
                 .child(
                     Button::new("add-environment-variable")
