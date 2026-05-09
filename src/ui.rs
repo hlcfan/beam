@@ -100,6 +100,17 @@ enum ResponseTab {
     Headers,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RequestBodyFormat {
+    None,
+    Json,
+    Xml,
+    Graphql,
+    Text,
+    FormUrlEncoded,
+    Multipart,
+}
+
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
 
 struct EnvironmentManagerDialogView {
@@ -1108,7 +1119,9 @@ impl BeamView {
         self.url_input.update(cx, |input, cx| {
             input.set_value(next_url, window, cx);
         });
+        let next_body_language = Self::body_editor_language(&self.request.body);
         self.request_body_editor.update(cx, |input, cx| {
+            input.set_highlighter(next_body_language, cx);
             input.set_value(next_body, window, cx);
         });
         self.post_script_editor.update(cx, |input, cx| {
@@ -1159,26 +1172,32 @@ impl BeamView {
                     String::new(),
                     String::new(),
                     String::new(),
-                    key.clone().unwrap_or_else(|| DEFAULT_API_KEY_HEADER_NAME.to_string()),
+                    key.clone()
+                        .unwrap_or_else(|| DEFAULT_API_KEY_HEADER_NAME.to_string()),
                     value.clone().unwrap_or_default(),
                 ),
             };
 
-        self.request_auth_bearer_token_input.update(cx, |input, cx| {
-            input.set_value(bearer_token, window, cx);
-        });
-        self.request_auth_basic_username_input.update(cx, |input, cx| {
-            input.set_value(basic_username, window, cx);
-        });
-        self.request_auth_basic_password_input.update(cx, |input, cx| {
-            input.set_value(basic_password, window, cx);
-        });
-        self.request_auth_api_key_name_input.update(cx, |input, cx| {
-            input.set_value(api_key_name, window, cx);
-        });
-        self.request_auth_api_key_value_input.update(cx, |input, cx| {
-            input.set_value(api_key_value, window, cx);
-        });
+        self.request_auth_bearer_token_input
+            .update(cx, |input, cx| {
+                input.set_value(bearer_token, window, cx);
+            });
+        self.request_auth_basic_username_input
+            .update(cx, |input, cx| {
+                input.set_value(basic_username, window, cx);
+            });
+        self.request_auth_basic_password_input
+            .update(cx, |input, cx| {
+                input.set_value(basic_password, window, cx);
+            });
+        self.request_auth_api_key_name_input
+            .update(cx, |input, cx| {
+                input.set_value(api_key_name, window, cx);
+            });
+        self.request_auth_api_key_value_input
+            .update(cx, |input, cx| {
+                input.set_value(api_key_value, window, cx);
+            });
 
         self.suppress_request_auth_change_events = false;
     }
@@ -1187,7 +1206,11 @@ impl BeamView {
         self.request_auth_input_subscriptions.clear();
     }
 
-    fn rebuild_request_auth_input_subscriptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn rebuild_request_auth_input_subscriptions(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.clear_request_auth_input_subscriptions();
 
         let bearer_input = self.request_auth_bearer_token_input.clone();
@@ -1334,7 +1357,10 @@ impl BeamView {
         .detach();
     }
 
-    fn save_request_snapshot_to_disk(request_id: Ulid, pane_data: RequestPaneData) -> Result<(), String> {
+    fn save_request_snapshot_to_disk(
+        request_id: Ulid,
+        pane_data: RequestPaneData,
+    ) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let storage = TomlWorkspaceStorage::new(paths);
         let mut request_file = storage
@@ -1596,7 +1622,8 @@ impl BeamView {
                                 secret: false,
                             });
                             this.rebuild_request_header_inputs(window, cx);
-                            if let Some(input) = this.request_header_value_inputs.get(index).cloned()
+                            if let Some(input) =
+                                this.request_header_value_inputs.get(index).cloned()
                             {
                                 input.update(cx, |state, cx| {
                                     state.focus(window, cx);
@@ -1611,8 +1638,10 @@ impl BeamView {
 
             self.request_header_name_inputs.push(key_input);
             self.request_header_value_inputs.push(value_input);
-            self.request_header_input_subscriptions.push(key_subscription);
-            self.request_header_input_subscriptions.push(value_subscription);
+            self.request_header_input_subscriptions
+                .push(key_subscription);
+            self.request_header_input_subscriptions
+                .push(value_subscription);
         }
     }
 
@@ -2633,21 +2662,36 @@ impl BeamView {
         let request_auth_api_key_value_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("API key value"));
 
-        let _subscriptions = vec![cx.subscribe_in(&url_input, window, {
-            let url_input = url_input.clone();
-            move |this, _, ev: &InputEvent, window, cx| match ev {
-                InputEvent::Change => {
-                    this.request.url = url_input.read(cx).value().to_string();
+        let _subscriptions = vec![
+            cx.subscribe_in(&url_input, window, {
+                let url_input = url_input.clone();
+                move |this, _, ev: &InputEvent, window, cx| match ev {
+                    InputEvent::Change => {
+                        this.request.url = url_input.read(cx).value().to_string();
+                        cx.notify();
+                    }
+                    InputEvent::PressEnter { .. } => {
+                        this.request.url = url_input.read(cx).value().to_string();
+                        this.send_request(window, cx);
+                        cx.notify();
+                    }
+                    _ => {}
+                }
+            }),
+            cx.subscribe_in(&request_body_editor, window, {
+                let request_body_editor = request_body_editor.clone();
+                move |this, _, ev: &InputEvent, _, cx| {
+                    if !matches!(ev, InputEvent::Change) {
+                        return;
+                    }
+                    let next_body_text = request_body_editor.read(cx).value().to_string();
+                    this.request.body =
+                        Self::body_with_updated_text(&this.request.body, next_body_text);
+                    this.schedule_request_save(cx);
                     cx.notify();
                 }
-                InputEvent::PressEnter { .. } => {
-                    this.request.url = url_input.read(cx).value().to_string();
-                    this.send_request(window, cx);
-                    cx.notify();
-                }
-                _ => {}
-            }
-        })];
+            }),
+        ];
 
         let mut view = Self {
             shell,
@@ -2748,6 +2792,145 @@ impl BeamView {
                 _ => query.clone(),
             },
         }
+    }
+
+    fn body_format_label(format: RequestBodyFormat) -> &'static str {
+        match format {
+            RequestBodyFormat::None => "None",
+            RequestBodyFormat::Json => "JSON",
+            RequestBodyFormat::Xml => "XML",
+            RequestBodyFormat::Graphql => "GraphQL",
+            RequestBodyFormat::Text => "Text",
+            RequestBodyFormat::FormUrlEncoded => "Form URL Encoded",
+            RequestBodyFormat::Multipart => "Multipart",
+        }
+    }
+
+    fn supported_body_formats() -> [RequestBodyFormat; 7] {
+        [
+            RequestBodyFormat::None,
+            RequestBodyFormat::Json,
+            RequestBodyFormat::Xml,
+            RequestBodyFormat::Graphql,
+            RequestBodyFormat::Text,
+            RequestBodyFormat::FormUrlEncoded,
+            RequestBodyFormat::Multipart,
+        ]
+    }
+
+    fn body_format_from_config(body: &BodyConfig) -> RequestBodyFormat {
+        match body {
+            BodyConfig::None => RequestBodyFormat::None,
+            BodyConfig::Raw { .. } => RequestBodyFormat::Text,
+            BodyConfig::Json { .. } => RequestBodyFormat::Json,
+            BodyConfig::Xml { .. } => RequestBodyFormat::Xml,
+            BodyConfig::FormUrlEncoded { .. } => RequestBodyFormat::FormUrlEncoded,
+            BodyConfig::Multipart { .. } => RequestBodyFormat::Multipart,
+            BodyConfig::Graphql { .. } => RequestBodyFormat::Graphql,
+        }
+    }
+
+    fn parse_form_body_fields(text: &str) -> Vec<crate::models::QueryParamField> {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let (name, value) = line
+                    .split_once('=')
+                    .map(|(name, value)| (name.trim().to_string(), value.to_string()))
+                    .unwrap_or_else(|| (line.to_string(), String::new()));
+                crate::models::QueryParamField {
+                    name,
+                    value,
+                    enabled: true,
+                    description: None,
+                }
+            })
+            .collect()
+    }
+
+    fn parse_graphql_editor_text(text: &str) -> (String, Option<String>) {
+        if let Some(rest) = text.strip_prefix("query:\n") {
+            if let Some((query, variables)) = rest.split_once("\n\nvariables:\n") {
+                let variables = variables.trim().to_string();
+                let variables_json = (!variables.is_empty()).then_some(variables);
+                return (query.to_string(), variables_json);
+            }
+            return (rest.to_string(), None);
+        }
+        (text.to_string(), None)
+    }
+
+    fn body_with_updated_text(current: &BodyConfig, text: String) -> BodyConfig {
+        match current {
+            BodyConfig::None => BodyConfig::None,
+            BodyConfig::Raw { media_type, .. } => BodyConfig::Raw {
+                media_type: media_type.clone(),
+                text,
+            },
+            BodyConfig::Json { .. } => BodyConfig::Json { text },
+            BodyConfig::Xml { .. } => BodyConfig::Xml { text },
+            BodyConfig::FormUrlEncoded { .. } => BodyConfig::FormUrlEncoded {
+                fields: Self::parse_form_body_fields(&text),
+            },
+            BodyConfig::Multipart { .. } => BodyConfig::Multipart {
+                fields: Self::parse_form_body_fields(&text),
+            },
+            BodyConfig::Graphql { .. } => {
+                let (query, variables_json) = Self::parse_graphql_editor_text(&text);
+                BodyConfig::Graphql {
+                    query,
+                    variables_json,
+                }
+            }
+        }
+    }
+
+    fn body_from_format(format: RequestBodyFormat, text: String) -> BodyConfig {
+        match format {
+            RequestBodyFormat::None => BodyConfig::None,
+            RequestBodyFormat::Json => BodyConfig::Json { text },
+            RequestBodyFormat::Xml => BodyConfig::Xml { text },
+            RequestBodyFormat::Graphql => {
+                let (query, variables_json) = Self::parse_graphql_editor_text(&text);
+                BodyConfig::Graphql {
+                    query,
+                    variables_json,
+                }
+            }
+            RequestBodyFormat::Text => BodyConfig::Raw {
+                media_type: Some("text/plain".to_string()),
+                text,
+            },
+            RequestBodyFormat::FormUrlEncoded => BodyConfig::FormUrlEncoded {
+                fields: Self::parse_form_body_fields(&text),
+            },
+            RequestBodyFormat::Multipart => BodyConfig::Multipart {
+                fields: Self::parse_form_body_fields(&text),
+            },
+        }
+    }
+
+    fn set_request_body_format(
+        &mut self,
+        format: RequestBodyFormat,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_text = self.request_body_editor.read(cx).value().to_string();
+        self.request.body = Self::body_from_format(format, current_text);
+        self.request.active_tab = RequestTab::Body;
+
+        let editor_text = Self::body_editor_text(&self.request.body);
+        let language = Self::body_editor_language(&self.request.body);
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_highlighter(language, cx);
+            input.set_value(editor_text, window, cx);
+            input.focus(window, cx);
+        });
+
+        self.schedule_request_save(cx);
+        cx.notify();
     }
 
     fn body_editor_language(body: &BodyConfig) -> &'static str {
@@ -3613,8 +3796,51 @@ impl BeamView {
 
     fn render_request_tabs(&self, cx: &mut Context<Self>) -> Div {
         let mut tabs = h_flex().items_center().gap_1().w_full();
+        let body_tab_view = cx.entity();
+        let current_body_format = Self::body_format_from_config(&self.request.body);
+        tabs = tabs.child(
+            Button::new("tab-Body")
+                .small()
+                .ghost()
+                .selected(self.request.active_tab == RequestTab::Body)
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.request.active_tab = RequestTab::Body;
+                    this.request_body_editor.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                    });
+                }))
+                .child(
+                    h_flex().items_center().gap_1().child("Body").child(
+                        Icon::default()
+                            .path("icons/chevron-down.svg")
+                            .size(px(12.0))
+                            .text_color(rgb(0x6b7280)),
+                    ),
+                )
+                .dropdown_menu(move |menu, window, _| {
+                    let mut menu = menu.min_w(px(180.0));
+                    for format in Self::supported_body_formats() {
+                        let item_label = Self::body_format_label(format);
+                        let checked = format == current_body_format;
+                        let format_view = body_tab_view.clone();
+                        menu = menu.item(
+                            PopupMenuItem::element(move |_, _| {
+                                div().w_full().cursor_pointer().child(item_label)
+                            })
+                            .checked(checked)
+                            .on_click(window.listener_for(
+                                &format_view,
+                                move |this, _, window, cx| {
+                                    this.set_request_body_format(format, window, cx);
+                                },
+                            )),
+                        );
+                    }
+                    menu
+                }),
+        );
+
         let tab_specs = [
-            (RequestTab::Body, "Body"),
             (RequestTab::Params, "Params"),
             (RequestTab::Headers, "Headers"),
             (RequestTab::Auth, "Auth"),
@@ -3757,7 +3983,8 @@ impl BeamView {
                                         .checked(header.enabled)
                                         .on_click(
                                             cx.listener(move |this, checked: &bool, _, cx| {
-                                                if let Some(item) = this.request.headers.get_mut(index)
+                                                if let Some(item) =
+                                                    this.request.headers.get_mut(index)
                                                 {
                                                     item.enabled = *checked;
                                                     this.schedule_request_save(cx);
@@ -3822,13 +4049,11 @@ impl BeamView {
                                 .ghost()
                                 .selected(is_none)
                                 .label("None")
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.request.auth = AuthConfig::None;
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    },
-                                )),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.request.auth = AuthConfig::None;
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
                         )
                         .child(
                             Button::new("auth-mode-bearer")
@@ -3836,16 +4061,14 @@ impl BeamView {
                                 .ghost()
                                 .selected(is_bearer)
                                 .label("Bearer Token")
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        let token = bearer_input.read(cx).value().to_string();
-                                        this.request.auth = AuthConfig::Bearer {
-                                            token: (!token.trim().is_empty()).then_some(token),
-                                        };
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    },
-                                )),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let token = bearer_input.read(cx).value().to_string();
+                                    this.request.auth = AuthConfig::Bearer {
+                                        token: (!token.trim().is_empty()).then_some(token),
+                                    };
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
                         )
                         .child(
                             Button::new("auth-mode-basic")
@@ -3853,22 +4076,18 @@ impl BeamView {
                                 .ghost()
                                 .selected(is_basic)
                                 .label("Basic Auth")
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        let username =
-                                            basic_username_input.read(cx).value().to_string();
-                                        let password =
-                                            basic_password_input.read(cx).value().to_string();
-                                        this.request.auth = AuthConfig::Basic {
-                                            username: (!username.trim().is_empty())
-                                                .then_some(username),
-                                            password: (!password.trim().is_empty())
-                                                .then_some(password),
-                                        };
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    },
-                                )),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let username =
+                                        basic_username_input.read(cx).value().to_string();
+                                    let password =
+                                        basic_password_input.read(cx).value().to_string();
+                                    this.request.auth = AuthConfig::Basic {
+                                        username: (!username.trim().is_empty()).then_some(username),
+                                        password: (!password.trim().is_empty()).then_some(password),
+                                    };
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
                         )
                         .child(
                             Button::new("auth-mode-apikey")
@@ -3876,23 +4095,21 @@ impl BeamView {
                                 .ghost()
                                 .selected(is_api_key)
                                 .label("API Key")
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        let key = api_key_name_input.read(cx).value().to_string();
-                                        let value = api_key_value_input.read(cx).value().to_string();
-                                        this.request.auth = AuthConfig::ApiKey {
-                                            key: if key.trim().is_empty() {
-                                                Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
-                                            } else {
-                                                Some(key)
-                                            },
-                                            value: (!value.trim().is_empty()).then_some(value),
-                                            location: crate::models::ApiKeyLocation::Header,
-                                        };
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    },
-                                )),
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let key = api_key_name_input.read(cx).value().to_string();
+                                    let value = api_key_value_input.read(cx).value().to_string();
+                                    this.request.auth = AuthConfig::ApiKey {
+                                        key: if key.trim().is_empty() {
+                                            Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
+                                        } else {
+                                            Some(key)
+                                        },
+                                        value: (!value.trim().is_empty()).then_some(value),
+                                        location: crate::models::ApiKeyLocation::Header,
+                                    };
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
                         )
                 })
                 .child(match &self.request.auth {
@@ -3905,7 +4122,11 @@ impl BeamView {
                         .w_full()
                         .gap_2()
                         .child(div().text_xs().text_color(rgb(0x6b7280)).child("Token"))
-                        .child(Input::new(&self.request_auth_bearer_token_input).small().w_full())
+                        .child(
+                            Input::new(&self.request_auth_bearer_token_input)
+                                .small()
+                                .w_full(),
+                        )
                         .into_any_element(),
                     AuthConfig::Basic { .. } => v_flex()
                         .w_full()
@@ -3936,9 +4157,12 @@ impl BeamView {
                                     .small()
                                     .w_full(),
                             )
-                            .child(div().text_xs().text_color(rgb(0x6b7280)).child(
-                                "Header / Query Name",
-                            ))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0x6b7280))
+                                    .child("Header / Query Name"),
+                            )
                             .child(
                                 Input::new(&self.request_auth_api_key_name_input)
                                     .small()
@@ -3954,22 +4178,20 @@ impl BeamView {
                                             .ghost()
                                             .selected(using_header)
                                             .label("Header")
-                                            .on_click(cx.listener(
-                                                move |this, _, _, cx| {
-                                                    if let AuthConfig::ApiKey { key, value, .. } =
-                                                        &this.request.auth
-                                                    {
-                                                        this.request.auth = AuthConfig::ApiKey {
-                                                            key: key.clone(),
-                                                            value: value.clone(),
-                                                            location:
-                                                                crate::models::ApiKeyLocation::Header,
-                                                        };
-                                                        this.schedule_request_save(cx);
-                                                        cx.notify();
-                                                    }
-                                                },
-                                            )),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if let AuthConfig::ApiKey { key, value, .. } =
+                                                    &this.request.auth
+                                                {
+                                                    this.request.auth = AuthConfig::ApiKey {
+                                                        key: key.clone(),
+                                                        value: value.clone(),
+                                                        location:
+                                                            crate::models::ApiKeyLocation::Header,
+                                                    };
+                                                    this.schedule_request_save(cx);
+                                                    cx.notify();
+                                                }
+                                            })),
                                     )
                                     .child(
                                         Button::new("auth-apikey-location-query")
@@ -3977,22 +4199,20 @@ impl BeamView {
                                             .ghost()
                                             .selected(using_query)
                                             .label("Query")
-                                            .on_click(cx.listener(
-                                                move |this, _, _, cx| {
-                                                    if let AuthConfig::ApiKey { key, value, .. } =
-                                                        &this.request.auth
-                                                    {
-                                                        this.request.auth = AuthConfig::ApiKey {
-                                                            key: key.clone(),
-                                                            value: value.clone(),
-                                                            location:
-                                                                crate::models::ApiKeyLocation::Query,
-                                                        };
-                                                        this.schedule_request_save(cx);
-                                                        cx.notify();
-                                                    }
-                                                },
-                                            )),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if let AuthConfig::ApiKey { key, value, .. } =
+                                                    &this.request.auth
+                                                {
+                                                    this.request.auth = AuthConfig::ApiKey {
+                                                        key: key.clone(),
+                                                        value: value.clone(),
+                                                        location:
+                                                            crate::models::ApiKeyLocation::Query,
+                                                    };
+                                                    this.schedule_request_save(cx);
+                                                    cx.notify();
+                                                }
+                                            })),
                                     ),
                             )
                             .into_any_element()
