@@ -5021,6 +5021,7 @@ impl BeamView {
             .h_full()
             .min_h_0()
             .w_full()
+            .overflow_hidden()
             .p_2()
             .gap_2();
 
@@ -5084,8 +5085,7 @@ impl BeamView {
             panel = panel.child(
                 div()
                     .w_full()
-                    .flex_1()
-                    .min_h_0()
+                    .h_full()
                     .overflow_y_scrollbar()
                     .child(content),
             );
