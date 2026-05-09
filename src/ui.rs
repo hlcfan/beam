@@ -5019,6 +5019,7 @@ impl BeamView {
     fn render_post_script_results(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let mut panel = v_flex()
             .h_full()
+            .min_h_0()
             .w_full()
             .rounded(px(8.0))
             .border_1()
@@ -5084,7 +5085,14 @@ impl BeamView {
             content = content.child(div().text_xs().font_semibold().child("Console"));
             content = content.child(self.render_script_console_section(result));
 
-            panel = panel.child(div().w_full().flex_1().overflow_y_scrollbar().child(content));
+            panel = panel.child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .child(content),
+            );
         } else {
             panel = panel.child(
                 div()
@@ -5109,6 +5117,7 @@ impl BeamView {
             .child(
                 div()
                     .h_1_2()
+                    .min_h_0()
                     .w_full()
                     .rounded(px(8.0))
                     .border_1()
@@ -5141,6 +5150,7 @@ impl BeamView {
             .child(
                 div()
                     .h_1_2()
+                    .min_h_0()
                     .w_full()
                     .child(self.render_post_script_results(window, cx)),
             )
