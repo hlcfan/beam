@@ -588,8 +588,8 @@ impl Render for EnvironmentManagerDialogView {
                     .flex_1()
                     .rounded(px(6.0))
                     .border_1()
-                    .border_color(rgb(0xd1d5db))
-                    .bg(rgb(0xf8fafc))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().secondary)
                     .px_2()
                     .py_1()
                     .child(
@@ -598,10 +598,11 @@ impl Render for EnvironmentManagerDialogView {
                             .w_full()
                             .appearance(false)
                             .context_menu({
-                                move |menu, _, _| {
+                                move |menu, _, cx| {
                                     BeamView::build_text_edit_context_menu(
                                         menu,
                                         environment_name_has_selection,
+                                        cx.theme().muted_foreground,
                                     )
                                 }
                             }),
@@ -612,7 +613,7 @@ impl Render for EnvironmentManagerDialogView {
             variables_panel = variables_panel.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0xb91c1c))
+                    .text_color(cx.theme().danger_foreground)
                     .child(error.clone()),
             );
         }
@@ -625,7 +626,7 @@ impl Render for EnvironmentManagerDialogView {
                 .py_1()
                 .text_xs()
                 .font_semibold()
-                .text_color(rgb(0x6b7280))
+                .text_color(cx.theme().muted_foreground)
                 .child(div().w(px(28.0)).child("On"))
                 .child(div().w(px(180.0)).child("Key"))
                 .child(div().flex_1().child("Value"))
@@ -634,7 +635,7 @@ impl Render for EnvironmentManagerDialogView {
         variables_rows = variables_rows.child(if self.variables.is_empty() {
             div()
                 .text_xs()
-                .text_color(rgb(0x6b7280))
+                .text_color(cx.theme().muted_foreground)
                 .px_2()
                 .py_2()
                 .child("No variables yet.")
@@ -656,7 +657,7 @@ impl Render for EnvironmentManagerDialogView {
                     .py_1()
                     .rounded(px(6.0))
                     .border_1()
-                    .border_color(rgb(0xe5e7eb))
+                    .border_color(cx.theme().border)
                     .child(
                         div().w(px(28.0)).child(
                             gpui_component::checkbox::Checkbox::new(format!(
@@ -682,10 +683,11 @@ impl Render for EnvironmentManagerDialogView {
                                 .w_full()
                                 .appearance(false)
                                 .context_menu({
-                                    move |menu, _, _| {
+                                    move |menu, _, cx| {
                                         BeamView::build_text_edit_context_menu(
                                             menu,
                                             key_has_selection,
+                                            cx.theme().muted_foreground,
                                         )
                                     }
                                 }),
@@ -698,10 +700,11 @@ impl Render for EnvironmentManagerDialogView {
                                 .w_full()
                                 .appearance(false)
                                 .context_menu({
-                                    move |menu, _, _| {
+                                    move |menu, _, cx| {
                                         BeamView::build_text_edit_context_menu(
                                             menu,
                                             value_has_selection,
+                                            cx.theme().muted_foreground,
                                         )
                                     }
                                 }),
@@ -717,7 +720,7 @@ impl Render for EnvironmentManagerDialogView {
                                     Icon::default()
                                         .path("icons/delete.svg")
                                         .size(px(14.0))
-                                        .text_color(rgb(0x6b7280)),
+                                        .text_color(cx.theme().muted_foreground),
                                 )
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.remove_variable(index, window, cx);
@@ -2789,18 +2792,31 @@ impl BeamView {
         ]
     }
 
-    fn method_badge_colors(method: HttpMethod) -> (Rgba, Rgba) {
+    fn method_badge_colors(method: HttpMethod, cx: &App) -> (Hsla, Hsla) {
         match method {
-            HttpMethod::Get => (rgb(0xdcfce7), rgb(0x166534)),
-            HttpMethod::Post => (rgb(0xffedd5), rgb(0x9a3412)),
-            HttpMethod::Put | HttpMethod::Patch => (rgb(0xdbeafe), rgb(0x1d4ed8)),
-            HttpMethod::Delete => (rgb(0xfee2e2), rgb(0xb91c1c)),
-            HttpMethod::Head | HttpMethod::Options => (rgb(0xe5e7eb), rgb(0x374151)),
+            HttpMethod::Get => (
+                cx.theme().success.opacity(1.0),
+                cx.theme().success_foreground,
+            ),
+            HttpMethod::Post => (
+                cx.theme().warning.opacity(1.0),
+                cx.theme().warning_foreground,
+            ),
+            HttpMethod::Put | HttpMethod::Patch => {
+                (cx.theme().info.opacity(1.0), cx.theme().info_foreground)
+            }
+            HttpMethod::Delete => (
+                cx.theme().danger.opacity(1.0),
+                cx.theme().danger_foreground,
+            ),
+            HttpMethod::Head | HttpMethod::Options => {
+                (cx.theme().secondary, cx.theme().secondary_foreground)
+            }
         }
     }
 
-    fn render_method_badge(method: HttpMethod) -> Div {
-        let (badge_bg, badge_text) = Self::method_badge_colors(method);
+    fn render_method_badge(method: HttpMethod, cx: &App) -> Div {
+        let (badge_bg, badge_text) = Self::method_badge_colors(method, cx);
         div()
             .px_1()
             .py(px(1.0))
@@ -2812,7 +2828,7 @@ impl BeamView {
             .child(format!("{method:?}").to_uppercase())
     }
 
-    fn render_title_bar_content(&self) -> Div {
+    fn render_title_bar_content(&self, cx: &App) -> Div {
         h_flex()
             .items_center()
             .justify_between()
@@ -2820,7 +2836,7 @@ impl BeamView {
             .h_full()
             .px_2()
             .text_sm()
-            .text_color(rgb(0x1f2937))
+            .text_color(cx.theme().foreground)
             .child(
                 h_flex()
                     .items_center()
@@ -2837,7 +2853,7 @@ impl BeamView {
                     .items_center()
                     .gap_2()
                     .text_xs()
-                    .text_color(rgb(0x6b7280))
+                    .text_color(cx.theme().muted_foreground)
                     .child("Workspace: default")
                     .child("Profile: local"),
             )
@@ -3613,15 +3629,15 @@ impl BeamView {
             .w_full()
             .gap(px(2.0))
             .p_2()
-            .bg(rgb(0xf5f7fb))
-            .text_color(rgb(0x1f2937));
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground);
 
         if !self.startup_messages.is_empty() {
             for msg in &self.startup_messages {
                 panel = panel.child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xb7791f))
+                        .text_color(cx.theme().warning_foreground)
                         .child(msg.text.clone()),
                 );
             }
@@ -3632,7 +3648,7 @@ impl BeamView {
             panel = panel.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x6b7280))
+                    .text_color(cx.theme().muted_foreground)
                     .child("No collections yet"),
             );
         } else {
@@ -3662,11 +3678,11 @@ impl BeamView {
                         Icon::default()
                             .path(icon_path)
                             .size(px(14.0))
-                            .text_color(rgb(0x6b7280)),
+                            .text_color(cx.theme().muted_foreground),
                     );
                 }
                 if let Some(method) = node.as_ref().and_then(|n| n.request_method) {
-                    row_content = row_content.child(Self::render_method_badge(method));
+                    row_content = row_content.child(Self::render_method_badge(method, cx));
                 }
                 row_content = row_content.child(label);
 
@@ -4137,10 +4153,11 @@ impl BeamView {
                                     .small()
                                     .appearance(false)
                                     .context_menu({
-                                        move |menu, _, _| {
+                                        move |menu, _, cx| {
                                             Self::build_text_edit_context_menu(
                                                 menu,
                                                 url_has_selection,
+                                                cx.theme().muted_foreground,
                                             )
                                         }
                                     }),
@@ -4300,14 +4317,20 @@ impl BeamView {
                             }),
                     ),
             );
-        variables_panel = variables_panel.child(div().text_xs().text_color(rgb(0x6b7280)).child(
-            format!("Variables: {}", self.environment_manager_variables.len()),
-        ));
+        variables_panel = variables_panel.child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(format!(
+                    "Variables: {}",
+                    self.environment_manager_variables.len()
+                )),
+        );
         if let Some(error) = &self.environment_manager_error {
             variables_panel = variables_panel.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0xb91c1c))
+                    .text_color(cx.theme().danger_foreground)
                     .child(error.clone()),
             );
         }
@@ -4322,10 +4345,11 @@ impl BeamView {
                         .flex_1()
                         .appearance(false)
                         .context_menu({
-                            move |menu, _, _| {
+                            move |menu, _, cx| {
                                 Self::build_text_edit_context_menu(
                                     menu,
                                     environment_manager_name_has_selection,
+                                    cx.theme().muted_foreground,
                                 )
                             }
                         }),
@@ -4336,10 +4360,11 @@ impl BeamView {
                         .flex_1()
                         .appearance(false)
                         .context_menu({
-                            move |menu, _, _| {
+                            move |menu, _, cx| {
                                 Self::build_text_edit_context_menu(
                                     menu,
                                     environment_manager_value_has_selection,
+                                    cx.theme().muted_foreground,
                                 )
                             }
                         }),
@@ -4361,7 +4386,7 @@ impl BeamView {
             variables_panel = variables_panel.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0x6b7280))
+                    .text_color(cx.theme().muted_foreground)
                     .child("No variables yet."),
             );
         } else {
@@ -4374,20 +4399,23 @@ impl BeamView {
                         .gap_2()
                         .p_1()
                         .rounded(px(6.0))
-                        .bg(rgb(0xf8fafc))
+                        .bg(cx.theme().secondary)
                         .border_1()
-                        .border_color(rgb(0xe5e7eb))
+                        .border_color(cx.theme().border)
                         .child(
                             h_flex()
                                 .items_center()
                                 .gap_2()
-                                .child(div().text_xs().text_color(rgb(0x6b7280)).child(
-                                    if variable.enabled {
-                                        "Enabled"
-                                    } else {
-                                        "Disabled"
-                                    },
-                                ))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(if variable.enabled {
+                                            "Enabled"
+                                        } else {
+                                            "Disabled"
+                                        }),
+                                )
                                 .child(
                                     div()
                                         .text_sm()
@@ -4619,6 +4647,7 @@ impl BeamView {
         label: &'static str,
         icon_path: &'static str,
         shortcut: &'static str,
+        muted_color: Hsla,
     ) -> Div {
         h_flex()
             .w_full()
@@ -4636,31 +4665,44 @@ impl BeamView {
                         Icon::default()
                             .path(icon_path)
                             .size(px(14.0))
-                            .text_color(rgb(0x6b7280)),
+                            .text_color(muted_color),
                     )
                     .child(label),
             )
-            .child(div().text_xs().text_color(rgb(0x9ca3af)).child(shortcut))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(muted_color.opacity(0.7))
+                    .child(shortcut),
+            )
     }
 
     fn context_menu_action_item(
         label: &'static str,
         icon_path: &'static str,
         shortcut: &'static str,
+        muted_color: Hsla,
         action: Box<dyn Action>,
         disabled: bool,
     ) -> PopupMenuItem {
-        PopupMenuItem::element(move |_, _| Self::context_menu_item_row(label, icon_path, shortcut))
-            .action(action)
-            .disabled(disabled)
+        PopupMenuItem::element(move |_, _| {
+            Self::context_menu_item_row(label, icon_path, shortcut, muted_color)
+        })
+        .action(action)
+        .disabled(disabled)
     }
 
-    fn build_text_edit_context_menu(menu: PopupMenu, has_selection: bool) -> PopupMenu {
+    fn build_text_edit_context_menu(
+        menu: PopupMenu,
+        has_selection: bool,
+        muted_color: Hsla,
+    ) -> PopupMenu {
         menu.min_w(px(180.0))
             .item(Self::context_menu_action_item(
                 "Cut",
                 "icons/cut.svg",
                 "Cmd+X",
+                muted_color,
                 Box::new(input::Cut),
                 !has_selection,
             ))
@@ -4668,6 +4710,7 @@ impl BeamView {
                 "Copy",
                 "icons/copy.svg",
                 "Cmd+C",
+                muted_color,
                 Box::new(input::Copy),
                 !has_selection,
             ))
@@ -4675,6 +4718,7 @@ impl BeamView {
                 "Paste",
                 "icons/clipboard-paste.svg",
                 "Cmd+V",
+                muted_color,
                 Box::new(input::Paste),
                 false,
             ))
@@ -4683,23 +4727,29 @@ impl BeamView {
                 "Select All",
                 "icons/square-dashed-text.svg",
                 "Cmd+A",
+                muted_color,
                 Box::new(input::SelectAll),
                 false,
             ))
     }
 
-    fn build_text_edit_context_menu_with_find(menu: PopupMenu, has_selection: bool) -> PopupMenu {
+    fn build_text_edit_context_menu_with_find(
+        menu: PopupMenu,
+        has_selection: bool,
+        muted_color: Hsla,
+    ) -> PopupMenu {
         let menu = menu
             .min_w(px(180.0))
             .item(Self::context_menu_action_item(
                 "Find",
                 "icons/search.svg",
                 "Cmd+F",
+                muted_color,
                 Box::new(input::Search),
                 false,
             ))
             .separator();
-        Self::build_text_edit_context_menu(menu, has_selection)
+        Self::build_text_edit_context_menu(menu, has_selection, muted_color)
     }
 
     fn render_request_editor_surface(
@@ -4723,7 +4773,8 @@ impl BeamView {
                     .text_size(cx.theme().mono_font_size)
                     .context_menu({
                         let view = cx.entity();
-                        move |menu, window, _| {
+                        move |menu, window, cx| {
+                            let muted_foreground = cx.theme().muted_foreground;
                             let menu = menu.min_w(px(180.0)).item(
                                 PopupMenuItem::element(move |_, _| {
                                     h_flex()
@@ -4737,7 +4788,7 @@ impl BeamView {
                                             Icon::default()
                                                 .path("icons/indent.svg")
                                                 .size(px(14.0))
-                                                .text_color(rgb(0x6b7280)),
+                                                .text_color(muted_foreground),
                                         )
                                         .child("Format")
                                 })
@@ -4751,6 +4802,7 @@ impl BeamView {
                             Self::build_text_edit_context_menu_with_find(
                                 menu,
                                 request_body_has_selection,
+                                muted_foreground,
                             )
                         }
                     })
@@ -4774,7 +4826,7 @@ impl BeamView {
                             .py_1()
                             .rounded(px(6.0))
                             .border_1()
-                            .border_color(rgb(0xe5e7eb))
+                            .border_color(cx.theme().border)
                             .child(
                                 div().w(px(28.0)).child(
                                     gpui_component::checkbox::Checkbox::new(format!(
@@ -4802,10 +4854,11 @@ impl BeamView {
                                         .w_full()
                                         .appearance(false)
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     key_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -4818,10 +4871,11 @@ impl BeamView {
                                         .w_full()
                                         .appearance(false)
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     value_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -4837,7 +4891,7 @@ impl BeamView {
                                             Icon::default()
                                                 .path("icons/delete.svg")
                                                 .size(px(14.0))
-                                                .text_color(rgb(0x6b7280)),
+                                                .text_color(cx.theme().muted_foreground),
                                         )
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.delete_request_param_row(index, window, cx);
@@ -4868,7 +4922,7 @@ impl BeamView {
                             .py_1()
                             .rounded(px(6.0))
                             .border_1()
-                            .border_color(rgb(0xe5e7eb))
+                            .border_color(cx.theme().border)
                             .child(
                                 div().w(px(28.0)).child(
                                     gpui_component::checkbox::Checkbox::new(format!(
@@ -4895,10 +4949,11 @@ impl BeamView {
                                         .w_full()
                                         .appearance(false)
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     key_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -4911,10 +4966,11 @@ impl BeamView {
                                         .w_full()
                                         .appearance(false)
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     value_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -4930,7 +4986,7 @@ impl BeamView {
                                             Icon::default()
                                                 .path("icons/delete.svg")
                                                 .size(px(14.0))
-                                                .text_color(rgb(0x6b7280)),
+                                                .text_color(cx.theme().muted_foreground),
                                         )
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.delete_request_header_row(index, window, cx);
@@ -5081,10 +5137,11 @@ impl BeamView {
                                         .small()
                                         .w_full()
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     bearer_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -5099,10 +5156,11 @@ impl BeamView {
                                         .small()
                                         .w_full()
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     basic_username_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -5113,10 +5171,11 @@ impl BeamView {
                                         .small()
                                         .w_full()
                                         .context_menu({
-                                            move |menu, _, _| {
+                                            move |menu, _, cx| {
                                                 Self::build_text_edit_context_menu(
                                                     menu,
                                                     basic_password_has_selection,
+                                                    cx.theme().muted_foreground,
                                                 )
                                             }
                                         }),
@@ -5185,10 +5244,11 @@ impl BeamView {
                                     .small()
                                     .w_full()
                                     .context_menu({
-                                        move |menu, _, _| {
+                                        move |menu, _, cx| {
                                             Self::build_text_edit_context_menu(
                                                 menu,
                                                 api_key_value_has_selection,
+                                                cx.theme().muted_foreground,
                                             )
                                         }
                                     }),
@@ -5204,10 +5264,11 @@ impl BeamView {
                                     .small()
                                     .w_full()
                                     .context_menu({
-                                        move |menu, _, _| {
+                                        move |menu, _, cx| {
                                             Self::build_text_edit_context_menu(
                                                 menu,
                                                 api_key_name_has_selection,
+                                                cx.theme().muted_foreground,
                                             )
                                         }
                                     }),
@@ -5422,15 +5483,15 @@ impl BeamView {
             .gap_0()
             .rounded(px(8.0))
             .border_1()
-            .border_color(rgb(0xd1d5db))
-            .bg(rgb(0xffffff))
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
             .child(
                 div()
                     .h_1_2()
                     .min_h_0()
                     .w_full()
                     .border_b_1()
-                    .border_color(rgb(0xd1d5db))
+                    .border_color(cx.theme().border)
                     .p_0()
                     .child(
                         div().w_full().h_full().overflow_y_scrollbar().child(
@@ -5442,10 +5503,11 @@ impl BeamView {
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_size(cx.theme().mono_font_size)
                                 .context_menu({
-                                    move |menu, _, _| {
+                                    move |menu, _, cx| {
                                         Self::build_text_edit_context_menu_with_find(
                                             menu,
                                             post_script_has_selection,
+                                            cx.theme().muted_foreground,
                                         )
                                     }
                                 }),
@@ -5469,7 +5531,7 @@ impl BeamView {
                 .w_full()
                 .rounded(px(8.0))
                 .border_1()
-                .border_color(rgb(0xd1d5db))
+                .border_color(cx.theme().border)
                 .p_0()
                 .child(self.render_request_editor_surface(window, cx)),
             RequestTab::PostScript => div()
@@ -5481,7 +5543,7 @@ impl BeamView {
                 .w_full()
                 .rounded(px(8.0))
                 .border_1()
-                .border_color(rgb(0xd1d5db))
+                .border_color(cx.theme().border)
                 .p_3()
                 .child(self.render_request_editor_surface(window, cx)),
         };
@@ -5491,8 +5553,8 @@ impl BeamView {
             .w_full()
             .gap_2()
             .p_3()
-            .bg(rgb(0xffffff))
-            .text_color(rgb(0x1f2937))
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(self.render_request_tabs(cx))
             .child(editor_container)
     }
@@ -5540,7 +5602,8 @@ impl BeamView {
                     .text_size(cx.theme().mono_font_size)
                     .context_menu({
                         let view = cx.entity();
-                        move |menu, window, _| {
+                        move |menu, window, cx| {
+                            let muted_foreground = cx.theme().muted_foreground;
                             let menu = menu
                                 .min_w(px(180.0))
                                 .item(
@@ -5556,7 +5619,7 @@ impl BeamView {
                                                 Icon::default()
                                                     .path("icons/indent.svg")
                                                     .size(px(14.0))
-                                                    .text_color(rgb(0x6b7280)),
+                                                    .text_color(muted_foreground),
                                             )
                                             .child("Format")
                                     })
@@ -5567,7 +5630,11 @@ impl BeamView {
                                     ),
                                 )
                                 .separator();
-                            Self::build_text_edit_context_menu(menu, response_body_has_selection)
+                            Self::build_text_edit_context_menu(
+                                menu,
+                                response_body_has_selection,
+                                muted_foreground,
+                            )
                         }
                     })
                     .into_any_element()
@@ -5648,7 +5715,7 @@ impl BeamView {
                 .w_full()
                 .rounded(px(8.0))
                 .border_1()
-                .border_color(rgb(0xd1d5db))
+                .border_color(cx.theme().border)
                 .p_0()
                 .child(self.render_response_editor_surface(cx)),
             ResponseTab::Headers => div()
@@ -5656,7 +5723,7 @@ impl BeamView {
                 .w_full()
                 .rounded(px(8.0))
                 .border_1()
-                .border_color(rgb(0xd1d5db))
+                .border_color(cx.theme().border)
                 .p_3()
                 .child(self.render_response_editor_surface(cx)),
         };
@@ -5666,8 +5733,8 @@ impl BeamView {
             .w_full()
             .gap_2()
             .p_3()
-            .bg(rgb(0xfafafa))
-            .text_color(rgb(0x1f2937))
+            .bg(cx.theme().secondary)
+            .text_color(cx.theme().foreground)
             .child(
                 h_flex()
                     .items_center()
@@ -5680,7 +5747,7 @@ impl BeamView {
                             .items_center()
                             .gap_2()
                             .text_xs()
-                            .text_color(rgb(0x6b7280))
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!("Status: {}", self.response_status))
                             .child(format!("Time: {}", self.response_time))
                             .child(format!("Size: {}", self.response_size)),
@@ -5689,18 +5756,18 @@ impl BeamView {
             .child(response_container)
     }
 
-    fn render_status_bar(&self) -> Div {
+    fn render_status_bar(&self, cx: &App) -> Div {
         h_flex()
             .items_center()
             .justify_between()
             .w_full()
             .h(px(28.0))
             .px_3()
-            .bg(rgb(0xf3f4f6))
+            .bg(cx.theme().secondary)
             .border_t_1()
-            .border_color(rgb(0xd1d5db))
+            .border_color(cx.theme().border)
             .text_xs()
-            .text_color(rgb(0x6b7280))
+            .text_color(cx.theme().muted_foreground)
             .child(
                 h_flex()
                     .items_center()
@@ -5961,7 +6028,7 @@ impl Render for BeamView {
         v_flex()
             .size_full()
             .bg(cx.theme().background)
-            .child(TitleBar::new().child(self.render_title_bar_content()))
+            .child(TitleBar::new().child(self.render_title_bar_content(cx)))
             .child(
                 h_flex().flex_1().w_full().child(
                     h_resizable("beam-main-shell")
@@ -5999,7 +6066,7 @@ impl Render for BeamView {
                         })),
                 ),
             )
-            .child(self.render_status_bar())
+            .child(self.render_status_bar(cx))
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
     }
