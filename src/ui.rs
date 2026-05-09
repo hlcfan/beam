@@ -5137,55 +5137,100 @@ impl BeamView {
                                     move |menu, _, _| {
                                         menu.min_w(px(180.0))
                                             .item(
-                                                PopupMenuItem::new("Find")
-                                                    .icon(
-                                                        Icon::default()
-                                                            .path("icons/search.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(rgb(0x6b7280)),
-                                                    )
+                                                PopupMenuItem::element(move |_, _| {
+                                                    h_flex()
+                                                        .w_full()
+                                                        .cursor_pointer()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .child(
+                                                            Icon::default()
+                                                                .path("icons/search.svg")
+                                                                .size(px(14.0))
+                                                                .text_color(rgb(0x6b7280)),
+                                                        )
+                                                        .child("Find")
+                                                })
                                                     .action(Box::new(input::Search)),
                                             )
                                             .separator()
                                             .item(
-                                                PopupMenuItem::new("Cut")
-                                                    .icon(
-                                                        Icon::default()
-                                                            .path("icons/cut.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(rgb(0x6b7280)),
-                                                    )
+                                                PopupMenuItem::element(move |_, _| {
+                                                    h_flex()
+                                                        .w_full()
+                                                        .cursor_pointer()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .child(
+                                                            Icon::default()
+                                                                .path("icons/cut.svg")
+                                                                .size(px(14.0))
+                                                                .text_color(rgb(0x6b7280)),
+                                                        )
+                                                        .child("Cut")
+                                                })
                                                     .action(Box::new(input::Cut)),
                                             )
                                             .item(
-                                                PopupMenuItem::new("Copy")
-                                                    .icon(
-                                                        Icon::default()
-                                                            .path("icons/copy.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(rgb(0x6b7280)),
-                                                    )
+                                                PopupMenuItem::element(move |_, _| {
+                                                    h_flex()
+                                                        .w_full()
+                                                        .cursor_pointer()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .child(
+                                                            Icon::default()
+                                                                .path("icons/copy.svg")
+                                                                .size(px(14.0))
+                                                                .text_color(rgb(0x6b7280)),
+                                                        )
+                                                        .child("Copy")
+                                                })
                                                     .action(Box::new(input::Copy)),
                                             )
                                             .item(
-                                                PopupMenuItem::new("Paste")
-                                                    .icon(
-                                                        Icon::default()
-                                                            .path("icons/clipboard-paste.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(rgb(0x6b7280)),
-                                                    )
+                                                PopupMenuItem::element(move |_, _| {
+                                                    h_flex()
+                                                        .w_full()
+                                                        .cursor_pointer()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .child(
+                                                            Icon::default()
+                                                                .path("icons/clipboard-paste.svg")
+                                                                .size(px(14.0))
+                                                                .text_color(rgb(0x6b7280)),
+                                                        )
+                                                        .child("Paste")
+                                                })
                                                     .action(Box::new(input::Paste)),
                                             )
                                             .separator()
                                             .item(
-                                                PopupMenuItem::new("Select All")
-                                                    .icon(
-                                                        Icon::default()
-                                                            .path("icons/square-dashed-text.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(rgb(0x6b7280)),
-                                                    )
+                                                PopupMenuItem::element(move |_, _| {
+                                                    h_flex()
+                                                        .w_full()
+                                                        .cursor_pointer()
+                                                        .items_center()
+                                                        .gap_2()
+                                                        .px_2()
+                                                        .py_1()
+                                                        .child(
+                                                            Icon::default()
+                                                                .path("icons/square-dashed-text.svg")
+                                                                .size(px(14.0))
+                                                                .text_color(rgb(0x6b7280)),
+                                                        )
+                                                        .child("Select All")
+                                                })
                                                     .action(Box::new(input::SelectAll)),
                                             )
                                     }
