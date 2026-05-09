@@ -2876,6 +2876,7 @@ impl BeamView {
         view.rebuild_request_header_inputs(window, cx);
         view.sync_request_auth_inputs(window, cx);
         view.rebuild_request_auth_input_subscriptions(window, cx);
+        view.sync_response_pane_from_selection(window, cx);
         view
     }
 
