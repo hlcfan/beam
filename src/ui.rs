@@ -4765,6 +4765,28 @@ impl BeamView {
     ) -> AnyElement {
         match self.request.active_tab {
             RequestTab::Body => {
+                if self.request.method == HttpMethod::Get {
+                    return v_flex()
+                        .h_full()
+                        .w_full()
+                        .child(div().flex_1())
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(div().flex_1())
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("No Body"),
+                                )
+                                .child(div().flex_1()),
+                        )
+                        .child(div().flex_1())
+                        .into_any_element();
+                }
+
                 let request_body_has_selection = !self
                     .request_body_editor
                     .read(cx)
