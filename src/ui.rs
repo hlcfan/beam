@@ -4417,6 +4417,25 @@ impl BeamView {
     }
 
     fn render_request_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let editor_container = match self.request.active_tab {
+            RequestTab::Body | RequestTab::PostScript => div()
+                .flex_1()
+                .w_full()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(0xd1d5db))
+                .p_0()
+                .child(self.render_request_editor_surface(window, cx)),
+            _ => div()
+                .flex_1()
+                .w_full()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(0xd1d5db))
+                .p_3()
+                .child(self.render_request_editor_surface(window, cx)),
+        };
+
         v_flex()
             .h_full()
             .w_full()
@@ -4425,16 +4444,7 @@ impl BeamView {
             .bg(rgb(0xffffff))
             .text_color(rgb(0x1f2937))
             .child(self.render_request_tabs(cx))
-            .child(
-                div()
-                    .flex_1()
-                    .w_full()
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(rgb(0xd1d5db))
-                    .p_3()
-                    .child(self.render_request_editor_surface(window, cx)),
-            )
+            .child(editor_container)
     }
 
     fn render_response_tabs(&self, cx: &mut Context<Self>) -> Div {
