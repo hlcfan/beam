@@ -5021,10 +5021,6 @@ impl BeamView {
             .h_full()
             .min_h_0()
             .w_full()
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(rgb(0xd1d5db))
-            .bg(rgb(0xffffff))
             .p_2()
             .gap_2();
 
@@ -5110,17 +5106,22 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // TODO: Keep this as a single parent card with one divider between editor/results.
+        // It avoids double-border overlap and is less error-prone than separate bordered panes.
         v_flex()
             .h_full()
             .w_full()
             .gap_0()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(0xd1d5db))
+            .bg(rgb(0xffffff))
             .child(
                 div()
                     .h_1_2()
                     .min_h_0()
                     .w_full()
-                    .rounded(px(8.0))
-                    .border_1()
+                    .border_b_1()
                     .border_color(rgb(0xd1d5db))
                     .p_0()
                     .child(
