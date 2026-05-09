@@ -4507,74 +4507,187 @@ impl BeamView {
                     move |menu, window, _| {
                         menu.min_w(px(180.0))
                             .item(
-                                PopupMenuItem::new("Format").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.format_request_body(window, cx);
-                                    },
-                                )),
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .gap_2()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            Icon::default()
+                                                .path("icons/indent.svg")
+                                                .size(px(14.0))
+                                                .text_color(rgb(0x6b7280)),
+                                        )
+                                        .child("Format")
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.format_request_body(window, cx);
+                                })),
                             )
                             .item(
-                                PopupMenuItem::new("Find").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.dispatch_request_body_editor_action(
-                                            Box::new(input::Search),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .separator()
-                            .item(
-                                PopupMenuItem::new("Cut").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.dispatch_request_body_editor_action(
-                                            Box::new(input::Cut),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .item(
-                                PopupMenuItem::new("Copy").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.dispatch_request_body_editor_action(
-                                            Box::new(input::Copy),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .item(
-                                PopupMenuItem::new("Paste").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.dispatch_request_body_editor_action(
-                                            Box::new(input::Paste),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )),
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/search.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Find"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+F"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_request_body_editor_action(
+                                        Box::new(input::Search),
+                                        window,
+                                        cx,
+                                    );
+                                })),
                             )
                             .separator()
                             .item(
-                                PopupMenuItem::new("Select All").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.dispatch_request_body_editor_action(
-                                            Box::new(input::SelectAll),
-                                            window,
-                                            cx,
-                                        );
-                                    },
-                                )),
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/cut.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Cut"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+X"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_request_body_editor_action(
+                                        Box::new(input::Cut),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/copy.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Copy"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+C"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_request_body_editor_action(
+                                        Box::new(input::Copy),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/clipboard-paste.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Paste"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+V"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_request_body_editor_action(
+                                        Box::new(input::Paste),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/square-dashed-text.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Select All"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+A"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_request_body_editor_action(
+                                        Box::new(input::SelectAll),
+                                        window,
+                                        cx,
+                                    );
+                                })),
                             )
                     }
                 })
