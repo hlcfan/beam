@@ -39,7 +39,14 @@ use crate::storage::{
     CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef, WorkspaceStorage,
 };
 
-actions!(beam, [QuitApp]);
+actions!(
+    beam,
+    [
+        QuitApp,
+        CreateRequestBelowActive,
+        FocusUrlInput
+    ]
+);
 
 pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
     let app = gpui_platform::application().with_assets(Assets);
@@ -48,8 +55,16 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
         cx.bind_keys([
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-q", QuitApp, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-n", CreateRequestBelowActive, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-l", FocusUrlInput, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-n", CreateRequestBelowActive, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-l", FocusUrlInput, None),
         ]);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
@@ -2564,6 +2579,64 @@ impl BeamView {
         self.shell.collections.select_request(request_id);
         self.sync_request_editor_from_selection(window, cx);
         self.send_request(window, cx);
+    }
+
+    fn create_request_below_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_request_id) = self.shell.collections.selected_request_id() else {
+            window.push_notification("No active request selected.", cx);
+            return;
+        };
+        let Some(parent) = self.parent_ref_for_add_request(active_request_id) else {
+            window.push_notification("Unable to determine request parent.", cx);
+            return;
+        };
+        let request_name = self.next_new_request_name(parent);
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        match storage.create_request_after(
+            CreateRequestInput {
+                parent,
+                name: request_name,
+                method: HttpMethod::Get,
+                url: String::new(),
+            },
+            active_request_id,
+        ) {
+            Ok(request_file) => {
+                self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
+                self.focus_url_input(window, cx);
+                window.push_notification("Request added.", cx);
+                cx.notify();
+            }
+            Err(error) => {
+                window.push_notification(format!("Failed to add request: {error}"), cx);
+            }
+        }
+    }
+
+    fn focus_url_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.url_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn on_action_create_request_below_active(
+        &mut self,
+        _: &CreateRequestBelowActive,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.create_request_below_active(window, cx);
+    }
+
+    fn on_action_focus_url_input(
+        &mut self,
+        _: &FocusUrlInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.focus_url_input(window, cx);
     }
 
     fn copy_request_as_curl_from_tree_node(
@@ -6158,6 +6231,8 @@ impl Render for BeamView {
 
         v_flex()
             .size_full()
+            .on_action(cx.listener(Self::on_action_create_request_below_active))
+            .on_action(cx.listener(Self::on_action_focus_url_input))
             .bg(cx.theme().background)
             .child(TitleBar::new().child(self.render_title_bar_content(cx)))
             .child(

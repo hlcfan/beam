@@ -827,6 +827,66 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         Ok(request_file)
     }
 
+    fn create_request_after(
+        &self,
+        input: CreateRequestInput,
+        source_request_id: Ulid,
+    ) -> Result<RequestFile> {
+        let name = input.name.trim();
+        if name.is_empty() {
+            return Err(BeamError::Validation {
+                message: "Request name cannot be empty".to_string(),
+            });
+        }
+        let now = Utc::now();
+        let request_file = RequestFile {
+            meta: RequestMeta {
+                request_id: Ulid::new(),
+                name: name.to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            request: RequestDefinition {
+                method: input.method,
+                url: input.url,
+                headers: vec![
+                    HeaderField {
+                        name: "Content-Type".to_string(),
+                        value: "application/json".to_string(),
+                        enabled: true,
+                        description: None,
+                        secret: false,
+                    },
+                    HeaderField {
+                        name: "User-Agent".to_string(),
+                        value: "BeamApp/1.0".to_string(),
+                        enabled: true,
+                        description: None,
+                        secret: false,
+                    },
+                ],
+                query_params: vec![QueryParamField {
+                    name: String::new(),
+                    value: String::new(),
+                    enabled: true,
+                    description: None,
+                }],
+            },
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            scripts: ScriptConfig::default(),
+        };
+        self.write_request_new_path(&request_file, input.parent)?;
+        self.insert_request_to_parent_manifest_after(
+            input.parent,
+            source_request_id,
+            request_file.meta.request_id,
+            &request_file.meta.name,
+        )?;
+        Ok(request_file)
+    }
+
     fn create_folder(&self, input: CreateFolderInput) -> Result<FolderFile> {
         let name = input.name.trim();
         if name.is_empty() {

@@ -44,6 +44,11 @@ pub trait WorkspaceStorage {
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()>;
     fn load_request(&self, request_id: Ulid) -> Result<RequestFile>;
     fn create_request(&self, input: CreateRequestInput) -> Result<RequestFile>;
+    fn create_request_after(
+        &self,
+        input: CreateRequestInput,
+        source_request_id: Ulid,
+    ) -> Result<RequestFile>;
     fn create_folder(&self, input: CreateFolderInput) -> Result<crate::models::FolderFile>;
     fn save_request(&self, request_file: &RequestFile) -> Result<()>;
     fn rename_request(&self, request_id: Ulid, new_name: &str) -> Result<RequestFile>;
