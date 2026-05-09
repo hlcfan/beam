@@ -899,10 +899,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         let owner_manifest = if let Some(folder_id) = parent.folder_id {
             let folder_dir = self.find_folder_dir_by_id(folder_id)?;
             let folder_manifest = folder_dir.join("folder.toml");
-            OwnerManifest::Folder(
-                self.read_folder_file(&folder_manifest)?,
-                folder_manifest,
-            )
+            OwnerManifest::Folder(self.read_folder_file(&folder_manifest)?, folder_manifest)
         } else {
             let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
             let collection_manifest = collection_dir.join("collection.toml");
