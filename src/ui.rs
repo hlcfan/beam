@@ -39,10 +39,21 @@ use crate::storage::{
     CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef, WorkspaceStorage,
 };
 
+actions!(beam, [QuitApp]);
+
 pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
     let app = gpui_platform::application().with_assets(Assets);
     app.run(move |cx| {
         gpui_component::init(cx);
+        cx.bind_keys([
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-q", QuitApp, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("alt-f4", QuitApp, None),
+        ]);
+        cx.on_action(|_: &QuitApp, cx: &mut App| {
+            cx.quit();
+        });
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
