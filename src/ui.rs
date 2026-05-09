@@ -128,9 +128,10 @@ enum RequestBodyFormat {
 }
 
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
-const RESPONSE_BODY_PLACEHOLDER: &str = "// Send a request to view the response body.";
 const RESPONSE_BODY_TRUNCATED_NOTE: &str =
     "[Response body omitted from local history (truncated).]";
+const MACOS_COMMAND_ICON_PATH: &str = "icons/command.svg";
+const NON_MACOS_COMMAND_ICON_PATH: &str = "icons/chevron-up.svg";
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 struct PersistedScriptResult {
@@ -1285,7 +1286,7 @@ impl BeamView {
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
         self.response_body_editor.update(cx, |input, cx| {
-            input.set_value(RESPONSE_BODY_PLACEHOLDER.to_string(), window, cx);
+            input.set_value(String::new(), window, cx);
         });
     }
 
@@ -1338,7 +1339,7 @@ impl BeamView {
             .unwrap_or_else(|| "—".to_string());
 
         let mut size = "—".to_string();
-        let mut body = RESPONSE_BODY_PLACEHOLDER.to_string();
+        let mut body = String::new();
         let mut headers_raw = String::new();
 
         if let Some(summary) = latest_execution.response_summary.as_ref() {
@@ -1359,7 +1360,7 @@ impl BeamView {
                 let body_path = paths.local_dir.join("history/responses").join(body_ref);
                 fs::read(body_path)
                     .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-                    .unwrap_or_else(|_| RESPONSE_BODY_PLACEHOLDER.to_string())
+                    .unwrap_or_default()
             } else {
                 String::new()
             };
@@ -2931,7 +2932,6 @@ impl BeamView {
                 })
                 .searchable(true)
                 .placeholder("Response body will appear here...")
-                .default_value(RESPONSE_BODY_PLACEHOLDER)
         });
 
         let post_script_editor = cx.new(|cx| {
@@ -3596,7 +3596,7 @@ impl BeamView {
     fn format_response_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current_text = self.response_body_editor.read(cx).value().to_string();
         let trimmed = current_text.trim();
-        if trimmed.is_empty() || trimmed == RESPONSE_BODY_PLACEHOLDER {
+        if trimmed.is_empty() {
             window.push_notification("No response body to format.".to_string(), cx);
             cx.notify();
             return;
@@ -5635,6 +5635,11 @@ impl BeamView {
     fn render_response_editor_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         match self.active_response_tab {
             ResponseTab::Body => {
+                let response_body_text = self.response_body_editor.read(cx).value().to_string();
+                let trimmed_body = response_body_text.trim();
+                if trimmed_body.is_empty() {
+                    return self.render_response_body_shortcuts_empty_state(cx);
+                }
                 let response_body_has_selection = !self
                     .response_body_editor
                     .read(cx)
@@ -5689,6 +5694,84 @@ impl BeamView {
             }
             ResponseTab::Headers => self.render_response_headers_table(),
         }
+    }
+
+    fn command_key_icon_path() -> &'static str {
+        if cfg!(target_os = "macos") {
+            MACOS_COMMAND_ICON_PATH
+        } else {
+            NON_MACOS_COMMAND_ICON_PATH
+        }
+    }
+
+    fn render_shortcut_key_with_icon(
+        &self,
+        icon_path: &'static str,
+        key_text: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut key = h_flex()
+            .items_center()
+            .gap_1()
+            .px_1p5()
+            .h(px(22.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary)
+            .child(
+                Icon::default()
+                    .path(icon_path)
+                    .size(px(12.0))
+                    .text_color(cx.theme().muted_foreground),
+            );
+        if let Some(key_text) = key_text {
+            key = key.child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(key_text),
+            );
+        }
+        key
+    }
+
+    fn render_response_shortcut_row(
+        &self,
+        label: &'static str,
+        key: Div,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        h_flex()
+            .items_center()
+            .justify_between()
+            .w(px(240.0))
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(label)
+            .child(key)
+    }
+
+    fn render_response_body_shortcuts_empty_state(&self, cx: &mut Context<Self>) -> AnyElement {
+        let command_icon_path = Self::command_key_icon_path();
+        let send_key = self.render_shortcut_key_with_icon(command_icon_path, Some("Enter"), cx);
+        let new_request_key = self.render_shortcut_key_with_icon(command_icon_path, Some("N"), cx);
+        let focus_url_key = self.render_shortcut_key_with_icon(command_icon_path, Some("L"), cx);
+
+        h_flex()
+            .h_full()
+            .w_full()
+            .items_center()
+            .justify_center()
+            .child(
+                v_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.render_response_shortcut_row("Send Request", send_key, cx))
+                    .child(self.render_response_shortcut_row("New Request", new_request_key, cx))
+                    .child(self.render_response_shortcut_row("Focus URL", focus_url_key, cx)),
+            )
+            .into_any_element()
     }
 
     fn parse_response_headers(headers: &str) -> Vec<(String, String)> {
