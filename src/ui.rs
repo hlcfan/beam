@@ -3007,7 +3007,10 @@ impl BeamView {
                 let latest_text = this.request_body_editor.read(cx).value().to_string();
                 if latest_text != source_text {
                     window.push_notification(
-                        "Body changed while formatting. Please run Format again.".to_string(),
+                        (
+                            gpui_component::notification::NotificationType::Warning,
+                            "Body changed while formatting. Please run Format again.",
+                        ),
                         cx,
                     );
                     cx.notify();
@@ -3018,7 +3021,10 @@ impl BeamView {
                     Ok(formatted) => formatted,
                     Err(error) => {
                         window.push_notification(
-                            format!("Failed to format request body: {error}"),
+                            (
+                                gpui_component::notification::NotificationType::Error,
+                                SharedString::from(format!("Failed to format request body: {error}")),
+                            ),
                             cx,
                         );
                         cx.notify();
@@ -4880,5 +4886,6 @@ impl Render for BeamView {
             )
             .child(self.render_status_bar())
             .children(Root::render_dialog_layer(window, cx))
+            .children(Root::render_notification_layer(window, cx))
     }
 }
