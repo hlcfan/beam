@@ -84,11 +84,13 @@ pub fn execute_post_request_script(
     script: &str,
     response: &ScriptRuntimeResponse,
     environment_variables: &[EnvironmentVariable],
+    allow_environment_writes: bool,
 ) -> ScriptExecutionResult {
     execute_post_request_script_with_options(
         script,
         response,
         environment_variables,
+        allow_environment_writes,
         5,
         64 * 1024 * 1024,
     )
@@ -98,6 +100,7 @@ fn execute_post_request_script_with_options(
     script: &str,
     response: &ScriptRuntimeResponse,
     environment_variables: &[EnvironmentVariable],
+    allow_environment_writes: bool,
     timeout_secs: u64,
     memory_limit_bytes: usize,
 ) -> ScriptExecutionResult {
@@ -155,6 +158,7 @@ fn execute_post_request_script_with_options(
             &ctx,
             response,
             environment_variables,
+            allow_environment_writes,
             Arc::clone(&console_output_shared),
             Arc::clone(&env_changes_shared),
             Arc::clone(&removed_env_keys_shared),
@@ -373,6 +377,7 @@ fn setup_global_objects(
     ctx: &rquickjs::Ctx,
     response: &ScriptRuntimeResponse,
     environment_variables: &[EnvironmentVariable],
+    allow_environment_writes: bool,
     console_output: Arc<Mutex<Vec<ConsoleMessage>>>,
     env_changes: Arc<Mutex<BTreeMap<String, String>>>,
     removed_env_keys: Arc<Mutex<Vec<String>>>,
@@ -487,6 +492,9 @@ fn setup_global_objects(
     {
         let env_changes_clone = Arc::clone(&env_changes);
         let set_fn = Func::new(move |key: String, value: String| {
+            if !allow_environment_writes {
+                return;
+            }
             if let Ok(mut changes) = env_changes_clone.lock() {
                 changes.insert(key, value);
             }
@@ -498,6 +506,9 @@ fn setup_global_objects(
         let removed_env_keys_clone = Arc::clone(&removed_env_keys);
         let env_vars_for_clear = env_vars.clone();
         let clear_fn = Func::new(move || {
+            if !allow_environment_writes {
+                return;
+            }
             if let Ok(mut changes) = env_changes_clone.lock() {
                 changes.clear();
             }
@@ -597,6 +608,9 @@ fn setup_global_objects(
         let removed_env_keys_clone = Arc::clone(&removed_env_keys);
         let env_vars_for_unset = env_vars.clone();
         let unset_fn = Func::new(move |key: String| {
+            if !allow_environment_writes {
+                return;
+            }
             let mut existed_in_changes = false;
             if let Ok(mut changes) = env_changes_clone.lock() {
                 existed_in_changes = changes.remove(&key).is_some();

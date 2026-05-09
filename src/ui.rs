@@ -163,6 +163,8 @@ struct PersistedScriptResult {
     test_results: Vec<TestResult>,
     #[serde(default)]
     environment_diff: Vec<EnvironmentChange>,
+    #[serde(default)]
+    no_environment_selected_with_env_writes: bool,
     updated_at: String,
 }
 
@@ -958,6 +960,20 @@ impl Render for TreeRenameDialogView {
 impl BeamView {
     fn no_environment_selection_marker() -> Ulid {
         Ulid::nil()
+    }
+
+    fn script_contains_environment_mutation(script: &str) -> bool {
+        let lowered = script.to_ascii_lowercase();
+        [
+            "pm.environment.set(",
+            "pm.environment.unset(",
+            "pm.environment.clear(",
+            "pm.environment.setall(",
+            "pm.environment.setifpresent(",
+            "pm.extract(",
+        ]
+        .iter()
+        .any(|pattern| lowered.contains(pattern))
     }
 
     fn send_button_state_for_view(&self) -> SendButtonState {
@@ -3148,6 +3164,7 @@ impl BeamView {
         self.request.post_script = (!latest_script.trim().is_empty()).then_some(latest_script);
         let request_id = self.shell.collections.selected_request_id();
         let selected_environment_id = self.selected_environment_id_for_view();
+        let no_environment_selected = selected_environment_id.is_none();
         let (environment_path, environment_variables) =
             Self::load_environment_for_script(selected_environment_id);
         let request_snapshot =
@@ -3168,6 +3185,7 @@ impl BeamView {
                     Self::execute_request_with_script(
                         request_snapshot,
                         request_id,
+                        no_environment_selected,
                         environment_path,
                         environment_variables,
                     )
@@ -3220,6 +3238,7 @@ impl BeamView {
     fn execute_request_with_script(
         request: RequestAuthoringState,
         request_id: Option<Ulid>,
+        no_environment_selected: bool,
         environment_path: Option<PathBuf>,
         environment_variables: Vec<EnvironmentVariable>,
     ) -> SendRequestOutcome {
@@ -3241,7 +3260,14 @@ impl BeamView {
             body_size_bytes: response.body.len(),
         };
         let script_exec_result =
-            execute_post_request_script(&script_text, &runtime_response, &environment_variables);
+            execute_post_request_script(
+                &script_text,
+                &runtime_response,
+                &environment_variables,
+                !no_environment_selected,
+            );
+        let no_environment_selected_with_env_writes = no_environment_selected
+            && Self::script_contains_environment_mutation(&script_text);
 
         if let Some(path) = environment_path.as_ref() {
             if let Err(error) = Self::apply_script_environment_changes(path, &script_exec_result) {
@@ -3257,6 +3283,7 @@ impl BeamView {
             script_result: Some(Self::to_persisted_script_result(
                 &script_exec_result,
                 request_id_text,
+                no_environment_selected_with_env_writes,
             )),
         }
     }
@@ -3319,6 +3346,7 @@ impl BeamView {
     fn to_persisted_script_result(
         result: &ScriptExecutionResult,
         request_id: String,
+        no_environment_selected_with_env_writes: bool,
     ) -> PersistedScriptResult {
         PersistedScriptResult {
             request_id,
@@ -3344,6 +3372,7 @@ impl BeamView {
                 .collect(),
             test_results: result.test_results.clone(),
             environment_diff: result.environment_diff.clone(),
+            no_environment_selected_with_env_writes,
             updated_at: Utc::now().to_rfc3339(),
         }
     }
@@ -5480,14 +5509,25 @@ impl BeamView {
     }
 
     fn render_script_env_changes_section(&self, result: &PersistedScriptResult) -> AnyElement {
+        let mut column = v_flex().w_full().gap_1();
+        if result.no_environment_selected_with_env_writes {
+            column = column.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0xb91c1c))
+                    .child("Warning: Script wrote environment changes, but \"No environment\" was selected. Changes were not persisted."),
+            );
+        }
         if result.environment_diff.is_empty() {
-            return div()
-                .text_xs()
-                .text_color(rgb(0x6b7280))
-                .child("No environment changes.")
+            return column
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x6b7280))
+                        .child("No environment changes."),
+                )
                 .into_any_element();
         }
-        let mut column = v_flex().w_full().gap_1();
         for change in &result.environment_diff {
             let line = match change.kind {
                 EnvironmentChangeKind::Added => {
