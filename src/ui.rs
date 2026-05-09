@@ -4042,7 +4042,117 @@ impl BeamView {
                                 Input::new(&self.url_input)
                                     .flex_1()
                                     .small()
-                                    .appearance(false),
+                                    .appearance(false)
+                                    .context_menu({
+                                        move |menu, _, _| {
+                                            menu.min_w(px(180.0))
+                                                .item(
+                                                    PopupMenuItem::element(move |_, _| {
+                                                        h_flex()
+                                                            .w_full()
+                                                            .cursor_pointer()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .gap_3()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        Icon::default()
+                                                                            .path("icons/cut.svg")
+                                                                            .size(px(14.0))
+                                                                            .text_color(rgb(0x6b7280)),
+                                                                    )
+                                                                    .child("Cut"),
+                                                            )
+                                                            .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+X"))
+                                                    })
+                                                    .action(Box::new(input::Cut)),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::element(move |_, _| {
+                                                        h_flex()
+                                                            .w_full()
+                                                            .cursor_pointer()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .gap_3()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        Icon::default()
+                                                                            .path("icons/copy.svg")
+                                                                            .size(px(14.0))
+                                                                            .text_color(rgb(0x6b7280)),
+                                                                    )
+                                                                    .child("Copy"),
+                                                            )
+                                                            .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+C"))
+                                                    })
+                                                    .action(Box::new(input::Copy)),
+                                                )
+                                                .item(
+                                                    PopupMenuItem::element(move |_, _| {
+                                                        h_flex()
+                                                            .w_full()
+                                                            .cursor_pointer()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .gap_3()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        Icon::default()
+                                                                            .path("icons/clipboard-paste.svg")
+                                                                            .size(px(14.0))
+                                                                            .text_color(rgb(0x6b7280)),
+                                                                    )
+                                                                    .child("Paste"),
+                                                            )
+                                                            .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+V"))
+                                                    })
+                                                    .action(Box::new(input::Paste)),
+                                                )
+                                                .separator()
+                                                .item(
+                                                    PopupMenuItem::element(move |_, _| {
+                                                        h_flex()
+                                                            .w_full()
+                                                            .cursor_pointer()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .gap_3()
+                                                            .px_2()
+                                                            .py_1()
+                                                            .child(
+                                                                h_flex()
+                                                                    .items_center()
+                                                                    .gap_2()
+                                                                    .child(
+                                                                        Icon::default()
+                                                                            .path("icons/square-dashed-text.svg")
+                                                                            .size(px(14.0))
+                                                                            .text_color(rgb(0x6b7280)),
+                                                                    )
+                                                                    .child("Select All"),
+                                                            )
+                                                            .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+A"))
+                                                    })
+                                                    .action(Box::new(input::SelectAll)),
+                                                )
+                                        }
+                                    }),
                             )
                             .child(
                                 Button::new("send-request")
