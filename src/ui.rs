@@ -5733,7 +5733,7 @@ impl BeamView {
             .w_full()
             .gap_2()
             .p_3()
-            .bg(cx.theme().secondary)
+            .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(
                 h_flex()
