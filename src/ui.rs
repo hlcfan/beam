@@ -4456,6 +4456,7 @@ impl BeamView {
                             Button::new("auth-mode-none")
                                 .small()
                                 .ghost()
+                                .cursor_pointer()
                                 .selected(is_none)
                                 .label("None")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -4468,6 +4469,7 @@ impl BeamView {
                             Button::new("auth-mode-bearer")
                                 .small()
                                 .ghost()
+                                .cursor_pointer()
                                 .selected(is_bearer)
                                 .label("Bearer Token")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -4483,6 +4485,7 @@ impl BeamView {
                             Button::new("auth-mode-basic")
                                 .small()
                                 .ghost()
+                                .cursor_pointer()
                                 .selected(is_basic)
                                 .label("Basic Auth")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -4502,6 +4505,7 @@ impl BeamView {
                             Button::new("auth-mode-apikey")
                                 .small()
                                 .ghost()
+                                .cursor_pointer()
                                 .selected(is_api_key)
                                 .label("API Key")
                                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -4568,6 +4572,7 @@ impl BeamView {
                                         Button::new("auth-apikey-location-header")
                                             .small()
                                             .ghost()
+                                            .cursor_pointer()
                                             .selected(using_header)
                                             .label("Header")
                                             .on_click(cx.listener(move |this, _, _, cx| {
@@ -4589,6 +4594,7 @@ impl BeamView {
                                         Button::new("auth-apikey-location-query")
                                             .small()
                                             .ghost()
+                                            .cursor_pointer()
                                             .selected(using_query)
                                             .label("Query")
                                             .on_click(cx.listener(move |this, _, _, cx| {
