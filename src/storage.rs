@@ -58,7 +58,12 @@ pub trait WorkspaceStorage {
         new_name: &str,
     ) -> Result<crate::models::CollectionFile>;
     fn rename_folder(&self, folder_id: Ulid, new_name: &str) -> Result<crate::models::FolderFile>;
-    fn duplicate_request(&self, request_id: Ulid, duplicate_name: &str) -> Result<RequestFile>;
+    fn duplicate_request(
+        &self,
+        request_id: Ulid,
+        duplicate_name: &str,
+        parent: RequestParentRef,
+    ) -> Result<RequestFile>;
     fn delete_collection(&self, collection_id: Ulid) -> Result<()>;
     fn delete_folder(&self, folder_id: Ulid) -> Result<()>;
     fn delete_request(&self, request_id: Ulid) -> Result<()>;

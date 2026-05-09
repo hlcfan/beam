@@ -2293,6 +2293,103 @@ impl BeamView {
         }
     }
 
+    fn add_request_to_shell(
+        &mut self,
+        request_file: &crate::models::RequestFile,
+        parent: crate::storage::RequestParentRef,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+        self.shell.collections.insert_request_child(
+            parent_id,
+            request_file.meta.request_id,
+            request_file.meta.name.clone(),
+            request_file.request.method,
+            request_file.request.url.clone(),
+        );
+        self.shell.request_pane_data.insert(
+            request_file.meta.request_id,
+            RequestPaneData {
+                method: request_file.request.method,
+                url: request_file.request.url.clone(),
+                headers: request_file.request.headers.clone(),
+                query_params: request_file.request.query_params.clone(),
+                auth: request_file.auth.clone(),
+                body: request_file.body.clone(),
+                post_script: request_file.scripts.post_response.clone(),
+            },
+        );
+        self.shell.collections.select_request(request_file.meta.request_id);
+        self.sync_request_editor_from_selection(window, cx);
+    }
+
+    fn add_request_after_to_shell(
+        &mut self,
+        request_file: &crate::models::RequestFile,
+        parent: crate::storage::RequestParentRef,
+        after_request_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+        self.shell.collections.insert_request_child_after(
+            parent_id,
+            after_request_id,
+            request_file.meta.request_id,
+            request_file.meta.name.clone(),
+            request_file.request.method,
+            request_file.request.url.clone(),
+        );
+        self.shell.request_pane_data.insert(
+            request_file.meta.request_id,
+            RequestPaneData {
+                method: request_file.request.method,
+                url: request_file.request.url.clone(),
+                headers: request_file.request.headers.clone(),
+                query_params: request_file.request.query_params.clone(),
+                auth: request_file.auth.clone(),
+                body: request_file.body.clone(),
+                post_script: request_file.scripts.post_response.clone(),
+            },
+        );
+        self.shell.collections.select_request(request_file.meta.request_id);
+        self.sync_request_editor_from_selection(window, cx);
+    }
+
+    fn duplicate_request_to_shell(
+        &mut self,
+        request_file: &crate::models::RequestFile,
+        parent: crate::storage::RequestParentRef,
+        source_request_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+        self.shell.collections.insert_request_child_after(
+            parent_id,
+            source_request_id,
+            request_file.meta.request_id,
+            request_file.meta.name.clone(),
+            request_file.request.method,
+            request_file.request.url.clone(),
+        );
+        self.shell.request_pane_data.insert(
+            request_file.meta.request_id,
+            RequestPaneData {
+                method: request_file.request.method,
+                url: request_file.request.url.clone(),
+                headers: request_file.request.headers.clone(),
+                query_params: request_file.request.query_params.clone(),
+                auth: request_file.auth.clone(),
+                body: request_file.body.clone(),
+                post_script: request_file.scripts.post_response.clone(),
+            },
+        );
+        self.shell.collections.select_request(request_file.meta.request_id);
+        self.sync_request_editor_from_selection(window, cx);
+    }
+
     fn persist_last_opened_request_id(&self, request_id: Ulid) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let storage = TomlWorkspaceStorage::new(paths);
@@ -2365,22 +2462,34 @@ impl BeamView {
         };
         let request_name = self.next_new_request_name(parent);
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
-        match storage.create_request(CreateRequestInput {
-            parent,
-            name: request_name,
-            method: HttpMethod::Get,
-            url: String::new(),
-        }) {
-            Ok(request_file) => {
-                self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
-                window.push_notification("Request added.", cx);
-                cx.notify();
-            }
-            Err(error) => {
-                window.push_notification(format!("Failed to add request: {error}"), cx);
-            }
-        }
+        let view = cx.entity();
+        cx.spawn_in(window, async move |_, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let storage = TomlWorkspaceStorage::new(paths);
+                    storage
+                        .create_request(CreateRequestInput {
+                            parent,
+                            name: request_name,
+                            method: HttpMethod::Get,
+                            url: String::new(),
+                        })
+                        .map_err(|error| format!("Failed to add request: {error}"))
+                })
+                .await;
+            let _ = view.update_in(cx, move |this, window, cx| match result {
+                Ok(request_file) => {
+                    this.add_request_to_shell(&request_file, parent, window, cx);
+                    window.push_notification("Request added.", cx);
+                    cx.notify();
+                }
+                Err(error) => {
+                    window.push_notification(error, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn add_folder_from_tree_node(
@@ -2662,26 +2771,44 @@ impl BeamView {
         };
         let request_name = self.next_new_request_name(parent);
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
-        match storage.create_request_after(
-            CreateRequestInput {
-                parent,
-                name: request_name,
-                method: HttpMethod::Get,
-                url: String::new(),
-            },
-            active_request_id,
-        ) {
-            Ok(request_file) => {
-                self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
-                self.focus_url_input(window, cx);
-                window.push_notification("Request added.", cx);
-                cx.notify();
-            }
-            Err(error) => {
-                window.push_notification(format!("Failed to add request: {error}"), cx);
-            }
-        }
+        let view = cx.entity();
+        cx.spawn_in(window, async move |_, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let storage = TomlWorkspaceStorage::new(paths);
+                    storage
+                        .create_request_after(
+                            CreateRequestInput {
+                                parent,
+                                name: request_name,
+                                method: HttpMethod::Get,
+                                url: String::new(),
+                            },
+                            active_request_id,
+                        )
+                        .map_err(|error| format!("Failed to add request: {error}"))
+                })
+                .await;
+            let _ = view.update_in(cx, move |this, window, cx| match result {
+                Ok(request_file) => {
+                    this.add_request_after_to_shell(
+                        &request_file,
+                        parent,
+                        active_request_id,
+                        window,
+                        cx,
+                    );
+                    this.focus_url_input(window, cx);
+                    window.push_notification("Request added.", cx);
+                    cx.notify();
+                }
+                Err(error) => {
+                    window.push_notification(error, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn focus_url_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2742,32 +2869,31 @@ impl BeamView {
             window.push_notification("Unable to duplicate this request.", cx);
             return;
         };
+        let Some(parent) = self.parent_ref_for_add_request(request_id) else {
+            window.push_notification("Unable to determine request parent.", cx);
+            return;
+        };
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths.clone());
-                    let request_file = storage
-                        .duplicate_request(request_id, &duplicate_name)
-                        .map_err(|error| format!("Failed to duplicate request: {error}"))?;
-                    let reload_storage = TomlWorkspaceStorage::new(paths.clone());
-                    let (state, messages) = match startup_preload(&reload_storage, &paths) {
-                        StartupLoad::Ready { state, messages } => (state, messages),
-                        StartupLoad::Fatal { message } => {
-                            return Err(format!("Failed to reload workspace: {}", message.text));
-                        }
-                    };
-                    Ok((request_file.meta.request_id, state, messages))
+                    let storage = TomlWorkspaceStorage::new(paths);
+                    storage
+                        .duplicate_request(request_id, &duplicate_name, parent)
+                        .map_err(|error| format!("Failed to duplicate request: {error}"))
                 })
                 .await;
             let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok((new_request_id, state, messages)) => {
-                    this.shell = state;
-                    this.startup_messages = messages;
-                    this.shell.collections.select_request(new_request_id);
-                    this.sync_request_editor_from_selection(window, cx);
+                Ok(request_file) => {
+                    this.duplicate_request_to_shell(
+                        &request_file,
+                        parent,
+                        request_id,
+                        window,
+                        cx,
+                    );
                     window.push_notification("Request duplicated.", cx);
                     cx.notify();
                 }

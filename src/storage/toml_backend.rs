@@ -1113,9 +1113,13 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         Ok(folder_file)
     }
 
-    fn duplicate_request(&self, request_id: Ulid, duplicate_name: &str) -> Result<RequestFile> {
+    fn duplicate_request(
+        &self,
+        request_id: Ulid,
+        duplicate_name: &str,
+        parent: RequestParentRef,
+    ) -> Result<RequestFile> {
         let source = self.load_request(request_id)?;
-        let parent = self.find_request_parent(request_id)?;
         let name = duplicate_name.trim();
         if name.is_empty() {
             return Err(BeamError::Validation {
@@ -1486,7 +1490,14 @@ environment_id = "{environment_id}"
             .expect("create second request");
 
         let duplicated = storage
-            .duplicate_request(created.meta.request_id, "Get User (Copy)")
+            .duplicate_request(
+                created.meta.request_id,
+                "Get User (Copy)",
+                RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+            )
             .expect("duplicate request");
 
         assert_ne!(duplicated.meta.request_id, created.meta.request_id);

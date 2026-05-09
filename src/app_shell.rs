@@ -250,6 +250,61 @@ impl CollectionsTreeState {
         }
         out
     }
+
+    pub fn insert_request_child(
+        &mut self,
+        parent_id: Ulid,
+        request_id: Ulid,
+        name: String,
+        method: HttpMethod,
+        url: String,
+    ) {
+        if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.children.push(request_id);
+        }
+        self.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name,
+                kind: TreeNodeKind::Request,
+                request_method: Some(method),
+                request_url: Some(url),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+    }
+
+    pub fn insert_request_child_after(
+        &mut self,
+        parent_id: Ulid,
+        after_request_id: Ulid,
+        request_id: Ulid,
+        name: String,
+        method: HttpMethod,
+        url: String,
+    ) {
+        if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            if let Some(index) = parent.children.iter().position(|&id| id == after_request_id) {
+                parent.children.insert(index + 1, request_id);
+            } else {
+                parent.children.push(request_id);
+            }
+        }
+        self.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name,
+                kind: TreeNodeKind::Request,
+                request_method: Some(method),
+                request_url: Some(url),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
