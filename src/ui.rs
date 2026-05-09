@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
@@ -955,6 +956,20 @@ impl Render for TreeRenameDialogView {
 }
 
 impl BeamView {
+    fn send_button_state_for_view(&self) -> SendButtonState {
+        let state = self.request.send_button_state();
+        if matches!(
+            state,
+            SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::InvalidUrl)
+        ) && self.selected_environment_id_for_view().is_some()
+            && self.request.url.contains("{{")
+            && self.request.url.contains("}}")
+        {
+            return SendButtonState::Ready;
+        }
+        state
+    }
+
     fn format_human_timestamp(timestamp: &str) -> String {
         chrono::DateTime::parse_from_rfc3339(timestamp)
             .map(|parsed| {
@@ -3122,19 +3137,21 @@ impl BeamView {
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.request.send_button_state(), SendButtonState::Ready) {
-            return;
-        }
-
         let latest_script = self.post_script_editor.read(cx).value().to_string();
         self.request.post_script = (!latest_script.trim().is_empty()).then_some(latest_script);
-        self.request.is_sending = true;
         let request_id = self.shell.collections.selected_request_id();
         let selected_environment_id = self.selected_environment_id_for_view();
+        let (environment_path, environment_variables) =
+            Self::load_environment_for_script(selected_environment_id);
+        let request_snapshot =
+            resolve_request_with_environment(self.request.clone(), &environment_variables);
+        if !matches!(request_snapshot.send_button_state(), SendButtonState::Ready) {
+            return;
+        }
+        self.request.is_sending = true;
         self.response_status = "Sending...".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
-        let request_snapshot = self.request.clone();
         let view = cx.entity();
 
         cx.spawn_in(window, async move |_, cx| {
@@ -3144,7 +3161,8 @@ impl BeamView {
                     Self::execute_request_with_script(
                         request_snapshot,
                         request_id,
-                        selected_environment_id,
+                        environment_path,
+                        environment_variables,
                     )
                 })
                 .await;
@@ -3195,7 +3213,8 @@ impl BeamView {
     fn execute_request_with_script(
         request: RequestAuthoringState,
         request_id: Option<Ulid>,
-        selected_environment_id: Option<Ulid>,
+        environment_path: Option<PathBuf>,
+        environment_variables: Vec<EnvironmentVariable>,
     ) -> SendRequestOutcome {
         let response = execute_http_request(request.clone());
         let script_text = request.post_script.clone().unwrap_or_default();
@@ -3206,8 +3225,6 @@ impl BeamView {
             };
         }
 
-        let (environment_path, environment_variables) =
-            Self::load_environment_for_script(selected_environment_id);
         let runtime_response = ScriptRuntimeResponse {
             status: Self::parse_response_status_code(&response.status).unwrap_or(0),
             status_text: response.status.clone(),
@@ -4186,7 +4203,7 @@ impl BeamView {
     }
 
     fn render_url_bar(&self, cx: &mut Context<Self>) -> Div {
-        let send_state = self.request.send_button_state();
+        let send_state = self.send_button_state_for_view();
         let send_disabled = !matches!(send_state, SendButtonState::Ready);
         let current_method = self.request.method;
         let url_has_selection = !self.url_input.read(cx).selected_range().is_empty();
@@ -6020,6 +6037,119 @@ fn shared_http_client() -> Result<&'static Client, String> {
         })
         .as_ref()
         .map_err(Clone::clone)
+}
+
+fn resolve_request_with_environment(
+    mut request: RequestAuthoringState,
+    environment_variables: &[EnvironmentVariable],
+) -> RequestAuthoringState {
+    let resolved_env = build_enabled_environment_lookup(environment_variables);
+    request.url = resolve_template_variables(&request.url, &resolved_env);
+
+    for header in &mut request.headers {
+        header.name = resolve_template_variables(&header.name, &resolved_env);
+        header.value = resolve_template_variables(&header.value, &resolved_env);
+    }
+
+    for param in &mut request.query_params {
+        param.name = resolve_template_variables(&param.name, &resolved_env);
+        param.value = resolve_template_variables(&param.value, &resolved_env);
+    }
+
+    match &mut request.auth {
+        AuthConfig::None => {}
+        AuthConfig::Bearer { token } => {
+            if let Some(value) = token.as_mut() {
+                *value = resolve_template_variables(value, &resolved_env);
+            }
+        }
+        AuthConfig::Basic { username, password } => {
+            if let Some(value) = username.as_mut() {
+                *value = resolve_template_variables(value, &resolved_env);
+            }
+            if let Some(value) = password.as_mut() {
+                *value = resolve_template_variables(value, &resolved_env);
+            }
+        }
+        AuthConfig::ApiKey { key, value, .. } => {
+            if let Some(key_value) = key.as_mut() {
+                *key_value = resolve_template_variables(key_value, &resolved_env);
+            }
+            if let Some(auth_value) = value.as_mut() {
+                *auth_value = resolve_template_variables(auth_value, &resolved_env);
+            }
+        }
+    }
+
+    match &mut request.body {
+        BodyConfig::None => {}
+        BodyConfig::Raw { media_type, text } => {
+            if let Some(content_type) = media_type.as_mut() {
+                *content_type = resolve_template_variables(content_type, &resolved_env);
+            }
+            *text = resolve_template_variables(text, &resolved_env);
+        }
+        BodyConfig::Json { text } | BodyConfig::Xml { text } => {
+            *text = resolve_template_variables(text, &resolved_env);
+        }
+        BodyConfig::FormUrlEncoded { fields } | BodyConfig::Multipart { fields } => {
+            for field in fields {
+                field.name = resolve_template_variables(&field.name, &resolved_env);
+                field.value = resolve_template_variables(&field.value, &resolved_env);
+            }
+        }
+        BodyConfig::Graphql {
+            query,
+            variables_json,
+        } => {
+            *query = resolve_template_variables(query, &resolved_env);
+            if let Some(variables_text) = variables_json.as_mut() {
+                *variables_text = resolve_template_variables(variables_text, &resolved_env);
+            }
+        }
+    }
+
+    request
+}
+
+fn build_enabled_environment_lookup(
+    environment_variables: &[EnvironmentVariable],
+) -> HashMap<String, String> {
+    environment_variables
+        .iter()
+        .filter(|entry| entry.enabled)
+        .filter_map(|entry| {
+            let name = entry.name.trim();
+            (!name.is_empty()).then_some((name.to_string(), entry.value.clone()))
+        })
+        .collect()
+}
+
+fn resolve_template_variables(input: &str, resolved_env: &HashMap<String, String>) -> String {
+    let mut output = String::new();
+    let mut index = 0usize;
+
+    while let Some(start_offset) = input[index..].find("{{") {
+        let start = index + start_offset;
+        output.push_str(&input[index..start]);
+
+        let token_start = start + 2;
+        let Some(end_offset) = input[token_start..].find("}}") else {
+            output.push_str(&input[start..]);
+            return output;
+        };
+        let end = token_start + end_offset;
+        let variable_name = input[token_start..end].trim();
+        if let Some(value) = resolved_env.get(variable_name) {
+            output.push_str(value);
+        } else {
+            output.push_str(&input[start..end + 2]);
+        }
+        index = end + 2;
+    }
+
+    output.push_str(&input[index..]);
+    output
 }
 
 fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
