@@ -3916,47 +3916,48 @@ impl BeamView {
         let mut tabs = h_flex().items_center().gap_1().w_full();
         let body_tab_view = cx.entity();
         let current_body_format = Self::body_format_from_config(&self.request.body);
-        tabs = tabs.child(
-            Button::new("tab-Body")
-                .small()
-                .ghost()
-                .selected(self.request.active_tab == RequestTab::Body)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.request.active_tab = RequestTab::Body;
-                    this.request_body_editor.update(cx, |state, cx| {
-                        state.focus(window, cx);
-                    });
-                }))
-                .child(
-                    h_flex().items_center().gap_1().child("Body").child(
-                        Icon::default()
-                            .path("icons/chevron-down.svg")
-                            .size(px(12.0))
-                            .text_color(rgb(0x6b7280)),
-                    ),
-                )
-                .dropdown_menu(move |menu, window, _| {
-                    let mut menu = menu.min_w(px(180.0));
-                    for format in Self::supported_body_formats() {
-                        let item_label = Self::body_format_label(format);
-                        let checked = format == current_body_format;
-                        let format_view = body_tab_view.clone();
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                div().w_full().cursor_pointer().child(item_label)
-                            })
-                            .checked(checked)
-                            .on_click(window.listener_for(
-                                &format_view,
-                                move |this, _, window, cx| {
-                                    this.set_request_body_format(format, window, cx);
-                                },
-                            )),
-                        );
-                    }
-                    menu
-                }),
-        );
+        let body_tab_button = Button::new("tab-Body")
+            .small()
+            .ghost()
+            .selected(self.request.active_tab == RequestTab::Body)
+            .child(
+                h_flex().items_center().gap_1().child("Body").child(
+                    Icon::default()
+                        .path("icons/chevron-down.svg")
+                        .size(px(12.0))
+                        .text_color(rgb(0x6b7280)),
+                ),
+            );
+        if self.request.active_tab == RequestTab::Body {
+            tabs = tabs.child(body_tab_button.dropdown_menu(move |menu, window, _| {
+                let mut menu = menu.min_w(px(180.0));
+                for format in Self::supported_body_formats() {
+                    let item_label = Self::body_format_label(format);
+                    let checked = format == current_body_format;
+                    let format_view = body_tab_view.clone();
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            div().w_full().cursor_pointer().child(item_label)
+                        })
+                        .checked(checked)
+                        .on_click(window.listener_for(
+                            &format_view,
+                            move |this, _, window, cx| {
+                                this.set_request_body_format(format, window, cx);
+                            },
+                        )),
+                    );
+                }
+                menu
+            }));
+        } else {
+            tabs = tabs.child(body_tab_button.on_click(cx.listener(|this, _, window, cx| {
+                this.request.active_tab = RequestTab::Body;
+                this.request_body_editor.update(cx, |state, cx| {
+                    state.focus(window, cx);
+                });
+            })));
+        }
 
         let tab_specs = [
             (RequestTab::Params, "Params"),
