@@ -2952,10 +2952,12 @@ impl BeamView {
                 move |this, _, ev: &InputEvent, window, cx| match ev {
                     InputEvent::Change => {
                         this.request.url = url_input.read(cx).value().to_string();
+                        this.schedule_request_save(cx);
                         cx.notify();
                     }
                     InputEvent::PressEnter { .. } => {
                         this.request.url = url_input.read(cx).value().to_string();
+                        this.schedule_request_save(cx);
                         this.send_request(window, cx);
                         cx.notify();
                     }
@@ -3391,7 +3393,10 @@ impl BeamView {
 
     fn body_with_updated_text(current: &BodyConfig, text: String) -> BodyConfig {
         match current {
-            BodyConfig::None => BodyConfig::None,
+            BodyConfig::None => BodyConfig::Raw {
+                media_type: None,
+                text,
+            },
             BodyConfig::Raw { media_type, .. } => BodyConfig::Raw {
                 media_type: media_type.clone(),
                 text,
@@ -4139,6 +4144,7 @@ impl BeamView {
                                                     &method_view,
                                                     move |this, _, _, cx| {
                                                         this.request.method = method;
+                                                        this.schedule_request_save(cx);
                                                         cx.notify();
                                                     },
                                                 )),
