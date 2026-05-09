@@ -150,7 +150,7 @@ struct EnvironmentTomlMeta {
     updated_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize, Default)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 struct RequestHistoryFile {
     #[serde(default)]
     meta: Option<RequestHistoryMeta>,
@@ -158,7 +158,7 @@ struct RequestHistoryFile {
     executions: Vec<RequestHistoryExecution>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct RequestHistoryMeta {
     request_id: String,
     #[serde(default)]
@@ -167,14 +167,14 @@ struct RequestHistoryMeta {
     updated_at: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct RequestHistoryExecution {
     status: Option<u16>,
     duration_ms: Option<u64>,
     response_summary: Option<RequestHistoryResponseSummary>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct RequestHistoryResponseSummary {
     body_bytes: Option<u64>,
     body_ref: Option<String>,
@@ -184,7 +184,7 @@ struct RequestHistoryResponseSummary {
     headers: Vec<RequestHistoryHeader>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct RequestHistoryHeader {
     name: String,
     value: String,
@@ -2885,6 +2885,7 @@ impl BeamView {
         }
 
         self.request.is_sending = true;
+        let request_id = self.shell.collections.selected_request_id();
         self.response_status = "Sending...".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
@@ -2899,19 +2900,86 @@ impl BeamView {
 
             let _ = view.update_in(cx, |this, window, cx| {
                 this.request.is_sending = false;
-                this.response_status = response.status;
-                this.response_time = response.time;
-                this.response_size = response.size;
+                let response_status = response.status.clone();
+                let response_time = response.time.clone();
+                let response_size = response.size.clone();
+                let response_body = response.body.clone();
+                let response_headers = response.headers.clone();
+                this.response_status = response_status;
+                this.response_time = response_time;
+                this.response_size = response_size;
                 this.response_body_editor.update(cx, |input, cx| {
-                    input.set_value(response.body, window, cx);
+                    input.set_value(response_body.clone(), window, cx);
                 });
-                this.response_headers_raw = response.headers;
+                this.response_headers_raw = response_headers;
+                if let Some(request_id) = request_id {
+                    if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
+                        eprintln!("Failed to persist response snapshot: {error}");
+                    }
+                }
                 cx.notify();
             });
         })
         .detach();
 
         cx.notify();
+    }
+
+    fn persist_response_snapshot(request_id: Ulid, response: &HttpResponseView) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let history_dir = paths.local_dir.join("history");
+        let by_request_dir = history_dir.join("by-request");
+        let responses_dir = history_dir.join("responses");
+        fs::create_dir_all(&by_request_dir)
+            .map_err(|error| format!("Failed to create history directory: {error}"))?;
+        fs::create_dir_all(&responses_dir)
+            .map_err(|error| format!("Failed to create responses directory: {error}"))?;
+
+        let history_path = by_request_dir.join(format!("{request_id}.history.toml"));
+        let mut history_file = fs::read_to_string(&history_path)
+            .ok()
+            .and_then(|content| toml::from_str::<RequestHistoryFile>(&content).ok())
+            .unwrap_or_default();
+
+        let execution_id = Ulid::new().to_string();
+        let body_ref = format!("{execution_id}.response.bin");
+        fs::write(responses_dir.join(&body_ref), response.body.as_bytes())
+            .map_err(|error| format!("Failed to write response body: {error}"))?;
+
+        history_file.meta = Some(RequestHistoryMeta {
+            request_id: request_id.to_string(),
+            schema_version: Some(1),
+            updated_at: Some(Utc::now().to_rfc3339()),
+        });
+        history_file.executions.push(RequestHistoryExecution {
+            status: Self::parse_response_status_code(&response.status),
+            duration_ms: Self::parse_response_duration_ms(&response.time),
+            response_summary: Some(RequestHistoryResponseSummary {
+                body_bytes: Some(response.body.len() as u64),
+                body_ref: Some(body_ref),
+                body_truncated: false,
+                headers: Self::parse_response_headers(&response.headers)
+                    .into_iter()
+                    .map(|(name, value)| RequestHistoryHeader { name, value })
+                    .collect(),
+            }),
+        });
+
+        let content = toml::to_string_pretty(&history_file)
+            .map_err(|error| format!("Failed to encode history file: {error}"))?;
+        fs::write(history_path, content).map_err(|error| format!("Failed to write history file: {error}"))
+    }
+
+    fn parse_response_status_code(status: &str) -> Option<u16> {
+        status
+            .split_whitespace()
+            .next()
+            .and_then(|token| token.parse::<u16>().ok())
+    }
+
+    fn parse_response_duration_ms(time: &str) -> Option<u64> {
+        time.strip_suffix(" ms")
+            .and_then(|value| value.trim().parse::<u64>().ok())
     }
 
     fn body_editor_text(body: &BodyConfig) -> String {
