@@ -4662,7 +4662,10 @@ impl BeamView {
 
     fn render_request_editor_surface(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.request.active_tab {
-            RequestTab::Body => Input::new(&self.request_body_editor)
+            RequestTab::Body => {
+                let request_body_has_selection =
+                    !self.request_body_editor.read(cx).selected_range().is_empty();
+                Input::new(&self.request_body_editor)
                 .h_full()
                 .p_0()
                 .border_0()
@@ -4757,7 +4760,8 @@ impl BeamView {
                                         window,
                                         cx,
                                     );
-                                })),
+                                }))
+                                .disabled(!request_body_has_selection),
                             )
                             .item(
                                 PopupMenuItem::element(move |_, _| {
@@ -4789,7 +4793,8 @@ impl BeamView {
                                         window,
                                         cx,
                                     );
-                                })),
+                                }))
+                                .disabled(!request_body_has_selection),
                             )
                             .item(
                                 PopupMenuItem::element(move |_, _| {
@@ -4858,7 +4863,8 @@ impl BeamView {
                             )
                     }
                 })
-                .into_any_element(),
+                .into_any_element()
+            }
             RequestTab::PostScript => self.render_post_script_editor_and_results(window, cx),
             RequestTab::Params => {
                 let mut table = v_flex().h_full().w_full().gap_2();
@@ -5386,6 +5392,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let post_script_has_selection = !self.post_script_editor.read(cx).selected_range().is_empty();
         // TODO: Keep this as a single parent card with one divider between editor/results.
         // It avoids double-border overlap and is less error-prone than separate bordered panes.
         v_flex()
@@ -5453,7 +5460,8 @@ impl BeamView {
                                                         )
                                                         .child("Cut")
                                                 })
-                                                    .action(Box::new(input::Cut)),
+                                                    .action(Box::new(input::Cut))
+                                                    .disabled(!post_script_has_selection),
                                             )
                                             .item(
                                                 PopupMenuItem::element(move |_, _| {
@@ -5472,7 +5480,8 @@ impl BeamView {
                                                         )
                                                         .child("Copy")
                                                 })
-                                                    .action(Box::new(input::Copy)),
+                                                    .action(Box::new(input::Copy))
+                                                    .disabled(!post_script_has_selection),
                                             )
                                             .item(
                                                 PopupMenuItem::element(move |_, _| {
@@ -5590,7 +5599,10 @@ impl BeamView {
 
     fn render_response_editor_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         match self.active_response_tab {
-            ResponseTab::Body => Input::new(&self.response_body_editor)
+            ResponseTab::Body => {
+                let response_body_has_selection =
+                    !self.response_body_editor.read(cx).selected_range().is_empty();
+                Input::new(&self.response_body_editor)
                 .h_full()
                 .p_0()
                 .border_0()
@@ -5654,7 +5666,8 @@ impl BeamView {
                                         window,
                                         cx,
                                     );
-                                })),
+                                }))
+                                .disabled(!response_body_has_selection),
                             )
                             .item(
                                 PopupMenuItem::element(move |_, _| {
@@ -5686,7 +5699,8 @@ impl BeamView {
                                         window,
                                         cx,
                                     );
-                                })),
+                                }))
+                                .disabled(!response_body_has_selection),
                             )
                             .item(
                                 PopupMenuItem::element(move |_, _| {
@@ -5755,7 +5769,8 @@ impl BeamView {
                             )
                     }
                 })
-                .into_any_element(),
+                .into_any_element()
+            }
             ResponseTab::Headers => self.render_response_headers_table(),
         }
     }
