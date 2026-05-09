@@ -956,6 +956,10 @@ impl Render for TreeRenameDialogView {
 }
 
 impl BeamView {
+    fn no_environment_selection_marker() -> Ulid {
+        Ulid::nil()
+    }
+
     fn send_button_state_for_view(&self) -> SendButtonState {
         let state = self.request.send_button_state();
         if matches!(
@@ -1027,6 +1031,9 @@ impl BeamView {
                 .get(&collection_id)
                 .copied()
             {
+                if collection_environment_id == Self::no_environment_selection_marker() {
+                    return None;
+                }
                 return Some(collection_environment_id);
             }
         }
@@ -4318,7 +4325,11 @@ impl BeamView {
                         let mut menu = menu.min_w(px(220.));
                         let environment_view = environment_view.clone();
 
-                        let no_env_selected = selected_environment_id.is_none();
+                        let no_env_selected = selected_environment_id.is_none_or(|selected_id| {
+                            !environment_options
+                                .iter()
+                                .any(|(environment_id, _, _)| *environment_id == selected_id)
+                        });
                         menu = menu.item(
                             PopupMenuItem::element(move |_, _| {
                                 div().w_full().cursor_pointer().child("No environment")
@@ -4331,7 +4342,10 @@ impl BeamView {
                                         this.shell
                                             .environment_selection
                                             .active_collection_environment_ids
-                                            .remove(&collection_id);
+                                            .insert(
+                                                collection_id,
+                                                Self::no_environment_selection_marker(),
+                                            );
                                     } else {
                                         this.shell
                                             .environment_selection
@@ -4376,7 +4390,10 @@ impl BeamView {
                             );
                         }
                         menu = menu.separator().item(
-                            PopupMenuItem::new("Manage environment").on_click(window.listener_for(
+                            PopupMenuItem::element(move |_, _| {
+                                div().w_full().cursor_pointer().child("Manage environment")
+                            })
+                            .on_click(window.listener_for(
                                 &environment_view,
                                 move |this, _, window, cx| {
                                     this.open_environment_manager(window, cx);
