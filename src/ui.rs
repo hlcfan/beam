@@ -8,7 +8,7 @@ use gpui_component::{
     ActiveTheme, Disableable, Icon, Root, Selectable, Sizable, StyledExt, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
-    input::{Input, InputEvent, InputState, Position, TabSize},
+    input::{self, Input, InputEvent, InputState, Position, TabSize},
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
@@ -2933,6 +2933,88 @@ impl BeamView {
         cx.notify();
     }
 
+    fn dispatch_request_body_editor_action(
+        &mut self,
+        action: Box<dyn Action>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request.active_tab = RequestTab::Body;
+        self.request_body_editor.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+        window.dispatch_action(action, cx);
+    }
+
+    fn format_request_body_text(body: &BodyConfig, text: &str) -> Result<String, String> {
+        match body {
+            BodyConfig::Json { .. } => {
+                let value = serde_json::from_str::<serde_json::Value>(text)
+                    .map_err(|err| format!("Unable to format JSON body: {err}"))?;
+                serde_json::to_string_pretty(&value)
+                    .map_err(|err| format!("Unable to format JSON body: {err}"))
+            }
+            BodyConfig::Graphql { .. } => {
+                let (query, variables_json) = Self::parse_graphql_editor_text(text);
+                let query = query.trim().to_string();
+                let formatted_variables = if let Some(variables) = variables_json {
+                    let trimmed = variables.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        let value = serde_json::from_str::<serde_json::Value>(trimmed)
+                            .map_err(|err| format!("Unable to format GraphQL variables JSON: {err}"))?;
+                        Some(
+                            serde_json::to_string_pretty(&value)
+                                .map_err(|err| format!("Unable to format GraphQL variables JSON: {err}"))?,
+                        )
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(variables) = formatted_variables {
+                    Ok(format!("query:\n{query}\n\nvariables:\n{variables}"))
+                } else {
+                    Ok(query)
+                }
+            }
+            BodyConfig::FormUrlEncoded { .. } | BodyConfig::Multipart { .. } => {
+                let formatted = Self::parse_form_body_fields(text)
+                    .into_iter()
+                    .map(|field| format!("{}={}", field.name.trim(), field.value.trim()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(formatted)
+            }
+            _ => Err("Formatting is only supported for JSON, GraphQL, and form bodies.".into()),
+        }
+    }
+
+    fn format_request_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current_text = self.request_body_editor.read(cx).value().to_string();
+        let formatted = match Self::format_request_body_text(&self.request.body, &current_text) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                window.push_notification(error, cx);
+                return;
+            }
+        };
+
+        if formatted == current_text {
+            return;
+        }
+
+        self.request.body = Self::body_with_updated_text(&self.request.body, formatted.clone());
+        self.request.active_tab = RequestTab::Body;
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_value(formatted, window, cx);
+            input.focus(window, cx);
+        });
+        self.schedule_request_save(cx);
+        cx.notify();
+    }
+
     fn body_editor_language(body: &BodyConfig) -> &'static str {
         match body {
             BodyConfig::Json { .. } => "json",
@@ -3881,6 +3963,82 @@ impl BeamView {
                 .focus_bordered(false)
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_size(cx.theme().mono_font_size)
+                .context_menu({
+                    let view = cx.entity();
+                    move |menu, window, _| {
+                        menu.min_w(px(180.0))
+                            .item(
+                                PopupMenuItem::new("Format").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.format_request_body(window, cx);
+                                    },
+                                )),
+                            )
+                            .item(
+                                PopupMenuItem::new("Find").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::Search),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new("Cut").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::Cut),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .item(
+                                PopupMenuItem::new("Copy").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::Copy),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .item(
+                                PopupMenuItem::new("Paste").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::Paste),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::new("Select All").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::SelectAll),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                    }
+                })
                 .into_any_element(),
             RequestTab::PostScript => Input::new(&self.post_script_editor)
                 .h_full()
