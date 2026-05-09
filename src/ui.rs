@@ -9,7 +9,7 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{self, Input, InputEvent, InputState, Position, TabSize},
-    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     text::html,
@@ -31,8 +31,8 @@ use crate::request_authoring::{
     RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, validate_rename,
 };
 use crate::script::{
-    ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult, ScriptRuntimeResponse,
-    TestResult, execute_post_request_script,
+    ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult,
+    ScriptRuntimeResponse, TestResult, execute_post_request_script,
 };
 use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
@@ -118,7 +118,8 @@ enum RequestBodyFormat {
 
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
 const RESPONSE_BODY_PLACEHOLDER: &str = "// Send a request to view the response body.";
-const RESPONSE_BODY_TRUNCATED_NOTE: &str = "[Response body omitted from local history (truncated).]";
+const RESPONSE_BODY_TRUNCATED_NOTE: &str =
+    "[Response body omitted from local history (truncated).]";
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 struct PersistedScriptResult {
@@ -889,7 +890,12 @@ impl Render for TreeRenameDialogView {
 impl BeamView {
     fn format_human_timestamp(timestamp: &str) -> String {
         chrono::DateTime::parse_from_rfc3339(timestamp)
-            .map(|parsed| parsed.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string())
+            .map(|parsed| {
+                parsed
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
             .unwrap_or_else(|_| timestamp.to_string())
     }
 
@@ -1319,7 +1325,8 @@ impl BeamView {
 
     fn script_result_file_path(request_id: Ulid) -> PathBuf {
         let paths = BeamPaths::default_user_config();
-        paths.local_dir
+        paths
+            .local_dir
             .join("script_results")
             .join(format!("{request_id}.toml"))
     }
@@ -1331,7 +1338,10 @@ impl BeamView {
         (parsed.request_id == request_id.to_string()).then_some(parsed)
     }
 
-    fn persist_script_result(request_id: Ulid, result: &PersistedScriptResult) -> Result<(), String> {
+    fn persist_script_result(
+        request_id: Ulid,
+        result: &PersistedScriptResult,
+    ) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let dir = paths.local_dir.join("script_results");
         fs::create_dir_all(&dir)
@@ -1345,7 +1355,8 @@ impl BeamView {
     fn clear_script_result_for_request(request_id: Ulid) -> Result<(), String> {
         let path = Self::script_result_file_path(request_id);
         if path.exists() {
-            fs::remove_file(path).map_err(|error| format!("Failed to clear script result: {error}"))?;
+            fs::remove_file(path)
+                .map_err(|error| format!("Failed to clear script result: {error}"))?;
         }
         Ok(())
     }
@@ -3021,7 +3032,9 @@ impl BeamView {
                     }
                     match outcome.script_result.as_ref() {
                         Some(script_result) => {
-                            if let Err(error) = Self::persist_script_result(request_id, script_result) {
+                            if let Err(error) =
+                                Self::persist_script_result(request_id, script_result)
+                            {
                                 eprintln!("Failed to persist script result: {error}");
                             }
                         }
@@ -3078,7 +3091,10 @@ impl BeamView {
             .unwrap_or_else(|| "unknown-request".to_string());
         SendRequestOutcome {
             response,
-            script_result: Some(Self::to_persisted_script_result(&script_exec_result, request_id_text)),
+            script_result: Some(Self::to_persisted_script_result(
+                &script_exec_result,
+                request_id_text,
+            )),
         }
     }
 
@@ -3169,7 +3185,10 @@ impl BeamView {
         }
     }
 
-    fn persist_response_snapshot(request_id: Ulid, response: &HttpResponseView) -> Result<(), String> {
+    fn persist_response_snapshot(
+        request_id: Ulid,
+        response: &HttpResponseView,
+    ) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let history_dir = paths.local_dir.join("history");
         let by_request_dir = history_dir.join("by-request");
@@ -3211,7 +3230,8 @@ impl BeamView {
 
         let content = toml::to_string_pretty(&history_file)
             .map_err(|error| format!("Failed to encode history file: {error}"))?;
-        fs::write(history_path, content).map_err(|error| format!("Failed to write history file: {error}"))
+        fs::write(history_path, content)
+            .map_err(|error| format!("Failed to write history file: {error}"))
     }
 
     fn parse_response_status_code(status: &str) -> Option<u16> {
@@ -3417,12 +3437,13 @@ impl BeamView {
                     if trimmed.is_empty() {
                         None
                     } else {
-                        let value = serde_json::from_str::<serde_json::Value>(trimmed)
-                            .map_err(|err| format!("Unable to format GraphQL variables JSON: {err}"))?;
-                        Some(
-                            serde_json::to_string_pretty(&value)
-                                .map_err(|err| format!("Unable to format GraphQL variables JSON: {err}"))?,
-                        )
+                        let value =
+                            serde_json::from_str::<serde_json::Value>(trimmed).map_err(|err| {
+                                format!("Unable to format GraphQL variables JSON: {err}")
+                            })?;
+                        Some(serde_json::to_string_pretty(&value).map_err(|err| {
+                            format!("Unable to format GraphQL variables JSON: {err}")
+                        })?)
                     }
                 } else {
                     None
@@ -3478,7 +3499,9 @@ impl BeamView {
                         window.push_notification(
                             (
                                 gpui_component::notification::NotificationType::Error,
-                                SharedString::from(format!("Failed to format request body: {error}")),
+                                SharedString::from(format!(
+                                    "Failed to format request body: {error}"
+                                )),
                             ),
                             cx,
                         );
@@ -3493,7 +3516,8 @@ impl BeamView {
                     return;
                 }
 
-                this.request.body = Self::body_with_updated_text(&this.request.body, formatted.clone());
+                this.request.body =
+                    Self::body_with_updated_text(&this.request.body, formatted.clone());
                 this.request.active_tab = RequestTab::Body;
                 this.request_body_editor.update(cx, |input, cx| {
                     input.set_value(formatted, window, cx);
@@ -4632,13 +4656,7 @@ impl BeamView {
                 .items_center()
                 .gap_1()
                 .child("Post Script")
-                .child(
-                    div()
-                        .w(px(6.0))
-                        .h(px(6.0))
-                        .rounded_full()
-                        .bg(color),
-                )
+                .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(color))
         } else {
             h_flex().items_center().gap_1().child("Post Script")
         };
@@ -4660,210 +4678,337 @@ impl BeamView {
         tabs
     }
 
-    fn render_request_editor_surface(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn context_menu_item_row(
+        label: &'static str,
+        icon_path: &'static str,
+        shortcut: &'static str,
+    ) -> Div {
+        h_flex()
+            .w_full()
+            .cursor_pointer()
+            .items_center()
+            .justify_between()
+            .gap_3()
+            .px_2()
+            .py_1()
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        Icon::default()
+                            .path(icon_path)
+                            .size(px(14.0))
+                            .text_color(rgb(0x6b7280)),
+                    )
+                    .child(label),
+            )
+            .child(div().text_xs().text_color(rgb(0x9ca3af)).child(shortcut))
+    }
+
+    fn context_menu_action_item(
+        label: &'static str,
+        icon_path: &'static str,
+        shortcut: &'static str,
+        action: Box<dyn Action>,
+        disabled: bool,
+    ) -> PopupMenuItem {
+        PopupMenuItem::element(move |_, _| Self::context_menu_item_row(label, icon_path, shortcut))
+            .action(action)
+            .disabled(disabled)
+    }
+
+    fn build_text_edit_context_menu(menu: PopupMenu, has_selection: bool) -> PopupMenu {
+        menu.min_w(px(180.0))
+            .item(Self::context_menu_action_item(
+                "Cut",
+                "icons/cut.svg",
+                "Cmd+X",
+                Box::new(input::Cut),
+                !has_selection,
+            ))
+            .item(Self::context_menu_action_item(
+                "Copy",
+                "icons/copy.svg",
+                "Cmd+C",
+                Box::new(input::Copy),
+                !has_selection,
+            ))
+            .item(Self::context_menu_action_item(
+                "Paste",
+                "icons/clipboard-paste.svg",
+                "Cmd+V",
+                Box::new(input::Paste),
+                false,
+            ))
+            .separator()
+            .item(Self::context_menu_action_item(
+                "Select All",
+                "icons/square-dashed-text.svg",
+                "Cmd+A",
+                Box::new(input::SelectAll),
+                false,
+            ))
+    }
+
+    fn build_text_edit_context_menu_with_find(menu: PopupMenu, has_selection: bool) -> PopupMenu {
+        let menu = menu
+            .min_w(px(180.0))
+            .item(Self::context_menu_action_item(
+                "Find",
+                "icons/search.svg",
+                "Cmd+F",
+                Box::new(input::Search),
+                false,
+            ))
+            .separator();
+        Self::build_text_edit_context_menu(menu, has_selection)
+    }
+
+    fn render_request_editor_surface(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         match self.request.active_tab {
             RequestTab::Body => {
-                let request_body_has_selection =
-                    !self.request_body_editor.read(cx).selected_range().is_empty();
+                let request_body_has_selection = !self
+                    .request_body_editor
+                    .read(cx)
+                    .selected_range()
+                    .is_empty();
                 Input::new(&self.request_body_editor)
-                .h_full()
-                .p_0()
-                .border_0()
-                .focus_bordered(false)
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_size(cx.theme().mono_font_size)
-                .context_menu({
-                    let view = cx.entity();
-                    move |menu, window, _| {
-                        menu.min_w(px(180.0))
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .gap_2()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            Icon::default()
-                                                .path("icons/indent.svg")
-                                                .size(px(14.0))
-                                                .text_color(rgb(0x6b7280)),
-                                        )
-                                        .child("Format")
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.format_request_body(window, cx);
-                                })),
-                            )
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/search.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Find"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+F"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_request_body_editor_action(
-                                        Box::new(input::Search),
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                            )
-                            .separator()
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/cut.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Cut"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+X"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_request_body_editor_action(
-                                        Box::new(input::Cut),
-                                        window,
-                                        cx,
-                                    );
-                                }))
-                                .disabled(!request_body_has_selection),
-                            )
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/copy.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Copy"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+C"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_request_body_editor_action(
-                                        Box::new(input::Copy),
-                                        window,
-                                        cx,
-                                    );
-                                }))
-                                .disabled(!request_body_has_selection),
-                            )
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/clipboard-paste.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Paste"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+V"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_request_body_editor_action(
-                                        Box::new(input::Paste),
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                            )
-                            .separator()
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/square-dashed-text.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Select All"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+A"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_request_body_editor_action(
-                                        Box::new(input::SelectAll),
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                            )
-                    }
-                })
-                .into_any_element()
+                    .h_full()
+                    .p_0()
+                    .border_0()
+                    .focus_bordered(false)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(cx.theme().mono_font_size)
+                    .context_menu({
+                        let view = cx.entity();
+                        move |menu, window, _| {
+                            menu.min_w(px(180.0))
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .gap_2()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                Icon::default()
+                                                    .path("icons/indent.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(rgb(0x6b7280)),
+                                            )
+                                            .child("Format")
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.format_request_body(window, cx);
+                                        }),
+                                    ),
+                                )
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/search.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Find"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+F"),
+                                            )
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.dispatch_request_body_editor_action(
+                                                Box::new(input::Search),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                                .separator()
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/cut.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Cut"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+X"),
+                                            )
+                                    })
+                                    .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::Cut),
+                                            window,
+                                            cx,
+                                        );
+                                    }))
+                                    .disabled(!request_body_has_selection),
+                                )
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/copy.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Copy"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+C"),
+                                            )
+                                    })
+                                    .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                        this.dispatch_request_body_editor_action(
+                                            Box::new(input::Copy),
+                                            window,
+                                            cx,
+                                        );
+                                    }))
+                                    .disabled(!request_body_has_selection),
+                                )
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/clipboard-paste.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Paste"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+V"),
+                                            )
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.dispatch_request_body_editor_action(
+                                                Box::new(input::Paste),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                                .separator()
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/square-dashed-text.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Select All"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+A"),
+                                            )
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.dispatch_request_body_editor_action(
+                                                Box::new(input::SelectAll),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                        }
+                    })
+                    .into_any_element()
             }
             RequestTab::PostScript => self.render_post_script_editor_and_results(window, cx),
             RequestTab::Params => {
@@ -4872,63 +5017,90 @@ impl BeamView {
                 for (index, param) in self.request.query_params.iter().enumerate() {
                     let key_input = self.request_param_name_inputs[index].clone();
                     let value_input = self.request_param_value_inputs[index].clone();
-                    table =
-                        table.child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_2()
-                                .px_2()
-                                .py_1()
-                                .rounded(px(6.0))
-                                .border_1()
-                                .border_color(rgb(0xe5e7eb))
-                                .child(
-                                    div().w(px(28.0)).child(
-                                        gpui_component::checkbox::Checkbox::new(format!(
-                                            "request-param-enabled-{index}"
-                                        ))
+                    let key_has_selection = !key_input.read(cx).selected_range().is_empty();
+                    let value_has_selection = !value_input.read(cx).selected_range().is_empty();
+                    table = table.child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(rgb(0xe5e7eb))
+                            .child(
+                                div().w(px(28.0)).child(
+                                    gpui_component::checkbox::Checkbox::new(format!(
+                                        "request-param-enabled-{index}"
+                                    ))
+                                    .small()
+                                    .checked(param.enabled)
+                                    .on_click(cx.listener(
+                                        move |this, checked: &bool, _, cx| {
+                                            if let Some(item) =
+                                                this.request.query_params.get_mut(index)
+                                            {
+                                                item.enabled = *checked;
+                                                this.schedule_request_save(cx);
+                                                cx.notify();
+                                            }
+                                        },
+                                    )),
+                                ),
+                            )
+                            .child(
+                                div().flex_1().child(
+                                    Input::new(&key_input)
                                         .small()
-                                        .checked(param.enabled)
-                                        .on_click(
-                                            cx.listener(move |this, checked: &bool, _, cx| {
-                                                if let Some(item) =
-                                                    this.request.query_params.get_mut(index)
-                                                {
-                                                    item.enabled = *checked;
-                                                    this.schedule_request_save(cx);
-                                                    cx.notify();
-                                                }
-                                            }),
-                                        ),
-                                    ),
+                                        .w_full()
+                                        .appearance(false)
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    key_has_selection,
+                                                )
+                                            }
+                                        }),
+                                ),
+                            )
+                            .child(
+                                div().flex_1().child(
+                                    Input::new(&value_input)
+                                        .small()
+                                        .w_full()
+                                        .appearance(false)
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    value_has_selection,
+                                                )
+                                            }
+                                        }),
+                                ),
+                            )
+                            .child(if self.request.query_params.len() > 1 {
+                                div().w(px(28.0)).child(
+                                    Button::new(format!("delete-request-param-{index}"))
+                                        .small()
+                                        .ghost()
+                                        .cursor_pointer()
+                                        .icon(
+                                            Icon::default()
+                                                .path("icons/delete.svg")
+                                                .size(px(14.0))
+                                                .text_color(rgb(0x6b7280)),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.delete_request_param_row(index, window, cx);
+                                        })),
                                 )
-                                .child(div().flex_1().child(
-                                    Input::new(&key_input).small().w_full().appearance(false),
-                                ))
-                                .child(div().flex_1().child(
-                                    Input::new(&value_input).small().w_full().appearance(false),
-                                ))
-                                .child(if self.request.query_params.len() > 1 {
-                                    div().w(px(28.0)).child(
-                                        Button::new(format!("delete-request-param-{index}"))
-                                            .small()
-                                            .ghost()
-                                            .cursor_pointer()
-                                            .icon(
-                                                Icon::default()
-                                                    .path("icons/delete.svg")
-                                                    .size(px(14.0))
-                                                    .text_color(rgb(0x6b7280)),
-                                            )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.delete_request_param_row(index, window, cx);
-                                            })),
-                                    )
-                                } else {
-                                    div().w(px(28.0))
-                                }),
-                        );
+                            } else {
+                                div().w(px(28.0))
+                            }),
+                    );
                 }
 
                 table.into_any_element()
@@ -4939,196 +5111,277 @@ impl BeamView {
                 for (index, header) in self.request.headers.iter().enumerate() {
                     let key_input = self.request_header_name_inputs[index].clone();
                     let value_input = self.request_header_value_inputs[index].clone();
-                    table =
-                        table.child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_2()
-                                .px_2()
-                                .py_1()
-                                .rounded(px(6.0))
-                                .border_1()
-                                .border_color(rgb(0xe5e7eb))
-                                .child(
-                                    div().w(px(28.0)).child(
-                                        gpui_component::checkbox::Checkbox::new(format!(
-                                            "request-header-enabled-{index}"
-                                        ))
+                    let key_has_selection = !key_input.read(cx).selected_range().is_empty();
+                    let value_has_selection = !value_input.read(cx).selected_range().is_empty();
+                    table = table.child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(rgb(0xe5e7eb))
+                            .child(
+                                div().w(px(28.0)).child(
+                                    gpui_component::checkbox::Checkbox::new(format!(
+                                        "request-header-enabled-{index}"
+                                    ))
+                                    .small()
+                                    .checked(header.enabled)
+                                    .on_click(cx.listener(
+                                        move |this, checked: &bool, _, cx| {
+                                            if let Some(item) = this.request.headers.get_mut(index)
+                                            {
+                                                item.enabled = *checked;
+                                                this.schedule_request_save(cx);
+                                                cx.notify();
+                                            }
+                                        },
+                                    )),
+                                ),
+                            )
+                            .child(
+                                div().flex_1().child(
+                                    Input::new(&key_input)
                                         .small()
-                                        .checked(header.enabled)
-                                        .on_click(
-                                            cx.listener(move |this, checked: &bool, _, cx| {
-                                                if let Some(item) =
-                                                    this.request.headers.get_mut(index)
-                                                {
-                                                    item.enabled = *checked;
-                                                    this.schedule_request_save(cx);
-                                                    cx.notify();
-                                                }
-                                            }),
-                                        ),
-                                    ),
+                                        .w_full()
+                                        .appearance(false)
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    key_has_selection,
+                                                )
+                                            }
+                                        }),
+                                ),
+                            )
+                            .child(
+                                div().flex_1().child(
+                                    Input::new(&value_input)
+                                        .small()
+                                        .w_full()
+                                        .appearance(false)
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    value_has_selection,
+                                                )
+                                            }
+                                        }),
+                                ),
+                            )
+                            .child(if self.request.headers.len() > 1 {
+                                div().w(px(28.0)).child(
+                                    Button::new(format!("delete-request-header-{index}"))
+                                        .small()
+                                        .ghost()
+                                        .cursor_pointer()
+                                        .icon(
+                                            Icon::default()
+                                                .path("icons/delete.svg")
+                                                .size(px(14.0))
+                                                .text_color(rgb(0x6b7280)),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.delete_request_header_row(index, window, cx);
+                                        })),
                                 )
-                                .child(div().flex_1().child(
-                                    Input::new(&key_input).small().w_full().appearance(false),
-                                ))
-                                .child(div().flex_1().child(
-                                    Input::new(&value_input).small().w_full().appearance(false),
-                                ))
-                                .child(if self.request.headers.len() > 1 {
-                                    div().w(px(28.0)).child(
-                                        Button::new(format!("delete-request-header-{index}"))
-                                            .small()
-                                            .ghost()
-                                            .cursor_pointer()
-                                            .icon(
-                                                Icon::default()
-                                                    .path("icons/delete.svg")
-                                                    .size(px(14.0))
-                                                    .text_color(rgb(0x6b7280)),
-                                            )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.delete_request_header_row(index, window, cx);
-                                            })),
-                                    )
-                                } else {
-                                    div().w(px(28.0))
-                                }),
-                        );
+                            } else {
+                                div().w(px(28.0))
+                            }),
+                    );
                 }
 
                 table.into_any_element()
             }
-            RequestTab::Auth => div()
-                .h_full()
-                .w_full()
-                .gap_3()
-                .child({
-                    let bearer_input = self.request_auth_bearer_token_input.clone();
-                    let basic_username_input = self.request_auth_basic_username_input.clone();
-                    let basic_password_input = self.request_auth_basic_password_input.clone();
-                    let api_key_name_input = self.request_auth_api_key_name_input.clone();
-                    let api_key_value_input = self.request_auth_api_key_value_input.clone();
-                    let is_none = matches!(self.request.auth, AuthConfig::None);
-                    let is_bearer = matches!(self.request.auth, AuthConfig::Bearer { .. });
-                    let is_basic = matches!(self.request.auth, AuthConfig::Basic { .. });
-                    let is_api_key = matches!(self.request.auth, AuthConfig::ApiKey { .. });
+            RequestTab::Auth => {
+                div()
+                    .h_full()
+                    .w_full()
+                    .gap_3()
+                    .child({
+                        let bearer_input = self.request_auth_bearer_token_input.clone();
+                        let basic_username_input = self.request_auth_basic_username_input.clone();
+                        let basic_password_input = self.request_auth_basic_password_input.clone();
+                        let api_key_name_input = self.request_auth_api_key_name_input.clone();
+                        let api_key_value_input = self.request_auth_api_key_value_input.clone();
+                        let is_none = matches!(self.request.auth, AuthConfig::None);
+                        let is_bearer = matches!(self.request.auth, AuthConfig::Bearer { .. });
+                        let is_basic = matches!(self.request.auth, AuthConfig::Basic { .. });
+                        let is_api_key = matches!(self.request.auth, AuthConfig::ApiKey { .. });
 
-                    h_flex()
-                        .items_center()
-                        .gap_1()
-                        .w_full()
-                        .child(
-                            Button::new("auth-mode-none")
-                                .small()
-                                .ghost()
-                                .cursor_pointer()
-                                .selected(is_none)
-                                .label("None")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.request.auth = AuthConfig::None;
-                                    this.schedule_request_save(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("auth-mode-bearer")
-                                .small()
-                                .ghost()
-                                .cursor_pointer()
-                                .selected(is_bearer)
-                                .label("Bearer Token")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let token = bearer_input.read(cx).value().to_string();
-                                    this.request.auth = AuthConfig::Bearer {
-                                        token: (!token.trim().is_empty()).then_some(token),
-                                    };
-                                    this.schedule_request_save(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("auth-mode-basic")
-                                .small()
-                                .ghost()
-                                .cursor_pointer()
-                                .selected(is_basic)
-                                .label("Basic Auth")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let username =
-                                        basic_username_input.read(cx).value().to_string();
-                                    let password =
-                                        basic_password_input.read(cx).value().to_string();
-                                    this.request.auth = AuthConfig::Basic {
-                                        username: (!username.trim().is_empty()).then_some(username),
-                                        password: (!password.trim().is_empty()).then_some(password),
-                                    };
-                                    this.schedule_request_save(cx);
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("auth-mode-apikey")
-                                .small()
-                                .ghost()
-                                .cursor_pointer()
-                                .selected(is_api_key)
-                                .label("API Key")
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let key = api_key_name_input.read(cx).value().to_string();
-                                    let value = api_key_value_input.read(cx).value().to_string();
-                                    this.request.auth = AuthConfig::ApiKey {
-                                        key: if key.trim().is_empty() {
-                                            Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
-                                        } else {
-                                            Some(key)
-                                        },
-                                        value: (!value.trim().is_empty()).then_some(value),
-                                        location: crate::models::ApiKeyLocation::Header,
-                                    };
-                                    this.schedule_request_save(cx);
-                                    cx.notify();
-                                })),
-                        )
-                })
-                .child(match &self.request.auth {
-                    AuthConfig::None => div()
-                        .text_sm()
-                        .text_color(rgb(0x6b7280))
-                        .child("No auth header will be added.")
-                        .into_any_element(),
-                    AuthConfig::Bearer { .. } => v_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(div().text_xs().text_color(rgb(0x6b7280)).child("Token"))
-                        .child(
-                            Input::new(&self.request_auth_bearer_token_input)
-                                .small()
-                                .w_full(),
-                        )
-                        .into_any_element(),
-                    AuthConfig::Basic { .. } => v_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(div().text_xs().text_color(rgb(0x6b7280)).child("Username"))
-                        .child(
-                            Input::new(&self.request_auth_basic_username_input)
-                                .small()
-                                .w_full(),
-                        )
-                        .child(div().text_xs().text_color(rgb(0x6b7280)).child("Password"))
-                        .child(
-                            Input::new(&self.request_auth_basic_password_input)
-                                .small()
-                                .w_full(),
-                        )
-                        .into_any_element(),
-                    AuthConfig::ApiKey { location, .. } => {
-                        let using_header =
-                            matches!(location, crate::models::ApiKeyLocation::Header);
-                        let using_query = matches!(location, crate::models::ApiKeyLocation::Query);
-                        v_flex()
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .w_full()
+                            .child(
+                                Button::new("auth-mode-none")
+                                    .small()
+                                    .ghost()
+                                    .cursor_pointer()
+                                    .selected(is_none)
+                                    .label("None")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.request.auth = AuthConfig::None;
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("auth-mode-bearer")
+                                    .small()
+                                    .ghost()
+                                    .cursor_pointer()
+                                    .selected(is_bearer)
+                                    .label("Bearer Token")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let token = bearer_input.read(cx).value().to_string();
+                                        this.request.auth = AuthConfig::Bearer {
+                                            token: (!token.trim().is_empty()).then_some(token),
+                                        };
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("auth-mode-basic")
+                                    .small()
+                                    .ghost()
+                                    .cursor_pointer()
+                                    .selected(is_basic)
+                                    .label("Basic Auth")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let username =
+                                            basic_username_input.read(cx).value().to_string();
+                                        let password =
+                                            basic_password_input.read(cx).value().to_string();
+                                        this.request.auth = AuthConfig::Basic {
+                                            username: (!username.trim().is_empty())
+                                                .then_some(username),
+                                            password: (!password.trim().is_empty())
+                                                .then_some(password),
+                                        };
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("auth-mode-apikey")
+                                    .small()
+                                    .ghost()
+                                    .cursor_pointer()
+                                    .selected(is_api_key)
+                                    .label("API Key")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        let key = api_key_name_input.read(cx).value().to_string();
+                                        let value =
+                                            api_key_value_input.read(cx).value().to_string();
+                                        this.request.auth = AuthConfig::ApiKey {
+                                            key: if key.trim().is_empty() {
+                                                Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
+                                            } else {
+                                                Some(key)
+                                            },
+                                            value: (!value.trim().is_empty()).then_some(value),
+                                            location: crate::models::ApiKeyLocation::Header,
+                                        };
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    })),
+                            )
+                    })
+                    .child({
+                        let bearer_has_selection = !self
+                            .request_auth_bearer_token_input
+                            .read(cx)
+                            .selected_range()
+                            .is_empty();
+                        let basic_username_has_selection = !self
+                            .request_auth_basic_username_input
+                            .read(cx)
+                            .selected_range()
+                            .is_empty();
+                        let basic_password_has_selection = !self
+                            .request_auth_basic_password_input
+                            .read(cx)
+                            .selected_range()
+                            .is_empty();
+                        let api_key_value_has_selection = !self
+                            .request_auth_api_key_value_input
+                            .read(cx)
+                            .selected_range()
+                            .is_empty();
+                        let api_key_name_has_selection = !self
+                            .request_auth_api_key_name_input
+                            .read(cx)
+                            .selected_range()
+                            .is_empty();
+                        match &self.request.auth {
+                            AuthConfig::None => div()
+                                .text_sm()
+                                .text_color(rgb(0x6b7280))
+                                .child("No auth header will be added.")
+                                .into_any_element(),
+                            AuthConfig::Bearer { .. } => v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(div().text_xs().text_color(rgb(0x6b7280)).child("Token"))
+                                .child(
+                                    Input::new(&self.request_auth_bearer_token_input)
+                                        .small()
+                                        .w_full()
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    bearer_has_selection,
+                                                )
+                                            }
+                                        }),
+                                )
+                                .into_any_element(),
+                            AuthConfig::Basic { .. } => v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(div().text_xs().text_color(rgb(0x6b7280)).child("Username"))
+                                .child(
+                                    Input::new(&self.request_auth_basic_username_input)
+                                        .small()
+                                        .w_full()
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    basic_username_has_selection,
+                                                )
+                                            }
+                                        }),
+                                )
+                                .child(div().text_xs().text_color(rgb(0x6b7280)).child("Password"))
+                                .child(
+                                    Input::new(&self.request_auth_basic_password_input)
+                                        .small()
+                                        .w_full()
+                                        .context_menu({
+                                            move |menu, _, _| {
+                                                Self::build_text_edit_context_menu(
+                                                    menu,
+                                                    basic_password_has_selection,
+                                                )
+                                            }
+                                        }),
+                                )
+                                .into_any_element(),
+                            AuthConfig::ApiKey { location, .. } => {
+                                let using_header =
+                                    matches!(location, crate::models::ApiKeyLocation::Header);
+                                let using_query =
+                                    matches!(location, crate::models::ApiKeyLocation::Query);
+                                v_flex()
                             .w_full()
                             .gap_2()
                             .child(
@@ -5184,7 +5437,15 @@ impl BeamView {
                             .child(
                                 Input::new(&self.request_auth_api_key_value_input)
                                     .small()
-                                    .w_full(),
+                                    .w_full()
+                                    .context_menu({
+                                        move |menu, _, _| {
+                                            Self::build_text_edit_context_menu(
+                                                menu,
+                                                api_key_value_has_selection,
+                                            )
+                                        }
+                                    }),
                             )
                             .child(
                                 div()
@@ -5195,12 +5456,22 @@ impl BeamView {
                             .child(
                                 Input::new(&self.request_auth_api_key_name_input)
                                     .small()
-                                    .w_full(),
+                                    .w_full()
+                                    .context_menu({
+                                        move |menu, _, _| {
+                                            Self::build_text_edit_context_menu(
+                                                menu,
+                                                api_key_name_has_selection,
+                                            )
+                                        }
+                                    }),
                             )
                             .into_any_element()
-                    }
-                })
-                .into_any_element(),
+                            }
+                        }
+                    })
+                    .into_any_element()
+            }
         }
     }
 
@@ -5215,7 +5486,11 @@ impl BeamView {
         let mut column = v_flex().w_full().gap_1();
         for test in &result.test_results {
             let status = if test.passed { "PASS" } else { "FAIL" };
-            let color = if test.passed { rgb(0x15803d) } else { rgb(0xb91c1c) };
+            let color = if test.passed {
+                rgb(0x15803d)
+            } else {
+                rgb(0xb91c1c)
+            };
             let summary = match (&test.expected, &test.actual) {
                 (Some(expected), Some(actual)) if expected != actual => {
                     format!("expected={expected}, actual={actual}")
@@ -5288,21 +5563,21 @@ impl BeamView {
         let mut column = v_flex().w_full().gap_1();
         for line in &result.console_output {
             let prefix = line.level.to_uppercase();
-            column = column.child(
-                div()
-                    .text_xs()
-                    .child(format!(
-                        "{} [{}] {}",
-                        Self::format_human_time(&line.timestamp),
-                        prefix,
-                        line.message
-                    )),
-            );
+            column = column.child(div().text_xs().child(format!(
+                "{} [{}] {}",
+                Self::format_human_time(&line.timestamp),
+                prefix,
+                line.message
+            )));
         }
         column.into_any_element()
     }
 
-    fn render_post_script_results(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_post_script_results(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let mut panel = v_flex()
             .h_full()
             .min_h_0()
@@ -5319,16 +5594,11 @@ impl BeamView {
                         .w_full()
                         .items_center()
                         .justify_between()
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_semibold()
-                                .child(if result.success {
-                                    "Script Succeeded"
-                                } else {
-                                    "Script Failed"
-                                }),
-                        )
+                        .child(div().text_sm().font_semibold().child(if result.success {
+                            "Script Succeeded"
+                        } else {
+                            "Script Failed"
+                        }))
                         .child(
                             Button::new("clear-script-results")
                                 .small()
@@ -5336,8 +5606,12 @@ impl BeamView {
                                 .label("Clear")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.script_result = None;
-                                    if let Some(request_id) = this.shell.collections.selected_request_id() {
-                                        if let Err(error) = Self::clear_script_result_for_request(request_id) {
+                                    if let Some(request_id) =
+                                        this.shell.collections.selected_request_id()
+                                    {
+                                        if let Err(error) =
+                                            Self::clear_script_result_for_request(request_id)
+                                        {
                                             eprintln!("Failed to clear script result: {error}");
                                         }
                                     }
@@ -5392,7 +5666,8 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let post_script_has_selection = !self.post_script_editor.read(cx).selected_range().is_empty();
+        let post_script_has_selection =
+            !self.post_script_editor.read(cx).selected_range().is_empty();
         // TODO: Keep this as a single parent card with one divider between editor/results.
         // It avoids double-border overlap and is less error-prone than separate bordered panes.
         v_flex()
@@ -5422,106 +5697,10 @@ impl BeamView {
                                 .text_size(cx.theme().mono_font_size)
                                 .context_menu({
                                     move |menu, _, _| {
-                                        menu.min_w(px(180.0))
-                                            .item(
-                                                PopupMenuItem::element(move |_, _| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .cursor_pointer()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .px_2()
-                                                        .py_1()
-                                                        .child(
-                                                            Icon::default()
-                                                                .path("icons/search.svg")
-                                                                .size(px(14.0))
-                                                                .text_color(rgb(0x6b7280)),
-                                                        )
-                                                        .child("Find")
-                                                })
-                                                    .action(Box::new(input::Search)),
-                                            )
-                                            .separator()
-                                            .item(
-                                                PopupMenuItem::element(move |_, _| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .cursor_pointer()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .px_2()
-                                                        .py_1()
-                                                        .child(
-                                                            Icon::default()
-                                                                .path("icons/cut.svg")
-                                                                .size(px(14.0))
-                                                                .text_color(rgb(0x6b7280)),
-                                                        )
-                                                        .child("Cut")
-                                                })
-                                                    .action(Box::new(input::Cut))
-                                                    .disabled(!post_script_has_selection),
-                                            )
-                                            .item(
-                                                PopupMenuItem::element(move |_, _| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .cursor_pointer()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .px_2()
-                                                        .py_1()
-                                                        .child(
-                                                            Icon::default()
-                                                                .path("icons/copy.svg")
-                                                                .size(px(14.0))
-                                                                .text_color(rgb(0x6b7280)),
-                                                        )
-                                                        .child("Copy")
-                                                })
-                                                    .action(Box::new(input::Copy))
-                                                    .disabled(!post_script_has_selection),
-                                            )
-                                            .item(
-                                                PopupMenuItem::element(move |_, _| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .cursor_pointer()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .px_2()
-                                                        .py_1()
-                                                        .child(
-                                                            Icon::default()
-                                                                .path("icons/clipboard-paste.svg")
-                                                                .size(px(14.0))
-                                                                .text_color(rgb(0x6b7280)),
-                                                        )
-                                                        .child("Paste")
-                                                })
-                                                    .action(Box::new(input::Paste)),
-                                            )
-                                            .separator()
-                                            .item(
-                                                PopupMenuItem::element(move |_, _| {
-                                                    h_flex()
-                                                        .w_full()
-                                                        .cursor_pointer()
-                                                        .items_center()
-                                                        .gap_2()
-                                                        .px_2()
-                                                        .py_1()
-                                                        .child(
-                                                            Icon::default()
-                                                                .path("icons/square-dashed-text.svg")
-                                                                .size(px(14.0))
-                                                                .text_color(rgb(0x6b7280)),
-                                                        )
-                                                        .child("Select All")
-                                                })
-                                                    .action(Box::new(input::SelectAll)),
-                                            )
+                                        Self::build_text_edit_context_menu_with_find(
+                                            menu,
+                                            post_script_has_selection,
+                                        )
                                     }
                                 }),
                         ),
@@ -5600,176 +5779,205 @@ impl BeamView {
     fn render_response_editor_surface(&self, cx: &mut Context<Self>) -> AnyElement {
         match self.active_response_tab {
             ResponseTab::Body => {
-                let response_body_has_selection =
-                    !self.response_body_editor.read(cx).selected_range().is_empty();
+                let response_body_has_selection = !self
+                    .response_body_editor
+                    .read(cx)
+                    .selected_range()
+                    .is_empty();
                 Input::new(&self.response_body_editor)
-                .h_full()
-                .p_0()
-                .border_0()
-                .focus_bordered(false)
-                .disabled(true)
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_size(cx.theme().mono_font_size)
-                .context_menu({
-                    let view = cx.entity();
-                    move |menu, window, _| {
-                        menu.min_w(px(180.0))
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .gap_2()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            Icon::default()
-                                                .path("icons/indent.svg")
-                                                .size(px(14.0))
-                                                .text_color(rgb(0x6b7280)),
-                                        )
-                                        .child("Format")
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.format_response_body(window, cx);
-                                })),
-                            )
-                            .separator()
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/cut.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Cut"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+X"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_response_body_editor_action(
-                                        Box::new(input::Cut),
-                                        window,
-                                        cx,
-                                    );
-                                }))
-                                .disabled(!response_body_has_selection),
-                            )
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/copy.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Copy"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+C"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_response_body_editor_action(
-                                        Box::new(input::Copy),
-                                        window,
-                                        cx,
-                                    );
-                                }))
-                                .disabled(!response_body_has_selection),
-                            )
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/clipboard-paste.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Paste"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+V"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_response_body_editor_action(
-                                        Box::new(input::Paste),
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                            )
-                            .separator()
-                            .item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .justify_between()
-                                        .gap_3()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_2()
-                                                .child(
-                                                    Icon::default()
-                                                        .path("icons/square-dashed-text.svg")
-                                                        .size(px(14.0))
-                                                        .text_color(rgb(0x6b7280)),
-                                                )
-                                                .child("Select All"),
-                                        )
-                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+A"))
-                                })
-                                .on_click(window.listener_for(&view, |this, _, window, cx| {
-                                    this.dispatch_response_body_editor_action(
-                                        Box::new(input::SelectAll),
-                                        window,
-                                        cx,
-                                    );
-                                })),
-                            )
-                    }
-                })
-                .into_any_element()
+                    .h_full()
+                    .p_0()
+                    .border_0()
+                    .focus_bordered(false)
+                    .disabled(true)
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_size(cx.theme().mono_font_size)
+                    .context_menu({
+                        let view = cx.entity();
+                        move |menu, window, _| {
+                            menu.min_w(px(180.0))
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .gap_2()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                Icon::default()
+                                                    .path("icons/indent.svg")
+                                                    .size(px(14.0))
+                                                    .text_color(rgb(0x6b7280)),
+                                            )
+                                            .child("Format")
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.format_response_body(window, cx);
+                                        }),
+                                    ),
+                                )
+                                .separator()
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/cut.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Cut"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+X"),
+                                            )
+                                    })
+                                    .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                        this.dispatch_response_body_editor_action(
+                                            Box::new(input::Cut),
+                                            window,
+                                            cx,
+                                        );
+                                    }))
+                                    .disabled(!response_body_has_selection),
+                                )
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/copy.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Copy"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+C"),
+                                            )
+                                    })
+                                    .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                        this.dispatch_response_body_editor_action(
+                                            Box::new(input::Copy),
+                                            window,
+                                            cx,
+                                        );
+                                    }))
+                                    .disabled(!response_body_has_selection),
+                                )
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/clipboard-paste.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Paste"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+V"),
+                                            )
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.dispatch_response_body_editor_action(
+                                                Box::new(input::Paste),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                                .separator()
+                                .item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        h_flex()
+                                            .w_full()
+                                            .cursor_pointer()
+                                            .items_center()
+                                            .justify_between()
+                                            .gap_3()
+                                            .px_2()
+                                            .py_1()
+                                            .child(
+                                                h_flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/square-dashed-text.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .child("Select All"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_xs()
+                                                    .text_color(rgb(0x9ca3af))
+                                                    .child("Cmd+A"),
+                                            )
+                                    })
+                                    .on_click(
+                                        window.listener_for(&view, |this, _, window, cx| {
+                                            this.dispatch_response_body_editor_action(
+                                                Box::new(input::SelectAll),
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                        }
+                    })
+                    .into_any_element()
             }
             ResponseTab::Headers => self.render_response_headers_table(),
         }
