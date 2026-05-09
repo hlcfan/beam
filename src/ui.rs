@@ -5136,13 +5136,58 @@ impl BeamView {
                                 .context_menu({
                                     move |menu, _, _| {
                                         menu.min_w(px(180.0))
-                                            .menu("Find", Box::new(input::Search))
+                                            .item(
+                                                PopupMenuItem::new("Find")
+                                                    .icon(
+                                                        Icon::default()
+                                                            .path("icons/search.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .action(Box::new(input::Search)),
+                                            )
                                             .separator()
-                                            .menu("Cut", Box::new(input::Cut))
-                                            .menu("Copy", Box::new(input::Copy))
-                                            .menu("Paste", Box::new(input::Paste))
+                                            .item(
+                                                PopupMenuItem::new("Cut")
+                                                    .icon(
+                                                        Icon::default()
+                                                            .path("icons/cut.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .action(Box::new(input::Cut)),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Copy")
+                                                    .icon(
+                                                        Icon::default()
+                                                            .path("icons/copy.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .action(Box::new(input::Copy)),
+                                            )
+                                            .item(
+                                                PopupMenuItem::new("Paste")
+                                                    .icon(
+                                                        Icon::default()
+                                                            .path("icons/clipboard-paste.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .action(Box::new(input::Paste)),
+                                            )
                                             .separator()
-                                            .menu("Select All", Box::new(input::SelectAll))
+                                            .item(
+                                                PopupMenuItem::new("Select All")
+                                                    .icon(
+                                                        Icon::default()
+                                                            .path("icons/square-dashed-text.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(rgb(0x6b7280)),
+                                                    )
+                                                    .action(Box::new(input::SelectAll)),
+                                            )
                                     }
                                 }),
                         ),
