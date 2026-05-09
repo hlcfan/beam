@@ -2992,27 +2992,57 @@ impl BeamView {
     }
 
     fn format_request_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        let body = self.request.body.clone();
         let current_text = self.request_body_editor.read(cx).value().to_string();
-        let formatted = match Self::format_request_body_text(&self.request.body, &current_text) {
-            Ok(formatted) => formatted,
-            Err(error) => {
-                window.push_notification(error, cx);
-                return;
-            }
-        };
+        let source_text = current_text.clone();
 
-        if formatted == current_text {
-            return;
-        }
+        cx.spawn_in(window, async move |_, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { Self::format_request_body_text(&body, &current_text) })
+                .await;
 
-        self.request.body = Self::body_with_updated_text(&self.request.body, formatted.clone());
-        self.request.active_tab = RequestTab::Body;
-        self.request_body_editor.update(cx, |input, cx| {
-            input.set_value(formatted, window, cx);
-            input.focus(window, cx);
-        });
-        self.schedule_request_save(cx);
-        cx.notify();
+            let _ = view.update_in(cx, |this, window, cx| {
+                let latest_text = this.request_body_editor.read(cx).value().to_string();
+                if latest_text != source_text {
+                    window.push_notification(
+                        "Body changed while formatting. Please run Format again.".to_string(),
+                        cx,
+                    );
+                    cx.notify();
+                    return;
+                }
+
+                let formatted = match result {
+                    Ok(formatted) => formatted,
+                    Err(error) => {
+                        window.push_notification(
+                            format!("Failed to format request body: {error}"),
+                            cx,
+                        );
+                        cx.notify();
+                        return;
+                    }
+                };
+
+                if formatted == latest_text {
+                    window.push_notification("Body is already formatted.".to_string(), cx);
+                    cx.notify();
+                    return;
+                }
+
+                this.request.body = Self::body_with_updated_text(&this.request.body, formatted.clone());
+                this.request.active_tab = RequestTab::Body;
+                this.request_body_editor.update(cx, |input, cx| {
+                    input.set_value(formatted, window, cx);
+                    input.focus(window, cx);
+                });
+                this.schedule_request_save(cx);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn body_editor_language(body: &BodyConfig) -> &'static str {
