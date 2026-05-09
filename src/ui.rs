@@ -78,6 +78,13 @@ struct BeamView {
     request_header_name_inputs: Vec<Entity<InputState>>,
     request_header_value_inputs: Vec<Entity<InputState>>,
     request_header_input_subscriptions: Vec<Subscription>,
+    request_auth_bearer_token_input: Entity<InputState>,
+    request_auth_basic_username_input: Entity<InputState>,
+    request_auth_basic_password_input: Entity<InputState>,
+    request_auth_api_key_name_input: Entity<InputState>,
+    request_auth_api_key_value_input: Entity<InputState>,
+    request_auth_input_subscriptions: Vec<Subscription>,
+    suppress_request_auth_change_events: bool,
     environment_manager_name_input: Entity<InputState>,
     environment_manager_value_input: Entity<InputState>,
     environment_manager_error: Option<String>,
@@ -92,6 +99,8 @@ enum ResponseTab {
     Body,
     Headers,
 }
+
+const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
 
 struct EnvironmentManagerDialogView {
     options: Vec<(Ulid, String)>,
@@ -1105,6 +1114,7 @@ impl BeamView {
         self.post_script_editor.update(cx, |input, cx| {
             input.set_value(next_script, window, cx);
         });
+        self.sync_request_auth_inputs(window, cx);
     }
 
     fn clear_request_param_inputs(&mut self) {
@@ -1117,6 +1127,161 @@ impl BeamView {
         self.request_header_name_inputs.clear();
         self.request_header_value_inputs.clear();
         self.request_header_input_subscriptions.clear();
+    }
+
+    fn sync_request_auth_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.suppress_request_auth_change_events = true;
+
+        let (bearer_token, basic_username, basic_password, api_key_name, api_key_value) =
+            match &self.request.auth {
+                AuthConfig::None => (
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    DEFAULT_API_KEY_HEADER_NAME.to_string(),
+                    String::new(),
+                ),
+                AuthConfig::Bearer { token } => (
+                    token.clone().unwrap_or_default(),
+                    String::new(),
+                    String::new(),
+                    DEFAULT_API_KEY_HEADER_NAME.to_string(),
+                    String::new(),
+                ),
+                AuthConfig::Basic { username, password } => (
+                    String::new(),
+                    username.clone().unwrap_or_default(),
+                    password.clone().unwrap_or_default(),
+                    DEFAULT_API_KEY_HEADER_NAME.to_string(),
+                    String::new(),
+                ),
+                AuthConfig::ApiKey { key, value, .. } => (
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    key.clone().unwrap_or_else(|| DEFAULT_API_KEY_HEADER_NAME.to_string()),
+                    value.clone().unwrap_or_default(),
+                ),
+            };
+
+        self.request_auth_bearer_token_input.update(cx, |input, cx| {
+            input.set_value(bearer_token, window, cx);
+        });
+        self.request_auth_basic_username_input.update(cx, |input, cx| {
+            input.set_value(basic_username, window, cx);
+        });
+        self.request_auth_basic_password_input.update(cx, |input, cx| {
+            input.set_value(basic_password, window, cx);
+        });
+        self.request_auth_api_key_name_input.update(cx, |input, cx| {
+            input.set_value(api_key_name, window, cx);
+        });
+        self.request_auth_api_key_value_input.update(cx, |input, cx| {
+            input.set_value(api_key_value, window, cx);
+        });
+
+        self.suppress_request_auth_change_events = false;
+    }
+
+    fn clear_request_auth_input_subscriptions(&mut self) {
+        self.request_auth_input_subscriptions.clear();
+    }
+
+    fn rebuild_request_auth_input_subscriptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_request_auth_input_subscriptions();
+
+        let bearer_input = self.request_auth_bearer_token_input.clone();
+        self.request_auth_input_subscriptions.push(cx.subscribe_in(
+            &self.request_auth_bearer_token_input,
+            window,
+            move |this, _, ev: &InputEvent, _, cx| {
+                if !matches!(ev, InputEvent::Change) || this.suppress_request_auth_change_events {
+                    return;
+                }
+                if let AuthConfig::Bearer { token } = &mut this.request.auth {
+                    let value = bearer_input.read(cx).value().to_string();
+                    *token = (!value.trim().is_empty()).then_some(value);
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+            },
+        ));
+
+        let username_input = self.request_auth_basic_username_input.clone();
+        self.request_auth_input_subscriptions.push(cx.subscribe_in(
+            &self.request_auth_basic_username_input,
+            window,
+            move |this, _, ev: &InputEvent, _, cx| {
+                if !matches!(ev, InputEvent::Change) || this.suppress_request_auth_change_events {
+                    return;
+                }
+                if let AuthConfig::Basic { username, .. } = &mut this.request.auth {
+                    let value = username_input.read(cx).value().to_string();
+                    *username = (!value.trim().is_empty()).then_some(value);
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+            },
+        ));
+
+        let password_input = self.request_auth_basic_password_input.clone();
+        self.request_auth_input_subscriptions.push(cx.subscribe_in(
+            &self.request_auth_basic_password_input,
+            window,
+            move |this, _, ev: &InputEvent, _, cx| {
+                if !matches!(ev, InputEvent::Change) || this.suppress_request_auth_change_events {
+                    return;
+                }
+                if let AuthConfig::Basic { password, .. } = &mut this.request.auth {
+                    let value = password_input.read(cx).value().to_string();
+                    *password = (!value.trim().is_empty()).then_some(value);
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+            },
+        ));
+
+        let api_key_name_input = self.request_auth_api_key_name_input.clone();
+        self.request_auth_input_subscriptions.push(cx.subscribe_in(
+            &self.request_auth_api_key_name_input,
+            window,
+            move |this, _, ev: &InputEvent, _, cx| {
+                if !matches!(ev, InputEvent::Change) || this.suppress_request_auth_change_events {
+                    return;
+                }
+                if let AuthConfig::ApiKey { key, .. } = &mut this.request.auth {
+                    let value = api_key_name_input.read(cx).value().to_string();
+                    *key = if value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(value)
+                    };
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+            },
+        ));
+
+        let api_key_value_input = self.request_auth_api_key_value_input.clone();
+        self.request_auth_input_subscriptions.push(cx.subscribe_in(
+            &self.request_auth_api_key_value_input,
+            window,
+            move |this, _, ev: &InputEvent, _, cx| {
+                if !matches!(ev, InputEvent::Change) || this.suppress_request_auth_change_events {
+                    return;
+                }
+                if let AuthConfig::ApiKey { value, .. } = &mut this.request.auth {
+                    let next_value = api_key_value_input.read(cx).value().to_string();
+                    *value = if next_value.trim().is_empty() {
+                        None
+                    } else {
+                        Some(next_value)
+                    };
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+            },
+        ));
     }
 
     fn sync_selected_request_pane_data(&mut self) -> Option<(Ulid, RequestPaneData)> {
@@ -2303,49 +2468,6 @@ impl BeamView {
             .into_any_element()
     }
 
-    fn auth_summary(auth: &AuthConfig) -> String {
-        match auth {
-            AuthConfig::None => "None".to_string(),
-            AuthConfig::Bearer { token } => format!(
-                "Bearer token: {}",
-                token
-                    .as_ref()
-                    .filter(|value| !value.is_empty())
-                    .map(|_| "***")
-                    .unwrap_or("empty")
-            ),
-            AuthConfig::Basic { username, password } => format!(
-                "Basic auth: username={}, password={}",
-                username
-                    .as_ref()
-                    .filter(|value| !value.is_empty())
-                    .map(String::as_str)
-                    .unwrap_or("empty"),
-                password
-                    .as_ref()
-                    .filter(|value| !value.is_empty())
-                    .map(|_| "***")
-                    .unwrap_or("empty")
-            ),
-            AuthConfig::ApiKey {
-                key,
-                value,
-                location,
-            } => format!(
-                "Api key ({location:?}): key={}, value={}",
-                key.as_ref()
-                    .filter(|item| !item.is_empty())
-                    .map(String::as_str)
-                    .unwrap_or("empty"),
-                value
-                    .as_ref()
-                    .filter(|item| !item.is_empty())
-                    .map(|_| "***")
-                    .unwrap_or("empty")
-            ),
-        }
-    }
-
     fn method_label(method: HttpMethod) -> &'static str {
         match method {
             HttpMethod::Get => "GET",
@@ -2500,6 +2622,16 @@ impl BeamView {
                 .placeholder("Write post-request script...")
                 .default_value(post_script_text)
         });
+        let request_auth_bearer_token_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Token"));
+        let request_auth_basic_username_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Username"));
+        let request_auth_basic_password_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Password"));
+        let request_auth_api_key_name_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Header / Query Name"));
+        let request_auth_api_key_value_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("API key value"));
 
         let _subscriptions = vec![cx.subscribe_in(&url_input, window, {
             let url_input = url_input.clone();
@@ -2538,6 +2670,13 @@ impl BeamView {
             request_header_name_inputs: Vec::new(),
             request_header_value_inputs: Vec::new(),
             request_header_input_subscriptions: Vec::new(),
+            request_auth_bearer_token_input,
+            request_auth_basic_username_input,
+            request_auth_basic_password_input,
+            request_auth_api_key_name_input,
+            request_auth_api_key_value_input,
+            request_auth_input_subscriptions: Vec::new(),
+            suppress_request_auth_change_events: false,
             environment_manager_name_input,
             environment_manager_value_input,
             environment_manager_error: None,
@@ -2548,6 +2687,8 @@ impl BeamView {
         };
         view.rebuild_request_param_inputs(window, cx);
         view.rebuild_request_header_inputs(window, cx);
+        view.sync_request_auth_inputs(window, cx);
+        view.rebuild_request_auth_input_subscriptions(window, cx);
         view
     }
 
@@ -3659,9 +3800,204 @@ impl BeamView {
             RequestTab::Auth => div()
                 .h_full()
                 .w_full()
-                .text_sm()
-                .text_color(rgb(0x1f2937))
-                .child(Self::auth_summary(&self.request.auth))
+                .gap_3()
+                .child({
+                    let bearer_input = self.request_auth_bearer_token_input.clone();
+                    let basic_username_input = self.request_auth_basic_username_input.clone();
+                    let basic_password_input = self.request_auth_basic_password_input.clone();
+                    let api_key_name_input = self.request_auth_api_key_name_input.clone();
+                    let api_key_value_input = self.request_auth_api_key_value_input.clone();
+                    let is_none = matches!(self.request.auth, AuthConfig::None);
+                    let is_bearer = matches!(self.request.auth, AuthConfig::Bearer { .. });
+                    let is_basic = matches!(self.request.auth, AuthConfig::Basic { .. });
+                    let is_api_key = matches!(self.request.auth, AuthConfig::ApiKey { .. });
+
+                    h_flex()
+                        .items_center()
+                        .gap_1()
+                        .w_full()
+                        .child(
+                            Button::new("auth-mode-none")
+                                .small()
+                                .ghost()
+                                .selected(is_none)
+                                .label("None")
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.request.auth = AuthConfig::None;
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    },
+                                )),
+                        )
+                        .child(
+                            Button::new("auth-mode-bearer")
+                                .small()
+                                .ghost()
+                                .selected(is_bearer)
+                                .label("Bearer Token")
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let token = bearer_input.read(cx).value().to_string();
+                                        this.request.auth = AuthConfig::Bearer {
+                                            token: (!token.trim().is_empty()).then_some(token),
+                                        };
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    },
+                                )),
+                        )
+                        .child(
+                            Button::new("auth-mode-basic")
+                                .small()
+                                .ghost()
+                                .selected(is_basic)
+                                .label("Basic Auth")
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let username =
+                                            basic_username_input.read(cx).value().to_string();
+                                        let password =
+                                            basic_password_input.read(cx).value().to_string();
+                                        this.request.auth = AuthConfig::Basic {
+                                            username: (!username.trim().is_empty())
+                                                .then_some(username),
+                                            password: (!password.trim().is_empty())
+                                                .then_some(password),
+                                        };
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    },
+                                )),
+                        )
+                        .child(
+                            Button::new("auth-mode-apikey")
+                                .small()
+                                .ghost()
+                                .selected(is_api_key)
+                                .label("API Key")
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let key = api_key_name_input.read(cx).value().to_string();
+                                        let value = api_key_value_input.read(cx).value().to_string();
+                                        this.request.auth = AuthConfig::ApiKey {
+                                            key: if key.trim().is_empty() {
+                                                Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
+                                            } else {
+                                                Some(key)
+                                            },
+                                            value: (!value.trim().is_empty()).then_some(value),
+                                            location: crate::models::ApiKeyLocation::Header,
+                                        };
+                                        this.schedule_request_save(cx);
+                                        cx.notify();
+                                    },
+                                )),
+                        )
+                })
+                .child(match &self.request.auth {
+                    AuthConfig::None => div()
+                        .text_sm()
+                        .text_color(rgb(0x6b7280))
+                        .child("No auth header will be added.")
+                        .into_any_element(),
+                    AuthConfig::Bearer { .. } => v_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(div().text_xs().text_color(rgb(0x6b7280)).child("Token"))
+                        .child(Input::new(&self.request_auth_bearer_token_input).small().w_full())
+                        .into_any_element(),
+                    AuthConfig::Basic { .. } => v_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(div().text_xs().text_color(rgb(0x6b7280)).child("Username"))
+                        .child(
+                            Input::new(&self.request_auth_basic_username_input)
+                                .small()
+                                .w_full(),
+                        )
+                        .child(div().text_xs().text_color(rgb(0x6b7280)).child("Password"))
+                        .child(
+                            Input::new(&self.request_auth_basic_password_input)
+                                .small()
+                                .w_full(),
+                        )
+                        .into_any_element(),
+                    AuthConfig::ApiKey { location, .. } => {
+                        let using_header =
+                            matches!(location, crate::models::ApiKeyLocation::Header);
+                        let using_query = matches!(location, crate::models::ApiKeyLocation::Query);
+                        v_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(div().text_xs().text_color(rgb(0x6b7280)).child("Key Value"))
+                            .child(
+                                Input::new(&self.request_auth_api_key_value_input)
+                                    .small()
+                                    .w_full(),
+                            )
+                            .child(div().text_xs().text_color(rgb(0x6b7280)).child(
+                                "Header / Query Name",
+                            ))
+                            .child(
+                                Input::new(&self.request_auth_api_key_name_input)
+                                    .small()
+                                    .w_full(),
+                            )
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("auth-apikey-location-header")
+                                            .small()
+                                            .ghost()
+                                            .selected(using_header)
+                                            .label("Header")
+                                            .on_click(cx.listener(
+                                                move |this, _, _, cx| {
+                                                    if let AuthConfig::ApiKey { key, value, .. } =
+                                                        &this.request.auth
+                                                    {
+                                                        this.request.auth = AuthConfig::ApiKey {
+                                                            key: key.clone(),
+                                                            value: value.clone(),
+                                                            location:
+                                                                crate::models::ApiKeyLocation::Header,
+                                                        };
+                                                        this.schedule_request_save(cx);
+                                                        cx.notify();
+                                                    }
+                                                },
+                                            )),
+                                    )
+                                    .child(
+                                        Button::new("auth-apikey-location-query")
+                                            .small()
+                                            .ghost()
+                                            .selected(using_query)
+                                            .label("Query")
+                                            .on_click(cx.listener(
+                                                move |this, _, _, cx| {
+                                                    if let AuthConfig::ApiKey { key, value, .. } =
+                                                        &this.request.auth
+                                                    {
+                                                        this.request.auth = AuthConfig::ApiKey {
+                                                            key: key.clone(),
+                                                            value: value.clone(),
+                                                            location:
+                                                                crate::models::ApiKeyLocation::Query,
+                                                        };
+                                                        this.schedule_request_save(cx);
+                                                        cx.notify();
+                                                    }
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .into_any_element()
+                    }
+                })
                 .into_any_element(),
         }
     }
@@ -3930,7 +4266,8 @@ fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
         AuthConfig::Basic { username, password } => {
             let user = username.clone().unwrap_or_default();
             let pass = password.clone().unwrap_or_default();
-            builder = builder.basic_auth(user, Some(pass));
+            let password_for_header = (!pass.is_empty()).then_some(pass);
+            builder = builder.basic_auth(user, password_for_header);
         }
         AuthConfig::ApiKey {
             key,
@@ -3938,8 +4275,14 @@ fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
             location,
         } => {
             if let (Some(key), Some(value)) = (
-                key.as_ref().filter(|key| !key.trim().is_empty()),
-                value.as_ref(),
+                Some(
+                    key.as_ref()
+                        .map(String::as_str)
+                        .unwrap_or(DEFAULT_API_KEY_HEADER_NAME)
+                        .trim(),
+                )
+                .filter(|key| !key.is_empty()),
+                value.as_ref().filter(|value| !value.trim().is_empty()),
             ) {
                 match location {
                     crate::models::ApiKeyLocation::Header => {
