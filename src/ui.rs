@@ -4556,14 +4556,24 @@ impl BeamView {
     }
 
     fn render_response_panel(&self, _: &mut Window, cx: &mut Context<Self>) -> Div {
-        let response_container = div()
-            .flex_1()
-            .w_full()
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(rgb(0xd1d5db))
-            .p_0()
-            .child(self.render_response_editor_surface(cx));
+        let response_container = match self.active_response_tab {
+            ResponseTab::Body => div()
+                .flex_1()
+                .w_full()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(0xd1d5db))
+                .p_0()
+                .child(self.render_response_editor_surface(cx)),
+            ResponseTab::Headers => div()
+                .flex_1()
+                .w_full()
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(rgb(0xd1d5db))
+                .p_3()
+                .child(self.render_response_editor_surface(cx)),
+        };
 
         v_flex()
             .h_full()
