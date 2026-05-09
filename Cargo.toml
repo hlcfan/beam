@@ -17,6 +17,7 @@ toml = "0.8"
 ulid = { version = "1.2", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }
 rust-embed = "8.8"
+rquickjs = { version = "0.9", features = ["chrono"] }
 
 [dev-dependencies]
 tempfile = "3.20"

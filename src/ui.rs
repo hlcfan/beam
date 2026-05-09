@@ -30,6 +30,10 @@ use crate::paths::BeamPaths;
 use crate::request_authoring::{
     RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, validate_rename,
 };
+use crate::script::{
+    ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult, ScriptRuntimeResponse,
+    TestResult, execute_post_request_script,
+};
 use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
     CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef, WorkspaceStorage,
@@ -70,6 +74,7 @@ struct BeamView {
     response_status: String,
     response_time: String,
     response_size: String,
+    script_result: Option<PersistedScriptResult>,
     environment_manager_selected_id: Option<Ulid>,
     environment_manager_variables: Vec<EnvironmentVariable>,
     request_param_name_inputs: Vec<Entity<InputState>>,
@@ -114,6 +119,30 @@ enum RequestBodyFormat {
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
 const RESPONSE_BODY_PLACEHOLDER: &str = "// Send a request to view the response body.";
 const RESPONSE_BODY_TRUNCATED_NOTE: &str = "[Response body omitted from local history (truncated).]";
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
+struct PersistedScriptResult {
+    request_id: String,
+    success: bool,
+    failed: bool,
+    error_type: Option<String>,
+    error_message: Option<String>,
+    failure_message: Option<String>,
+    #[serde(default)]
+    console_output: Vec<ConsoleMessageView>,
+    #[serde(default)]
+    test_results: Vec<TestResult>,
+    #[serde(default)]
+    environment_diff: Vec<EnvironmentChange>,
+    updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct ConsoleMessageView {
+    level: String,
+    message: String,
+    timestamp: String,
+}
 
 struct EnvironmentManagerDialogView {
     options: Vec<(Ulid, String)>,
@@ -1194,11 +1223,13 @@ impl BeamView {
     fn sync_response_pane_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(request_id) = self.shell.collections.selected_request_id() else {
             self.clear_response_pane(window, cx);
+            self.script_result = None;
             return;
         };
 
         let Some(snapshot) = Self::load_latest_response_snapshot(request_id) else {
             self.clear_response_pane(window, cx);
+            self.script_result = Self::load_script_result(request_id);
             return;
         };
 
@@ -1209,6 +1240,7 @@ impl BeamView {
         self.response_body_editor.update(cx, |input, cx| {
             input.set_value(snapshot.body, window, cx);
         });
+        self.script_result = Self::load_script_result(request_id);
     }
 
     fn load_latest_response_snapshot(request_id: Ulid) -> Option<StoredResponseSnapshot> {
@@ -1271,6 +1303,39 @@ impl BeamView {
             body,
             headers_raw,
         })
+    }
+
+    fn script_result_file_path(request_id: Ulid) -> PathBuf {
+        let paths = BeamPaths::default_user_config();
+        paths.local_dir
+            .join("script_results")
+            .join(format!("{request_id}.toml"))
+    }
+
+    fn load_script_result(request_id: Ulid) -> Option<PersistedScriptResult> {
+        let path = Self::script_result_file_path(request_id);
+        let content = fs::read_to_string(path).ok()?;
+        let parsed: PersistedScriptResult = toml::from_str(&content).ok()?;
+        (parsed.request_id == request_id.to_string()).then_some(parsed)
+    }
+
+    fn persist_script_result(request_id: Ulid, result: &PersistedScriptResult) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let dir = paths.local_dir.join("script_results");
+        fs::create_dir_all(&dir)
+            .map_err(|error| format!("Failed to create script_results directory: {error}"))?;
+        let path = dir.join(format!("{request_id}.toml"));
+        let content = toml::to_string_pretty(result)
+            .map_err(|error| format!("Failed to encode script result: {error}"))?;
+        fs::write(path, content).map_err(|error| format!("Failed to write script result: {error}"))
+    }
+
+    fn clear_script_result_for_request(request_id: Ulid) -> Result<(), String> {
+        let path = Self::script_result_file_path(request_id);
+        if path.exists() {
+            fs::remove_file(path).map_err(|error| format!("Failed to clear script result: {error}"))?;
+        }
+        Ok(())
     }
 
     fn clear_request_param_inputs(&mut self) {
@@ -2834,6 +2899,19 @@ impl BeamView {
                     cx.notify();
                 }
             }),
+            cx.subscribe_in(&post_script_editor, window, {
+                let post_script_editor = post_script_editor.clone();
+                move |this, _, ev: &InputEvent, _, cx| {
+                    if !matches!(ev, InputEvent::Change) {
+                        return;
+                    }
+                    let next_script_text = post_script_editor.read(cx).value().to_string();
+                    this.request.post_script =
+                        (!next_script_text.trim().is_empty()).then_some(next_script_text);
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+            }),
         ];
 
         let mut view = Self {
@@ -2849,6 +2927,7 @@ impl BeamView {
             response_status: "—".to_string(),
             response_time: "—".to_string(),
             response_size: "—".to_string(),
+            script_result: None,
             environment_manager_selected_id: None,
             environment_manager_variables: Vec::new(),
             request_param_name_inputs: Vec::new(),
@@ -2885,8 +2964,11 @@ impl BeamView {
             return;
         }
 
+        let latest_script = self.post_script_editor.read(cx).value().to_string();
+        self.request.post_script = (!latest_script.trim().is_empty()).then_some(latest_script);
         self.request.is_sending = true;
         let request_id = self.shell.collections.selected_request_id();
+        let selected_environment_id = self.selected_environment_id_for_view();
         self.response_status = "Sending...".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
@@ -2894,13 +2976,20 @@ impl BeamView {
         let view = cx.entity();
 
         cx.spawn_in(window, async move |_, cx| {
-            let response = cx
+            let outcome = cx
                 .background_executor()
-                .spawn(async move { execute_http_request(request_snapshot) })
+                .spawn(async move {
+                    Self::execute_request_with_script(
+                        request_snapshot,
+                        request_id,
+                        selected_environment_id,
+                    )
+                })
                 .await;
 
             let _ = view.update_in(cx, |this, window, cx| {
                 this.request.is_sending = false;
+                let response = outcome.response;
                 let response_status = response.status.clone();
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
@@ -2913,9 +3002,22 @@ impl BeamView {
                     input.set_value(response_body.clone(), window, cx);
                 });
                 this.response_headers_raw = response_headers;
+                this.script_result = outcome.script_result.clone();
                 if let Some(request_id) = request_id {
                     if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
                         eprintln!("Failed to persist response snapshot: {error}");
+                    }
+                    match outcome.script_result.as_ref() {
+                        Some(script_result) => {
+                            if let Err(error) = Self::persist_script_result(request_id, script_result) {
+                                eprintln!("Failed to persist script result: {error}");
+                            }
+                        }
+                        None => {
+                            if let Err(error) = Self::clear_script_result_for_request(request_id) {
+                                eprintln!("Failed to clear script result: {error}");
+                            }
+                        }
                     }
                 }
                 cx.notify();
@@ -2924,6 +3026,135 @@ impl BeamView {
         .detach();
 
         cx.notify();
+    }
+
+    fn execute_request_with_script(
+        request: RequestAuthoringState,
+        request_id: Option<Ulid>,
+        selected_environment_id: Option<Ulid>,
+    ) -> SendRequestOutcome {
+        let response = execute_http_request(request.clone());
+        let script_text = request.post_script.clone().unwrap_or_default();
+        if script_text.trim().is_empty() {
+            return SendRequestOutcome {
+                response,
+                script_result: None,
+            };
+        }
+
+        let (environment_path, environment_variables) =
+            Self::load_environment_for_script(selected_environment_id);
+        let runtime_response = ScriptRuntimeResponse {
+            status: Self::parse_response_status_code(&response.status).unwrap_or(0),
+            status_text: response.status.clone(),
+            headers: Self::parse_response_headers(&response.headers),
+            body: response.body.clone(),
+            response_time_ms: Self::parse_response_duration_ms(&response.time).unwrap_or(0),
+            body_size_bytes: response.body.len(),
+        };
+        let script_exec_result =
+            execute_post_request_script(&script_text, &runtime_response, &environment_variables);
+
+        if let Some(path) = environment_path.as_ref() {
+            if let Err(error) = Self::apply_script_environment_changes(path, &script_exec_result) {
+                eprintln!("Failed to apply script environment changes: {error}");
+            }
+        }
+
+        let request_id_text = request_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown-request".to_string());
+        SendRequestOutcome {
+            response,
+            script_result: Some(Self::to_persisted_script_result(&script_exec_result, request_id_text)),
+        }
+    }
+
+    fn load_environment_for_script(
+        selected_environment_id: Option<Ulid>,
+    ) -> (Option<PathBuf>, Vec<EnvironmentVariable>) {
+        let Some(environment_id) = selected_environment_id else {
+            return (None, Vec::new());
+        };
+        let Some(path) = Self::find_environment_file_path(environment_id) else {
+            return (None, Vec::new());
+        };
+        let Ok(content) = fs::read_to_string(&path) else {
+            return (None, Vec::new());
+        };
+        let Ok(parsed) = EnvironmentManagerDialogView::parse_environment_file(&content) else {
+            return (None, Vec::new());
+        };
+        (Some(path), parsed.variables)
+    }
+
+    fn apply_script_environment_changes(
+        environment_file_path: &PathBuf,
+        script_result: &ScriptExecutionResult,
+    ) -> Result<(), String> {
+        let content = fs::read_to_string(environment_file_path)
+            .map_err(|error| format!("Failed to read environment file: {error}"))?;
+        let mut parsed = EnvironmentManagerDialogView::parse_environment_file(&content)?;
+
+        parsed.variables.retain(|var| {
+            !script_result
+                .removed_env_keys
+                .iter()
+                .any(|removed| removed == &var.name)
+        });
+
+        for (key, value) in &script_result.environment_changes {
+            if let Some(var) = parsed.variables.iter_mut().find(|var| var.name == *key) {
+                var.value = value.clone();
+                var.enabled = true;
+            } else {
+                parsed.variables.push(EnvironmentVariable {
+                    name: key.clone(),
+                    value: value.clone(),
+                    enabled: true,
+                    secret: false,
+                    description: None,
+                });
+            }
+        }
+
+        parsed.environment.updated_at = Utc::now();
+        let updated_content = toml::to_string_pretty(&parsed)
+            .map_err(|error| format!("Failed to encode environment file: {error}"))?;
+        fs::write(environment_file_path, updated_content)
+            .map_err(|error| format!("Failed to write environment file: {error}"))
+    }
+
+    fn to_persisted_script_result(
+        result: &ScriptExecutionResult,
+        request_id: String,
+    ) -> PersistedScriptResult {
+        PersistedScriptResult {
+            request_id,
+            success: result.success,
+            failed: result.failed,
+            error_type: result.error_type.map(|kind| format!("{kind:?}")),
+            error_message: result.error_message.clone(),
+            failure_message: result.failure_message.clone(),
+            console_output: result
+                .console_output
+                .iter()
+                .map(|entry| ConsoleMessageView {
+                    level: match entry.level {
+                        ConsoleLevel::Log => "log".to_string(),
+                        ConsoleLevel::Info => "info".to_string(),
+                        ConsoleLevel::Warn => "warn".to_string(),
+                        ConsoleLevel::Error => "error".to_string(),
+                        ConsoleLevel::Debug => "debug".to_string(),
+                    },
+                    message: entry.message.clone(),
+                    timestamp: entry.timestamp.to_rfc3339(),
+                })
+                .collect(),
+            test_results: result.test_results.clone(),
+            environment_diff: result.environment_diff.clone(),
+            updated_at: Utc::now().to_rfc3339(),
+        }
     }
 
     fn persist_response_snapshot(request_id: Ulid, response: &HttpResponseView) -> Result<(), String> {
@@ -4176,7 +4407,6 @@ impl BeamView {
             (RequestTab::Params, "Params"),
             (RequestTab::Headers, "Headers"),
             (RequestTab::Auth, "Auth"),
-            (RequestTab::PostScript, "Post Script"),
         ];
 
         for (tab, label) in tab_specs {
@@ -4202,10 +4432,56 @@ impl BeamView {
             );
         }
 
+        let has_script = self
+            .request
+            .post_script
+            .as_ref()
+            .is_some_and(|value| !value.trim().is_empty());
+        let indicator_color = if !has_script {
+            None
+        } else if let Some(result) = self.script_result.as_ref() {
+            Some(if result.success {
+                rgb(0x10b981)
+            } else {
+                rgb(0xef4444)
+            })
+        } else {
+            Some(rgb(0x9ca3af))
+        };
+        let post_script_label = if let Some(color) = indicator_color {
+            h_flex()
+                .items_center()
+                .gap_1()
+                .child("Post Script")
+                .child(
+                    div()
+                        .w(px(6.0))
+                        .h(px(6.0))
+                        .rounded_full()
+                        .bg(color),
+                )
+        } else {
+            h_flex().items_center().gap_1().child("Post Script")
+        };
+        tabs = tabs.child(
+            Button::new("tab-Post Script")
+                .small()
+                .ghost()
+                .cursor_pointer()
+                .selected(self.request.active_tab == RequestTab::PostScript)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.request.active_tab = RequestTab::PostScript;
+                    this.post_script_editor.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                    });
+                }))
+                .child(post_script_label),
+        );
+
         tabs
     }
 
-    fn render_request_editor_surface(&self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_request_editor_surface(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.request.active_tab {
             RequestTab::Body => Input::new(&self.request_body_editor)
                 .h_full()
@@ -4291,14 +4567,7 @@ impl BeamView {
                     }
                 })
                 .into_any_element(),
-            RequestTab::PostScript => Input::new(&self.post_script_editor)
-                .h_full()
-                .p_0()
-                .border_0()
-                .focus_bordered(false)
-                .font_family(cx.theme().mono_font_family.clone())
-                .text_size(cx.theme().mono_font_size)
-                .into_any_element(),
+            RequestTab::PostScript => self.render_post_script_editor_and_results(window, cx),
             RequestTab::Params => {
                 let mut table = v_flex().h_full().w_full().gap_2();
 
@@ -4637,15 +4906,227 @@ impl BeamView {
         }
     }
 
+    fn render_script_tests_section(&self, result: &PersistedScriptResult) -> AnyElement {
+        if result.test_results.is_empty() {
+            return div()
+                .text_xs()
+                .text_color(rgb(0x6b7280))
+                .child("No tests recorded.")
+                .into_any_element();
+        }
+        let mut column = v_flex().w_full().gap_1();
+        for test in &result.test_results {
+            let status = if test.passed { "PASS" } else { "FAIL" };
+            let color = if test.passed { rgb(0x15803d) } else { rgb(0xb91c1c) };
+            let summary = match (&test.expected, &test.actual) {
+                (Some(expected), Some(actual)) if expected != actual => {
+                    format!("expected={expected}, actual={actual}")
+                }
+                _ => String::new(),
+            };
+            let line = if summary.is_empty() {
+                format!("[{status}] {}", test.name)
+            } else {
+                format!("[{status}] {} ({summary})", test.name)
+            };
+            column = column.child(div().text_xs().text_color(color).child(line));
+            if let Some(error) = &test.error_message {
+                if !error.is_empty() {
+                    column = column.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0x7f1d1d))
+                            .child(format!("  {error}")),
+                    );
+                }
+            }
+        }
+        column.into_any_element()
+    }
+
+    fn render_script_env_changes_section(&self, result: &PersistedScriptResult) -> AnyElement {
+        if result.environment_diff.is_empty() {
+            return div()
+                .text_xs()
+                .text_color(rgb(0x6b7280))
+                .child("No environment changes.")
+                .into_any_element();
+        }
+        let mut column = v_flex().w_full().gap_1();
+        for change in &result.environment_diff {
+            let line = match change.kind {
+                EnvironmentChangeKind::Added => {
+                    format!(
+                        "[added] {} = {}",
+                        change.key,
+                        change.new_value.clone().unwrap_or_default()
+                    )
+                }
+                EnvironmentChangeKind::Updated => format!(
+                    "[updated] {}: {} -> {}",
+                    change.key,
+                    change.old_value.clone().unwrap_or_default(),
+                    change.new_value.clone().unwrap_or_default()
+                ),
+                EnvironmentChangeKind::Removed => format!(
+                    "[removed] {} (was {})",
+                    change.key,
+                    change.old_value.clone().unwrap_or_default()
+                ),
+            };
+            column = column.child(div().text_xs().child(line));
+        }
+        column.into_any_element()
+    }
+
+    fn render_script_console_section(&self, result: &PersistedScriptResult) -> AnyElement {
+        if result.console_output.is_empty() {
+            return div()
+                .text_xs()
+                .text_color(rgb(0x6b7280))
+                .child("No console output.")
+                .into_any_element();
+        }
+        let mut column = v_flex().w_full().gap_1();
+        for line in &result.console_output {
+            let prefix = line.level.to_uppercase();
+            column = column.child(
+                div()
+                    .text_xs()
+                    .child(format!("{} [{}] {}", line.timestamp, prefix, line.message)),
+            );
+        }
+        column.into_any_element()
+    }
+
+    fn render_post_script_results(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let mut panel = v_flex()
+            .h_full()
+            .w_full()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(rgb(0xd1d5db))
+            .bg(rgb(0xffffff))
+            .p_2()
+            .gap_2();
+
+        if let Some(result) = self.script_result.as_ref() {
+            panel = panel
+                .child(
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_semibold()
+                                .child(if result.success {
+                                    "Script Succeeded"
+                                } else {
+                                    "Script Failed"
+                                }),
+                        )
+                        .child(
+                            Button::new("clear-script-results")
+                                .small()
+                                .ghost()
+                                .label("Clear")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.script_result = None;
+                                    if let Some(request_id) = this.shell.collections.selected_request_id() {
+                                        if let Err(error) = Self::clear_script_result_for_request(request_id) {
+                                            eprintln!("Failed to clear script result: {error}");
+                                        }
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(div().text_xs().text_color(rgb(0x6b7280)).child(format!(
+                    "Updated at {}",
+                    result.updated_at
+                )));
+
+            if let Some(error_message) = &result.error_message {
+                if !error_message.is_empty() {
+                    panel = panel.child(
+                        div()
+                            .text_xs()
+                            .text_color(rgb(0xb91c1c))
+                            .child(format!("Error: {error_message}")),
+                    );
+                }
+            }
+
+            panel = panel.child(div().text_xs().font_semibold().child("Tests"));
+            panel = panel.child(self.render_script_tests_section(result));
+            panel = panel.child(div().text_xs().font_semibold().child("Environment Changes"));
+            panel = panel.child(self.render_script_env_changes_section(result));
+            panel = panel.child(div().text_xs().font_semibold().child("Console"));
+            panel = panel.child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    .overflow_y_scrollbar()
+                    .child(self.render_script_console_section(result)),
+            );
+        } else {
+            panel = panel.child(
+                div()
+                    .text_sm()
+                    .text_color(rgb(0x6b7280))
+                    .child("Send a request to see script results"),
+            );
+        }
+
+        panel.into_any_element()
+    }
+
+    fn render_post_script_editor_and_results(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .h_full()
+            .w_full()
+            .gap_2()
+            .child(
+                div()
+                    .h_1_2()
+                    .w_full()
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(rgb(0xd1d5db))
+                    .p_0()
+                    .child(
+                        Input::new(&self.post_script_editor)
+                            .h_full()
+                            .p_0()
+                            .border_0()
+                            .focus_bordered(false)
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(cx.theme().mono_font_size),
+                    ),
+            )
+            .child(div().flex_1().w_full().child(self.render_post_script_results(window, cx)))
+            .into_any_element()
+    }
+
     fn render_request_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let editor_container = match self.request.active_tab {
-            RequestTab::Body | RequestTab::PostScript => div()
+            RequestTab::Body => div()
                 .flex_1()
                 .w_full()
                 .rounded(px(8.0))
                 .border_1()
                 .border_color(rgb(0xd1d5db))
                 .p_0()
+                .child(self.render_request_editor_surface(window, cx)),
+            RequestTab::PostScript => div()
+                .flex_1()
+                .w_full()
                 .child(self.render_request_editor_surface(window, cx)),
             _ => div()
                 .flex_1()
@@ -4858,6 +5339,11 @@ struct HttpResponseView {
     size: String,
     body: String,
     headers: String,
+}
+
+struct SendRequestOutcome {
+    response: HttpResponseView,
+    script_result: Option<PersistedScriptResult>,
 }
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();

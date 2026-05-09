@@ -5,5 +5,6 @@ pub mod models;
 pub mod paths;
 pub mod request_authoring;
 pub mod schema;
+pub mod script;
 pub mod storage;
 pub mod ui;
