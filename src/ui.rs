@@ -3506,6 +3506,63 @@ impl BeamView {
         .detach();
     }
 
+    fn dispatch_response_body_editor_action(
+        &mut self,
+        action: Box<dyn Action>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_response_tab = ResponseTab::Body;
+        self.response_body_editor.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+        window.dispatch_action(action, cx);
+    }
+
+    fn format_response_body_text(text: &str) -> Result<String, String> {
+        let value = serde_json::from_str::<serde_json::Value>(text)
+            .map_err(|err| format!("Unable to format response body as JSON: {err}"))?;
+        serde_json::to_string_pretty(&value)
+            .map_err(|err| format!("Unable to format response body as JSON: {err}"))
+    }
+
+    fn format_response_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current_text = self.response_body_editor.read(cx).value().to_string();
+        let trimmed = current_text.trim();
+        if trimmed.is_empty() || trimmed == RESPONSE_BODY_PLACEHOLDER {
+            window.push_notification("No response body to format.".to_string(), cx);
+            cx.notify();
+            return;
+        }
+
+        let formatted = match Self::format_response_body_text(&current_text) {
+            Ok(formatted) => formatted,
+            Err(error) => {
+                window.push_notification(
+                    (
+                        gpui_component::notification::NotificationType::Error,
+                        SharedString::from(format!("Failed to format response body: {error}")),
+                    ),
+                    cx,
+                );
+                cx.notify();
+                return;
+            }
+        };
+
+        if formatted == current_text {
+            window.push_notification("Body is already formatted.".to_string(), cx);
+            cx.notify();
+            return;
+        }
+
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_value(formatted, window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
     fn body_editor_language(body: &BodyConfig) -> &'static str {
         match body {
             BodyConfig::Json { .. } => "json",
@@ -5541,6 +5598,163 @@ impl BeamView {
                 .disabled(true)
                 .font_family(cx.theme().mono_font_family.clone())
                 .text_size(cx.theme().mono_font_size)
+                .context_menu({
+                    let view = cx.entity();
+                    move |menu, window, _| {
+                        menu.min_w(px(180.0))
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .gap_2()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            Icon::default()
+                                                .path("icons/indent.svg")
+                                                .size(px(14.0))
+                                                .text_color(rgb(0x6b7280)),
+                                        )
+                                        .child("Format")
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.format_response_body(window, cx);
+                                })),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/cut.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Cut"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+X"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_response_body_editor_action(
+                                        Box::new(input::Cut),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/copy.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Copy"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+C"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_response_body_editor_action(
+                                        Box::new(input::Copy),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/clipboard-paste.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Paste"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+V"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_response_body_editor_action(
+                                        Box::new(input::Paste),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                            .separator()
+                            .item(
+                                PopupMenuItem::element(move |_, _| {
+                                    h_flex()
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap_3()
+                                        .px_2()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .items_center()
+                                                .gap_2()
+                                                .child(
+                                                    Icon::default()
+                                                        .path("icons/square-dashed-text.svg")
+                                                        .size(px(14.0))
+                                                        .text_color(rgb(0x6b7280)),
+                                                )
+                                                .child("Select All"),
+                                        )
+                                        .child(div().text_xs().text_color(rgb(0x9ca3af)).child("Cmd+A"))
+                                })
+                                .on_click(window.listener_for(&view, |this, _, window, cx| {
+                                    this.dispatch_response_body_editor_action(
+                                        Box::new(input::SelectAll),
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                            )
+                    }
+                })
                 .into_any_element(),
             ResponseTab::Headers => self.render_response_headers_table(),
         }
