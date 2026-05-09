@@ -5122,7 +5122,19 @@ impl BeamView {
                                 .border_0()
                                 .focus_bordered(false)
                                 .font_family(cx.theme().mono_font_family.clone())
-                                .text_size(cx.theme().mono_font_size),
+                                .text_size(cx.theme().mono_font_size)
+                                .context_menu({
+                                    move |menu, _, _| {
+                                        menu.min_w(px(180.0))
+                                            .menu("Find", Box::new(input::Search))
+                                            .separator()
+                                            .menu("Cut", Box::new(input::Cut))
+                                            .menu("Copy", Box::new(input::Copy))
+                                            .menu("Paste", Box::new(input::Paste))
+                                            .separator()
+                                            .menu("Select All", Box::new(input::SelectAll))
+                                    }
+                                }),
                         ),
                     ),
             )
