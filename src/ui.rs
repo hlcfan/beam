@@ -3723,8 +3723,8 @@ impl BeamView {
                             .cursor_pointer()
                             .w_full()
                             .rounded(px(8.0))
-                            .pl(indent)
                             .px_1()
+                            .pl(indent)
                             .py(px(1.0))
                             .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                                 TreeNodeKind::Collection | TreeNodeKind::Folder => {
