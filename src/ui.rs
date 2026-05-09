@@ -2,7 +2,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
-use chrono::Utc;
+use chrono::{Local, Utc};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Root, Selectable, Sizable, StyledExt, TitleBar, WindowExt as _,
@@ -887,6 +887,18 @@ impl Render for TreeRenameDialogView {
 }
 
 impl BeamView {
+    fn format_human_timestamp(timestamp: &str) -> String {
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|parsed| parsed.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_else(|_| timestamp.to_string())
+    }
+
+    fn format_human_time(timestamp: &str) -> String {
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|parsed| parsed.with_timezone(&Local).format("%H:%M:%S").to_string())
+            .unwrap_or_else(|_| timestamp.to_string())
+    }
+
     fn selected_collection_id(&self) -> Option<Ulid> {
         let mut cursor = self.shell.collections.selected_request_id()?;
         loop {
@@ -4993,7 +5005,12 @@ impl BeamView {
             column = column.child(
                 div()
                     .text_xs()
-                    .child(format!("{} [{}] {}", line.timestamp, prefix, line.message)),
+                    .child(format!(
+                        "{} [{}] {}",
+                        Self::format_human_time(&line.timestamp),
+                        prefix,
+                        line.message
+                    )),
             );
         }
         column.into_any_element()
@@ -5011,7 +5028,8 @@ impl BeamView {
             .gap_2();
 
         if let Some(result) = self.script_result.as_ref() {
-            panel = panel
+            let mut content = v_flex().w_full().gap_2();
+            content = content
                 .child(
                     h_flex()
                         .w_full()
@@ -5044,13 +5062,13 @@ impl BeamView {
                         ),
                 )
                 .child(div().text_xs().text_color(rgb(0x6b7280)).child(format!(
-                    "Updated at {}",
-                    result.updated_at
+                    "Updated {}",
+                    Self::format_human_timestamp(&result.updated_at)
                 )));
 
             if let Some(error_message) = &result.error_message {
                 if !error_message.is_empty() {
-                    panel = panel.child(
+                    content = content.child(
                         div()
                             .text_xs()
                             .text_color(rgb(0xb91c1c))
@@ -5059,18 +5077,14 @@ impl BeamView {
                 }
             }
 
-            panel = panel.child(div().text_xs().font_semibold().child("Tests"));
-            panel = panel.child(self.render_script_tests_section(result));
-            panel = panel.child(div().text_xs().font_semibold().child("Environment Changes"));
-            panel = panel.child(self.render_script_env_changes_section(result));
-            panel = panel.child(div().text_xs().font_semibold().child("Console"));
-            panel = panel.child(
-                div()
-                    .w_full()
-                    .flex_1()
-                    .overflow_y_scrollbar()
-                    .child(self.render_script_console_section(result)),
-            );
+            content = content.child(div().text_xs().font_semibold().child("Tests"));
+            content = content.child(self.render_script_tests_section(result));
+            content = content.child(div().text_xs().font_semibold().child("Environment Changes"));
+            content = content.child(self.render_script_env_changes_section(result));
+            content = content.child(div().text_xs().font_semibold().child("Console"));
+            content = content.child(self.render_script_console_section(result));
+
+            panel = panel.child(div().w_full().flex_1().overflow_y_scrollbar().child(content));
         } else {
             panel = panel.child(
                 div()
@@ -5091,7 +5105,7 @@ impl BeamView {
         v_flex()
             .h_full()
             .w_full()
-            .gap_2()
+            .gap_0()
             .child(
                 div()
                     .h_1_2()
@@ -5101,16 +5115,23 @@ impl BeamView {
                     .border_color(rgb(0xd1d5db))
                     .p_0()
                     .child(
-                        Input::new(&self.post_script_editor)
-                            .h_full()
-                            .p_0()
-                            .border_0()
-                            .focus_bordered(false)
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_size(cx.theme().mono_font_size),
+                        div().w_full().h_full().overflow_y_scrollbar().child(
+                            Input::new(&self.post_script_editor)
+                                .h_full()
+                                .p_0()
+                                .border_0()
+                                .focus_bordered(false)
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_size(cx.theme().mono_font_size),
+                        ),
                     ),
             )
-            .child(div().flex_1().w_full().child(self.render_post_script_results(window, cx)))
+            .child(
+                div()
+                    .h_1_2()
+                    .w_full()
+                    .child(self.render_post_script_results(window, cx)),
+            )
             .into_any_element()
     }
 
