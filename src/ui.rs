@@ -958,10 +958,6 @@ impl Render for TreeRenameDialogView {
 }
 
 impl BeamView {
-    fn no_environment_selection_marker() -> Ulid {
-        Ulid::nil()
-    }
-
     fn script_contains_environment_mutation(script: &str) -> bool {
         let lowered = script.to_ascii_lowercase();
         [
@@ -1007,52 +1003,18 @@ impl BeamView {
             .unwrap_or_else(|_| timestamp.to_string())
     }
 
-    fn selected_collection_id(&self) -> Option<Ulid> {
-        let mut cursor = self.shell.collections.selected_request_id()?;
-        loop {
-            let node = self.shell.collections.node(cursor)?;
-            if node.kind == TreeNodeKind::Collection {
-                return Some(node.id);
-            }
-            cursor = node.parent_id?;
-        }
-    }
-
-    fn active_environment_options(&self) -> Vec<(Ulid, String, EnvironmentScope)> {
-        let selected_collection_id = self.selected_collection_id();
+    fn active_environment_options(&self) -> Vec<(Ulid, String)> {
         self.shell
             .environments
             .iter()
-            .filter(|environment| {
-                environment.scope == EnvironmentScope::Global
-                    || (environment.scope == EnvironmentScope::Collection
-                        && environment.collection_id == selected_collection_id)
-            })
+            .filter(|environment| environment.scope == EnvironmentScope::Global)
             .map(|environment| {
-                let label = match environment.scope {
-                    EnvironmentScope::Global => environment.name.clone(),
-                    EnvironmentScope::Collection => format!("Collection: {}", environment.name),
-                };
-                (environment.environment_id, label, environment.scope)
+                (environment.environment_id, environment.name.clone())
             })
             .collect()
     }
 
     fn selected_environment_id_for_view(&self) -> Option<Ulid> {
-        if let Some(collection_id) = self.selected_collection_id() {
-            if let Some(collection_environment_id) = self
-                .shell
-                .environment_selection
-                .active_collection_environment_ids
-                .get(&collection_id)
-                .copied()
-            {
-                if collection_environment_id == Self::no_environment_selection_marker() {
-                    return None;
-                }
-                return Some(collection_environment_id);
-            }
-        }
         self.shell
             .environment_selection
             .active_global_environment_id
@@ -1062,10 +1024,10 @@ impl BeamView {
         let Some(selected_id) = self.selected_environment_id_for_view() else {
             return "No environment".to_string();
         };
-        let Some((_, label, _)) = self
+        let Some((_, label)) = self
             .active_environment_options()
             .into_iter()
-            .find(|(environment_id, _, _)| *environment_id == selected_id)
+            .find(|(environment_id, _)| *environment_id == selected_id)
         else {
             return "No environment".to_string();
         };
@@ -2315,6 +2277,26 @@ impl BeamView {
         }
 
         local_state.tree_state.expanded_item_ids = expanded_item_ids;
+        local_state.local_state.updated_at = Utc::now();
+        storage
+            .save_local_state(&local_state)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
+    fn persist_environment_selection_state(&self) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        let mut local_state = match storage.load_local_state() {
+            Ok(state) => state,
+            Err(_) => LocalStateFile::default(),
+        };
+
+        let active_global_environment_id = self.shell.environment_selection.active_global_environment_id;
+        if local_state.local_state.active_global_environment_id == active_global_environment_id {
+            return Ok(());
+        }
+
+        local_state.local_state.active_global_environment_id = active_global_environment_id;
         local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
@@ -4244,7 +4226,6 @@ impl BeamView {
         let current_method = self.request.method;
         let url_has_selection = !self.url_input.read(cx).selected_range().is_empty();
         let selected_environment_id = self.selected_environment_id_for_view();
-        let selected_collection_id = self.selected_collection_id();
         let environment_options = self.active_environment_options();
         let env_label = self.selected_environment_label();
         let method_view = cx.entity();
@@ -4357,7 +4338,7 @@ impl BeamView {
                         let no_env_selected = selected_environment_id.is_none_or(|selected_id| {
                             !environment_options
                                 .iter()
-                                .any(|(environment_id, _, _)| *environment_id == selected_id)
+                                .any(|(environment_id, _)| *environment_id == selected_id)
                         });
                         menu = menu.item(
                             PopupMenuItem::element(move |_, _| {
@@ -4366,26 +4347,19 @@ impl BeamView {
                             .checked(no_env_selected)
                             .on_click(window.listener_for(
                                 &environment_view,
-                                move |this, _, _, cx| {
-                                    if let Some(collection_id) = selected_collection_id {
-                                        this.shell
-                                            .environment_selection
-                                            .active_collection_environment_ids
-                                            .insert(
-                                                collection_id,
-                                                Self::no_environment_selection_marker(),
-                                            );
-                                    } else {
-                                        this.shell
-                                            .environment_selection
-                                            .active_global_environment_id = None;
+                                move |this, _, window, cx| {
+                                    this.shell
+                                        .environment_selection
+                                        .active_global_environment_id = None;
+                                    if let Err(error) = this.persist_environment_selection_state() {
+                                        window.push_notification(error, cx);
                                     }
                                     cx.notify();
                                 },
                             )),
                         );
 
-                        for (environment_id, label, scope) in environment_options.clone() {
+                        for (environment_id, label) in environment_options.clone() {
                             let checked = Some(environment_id) == selected_environment_id;
                             let item_view = environment_view.clone();
                             menu = menu.item(
@@ -4395,23 +4369,14 @@ impl BeamView {
                                 .checked(checked)
                                 .on_click(window.listener_for(
                                     &item_view,
-                                    move |this, _, _, cx| {
-                                        match scope {
-                                            EnvironmentScope::Global => {
-                                                this.shell
-                                                    .environment_selection
-                                                    .active_global_environment_id =
-                                                    Some(environment_id);
-                                            }
-                                            EnvironmentScope::Collection => {
-                                                if let Some(collection_id) = selected_collection_id
-                                                {
-                                                    this.shell
-                                                        .environment_selection
-                                                        .active_collection_environment_ids
-                                                        .insert(collection_id, environment_id);
-                                                }
-                                            }
+                                    move |this, _, window, cx| {
+                                        this.shell
+                                            .environment_selection
+                                            .active_global_environment_id = Some(environment_id);
+                                        if let Err(error) =
+                                            this.persist_environment_selection_state()
+                                        {
+                                            window.push_notification(error, cx);
                                         }
                                         cx.notify();
                                     },
