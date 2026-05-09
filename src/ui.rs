@@ -112,6 +112,8 @@ enum RequestBodyFormat {
 }
 
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
+const RESPONSE_BODY_PLACEHOLDER: &str = "// Send a request to view the response body.";
+const RESPONSE_BODY_TRUNCATED_NOTE: &str = "[Response body omitted from local history (truncated).]";
 
 struct EnvironmentManagerDialogView {
     options: Vec<(Ulid, String)>,
@@ -146,6 +148,54 @@ struct EnvironmentTomlMeta {
     description: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, Default)]
+struct RequestHistoryFile {
+    #[serde(default)]
+    meta: Option<RequestHistoryMeta>,
+    #[serde(default)]
+    executions: Vec<RequestHistoryExecution>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RequestHistoryMeta {
+    request_id: String,
+    #[serde(default)]
+    schema_version: Option<u32>,
+    #[serde(default)]
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RequestHistoryExecution {
+    status: Option<u16>,
+    duration_ms: Option<u64>,
+    response_summary: Option<RequestHistoryResponseSummary>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RequestHistoryResponseSummary {
+    body_bytes: Option<u64>,
+    body_ref: Option<String>,
+    #[serde(default)]
+    body_truncated: bool,
+    #[serde(default)]
+    headers: Vec<RequestHistoryHeader>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RequestHistoryHeader {
+    name: String,
+    value: String,
+}
+
+struct StoredResponseSnapshot {
+    status: String,
+    time: String,
+    size: String,
+    body: String,
+    headers_raw: String,
 }
 
 impl EnvironmentManagerDialogView {
@@ -1128,6 +1178,99 @@ impl BeamView {
             input.set_value(next_script, window, cx);
         });
         self.sync_request_auth_inputs(window, cx);
+        self.sync_response_pane_from_selection(window, cx);
+    }
+
+    fn clear_response_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.response_status = "—".to_string();
+        self.response_time = "—".to_string();
+        self.response_size = "—".to_string();
+        self.response_headers_raw.clear();
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_value(RESPONSE_BODY_PLACEHOLDER.to_string(), window, cx);
+        });
+    }
+
+    fn sync_response_pane_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(request_id) = self.shell.collections.selected_request_id() else {
+            self.clear_response_pane(window, cx);
+            return;
+        };
+
+        let Some(snapshot) = Self::load_latest_response_snapshot(request_id) else {
+            self.clear_response_pane(window, cx);
+            return;
+        };
+
+        self.response_status = snapshot.status;
+        self.response_time = snapshot.time;
+        self.response_size = snapshot.size;
+        self.response_headers_raw = snapshot.headers_raw;
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_value(snapshot.body, window, cx);
+        });
+    }
+
+    fn load_latest_response_snapshot(request_id: Ulid) -> Option<StoredResponseSnapshot> {
+        let paths = BeamPaths::default_user_config();
+        let history_file_path = paths
+            .local_dir
+            .join("history/by-request")
+            .join(format!("{request_id}.history.toml"));
+        let content = fs::read_to_string(history_file_path).ok()?;
+        let history_file: RequestHistoryFile = toml::from_str(&content).ok()?;
+        if let Some(meta) = history_file.meta.as_ref() {
+            let _ = (&meta.schema_version, &meta.updated_at);
+            if meta.request_id != request_id.to_string() {
+                return None;
+            }
+        }
+        let latest_execution = history_file.executions.last()?;
+
+        let status = latest_execution
+            .status
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let time = latest_execution
+            .duration_ms
+            .map(|ms| format!("{ms} ms"))
+            .unwrap_or_else(|| "—".to_string());
+
+        let mut size = "—".to_string();
+        let mut body = RESPONSE_BODY_PLACEHOLDER.to_string();
+        let mut headers_raw = String::new();
+
+        if let Some(summary) = latest_execution.response_summary.as_ref() {
+            if let Some(bytes) = summary.body_bytes.and_then(|n| usize::try_from(n).ok()) {
+                size = format_bytes(bytes);
+            }
+            if !summary.headers.is_empty() {
+                headers_raw = summary
+                    .headers
+                    .iter()
+                    .map(|header| format!("{}: {}", header.name, header.value))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+            }
+            body = if summary.body_truncated {
+                RESPONSE_BODY_TRUNCATED_NOTE.to_string()
+            } else if let Some(body_ref) = summary.body_ref.as_ref() {
+                let body_path = paths.local_dir.join("history/responses").join(body_ref);
+                fs::read(body_path)
+                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                    .unwrap_or_else(|_| RESPONSE_BODY_PLACEHOLDER.to_string())
+            } else {
+                String::new()
+            };
+        }
+
+        Some(StoredResponseSnapshot {
+            status,
+            time,
+            size,
+            body,
+            headers_raw,
+        })
     }
 
     fn clear_request_param_inputs(&mut self) {
@@ -2636,7 +2779,7 @@ impl BeamView {
                 })
                 .searchable(true)
                 .placeholder("Response body will appear here...")
-                .default_value("// Send a request to view the response body.")
+                .default_value(RESPONSE_BODY_PLACEHOLDER)
         });
 
         let post_script_editor = cx.new(|cx| {
