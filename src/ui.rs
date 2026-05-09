@@ -44,6 +44,7 @@ actions!(
     beam,
     [
         QuitApp,
+        SendActiveRequest,
         CreateRequestBelowActive,
         FocusUrlInput
     ]
@@ -57,11 +58,15 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-q", QuitApp, None),
             #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-enter", SendActiveRequest, None),
+            #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-n", CreateRequestBelowActive, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-l", FocusUrlInput, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-enter", SendActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-n", CreateRequestBelowActive, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -69,6 +74,51 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
         ]);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
+        });
+        cx.on_action(|_: &SendActiveRequest, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle.downcast::<Root>().and_then(|h| h.read(cx).ok()) {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.send_request(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &CreateRequestBelowActive, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle.downcast::<Root>().and_then(|h| h.read(cx).ok()) {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.create_request_below_active(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &FocusUrlInput, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle.downcast::<Root>().and_then(|h| h.read(cx).ok()) {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.focus_url_input(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
         });
 
         let window_options = WindowOptions {
@@ -2659,6 +2709,15 @@ impl BeamView {
         self.focus_url_input(window, cx);
     }
 
+    fn on_action_send_active_request(
+        &mut self,
+        _: &SendActiveRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.send_request(window, cx);
+    }
+
     fn copy_request_as_curl_from_tree_node(
         &mut self,
         request_id: Ulid,
@@ -3848,6 +3907,7 @@ impl BeamView {
                                         window.push_notification(error, cx);
                                     }
                                     this.sync_request_editor_from_selection(window, cx);
+                                    window.blur();
                                 }
                             }))
                             .child(row_content)
@@ -6383,6 +6443,7 @@ impl Render for BeamView {
 
         v_flex()
             .size_full()
+            .on_action(cx.listener(Self::on_action_send_active_request))
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .bg(cx.theme().background)
