@@ -241,6 +241,7 @@ struct ConsoleMessageView {
 }
 
 struct EnvironmentManagerDialogView {
+    beam_view: Entity<BeamView>,
     options: Vec<(Ulid, String)>,
     environment_file_names: HashMap<Ulid, String>,
     selected_id: Option<Ulid>,
@@ -349,6 +350,7 @@ impl EnvironmentManagerDialogView {
     }
 
     fn new(
+        beam_view: Entity<BeamView>,
         options: Vec<(Ulid, String)>,
         environment_file_names: HashMap<Ulid, String>,
         selected_id: Option<Ulid>,
@@ -358,6 +360,7 @@ impl EnvironmentManagerDialogView {
         let environment_name_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
         let mut view = Self {
+            beam_view,
             options,
             environment_file_names,
             selected_id,
@@ -399,6 +402,7 @@ impl EnvironmentManagerDialogView {
     }
 
     fn new_for_sheet(
+        beam_view: Entity<BeamView>,
         selected_option: Option<(Ulid, String, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -413,9 +417,28 @@ impl EnvironmentManagerDialogView {
             } else {
                 (Vec::new(), HashMap::new(), None)
             };
-        let mut view = Self::new(options, environment_file_names, selected_id, window, cx);
+        let mut view = Self::new(
+            beam_view,
+            options,
+            environment_file_names,
+            selected_id,
+            window,
+            cx,
+        );
         view.show_environment_selector = false;
         view
+    }
+
+    fn sync_environment_meta_to_beam_view(
+        &self,
+        environment_meta: crate::models::EnvironmentMeta,
+        cx: &mut Context<Self>,
+    ) {
+        let beam_view = self.beam_view.clone();
+        let _ = beam_view.update(cx, move |this, cx| {
+            this.upsert_environment_meta(environment_meta.clone());
+            cx.notify();
+        });
     }
 
     fn environment_file_path(&self, environment_id: Ulid) -> Option<PathBuf> {
@@ -542,6 +565,7 @@ impl EnvironmentManagerDialogView {
         };
         let environment_id = created.environment.environment_id;
         self.update_environment_file_name(environment_id, created.environment.file_name.clone());
+        self.sync_environment_meta_to_beam_view(created.environment.clone(), cx);
 
         let label = Self::environment_option_label(&environment_name, EnvironmentScope::Global);
         self.options.push((environment_id, label));
@@ -679,7 +703,6 @@ impl EnvironmentManagerDialogView {
         }
         let file_name = self.environment_file_names.get(&environment_id).cloned();
         let variables = self.variables.clone();
-        let updated_name_for_label = updated_name.clone();
         self.variables_save_in_flight = true;
         let view = cx.entity();
         cx.spawn(async move |_, cx| {
@@ -691,6 +714,7 @@ impl EnvironmentManagerDialogView {
                 this.variables_save_in_flight = false;
                 match result {
                     Ok(updated_environment) => {
+                        this.sync_environment_meta_to_beam_view(updated_environment.clone(), cx);
                         this.update_environment_file_name(
                             environment_id,
                             updated_environment.file_name.clone(),
@@ -701,7 +725,7 @@ impl EnvironmentManagerDialogView {
                             .find(|(option_id, _)| *option_id == environment_id)
                         {
                             *label = Self::environment_option_label(
-                                &updated_name_for_label,
+                                &updated_environment.name,
                                 updated_environment.scope,
                             );
                         }
@@ -1201,7 +1225,35 @@ impl BeamView {
         label
     }
 
+    fn upsert_environment_meta(&mut self, environment_meta: crate::models::EnvironmentMeta) {
+        if let Some(existing) = self
+            .shell
+            .environments
+            .iter_mut()
+            .find(|environment| environment.environment_id == environment_meta.environment_id)
+        {
+            *existing = environment_meta;
+        } else {
+            self.shell.environments.push(environment_meta);
+        }
+        self.shell.environments.sort_by(|a, b| {
+            let scope_rank = |scope: EnvironmentScope| match scope {
+                EnvironmentScope::Global => 0_u8,
+                EnvironmentScope::Collection => 1_u8,
+            };
+            scope_rank(a.scope)
+                .cmp(&scope_rank(b.scope))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                .then_with(|| {
+                    a.environment_id
+                        .to_string()
+                        .cmp(&b.environment_id.to_string())
+                })
+        });
+    }
+
     fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let beam_view = cx.entity();
         let selected_option = self
             .selected_environment_id_for_view()
             .and_then(|selected_id| {
@@ -1218,7 +1270,12 @@ impl BeamView {
                     })
             });
         let sheet_view = cx.new(|cx| {
-            EnvironmentManagerDialogView::new_for_sheet(selected_option.clone(), window, cx)
+            EnvironmentManagerDialogView::new_for_sheet(
+                beam_view.clone(),
+                selected_option.clone(),
+                window,
+                cx,
+            )
         });
 
         window.open_sheet_at(Placement::Right, cx, move |sheet, _, _| {
@@ -1252,12 +1309,14 @@ impl BeamView {
     }
 
     fn open_environment_manager(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let beam_view = cx.entity();
         let options = self.environment_manager_options();
         let environment_file_names = self.environment_manager_file_names();
         let fallback_id = options.first().map(|(environment_id, _)| *environment_id);
         let selected = self.selected_environment_id_for_view().or(fallback_id);
         let manager_view = cx.new(|cx| {
             EnvironmentManagerDialogView::new(
+                beam_view.clone(),
                 options.clone(),
                 environment_file_names.clone(),
                 selected,
