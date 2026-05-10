@@ -79,7 +79,10 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
         cx.on_action(|_: &SendActiveRequest, cx: &mut App| {
             cx.defer(move |cx| {
                 if let Some(window_handle) = cx.active_window() {
-                    if let Some(root) = window_handle.downcast::<Root>().and_then(|h| h.read(cx).ok()) {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
@@ -94,7 +97,10 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
         cx.on_action(|_: &CreateRequestBelowActive, cx: &mut App| {
             cx.defer(move |cx| {
                 if let Some(window_handle) = cx.active_window() {
-                    if let Some(root) = window_handle.downcast::<Root>().and_then(|h| h.read(cx).ok()) {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
@@ -109,7 +115,10 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
         cx.on_action(|_: &FocusUrlInput, cx: &mut App| {
             cx.defer(move |cx| {
                 if let Some(window_handle) = cx.active_window() {
-                    if let Some(root) = window_handle.downcast::<Root>().and_then(|h| h.read(cx).ok()) {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
@@ -176,7 +185,7 @@ struct BeamView {
     request_save_in_flight: bool,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
-
+    collection_context_menu_row: Option<crate::app_shell::TreeRow>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1061,9 +1070,7 @@ impl BeamView {
             .environments
             .iter()
             .filter(|environment| environment.scope == EnvironmentScope::Global)
-            .map(|environment| {
-                (environment.environment_id, environment.name.clone())
-            })
+            .map(|environment| (environment.environment_id, environment.name.clone()))
             .collect()
     }
 
@@ -2323,7 +2330,9 @@ impl BeamView {
                 post_script: request_file.scripts.post_response.clone(),
             },
         );
-        self.shell.collections.select_request(request_file.meta.request_id);
+        self.shell
+            .collections
+            .select_request(request_file.meta.request_id);
         self.sync_request_editor_from_selection(window, cx);
     }
 
@@ -2356,7 +2365,9 @@ impl BeamView {
                 post_script: request_file.scripts.post_response.clone(),
             },
         );
-        self.shell.collections.select_request(request_file.meta.request_id);
+        self.shell
+            .collections
+            .select_request(request_file.meta.request_id);
         self.sync_request_editor_from_selection(window, cx);
     }
 
@@ -2389,7 +2400,9 @@ impl BeamView {
                 post_script: request_file.scripts.post_response.clone(),
             },
         );
-        self.shell.collections.select_request(request_file.meta.request_id);
+        self.shell
+            .collections
+            .select_request(request_file.meta.request_id);
         self.sync_request_editor_from_selection(window, cx);
     }
 
@@ -2441,7 +2454,10 @@ impl BeamView {
             Err(_) => LocalStateFile::default(),
         };
 
-        let active_global_environment_id = self.shell.environment_selection.active_global_environment_id;
+        let active_global_environment_id = self
+            .shell
+            .environment_selection
+            .active_global_environment_id;
         if local_state.local_state.active_global_environment_id == active_global_environment_id {
             return Ok(());
         }
@@ -2890,13 +2906,7 @@ impl BeamView {
                 .await;
             let _ = view.update_in(cx, move |this, window, cx| match result {
                 Ok(request_file) => {
-                    this.duplicate_request_to_shell(
-                        &request_file,
-                        parent,
-                        request_id,
-                        window,
-                        cx,
-                    );
+                    this.duplicate_request_to_shell(&request_file, parent, request_id, window, cx);
                     window.push_notification("Request duplicated.", cx);
                     cx.notify();
                 }
@@ -3098,10 +3108,7 @@ impl BeamView {
             HttpMethod::Put | HttpMethod::Patch => {
                 (cx.theme().info.opacity(1.0), cx.theme().info_foreground)
             }
-            HttpMethod::Delete => (
-                cx.theme().danger.opacity(1.0),
-                cx.theme().danger_foreground,
-            ),
+            HttpMethod::Delete => (cx.theme().danger.opacity(1.0), cx.theme().danger_foreground),
             HttpMethod::Head | HttpMethod::Options => {
                 (cx.theme().secondary, cx.theme().secondary_foreground)
             }
@@ -3321,7 +3328,7 @@ impl BeamView {
             request_save_in_flight: false,
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
-
+            collection_context_menu_row: None,
         };
         view.rebuild_request_param_inputs(window, cx);
         view.rebuild_request_header_inputs(window, cx);
@@ -3431,15 +3438,14 @@ impl BeamView {
             response_time_ms: Self::parse_response_duration_ms(&response.time).unwrap_or(0),
             body_size_bytes: response.body.len(),
         };
-        let script_exec_result =
-            execute_post_request_script(
-                &script_text,
-                &runtime_response,
-                &environment_variables,
-                !no_environment_selected,
-            );
-        let no_environment_selected_with_env_writes = no_environment_selected
-            && Self::script_contains_environment_mutation(&script_text);
+        let script_exec_result = execute_post_request_script(
+            &script_text,
+            &runtime_response,
+            &environment_variables,
+            !no_environment_selected,
+        );
+        let no_environment_selected_with_env_writes =
+            no_environment_selected && Self::script_contains_environment_mutation(&script_text);
 
         if let Some(path) = environment_path.as_ref() {
             if let Err(error) = Self::apply_script_environment_changes(path, &script_exec_result) {
@@ -3985,9 +3991,9 @@ impl BeamView {
         }
         row_content = row_content.child(label);
 
+        let row_data = *row;
         let row_id = row.id;
         let row_kind = row.kind;
-        let view = cx.entity();
 
         div()
             .cursor_pointer()
@@ -4015,352 +4021,373 @@ impl BeamView {
                         }
                     })),
             )
-            .context_menu(move |menu, window, _| {
-                let mut menu = menu.min_w(px(180.0));
-                match row_kind {
-                    TreeNodeKind::Collection => {
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/add.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Add Request")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.add_request_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/folder-add.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Add Folder")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.add_folder_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.separator();
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/edit.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Rename")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.open_rename_dialog_for_tree_node(
-                                        row_id,
-                                        TreeNodeKind::Collection,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/trash.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Delete")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.delete_collection_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                    }
-                    TreeNodeKind::Folder => {
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/add.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Add Request")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.add_request_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/folder-add.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Add Folder")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.add_folder_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.separator();
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/edit.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Rename")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.open_rename_dialog_for_tree_node(
-                                        row_id,
-                                        TreeNodeKind::Folder,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/trash.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Delete")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.delete_folder_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                    }
-                    TreeNodeKind::Request => {
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/send.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Send Request")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.send_request_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/copy.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Copy as cURL")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.copy_request_as_curl_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.separator();
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/edit.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Rename")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.open_rename_dialog_for_tree_node(
-                                        row_id,
-                                        TreeNodeKind::Request,
-                                        window,
-                                        cx,
-                                    );
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/duplicate.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Duplicate")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.duplicate_request_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, _| {
-                                h_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .items_center()
-                                    .gap_2()
-                                    .px_2()
-                                    .py_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/trash.svg")
-                                            .size(px(14.0))
-                                            .text_color(rgb(0x6b7280)),
-                                    )
-                                    .child("Delete")
-                            })
-                            .on_click(window.listener_for(
-                                &view,
-                                move |this, _, window, cx| {
-                                    this.delete_request_from_tree_node(row_id, window, cx);
-                                },
-                            )),
-                        );
-                    }
-                }
-                menu
-            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, _, cx| {
+                    this.collection_context_menu_row = Some(row_data);
+                    cx.notify();
+                }),
+            )
             .into_any_element()
     }
 
-    fn render_collections_panel(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn build_tree_row_context_menu(
+        &self,
+        row: crate::app_shell::TreeRow,
+        menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PopupMenu {
+        let row_id = row.id;
+        let row_kind = row.kind;
+        let view = cx.entity();
+        let mut menu = menu.min_w(px(180.0));
+        match row_kind {
+            TreeNodeKind::Collection => {
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/add.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Add Request")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.add_request_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/folder-add.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Add Folder")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.add_folder_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.separator();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/edit.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Rename")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.open_rename_dialog_for_tree_node(
+                                row_id,
+                                TreeNodeKind::Collection,
+                                window,
+                                cx,
+                            );
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/trash.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Delete")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.delete_collection_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+            }
+            TreeNodeKind::Folder => {
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/add.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Add Request")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.add_request_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/folder-add.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Add Folder")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.add_folder_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.separator();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/edit.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Rename")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.open_rename_dialog_for_tree_node(
+                                row_id,
+                                TreeNodeKind::Folder,
+                                window,
+                                cx,
+                            );
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/trash.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Delete")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.delete_folder_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+            }
+            TreeNodeKind::Request => {
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/send.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Send Request")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.send_request_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/copy.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Copy as cURL")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.copy_request_as_curl_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.separator();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/edit.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Rename")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.open_rename_dialog_for_tree_node(
+                                row_id,
+                                TreeNodeKind::Request,
+                                window,
+                                cx,
+                            );
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/duplicate.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Duplicate")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.duplicate_request_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        h_flex()
+                            .w_full()
+                            .cursor_pointer()
+                            .items_center()
+                            .gap_2()
+                            .px_2()
+                            .py_1()
+                            .child(
+                                Icon::default()
+                                    .path("icons/trash.svg")
+                                    .size(px(14.0))
+                                    .text_color(rgb(0x6b7280)),
+                            )
+                            .child("Delete")
+                    })
+                    .on_click(window.listener_for(
+                        &view,
+                        move |this, _, window, cx| {
+                            this.delete_request_from_tree_node(row_id, window, cx);
+                        },
+                    )),
+                );
+            }
+        }
+        menu
+    }
+
+    fn render_collections_panel(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let mut panel = v_flex()
             .h_full()
             .w_full()
@@ -4383,25 +4410,24 @@ impl BeamView {
         let rows = self.shell.collections.visible_rows();
         if rows.is_empty() {
             panel.child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .child(
-                        div()
-                            .size_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("No collections yet"),
-                            ),
-                    ),
+                div().flex_1().min_h_0().child(
+                    div()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("No collections yet"),
+                        ),
+                ),
             )
         } else {
             let view = cx.entity();
+            let list_view = view.clone();
+            let menu_view = view.clone();
             panel.child(
                 div()
                     .relative()
@@ -4414,7 +4440,7 @@ impl BeamView {
                                 let mut elements = Vec::with_capacity(visible_range.len());
                                 for ix in visible_range {
                                     let row = rows[ix].clone();
-                                    let el = view.update(app, |this, cx| {
+                                    let el = list_view.update(app, |this, cx| {
                                         this.render_tree_row(&row, window, cx)
                                     });
                                     elements.push(el);
@@ -4428,7 +4454,19 @@ impl BeamView {
                         .with_sizing_behavior(ListSizingBehavior::Auto)
                         .track_scroll(&self.collection_scroll_handle),
                     )
-                    .vertical_scrollbar(&self.collection_scroll_handle),
+                    .vertical_scrollbar(&self.collection_scroll_handle)
+                    .context_menu({
+                        let view = menu_view;
+                        move |menu, window, cx| {
+                            view.update(cx, |this, cx| {
+                                if let Some(row) = this.collection_context_menu_row {
+                                    this.build_tree_row_context_menu(row, menu, window, cx)
+                                } else {
+                                    menu
+                                }
+                            })
+                        }
+                    }),
             )
         }
     }
