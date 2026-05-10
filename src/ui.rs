@@ -168,6 +168,8 @@ pub fn run_app(
             KeyBinding::new("cmd-n", CreateRequestBelowActive, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-l", FocusUrlInput, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-,", OpenSettings, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -176,6 +178,8 @@ pub fn run_app(
             KeyBinding::new("ctrl-n", CreateRequestBelowActive, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-l", FocusUrlInput, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-,", OpenSettings, None),
         ]);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
