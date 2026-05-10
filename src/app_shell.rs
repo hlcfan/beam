@@ -286,7 +286,11 @@ impl CollectionsTreeState {
         url: String,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
-            if let Some(index) = parent.children.iter().position(|&id| id == after_request_id) {
+            if let Some(index) = parent
+                .children
+                .iter()
+                .position(|&id| id == after_request_id)
+            {
                 parent.children.insert(index + 1, request_id);
             } else {
                 parent.children.push(request_id);

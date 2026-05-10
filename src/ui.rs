@@ -6,7 +6,8 @@ use std::{fs, path::PathBuf};
 use chrono::{Local, Utc};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, Root, Selectable, Sizable, StyledExt, TitleBar, WindowExt as _,
+    ActiveTheme, Disableable, Icon, IconName, Placement, Root, Selectable, Sizable, StyledExt,
+    TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{self, Input, InputEvent, InputState, Position, TabSize},
@@ -14,6 +15,7 @@ use gpui_component::{
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
+    spinner::Spinner,
     text::html,
     v_flex,
 };
@@ -1092,6 +1094,117 @@ impl BeamView {
             return "No environment".to_string();
         };
         label
+    }
+
+    fn load_selected_environment_variables(&self) -> Result<Vec<EnvironmentVariable>, String> {
+        let Some(environment_id) = self.selected_environment_id_for_view() else {
+            return Err("No environment selected.".to_string());
+        };
+        let Some(path) = Self::find_environment_file_path(environment_id) else {
+            return Err("Environment file not found.".to_string());
+        };
+        let content =
+            fs::read_to_string(&path).map_err(|error| format!("Failed to read file: {error}"))?;
+        let parsed = EnvironmentManagerDialogView::parse_environment_file(&content)
+            .map_err(|error| format!("Failed to parse file: {error}"))?;
+        Ok(parsed.variables)
+    }
+
+    fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected_label = self.selected_environment_label();
+        let variables_result = self.load_selected_environment_variables();
+
+        window.open_sheet_at(Placement::Right, cx, move |sheet, _, cx| {
+            let mut content = v_flex().size_full().gap_3();
+            content = content.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_semibold()
+                            .child(selected_label.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(match &variables_result {
+                                Ok(variables) => format!("{} variables", variables.len()),
+                                Err(_) => "0 variables".to_string(),
+                            }),
+                    ),
+            );
+
+            match &variables_result {
+                Ok(variables) if variables.is_empty() => {
+                    content = content.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("No variables in the selected environment."),
+                    );
+                }
+                Ok(variables) => {
+                    let mut table = v_flex()
+                        .w_full()
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background);
+                    table = table.child(
+                        h_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_3()
+                            .px_2()
+                            .py_1()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().secondary)
+                            .child(div().w(px(120.0)).text_xs().font_semibold().child("Name"))
+                            .child(div().flex_1().text_xs().font_semibold().child("Value"))
+                            .child(div().w(px(72.0)).text_xs().font_semibold().child("Enabled")),
+                    );
+                    for variable in variables {
+                        table = table.child(
+                            h_flex()
+                                .w_full()
+                                .items_center()
+                                .gap_3()
+                                .px_2()
+                                .py_1()
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(div().w(px(120.0)).text_sm().child(variable.name.clone()))
+                                .child(div().flex_1().text_sm().child(variable.value.clone()))
+                                .child(div().w(px(72.0)).text_sm().child(if variable.enabled {
+                                    "Yes"
+                                } else {
+                                    "No"
+                                })),
+                        );
+                    }
+                    content =
+                        content.child(div().w_full().flex_1().overflow_y_scrollbar().child(table));
+                }
+                Err(error) => {
+                    content = content.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().danger_foreground)
+                            .child(error.clone()),
+                    );
+                }
+            }
+
+            sheet
+                .title("Environment Variables")
+                .size(px(520.0))
+                .child(content)
+        });
     }
 
     fn environment_manager_options(&self) -> Vec<(Ulid, String)> {
@@ -6250,7 +6363,34 @@ impl BeamView {
             .child(response_container)
     }
 
-    fn render_status_bar(&self, cx: &App) -> Div {
+    fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
+        // Placeholder visual state only; save behavior wiring is added separately.
+        let is_saving = false;
+        let selected_environment_label = self.selected_environment_label();
+        let status_bar_environment_label = format!("Environment: {selected_environment_label}");
+        let save_status = if is_saving {
+            h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Spinner::new()
+                        .icon(IconName::LoaderCircle)
+                        .xsmall()
+                        .color(cx.theme().muted_foreground),
+                )
+                .child("Saving")
+        } else {
+            h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Check)
+                        .size(px(12.0))
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .child("Saved")
+        };
+
         h_flex()
             .items_center()
             .justify_between()
@@ -6265,18 +6405,39 @@ impl BeamView {
             .child(
                 h_flex()
                     .items_center()
-                    .gap_3()
-                    .child("Ready")
-                    .child("Env: Local")
-                    .child("Collection: Sample"),
+                    .gap_2()
+                    .child(
+                        Icon::default()
+                            .path("icons/settings.svg")
+                            .size(px(14.0))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child("Settings"),
             )
+            .child(save_status)
             .child(
-                h_flex()
-                    .items_center()
-                    .gap_3()
-                    .child("UTF-8")
-                    .child("Ln 1, Col 1")
-                    .child("Spaces: 2"),
+                Button::new("status-bar-environment-sheet")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .h(px(22.0))
+                    .px_1()
+                    .rounded(px(6.0))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_environment_variables_sheet(window, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::default()
+                                    .path("icons/variable.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child(status_bar_environment_label),
+                    ),
             )
     }
 }
@@ -6677,6 +6838,7 @@ impl Render for BeamView {
                 ),
             )
             .child(self.render_status_bar(cx))
+            .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
     }
