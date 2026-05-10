@@ -10,12 +10,12 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{self, Input, InputEvent, InputState, Position, TabSize},
+    list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     text::html,
     v_flex,
-
 };
 use reqwest::{Method, blocking::Client};
 use ulid::Ulid;
@@ -3989,15 +3989,15 @@ impl BeamView {
         let row_kind = row.kind;
         let view = cx.entity();
 
-        Button::new(format!("tree-row-{}", row_id))
-                    .ghost()
-                    .selected(row.selected)
-                    .cursor_pointer()
+        div()
+            .child(
+                ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
                     .rounded(px(8.0))
                     .px_1()
                     .pl(indent)
-                    .py(px(1.0))
+                    .selected(row.selected)
+                    .child(row_content)
                     .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                         TreeNodeKind::Collection | TreeNodeKind::Folder => {
                             this.shell.collections.toggle_expanded(row_id);
@@ -4012,9 +4012,9 @@ impl BeamView {
                             }
                             this.sync_request_editor_from_selection(window, cx);
                         }
-                    }))
-                    .child(row_content)
-                    .context_menu(move |menu, window, _| {
+                    })),
+            )
+            .context_menu(move |menu, window, _| {
                 let mut menu = menu.min_w(px(180.0));
                 match row_kind {
                     TreeNodeKind::Collection => {
@@ -4416,19 +4416,15 @@ impl BeamView {
                                     let el = view.update(app, |this, cx| {
                                         this.render_tree_row(&row, window, cx)
                                     });
-                                    elements.push(
-                                        div()
-                                            .h(px(32.0))
-                                            .flex()
-                                            .items_center()
-                                            .child(el),
-                                    );
+                                    elements.push(el);
                                 }
                                 elements
                             }
                         })
                         .py_1()
+                        .flex_grow()
                         .size_full()
+                        .with_sizing_behavior(ListSizingBehavior::Auto)
                         .track_scroll(&self.collection_scroll_handle),
                     )
                     .vertical_scrollbar(&self.collection_scroll_handle),
