@@ -1073,6 +1073,7 @@ impl Render for EnvironmentManagerDialogView {
                             .border_1()
                             .border_color(cx.theme().border)
                             .bg(cx.theme().background)
+                            .overflow_hidden()
                             .p_3()
                             .gap_2()
                             .child(
@@ -1082,37 +1083,40 @@ impl Render for EnvironmentManagerDialogView {
                                     .child(div().text_xs().font_semibold().child("Environments")),
                             )
                             .child(
-                                v_flex()
-                                    .w_full()
-                                    .flex_1()
-                                    .gap_1()
-                                    .overflow_y_scrollbar()
-                                    .children(self.options.clone().into_iter().map(
-                                        |(environment_id, label)| {
-                                            Button::new(format!(
-                                                "environment-manager-select-{environment_id}"
-                                            ))
-                                            .small()
-                                            .ghost()
-                                            .selected(Some(environment_id) == self.selected_id)
-                                            .w_full()
-                                            .px_3()
-                                            .py_1()
-                                            .justify_start()
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.selected_id = Some(environment_id);
-                                                this.load_variables(environment_id, window, cx);
-                                                cx.notify();
-                                            }))
-                                            .child(
-                                                div()
+                                v_flex().w_full().flex_1().min_h_0().child(
+                                    div().w_full().h_full().overflow_y_scrollbar().child(
+                                        v_flex().w_full().gap_1().children(
+                                            self.options.clone().into_iter().map(
+                                                |(environment_id, label)| {
+                                                    Button::new(format!(
+                                                        "environment-manager-select-{environment_id}"
+                                                    ))
+                                                    .small()
+                                                    .ghost()
+                                                    .selected(Some(environment_id) == self.selected_id)
                                                     .w_full()
-                                                    .text_sm()
-                                                    .line_height(relative(1.0))
-                                                    .child(label),
-                                            )
-                                        },
-                                    )),
+                                                    .px_3()
+                                                    .py_1()
+                                                    .justify_start()
+                                                    .on_click(cx.listener(
+                                                        move |this, _, window, cx| {
+                                                            this.selected_id = Some(environment_id);
+                                                            this.load_variables(environment_id, window, cx);
+                                                            cx.notify();
+                                                        },
+                                                    ))
+                                                    .child(
+                                                        div()
+                                                            .w_full()
+                                                            .text_sm()
+                                                            .line_height(relative(1.0))
+                                                            .child(label),
+                                                    )
+                                                },
+                                            ),
+                                        ),
+                                    ),
+                                ),
                             )
                             .child(
                                 Button::new("environment-manager-add-environment")
