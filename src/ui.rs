@@ -973,13 +973,6 @@ impl TreeRenameDialogView {
         });
     }
 
-    fn title(&self) -> &'static str {
-        match self.node_kind {
-            TreeNodeKind::Collection => "Rename collection",
-            TreeNodeKind::Folder => "Rename folder",
-            TreeNodeKind::Request => "Rename request",
-        }
-    }
 }
 
 impl Render for TreeRenameDialogView {
@@ -993,7 +986,6 @@ impl Render for TreeRenameDialogView {
             .w(px(420.0))
             .p_3()
             .gap_3()
-            .child(div().text_sm().font_semibold().child(self.title()))
             .child(
                 div()
                     .w_full()
@@ -2615,7 +2607,7 @@ impl BeamView {
                         window.open_dialog(cx, move |dialog, _, _| {
                             let submit_dialog_view_for_ok = submit_dialog_view.clone();
                             dialog
-                                .title("Rename item")
+                                .title("Rename")
                                 .w(px(460.0))
                                 .child(dialog_view.clone())
                                 .on_ok(move |_, window, cx| {
