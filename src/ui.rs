@@ -28,7 +28,7 @@ use crate::app_shell::{
     AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupLoad,
     StartupMessage, TreeNodeKind, startup_preload,
 };
-use crate::assets::Assets;
+use crate::assets::{Assets, embedded_theme_contents};
 use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable, HttpMethod,
     LocalStateFile, RequestFile,
@@ -139,23 +139,10 @@ fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
 
 #[cfg(not(target_family = "wasm"))]
 fn init_theme_registry(preferred_theme_name: Option<SharedString>, cx: &mut App) {
-    let themes_dir = PathBuf::from("./themes");
-
-    if let Ok(entries) = fs::read_dir(&themes_dir) {
-        let registry = ThemeRegistry::global_mut(cx);
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file()
-                || path.extension().and_then(|extension| extension.to_str()) != Some("json")
-            {
-                continue;
-            }
-            let Ok(content) = fs::read_to_string(&path) else {
-                continue;
-            };
-            if let Err(error) = registry.load_themes_from_str(&content) {
-                eprintln!("Failed to preload theme file {}: {error}", path.display());
-            }
+    let registry = ThemeRegistry::global_mut(cx);
+    for (theme_path, content) in embedded_theme_contents() {
+        if let Err(error) = registry.load_themes_from_str(&content) {
+            eprintln!("Failed to preload theme file {theme_path}: {error}");
         }
     }
 
