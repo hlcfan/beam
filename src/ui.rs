@@ -16,6 +16,7 @@ use gpui_component::{
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     spinner::Spinner,
+    tag::Tag,
     text::html,
     v_flex,
 };
@@ -268,6 +269,7 @@ struct EnvironmentManagerDialogView {
     options: Vec<(Ulid, String)>,
     environment_file_names: HashMap<Ulid, String>,
     selected_id: Option<Ulid>,
+    active_environment_id: Option<Ulid>,
     show_environment_selector: bool,
     variables: Vec<EnvironmentVariable>,
     environment_name_input: Entity<InputState>,
@@ -424,6 +426,7 @@ impl EnvironmentManagerDialogView {
         options: Vec<(Ulid, String)>,
         environment_file_names: HashMap<Ulid, String>,
         selected_id: Option<Ulid>,
+        active_environment_id: Option<Ulid>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -434,6 +437,7 @@ impl EnvironmentManagerDialogView {
             options,
             environment_file_names,
             selected_id,
+            active_environment_id,
             show_environment_selector: true,
             variables: Vec::new(),
             environment_name_input,
@@ -492,6 +496,7 @@ impl EnvironmentManagerDialogView {
             beam_view,
             options,
             environment_file_names,
+            selected_id,
             selected_id,
             window,
             cx,
@@ -850,10 +855,15 @@ impl EnvironmentManagerDialogView {
         &mut self,
         options: Vec<(Ulid, String)>,
         environment_file_names: HashMap<Ulid, String>,
+        active_environment_id: Option<Ulid>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let active_environment_changed = self.active_environment_id != active_environment_id;
+        self.active_environment_id = active_environment_id;
         if self.sync_environment_options(options, environment_file_names, window, cx) {
+            cx.notify();
+        } else if active_environment_changed {
             cx.notify();
         }
     }
@@ -1088,16 +1098,41 @@ impl Render for EnvironmentManagerDialogView {
                                         v_flex().w_full().gap_1().children(
                                             self.options.clone().into_iter().map(
                                                 |(environment_id, label)| {
-                                                    Button::new(format!(
+                                                    let is_current =
+                                                        Some(environment_id)
+                                                            == self.active_environment_id;
+                                                    let mut row_content = h_flex()
+                                                        .w_full()
+                                                        .items_center()
+                                                        .justify_between()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .min_w_0()
+                                                                .flex_1()
+                                                                .text_sm()
+                                                                .line_height(relative(1.0))
+                                                                .truncate()
+                                                                .child(label),
+                                                        );
+                                                    if is_current {
+                                                        row_content = row_content.child(
+                                                            Tag::success()
+                                                                .small()
+                                                                .outline()
+                                                                .rounded_full()
+                                                                .child("Current"),
+                                                        );
+                                                    }
+                                                    ListItem::new(format!(
                                                         "environment-manager-select-{environment_id}"
                                                     ))
-                                                    .small()
-                                                    .ghost()
-                                                    .selected(Some(environment_id) == self.selected_id)
                                                     .w_full()
+                                                    .cursor_pointer()
+                                                    .rounded(px(8.0))
                                                     .px_3()
-                                                    .py_1()
-                                                    .justify_start()
+                                                    .py_2()
+                                                    .selected(Some(environment_id) == self.selected_id)
                                                     .on_click(cx.listener(
                                                         move |this, _, window, cx| {
                                                             this.selected_id = Some(environment_id);
@@ -1105,13 +1140,7 @@ impl Render for EnvironmentManagerDialogView {
                                                             cx.notify();
                                                         },
                                                     ))
-                                                    .child(
-                                                        div()
-                                                            .w_full()
-                                                            .text_sm()
-                                                            .line_height(relative(1.0))
-                                                            .child(label),
-                                                    )
+                                                    .child(row_content)
                                                 },
                                             ),
                                         ),
@@ -1391,12 +1420,14 @@ impl BeamView {
         let environment_file_names = self.environment_manager_file_names();
         let fallback_id = options.first().map(|(environment_id, _)| *environment_id);
         let selected = self.selected_environment_id_for_view().or(fallback_id);
+        let active_environment_id = self.selected_environment_id_for_view();
         let manager_view = cx.new(|cx| {
             EnvironmentManagerDialogView::new(
                 beam_view.clone(),
                 options.clone(),
                 environment_file_names.clone(),
                 selected,
+                active_environment_id,
                 window,
                 cx,
             )
@@ -1430,8 +1461,15 @@ impl BeamView {
         };
         let options = self.environment_manager_options();
         let environment_file_names = self.environment_manager_file_names();
+        let active_environment_id = self.selected_environment_id_for_view();
         dialog_view.update(cx, |dialog, cx| {
-            dialog.refresh_from_snapshot(options, environment_file_names, window, cx);
+            dialog.refresh_from_snapshot(
+                options,
+                environment_file_names,
+                active_environment_id,
+                window,
+                cx,
+            );
         });
     }
 
@@ -5268,15 +5306,15 @@ impl BeamView {
                                 v_flex().w_full().gap_1().children(
                                     environment_options.into_iter().map(
                                         |(environment_id, label)| {
-                                            Button::new(format!(
+                                            ListItem::new(format!(
                                                 "environment-manager-select-{environment_id}"
                                             ))
-                                            .small()
-                                            .ghost()
-                                            .selected(Some(environment_id) == selected_id)
                                             .w_full()
+                                            .cursor_pointer()
+                                            .rounded(px(8.0))
                                             .px_2()
-                                            .justify_start()
+                                            .py_2()
+                                            .selected(Some(environment_id) == selected_id)
                                             .on_click(window.listener_for(
                                                 &environment_view,
                                                 move |this, _, _, cx| {
@@ -5291,7 +5329,6 @@ impl BeamView {
                                             .child(
                                                 div()
                                                     .w_full()
-                                                    .text_sm()
                                                     .line_height(relative(1.0))
                                                     .child(label),
                                             )
