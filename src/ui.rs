@@ -329,6 +329,7 @@ struct BeamView {
     pending_request_save_due_at: Option<Instant>,
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
+    show_invalid_url_border: bool,
     active_request_cache: Option<RequestFile>,
     request_file_index: HashMap<Ulid, PathBuf>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
@@ -1975,6 +1976,7 @@ impl BeamView {
 
     fn sync_request_editor_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_active_request_cache();
+        self.show_invalid_url_border = false;
         Self::hydrate_request_from_selection(&mut self.request, &self.shell);
         if self.request.query_params.is_empty() {
             self.request
@@ -4070,6 +4072,7 @@ impl BeamView {
                 move |this, _, ev: &InputEvent, window, cx| match ev {
                     InputEvent::Change => {
                         this.request.url = url_input.read(cx).value().to_string();
+                        this.show_invalid_url_border = false;
                         this.schedule_request_save(cx);
                         cx.notify();
                     }
@@ -4145,6 +4148,7 @@ impl BeamView {
             pending_request_save_due_at: None,
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
+            show_invalid_url_border: false,
             active_request_cache: None,
             request_file_index: Self::build_request_file_index(),
             environment_manager_dialog_view: None,
@@ -4170,6 +4174,15 @@ impl BeamView {
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let latest_script = self.post_script_editor.read(cx).value().to_string();
         self.request.post_script = (!latest_script.trim().is_empty()).then_some(latest_script);
+        if matches!(
+            self.send_button_state_for_view(),
+            SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::InvalidUrl)
+        ) {
+            self.show_invalid_url_border = true;
+            cx.notify();
+            return;
+        }
+        self.show_invalid_url_border = false;
         let request_id = self.shell.collections.selected_request_id();
         let selected_environment_id = self.selected_environment_id_for_view();
         let no_environment_selected = selected_environment_id.is_none();
@@ -4177,6 +4190,13 @@ impl BeamView {
         let request_snapshot =
             resolve_request_with_environment(self.request.clone(), &environment_variables);
         if !matches!(request_snapshot.send_button_state(), SendButtonState::Ready) {
+            if matches!(
+                request_snapshot.send_button_state(),
+                SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::InvalidUrl)
+            ) {
+                self.show_invalid_url_border = true;
+                cx.notify();
+            }
             return;
         }
         self.request.is_sending = true;
@@ -5314,7 +5334,12 @@ impl BeamView {
 
     fn render_url_bar(&self, cx: &mut Context<Self>) -> Div {
         let send_state = self.send_button_state_for_view();
-        let send_disabled = !matches!(send_state, SendButtonState::Ready);
+        let send_disabled = matches!(
+            send_state,
+            SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::EmptyUrl)
+                | SendButtonState::Sending
+        );
+        let highlight_invalid_url = self.show_invalid_url_border;
         let current_method = self.request.method;
         let url_has_selection = !self.url_input.read(cx).selected_range().is_empty();
         let selected_environment_id = self.selected_environment_id_for_view();
@@ -5332,7 +5357,11 @@ impl BeamView {
                     .flex_1()
                     .rounded(px(10.0))
                     .border_1()
-                    .border_color(cx.theme().border)
+                    .border_color(if highlight_invalid_url {
+                        cx.theme().danger
+                    } else {
+                        cx.theme().border
+                    })
                     .bg(cx.theme().background)
                     .p_1()
                     .child(
