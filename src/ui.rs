@@ -3990,6 +3990,7 @@ impl BeamView {
         let view = cx.entity();
 
         div()
+            .cursor_pointer()
             .child(
                 ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
