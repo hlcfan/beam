@@ -1,4 +1,4 @@
-use beam::app_shell::{StartupLoad, startup_preload};
+use beam::app_shell::{StartupLoad, start_data_sync_worker, startup_preload};
 use beam::paths::BeamPaths;
 use beam::storage::WorkspaceStorage;
 use beam::storage::toml_backend::TomlWorkspaceStorage;
@@ -41,7 +41,8 @@ fn main() {
             for message in &messages {
                 eprintln!("[startup warning] {}", message.text);
             }
-            run_app(state, messages);
+            let sync_runtime = start_data_sync_worker(storage.clone());
+            run_app(state, messages, sync_runtime);
         }
         StartupLoad::Fatal { message } => {
             eprintln!("[startup fatal] {}", message.text);

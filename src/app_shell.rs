@@ -1,17 +1,21 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
     AuthConfig, BodyConfig, CollectionFile, CollectionItemRef, EnvironmentFile, EnvironmentMeta,
-    EnvironmentScope, FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    QueryParamField, RequestFile,
+    EnvironmentScope, EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType,
+    LocalStateFile, QueryParamField, RequestFile,
 };
 use crate::paths::BeamPaths;
-use crate::storage::WorkspaceStorage;
+use crate::storage::{
+    CreateEnvironmentInput, CreateRequestInput, RequestParentRef, WorkspaceStorage,
+};
 
 const MIN_SPLIT_RATIO: f32 = 0.1;
 const MAX_SPLIT_RATIO: f32 = 0.9;
@@ -376,6 +380,367 @@ impl AppShellState {
             AppShortcut::Escape => {
                 self.modal_stack.close_top();
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppOperation {
+    CreateEnvironment,
+    RenameEnvironment,
+    UpdateEnvironmentVariables,
+    DeleteEnvironment,
+    CreateRequest,
+    CreateRequestAfter,
+    DuplicateRequest,
+    RenameRequest,
+    UpdateRequest,
+    SaveRequest,
+    DeleteRequest,
+}
+
+impl AppOperation {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AppOperation::CreateEnvironment => "create_environment",
+            AppOperation::RenameEnvironment => "rename_environment",
+            AppOperation::UpdateEnvironmentVariables => "update_environment_variables",
+            AppOperation::DeleteEnvironment => "delete_environment",
+            AppOperation::CreateRequest => "create_request",
+            AppOperation::CreateRequestAfter => "create_request_after",
+            AppOperation::DuplicateRequest => "duplicate_request",
+            AppOperation::RenameRequest => "rename_request",
+            AppOperation::UpdateRequest => "update_request",
+            AppOperation::SaveRequest => "save_request",
+            AppOperation::DeleteRequest => "delete_request",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppCommand {
+    CreateEnvironment {
+        name: String,
+        scope: EnvironmentScope,
+        collection_id: Option<Ulid>,
+        command_id: String,
+    },
+    RenameEnvironment {
+        environment_id: Ulid,
+        file_name: Option<String>,
+        new_name: String,
+        variables: Vec<EnvironmentVariable>,
+        command_id: String,
+    },
+    UpdateEnvironmentVariables {
+        environment_id: Ulid,
+        file_name: Option<String>,
+        name: String,
+        variables: Vec<EnvironmentVariable>,
+        command_id: String,
+    },
+    DeleteEnvironment {
+        environment_id: Ulid,
+        command_id: String,
+    },
+    CreateRequest {
+        input: CreateRequestInput,
+        command_id: String,
+    },
+    CreateRequestAfter {
+        input: CreateRequestInput,
+        source_request_id: Ulid,
+        command_id: String,
+    },
+    DuplicateRequest {
+        request_id: Ulid,
+        duplicate_name: String,
+        parent: RequestParentRef,
+        command_id: String,
+    },
+    RenameRequest {
+        request_id: Ulid,
+        new_name: String,
+        command_id: String,
+    },
+    UpdateRequest {
+        request_file: RequestFile,
+        command_id: String,
+    },
+    SaveRequest {
+        request_file: RequestFile,
+        command_id: String,
+    },
+    DeleteRequest {
+        request_id: Ulid,
+        command_id: String,
+    },
+}
+
+impl AppCommand {
+    pub fn command_id(&self) -> &str {
+        match self {
+            AppCommand::CreateEnvironment { command_id, .. }
+            | AppCommand::RenameEnvironment { command_id, .. }
+            | AppCommand::UpdateEnvironmentVariables { command_id, .. }
+            | AppCommand::DeleteEnvironment { command_id, .. }
+            | AppCommand::CreateRequest { command_id, .. }
+            | AppCommand::CreateRequestAfter { command_id, .. }
+            | AppCommand::DuplicateRequest { command_id, .. }
+            | AppCommand::RenameRequest { command_id, .. }
+            | AppCommand::UpdateRequest { command_id, .. }
+            | AppCommand::SaveRequest { command_id, .. }
+            | AppCommand::DeleteRequest { command_id, .. } => command_id,
+        }
+    }
+
+    pub fn operation(&self) -> AppOperation {
+        match self {
+            AppCommand::CreateEnvironment { .. } => AppOperation::CreateEnvironment,
+            AppCommand::RenameEnvironment { .. } => AppOperation::RenameEnvironment,
+            AppCommand::UpdateEnvironmentVariables { .. } => {
+                AppOperation::UpdateEnvironmentVariables
+            }
+            AppCommand::DeleteEnvironment { .. } => AppOperation::DeleteEnvironment,
+            AppCommand::CreateRequest { .. } => AppOperation::CreateRequest,
+            AppCommand::CreateRequestAfter { .. } => AppOperation::CreateRequestAfter,
+            AppCommand::DuplicateRequest { .. } => AppOperation::DuplicateRequest,
+            AppCommand::RenameRequest { .. } => AppOperation::RenameRequest,
+            AppCommand::UpdateRequest { .. } => AppOperation::UpdateRequest,
+            AppCommand::SaveRequest { .. } => AppOperation::SaveRequest,
+            AppCommand::DeleteRequest { .. } => AppOperation::DeleteRequest,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AppEvent {
+    SyncStarted {
+        command_id: String,
+        operation: AppOperation,
+    },
+    EnvironmentUpserted {
+        environment: EnvironmentMeta,
+        command_id: String,
+    },
+    EnvironmentDeleted {
+        environment_id: Ulid,
+        command_id: String,
+    },
+    RequestUpserted {
+        request: RequestFile,
+        command_id: String,
+    },
+    RequestDeleted {
+        request_id: Ulid,
+        command_id: String,
+    },
+    SyncFailed {
+        command_id: String,
+        operation: AppOperation,
+        error: String,
+    },
+    SyncCompleted {
+        command_id: String,
+        operation: AppOperation,
+    },
+}
+
+pub struct DataSyncRuntime {
+    pub command_tx: Sender<AppCommand>,
+    pub event_rx: Receiver<AppEvent>,
+}
+
+pub fn next_command_id() -> String {
+    Ulid::new().to_string()
+}
+
+pub fn start_data_sync_worker<S>(storage: S) -> DataSyncRuntime
+where
+    S: WorkspaceStorage + Send + 'static,
+{
+    let (command_tx, command_rx) = mpsc::channel::<AppCommand>();
+    let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
+
+    thread::Builder::new()
+        .name("beam-data-sync-worker".to_string())
+        .spawn(move || data_sync_worker_loop(storage, command_rx, event_tx))
+        .expect("failed to start data sync worker thread");
+
+    DataSyncRuntime {
+        command_tx,
+        event_rx,
+    }
+}
+
+fn data_sync_worker_loop<S>(
+    storage: S,
+    command_rx: Receiver<AppCommand>,
+    event_tx: Sender<AppEvent>,
+) where
+    S: WorkspaceStorage,
+{
+    while let Ok(command) = command_rx.recv() {
+        let command_id = command.command_id().to_string();
+        let operation = command.operation();
+        let _ = event_tx.send(AppEvent::SyncStarted {
+            command_id: command_id.clone(),
+            operation,
+        });
+
+        match handle_command(&storage, command) {
+            Ok(domain_events) => {
+                for event in domain_events {
+                    let _ = event_tx.send(event);
+                }
+                let _ = event_tx.send(AppEvent::SyncCompleted {
+                    command_id,
+                    operation,
+                });
+            }
+            Err(error) => {
+                let _ = event_tx.send(AppEvent::SyncFailed {
+                    command_id,
+                    operation,
+                    error,
+                });
+            }
+        }
+    }
+}
+
+fn handle_command<S>(storage: &S, command: AppCommand) -> std::result::Result<Vec<AppEvent>, String>
+where
+    S: WorkspaceStorage,
+{
+    match command {
+        AppCommand::CreateEnvironment {
+            name,
+            scope,
+            collection_id,
+            command_id,
+        } => {
+            let created = storage
+                .create_environment(CreateEnvironmentInput {
+                    name,
+                    scope,
+                    collection_id,
+                })
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::EnvironmentUpserted {
+                environment: created.environment,
+                command_id,
+            }])
+        }
+        AppCommand::RenameEnvironment {
+            environment_id,
+            file_name,
+            new_name,
+            variables,
+            command_id,
+        } => {
+            let updated = storage
+                .update_environment(environment_id, file_name.as_deref(), &new_name, variables)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::EnvironmentUpserted {
+                environment: updated.environment,
+                command_id,
+            }])
+        }
+        AppCommand::UpdateEnvironmentVariables {
+            environment_id,
+            file_name,
+            name,
+            variables,
+            command_id,
+        } => {
+            let updated = storage
+                .update_environment(environment_id, file_name.as_deref(), &name, variables)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::EnvironmentUpserted {
+                environment: updated.environment,
+                command_id,
+            }])
+        }
+        AppCommand::DeleteEnvironment { command_id, .. } => Err(format!(
+            "delete_environment is not implemented yet (command_id={command_id})"
+        )),
+        AppCommand::CreateRequest { input, command_id } => {
+            let created = storage
+                .create_request(input)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestUpserted {
+                request: created,
+                command_id,
+            }])
+        }
+        AppCommand::CreateRequestAfter {
+            input,
+            source_request_id,
+            command_id,
+        } => {
+            let created = storage
+                .create_request_after(input, source_request_id)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestUpserted {
+                request: created,
+                command_id,
+            }])
+        }
+        AppCommand::DuplicateRequest {
+            request_id,
+            duplicate_name,
+            parent,
+            command_id,
+        } => {
+            let duplicated = storage
+                .duplicate_request(request_id, &duplicate_name, parent)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestUpserted {
+                request: duplicated,
+                command_id,
+            }])
+        }
+        AppCommand::RenameRequest {
+            request_id,
+            new_name,
+            command_id,
+        } => {
+            let renamed = storage
+                .rename_request(request_id, &new_name)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestUpserted {
+                request: renamed,
+                command_id,
+            }])
+        }
+        AppCommand::UpdateRequest {
+            request_file,
+            command_id,
+        }
+        | AppCommand::SaveRequest {
+            request_file,
+            command_id,
+        } => {
+            storage
+                .save_request(&request_file)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestUpserted {
+                request: request_file,
+                command_id,
+            }])
+        }
+        AppCommand::DeleteRequest {
+            request_id,
+            command_id,
+        } => {
+            storage
+                .delete_request(request_id)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestDeleted {
+                request_id,
+                command_id,
+            }])
         }
     }
 }

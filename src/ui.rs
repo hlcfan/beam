@@ -23,7 +23,8 @@ use reqwest::{Method, blocking::Client};
 use ulid::Ulid;
 
 use crate::app_shell::{
-    AppShellState, RequestPaneData, StartupLoad, StartupMessage, TreeNodeKind, startup_preload,
+    AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupLoad,
+    StartupMessage, TreeNodeKind, startup_preload,
 };
 use crate::assets::Assets;
 use crate::models::{
@@ -54,7 +55,11 @@ actions!(
     ]
 );
 
-pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
+pub fn run_app(
+    state: AppShellState,
+    startup_messages: Vec<StartupMessage>,
+    sync_runtime: DataSyncRuntime,
+) {
     let app = gpui_platform::application().with_assets(Assets);
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -143,7 +148,8 @@ pub fn run_app(state: AppShellState, startup_messages: Vec<StartupMessage>) {
         let state = state.clone();
         let startup_messages = startup_messages.clone();
         cx.open_window(window_options, |window, cx| {
-            let view = cx.new(|cx| BeamView::new(state, startup_messages, window, cx));
+            let view =
+                cx.new(|cx| BeamView::new(state, startup_messages, sync_runtime, window, cx));
             cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
         })
         .expect("Failed to open Beam window");
@@ -186,6 +192,8 @@ struct BeamView {
     pending_request_save_due_at: Option<Instant>,
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
+    _app_command_tx: std::sync::mpsc::Sender<AppCommand>,
+    _app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -3344,6 +3352,7 @@ impl BeamView {
     fn new(
         shell: AppShellState,
         startup_messages: Vec<StartupMessage>,
+        sync_runtime: DataSyncRuntime,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -3508,6 +3517,8 @@ impl BeamView {
             pending_request_save_due_at: None,
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
+            _app_command_tx: sync_runtime.command_tx,
+            _app_event_rx: sync_runtime.event_rx,
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
