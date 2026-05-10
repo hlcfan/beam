@@ -608,14 +608,6 @@ impl TomlWorkspaceStorage {
         })
     }
 
-    fn environment_file_path_from_name(&self, file_name: &str) -> Option<PathBuf> {
-        let trimmed = file_name.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        Some(self.paths.environments_dir.join(trimmed))
-    }
-
     fn find_request_file_by_id(&self, request_id: Ulid) -> Result<PathBuf> {
         let mut found: Option<PathBuf> = None;
         self.walk_files_recursive(&self.paths.collections_dir, |path| {
@@ -1066,34 +1058,18 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         Ok(environment_file)
     }
 
-    fn update_environment(
-        &self,
-        environment_id: Ulid,
-        file_name: Option<&str>,
-        name: &str,
-        variables: Vec<EnvironmentVariable>,
-    ) -> Result<EnvironmentFile> {
-        let next_name = name.trim();
+    fn rename_environment(&self, environment_id: Ulid, new_name: &str) -> Result<EnvironmentFile> {
+        let next_name = new_name.trim();
         if next_name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Environment name cannot be empty".to_string(),
             });
         }
 
-        let existing_path = file_name
-            .and_then(|name| self.environment_file_path_from_name(name))
-            .filter(|path| path.exists())
-            .and_then(|path| {
-                self.read_toml_file::<EnvironmentFile>(&path)
-                    .ok()
-                    .filter(|file| file.environment.environment_id == environment_id)
-                    .map(|_| path)
-            })
-            .unwrap_or(self.find_environment_file_by_id(environment_id)?);
+        let existing_path = self.find_environment_file_by_id(environment_id)?;
         let mut environment_file: EnvironmentFile = self.read_toml_file(&existing_path)?;
         environment_file.environment.name = next_name.to_string();
         environment_file.environment.updated_at = Utc::now();
-        environment_file.variables = variables;
         if environment_file.environment.file_name.trim().is_empty() {
             environment_file.environment.file_name = existing_path
                 .file_name()
@@ -1124,6 +1100,26 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         }
         environment_file.environment.file_name = next_file_name;
         self.write_toml_file(&next_path, &environment_file)?;
+        Ok(environment_file)
+    }
+
+    fn update_environment_variables(
+        &self,
+        environment_id: Ulid,
+        variables: Vec<EnvironmentVariable>,
+    ) -> Result<EnvironmentFile> {
+        let existing_path = self.find_environment_file_by_id(environment_id)?;
+        let mut environment_file: EnvironmentFile = self.read_toml_file(&existing_path)?;
+        environment_file.environment.updated_at = Utc::now();
+        environment_file.variables = variables;
+        if environment_file.environment.file_name.trim().is_empty() {
+            environment_file.environment.file_name = existing_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string();
+        }
+        self.write_toml_file(&existing_path, &environment_file)?;
         Ok(environment_file)
     }
 
@@ -1368,6 +1364,14 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             source,
         })?;
         self.remove_request_from_parent_manifest(parent, request_id)
+    }
+
+    fn delete_environment(&self, environment_id: Ulid) -> Result<()> {
+        let environment_path = self.find_environment_file_by_id(environment_id)?;
+        fs::remove_file(&environment_path).map_err(|source| BeamError::Io {
+            path: environment_path,
+            source,
+        })
     }
 }
 
@@ -1839,7 +1843,7 @@ environment_id = "{environment_id}"
     }
 
     #[test]
-    fn update_environment_renames_file_with_slug_name() {
+    fn rename_environment_renames_file_with_slug_name() {
         let (_dir, storage, _, _) = init_storage_with_collection();
         let created = storage
             .create_environment(CreateEnvironmentInput {
@@ -1853,13 +1857,8 @@ environment_id = "{environment_id}"
             .expect("find old environment path");
 
         let updated = storage
-            .update_environment(
-                created.environment.environment_id,
-                Some(&created.environment.file_name),
-                "Renamed Environment",
-                Vec::new(),
-            )
-            .expect("update environment");
+            .rename_environment(created.environment.environment_id, "Renamed Environment")
+            .expect("rename environment");
 
         let new_path = storage
             .find_environment_file_by_id(created.environment.environment_id)
@@ -1876,6 +1875,39 @@ environment_id = "{environment_id}"
             updated.environment.file_name,
             "renamed-environment.env.toml"
         );
+    }
+
+    #[test]
+    fn update_environment_variables_persists_new_values_without_renaming_file() {
+        let (_dir, storage, _, _) = init_storage_with_collection();
+        let created = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "Shared Env".to_string(),
+                scope: EnvironmentScope::Global,
+                collection_id: None,
+            })
+            .expect("create environment");
+        let original_path = storage
+            .find_environment_file_by_id(created.environment.environment_id)
+            .expect("find original environment path");
+        let variables = vec![EnvironmentVariable {
+            name: "BASE_URL".to_string(),
+            value: "https://api.example.com".to_string(),
+            enabled: true,
+            secret: false,
+            description: None,
+        }];
+
+        let updated = storage
+            .update_environment_variables(created.environment.environment_id, variables.clone())
+            .expect("update environment variables");
+
+        let updated_path = storage
+            .find_environment_file_by_id(created.environment.environment_id)
+            .expect("find updated environment path");
+        assert_eq!(updated_path, original_path);
+        assert_eq!(updated.variables, variables);
+        assert_eq!(updated.environment.name, "Shared Env");
     }
 
     #[test]

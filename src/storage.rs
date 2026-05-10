@@ -61,13 +61,13 @@ pub trait WorkspaceStorage {
     ) -> Result<RequestFile>;
     fn create_folder(&self, input: CreateFolderInput) -> Result<crate::models::FolderFile>;
     fn create_environment(&self, input: CreateEnvironmentInput) -> Result<EnvironmentFile>;
-    fn update_environment(
+    fn rename_environment(&self, environment_id: Ulid, new_name: &str) -> Result<EnvironmentFile>;
+    fn update_environment_variables(
         &self,
         environment_id: Ulid,
-        file_name: Option<&str>,
-        name: &str,
         variables: Vec<EnvironmentVariable>,
     ) -> Result<EnvironmentFile>;
+    fn delete_environment(&self, environment_id: Ulid) -> Result<()>;
     fn save_request(&self, request_file: &RequestFile) -> Result<()>;
     fn rename_request(&self, request_id: Ulid, new_name: &str) -> Result<RequestFile>;
     fn rename_collection(

@@ -22,6 +22,7 @@ use gpui_component::{
 use reqwest::{Method, blocking::Client};
 use ulid::Ulid;
 
+use crate::app_shell::next_command_id;
 use crate::app_shell::{
     AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupLoad,
     StartupMessage, TreeNodeKind, startup_preload,
@@ -29,7 +30,7 @@ use crate::app_shell::{
 use crate::assets::Assets;
 use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable, HttpMethod,
-    LocalStateFile,
+    LocalStateFile, RequestFile,
 };
 use crate::paths::BeamPaths;
 use crate::request_authoring::{
@@ -41,8 +42,7 @@ use crate::script::{
 };
 use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
-    CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, FolderParentRef,
-    RequestParentRef, WorkspaceStorage,
+    CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef, WorkspaceStorage,
 };
 
 actions!(
@@ -192,8 +192,11 @@ struct BeamView {
     pending_request_save_due_at: Option<Instant>,
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
-    _app_command_tx: std::sync::mpsc::Sender<AppCommand>,
-    _app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
+    active_request_cache: Option<RequestFile>,
+    app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
+    app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
+    app_event_poll_scheduled: bool,
+    pending_request_placements: HashMap<String, PendingRequestPlacement>,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -203,6 +206,17 @@ struct BeamView {
 enum ResponseTab {
     Body,
     Headers,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingRequestPlacement {
+    Append {
+        parent: RequestParentRef,
+    },
+    After {
+        parent: RequestParentRef,
+        after_request_id: Ulid,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -264,6 +278,7 @@ struct EnvironmentManagerDialogView {
     variables_save_in_flight: bool,
     suppress_environment_name_change_events: bool,
     environment_name_input_subscription: Option<Subscription>,
+    loaded_environment_name: Option<String>,
     error: Option<String>,
 }
 
@@ -383,6 +398,7 @@ impl EnvironmentManagerDialogView {
             variables_save_in_flight: false,
             suppress_environment_name_change_events: false,
             environment_name_input_subscription: None,
+            loaded_environment_name: None,
             error: None,
         };
         let environment_name_input_handle = view.environment_name_input.clone();
@@ -497,11 +513,13 @@ impl EnvironmentManagerDialogView {
                 return;
             }
         };
+        let environment_name = parsed.environment.name.clone();
         self.variables = parsed.variables;
+        self.loaded_environment_name = Some(environment_name.clone());
         self.rebuild_variable_inputs(window, cx);
         self.suppress_environment_name_change_events = true;
         self.environment_name_input.update(cx, |input, cx| {
-            input.set_value(parsed.environment.name.clone(), window, cx);
+            input.set_value(environment_name.clone(), window, cx);
         });
         self.suppress_environment_name_change_events = false;
         if let Some((_, label)) = self
@@ -513,24 +531,6 @@ impl EnvironmentManagerDialogView {
                 Self::environment_option_label(&parsed.environment.name, parsed.environment.scope);
         }
         self.error = None;
-    }
-
-    fn save_variables_to_disk(
-        environment_id: Ulid,
-        file_name: Option<String>,
-        updated_name: String,
-        variables: Vec<EnvironmentVariable>,
-    ) -> Result<crate::models::EnvironmentMeta, String> {
-        let storage = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
-        let updated = storage
-            .update_environment(
-                environment_id,
-                file_name.as_deref(),
-                &updated_name,
-                variables,
-            )
-            .map_err(|error| format!("Failed to save environment: {error}"))?;
-        Ok(updated.environment)
     }
 
     fn next_default_environment_name(&self) -> String {
@@ -556,32 +556,66 @@ impl EnvironmentManagerDialogView {
         }
     }
 
-    fn add_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn add_environment(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let environment_name = self.next_default_environment_name();
-        let storage = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
-        let created = match storage.create_environment(CreateEnvironmentInput {
-            name: environment_name.clone(),
+        let command = AppCommand::CreateEnvironment {
+            name: environment_name,
             scope: EnvironmentScope::Global,
             collection_id: None,
-        }) {
-            Ok(environment_file) => environment_file,
-            Err(error) => {
-                self.error = Some(format!("Failed to create environment file: {error}"));
-                cx.notify();
-                return;
-            }
+            command_id: next_command_id(),
         };
-        let environment_id = created.environment.environment_id;
-        self.update_environment_file_name(environment_id, created.environment.file_name.clone());
-        self.sync_environment_meta_to_beam_view(created.environment.clone(), cx);
-
-        let label = Self::environment_option_label(&environment_name, EnvironmentScope::Global);
-        self.options.push((environment_id, label));
-        self.selected_id = Some(environment_id);
-        self.load_variables(environment_id, window, cx);
-        self.error = None;
+        let send_result = self
+            .beam_view
+            .update(cx, move |this, _| this.publish_app_command(command));
+        self.error = send_result
+            .err()
+            .map(|error| format!("Failed to queue environment creation: {error}"));
         cx.notify();
     }
+
+    fn delete_selected_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(environment_id) = self.selected_id else {
+            self.error = Some("No environment selected.".to_string());
+            cx.notify();
+            return;
+        };
+        let command = AppCommand::DeleteEnvironment {
+            environment_id,
+            command_id: next_command_id(),
+        };
+        let send_result = self
+            .beam_view
+            .update(cx, move |this, _| this.publish_app_command(command));
+        if let Err(error) = send_result {
+            self.error = Some(format!("Failed to queue environment deletion: {error}"));
+            cx.notify();
+            return;
+        }
+
+        self.options
+            .retain(|(option_environment_id, _)| *option_environment_id != environment_id);
+        self.environment_file_names.remove(&environment_id);
+        self.pending_variables_save_due_at = None;
+        self.variables_save_tick_scheduled = false;
+        self.variables_save_in_flight = false;
+        self.selected_id = self.options.first().map(|(id, _)| *id);
+
+        if let Some(next_environment_id) = self.selected_id {
+            self.load_variables(next_environment_id, window, cx);
+        } else {
+            self.variables.clear();
+            self.clear_variable_inputs();
+            self.loaded_environment_name = None;
+            self.suppress_environment_name_change_events = true;
+            self.environment_name_input.update(cx, |input, cx| {
+                input.set_value(String::new(), window, cx);
+            });
+            self.suppress_environment_name_change_events = false;
+            self.error = Some("No environment available to manage.".to_string());
+        }
+        cx.notify();
+    }
+
     fn environment_option_label(name: &str, scope: EnvironmentScope) -> String {
         match scope {
             EnvironmentScope::Global => name.to_string(),
@@ -709,50 +743,49 @@ impl EnvironmentManagerDialogView {
             cx.notify();
             return;
         }
-        let file_name = self.environment_file_names.get(&environment_id).cloned();
         let variables = self.variables.clone();
-        self.variables_save_in_flight = true;
-        let view = cx.entity();
-        cx.spawn(async move |_, cx| {
-            let result = cx.background_executor().spawn(async move {
-                Self::save_variables_to_disk(environment_id, file_name, updated_name, variables)
-            });
-            let result = result.await;
-            let _ = view.update(cx, move |this, cx| {
-                this.variables_save_in_flight = false;
-                match result {
-                    Ok(updated_environment) => {
-                        this.sync_environment_meta_to_beam_view(updated_environment.clone(), cx);
-                        this.update_environment_file_name(
-                            environment_id,
-                            updated_environment.file_name.clone(),
-                        );
-                        if let Some((_, label)) = this
-                            .options
-                            .iter_mut()
-                            .find(|(option_id, _)| *option_id == environment_id)
-                        {
-                            *label = Self::environment_option_label(
-                                &updated_environment.name,
-                                updated_environment.scope,
-                            );
-                        }
-                        this.error = None;
-                    }
-                    Err(error) => {
-                        this.error = Some(error);
-                    }
-                }
-                if this.pending_variables_save_due_at.is_some()
-                    && !this.variables_save_tick_scheduled
-                {
-                    this.variables_save_tick_scheduled = true;
-                    this.schedule_variables_save_tick(cx);
-                }
+        if self
+            .loaded_environment_name
+            .as_deref()
+            .is_some_and(|name| name != updated_name.as_str())
+        {
+            let rename_command = AppCommand::RenameEnvironment {
+                environment_id,
+                new_name: updated_name.clone(),
+                command_id: next_command_id(),
+            };
+            let rename_result = self
+                .beam_view
+                .update(cx, move |this, _| this.publish_app_command(rename_command));
+            if let Err(error) = rename_result {
+                self.variables_save_in_flight = false;
+                self.error = Some(format!("Failed to queue environment rename: {error}"));
                 cx.notify();
-            });
-        })
-        .detach();
+                return;
+            }
+            self.loaded_environment_name = Some(updated_name.clone());
+        }
+        let command = AppCommand::UpdateEnvironmentVariables {
+            environment_id,
+            variables,
+            command_id: next_command_id(),
+        };
+        let send_result = self
+            .beam_view
+            .update(cx, move |this, _| this.publish_app_command(command));
+        self.variables_save_in_flight = false;
+        self.error = send_result.err().map(|error| {
+            if error.starts_with("Backpressure:") {
+                self.pending_variables_save_due_at =
+                    Some(Instant::now() + Duration::from_millis(100));
+            }
+            format!("Failed to queue environment save: {error}")
+        });
+        if self.pending_variables_save_due_at.is_some() && !self.variables_save_tick_scheduled {
+            self.variables_save_tick_scheduled = true;
+            self.schedule_variables_save_tick(cx);
+        }
+        cx.notify();
     }
 
     fn add_variable(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -794,14 +827,26 @@ impl Render for EnvironmentManagerDialogView {
         });
 
         let mut variables_panel = v_flex().h_full().w_full().gap_3();
-        variables_panel = variables_panel.child(
-            h_flex().w_full().items_center().child(
-                div()
-                    .text_sm()
-                    .font_semibold()
-                    .child(selected_label.unwrap_or_else(|| "No environment selected".to_string())),
-            ),
-        );
+        variables_panel =
+            variables_panel.child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(div().text_sm().font_semibold().child(
+                        selected_label.unwrap_or_else(|| "No environment selected".to_string()),
+                    ))
+                    .child(
+                        Button::new("delete-selected-environment")
+                            .small()
+                            .ghost()
+                            .label("Delete")
+                            .disabled(self.selected_id.is_none())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.delete_selected_environment(window, cx);
+                            })),
+                    ),
+            );
         variables_panel = variables_panel.child(
             h_flex().w_full().items_center().gap_2().child(
                 Input::new(&self.environment_name_input)
@@ -1234,29 +1279,9 @@ impl BeamView {
     }
 
     fn upsert_environment_meta(&mut self, environment_meta: crate::models::EnvironmentMeta) {
-        if let Some(existing) = self
-            .shell
-            .environments
-            .iter_mut()
-            .find(|environment| environment.environment_id == environment_meta.environment_id)
-        {
-            *existing = environment_meta;
-        } else {
-            self.shell.environments.push(environment_meta);
-        }
-        self.shell.environments.sort_by(|a, b| {
-            let scope_rank = |scope: EnvironmentScope| match scope {
-                EnvironmentScope::Global => 0_u8,
-                EnvironmentScope::Collection => 1_u8,
-            };
-            scope_rank(a.scope)
-                .cmp(&scope_rank(b.scope))
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                .then_with(|| {
-                    a.environment_id
-                        .to_string()
-                        .cmp(&b.environment_id.to_string())
-                })
+        self.shell.apply_event(&AppEvent::EnvironmentUpserted {
+            environment: environment_meta,
+            command_id: "ui_local".to_string(),
         });
     }
 
@@ -1393,18 +1418,20 @@ impl BeamView {
     }
 
     fn save_environment_manager_variables(&mut self, environment_id: Ulid) -> Result<(), String> {
-        let Some(path) = self.environment_file_path_from_shell(environment_id) else {
-            return Err("Environment file not found.".to_string());
+        let Some(_) = self
+            .shell
+            .environments
+            .iter()
+            .find(|environment| environment.environment_id == environment_id)
+        else {
+            return Err("Environment not found.".to_string());
         };
-        let content =
-            fs::read_to_string(&path).map_err(|error| format!("Failed to read file: {error}"))?;
-        let mut parsed = toml::from_str::<EnvironmentFile>(&content)
-            .map_err(|error| format!("Failed to parse file: {error}"))?;
-        parsed.variables = self.environment_manager_variables.clone();
-        parsed.environment.updated_at = Utc::now();
-        let updated_content = toml::to_string_pretty(&parsed)
-            .map_err(|error| format!("Failed to serialize file: {error}"))?;
-        fs::write(&path, updated_content).map_err(|error| format!("Failed to write file: {error}"))
+        let command = AppCommand::UpdateEnvironmentVariables {
+            environment_id,
+            variables: self.environment_manager_variables.clone(),
+            command_id: next_command_id(),
+        };
+        self.publish_app_command(command)
     }
 
     fn add_environment_variable_from_inputs(
@@ -1505,6 +1532,7 @@ impl BeamView {
     }
 
     fn sync_request_editor_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_active_request_cache();
         Self::hydrate_request_from_selection(&mut self.request, &self.shell);
         if self.request.query_params.is_empty() {
             self.request
@@ -1543,6 +1571,33 @@ impl BeamView {
         });
         self.sync_request_auth_inputs(window, cx);
         self.sync_response_pane_from_selection(window, cx);
+    }
+
+    fn refresh_active_request_cache(&mut self) {
+        let selected_request_id = self.shell.collections.selected_request_id();
+        let cached_request_id = self
+            .active_request_cache
+            .as_ref()
+            .map(|request_file| request_file.meta.request_id);
+        if cached_request_id == selected_request_id {
+            return;
+        }
+
+        self.active_request_cache = None;
+        let Some(request_id) = selected_request_id else {
+            return;
+        };
+
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        match storage.load_request(request_id) {
+            Ok(request_file) => {
+                self.active_request_cache = Some(request_file);
+            }
+            Err(error) => {
+                eprintln!("Failed to load active request cache for {request_id}: {error}");
+            }
+        }
     }
 
     fn clear_response_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1905,15 +1960,21 @@ impl BeamView {
         .detach();
     }
 
-    fn save_request_snapshot_to_disk(
+    fn build_request_snapshot_for_save(
+        &mut self,
         request_id: Ulid,
         pane_data: RequestPaneData,
-    ) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
-        let mut request_file = storage
-            .load_request(request_id)
-            .map_err(|error| format!("Failed to load request for save: {error}"))?;
+    ) -> Result<RequestFile, String> {
+        let mut request_file = self
+            .active_request_cache
+            .clone()
+            .ok_or_else(|| "No active request cache available for save.".to_string())?;
+        if request_file.meta.request_id != request_id {
+            return Err(format!(
+                "Active request cache mismatch: expected {request_id}, found {}.",
+                request_file.meta.request_id
+            ));
+        }
         request_file.request.method = pane_data.method;
         request_file.request.url = pane_data.url;
         request_file.request.headers = pane_data.headers;
@@ -1922,9 +1983,8 @@ impl BeamView {
         request_file.body = pane_data.body;
         request_file.scripts.post_response = pane_data.post_script;
         request_file.meta.updated_at = Utc::now();
-        storage
-            .save_request(&request_file)
-            .map_err(|error| format!("Failed to save request: {error}"))
+        self.active_request_cache = Some(request_file.clone());
+        Ok(request_file)
     }
 
     fn process_pending_request_save(&mut self, cx: &mut Context<Self>) {
@@ -1945,25 +2005,28 @@ impl BeamView {
         let Some((request_id, pane_data)) = self.sync_selected_request_pane_data() else {
             return;
         };
-        self.request_save_in_flight = true;
-        let view = cx.entity();
-        cx.spawn(async move |_, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { Self::save_request_snapshot_to_disk(request_id, pane_data) })
-                .await;
-            let _ = view.update(cx, move |this, cx| {
-                this.request_save_in_flight = false;
-                if let Err(error) = result {
+        self.refresh_active_request_cache();
+        match self.build_request_snapshot_for_save(request_id, pane_data) {
+            Ok(request_file) => {
+                let command = AppCommand::SaveRequest {
+                    request_file,
+                    command_id: next_command_id(),
+                };
+                if let Err(error) = self.publish_app_command(command) {
                     eprintln!("{error}");
+                    if error.starts_with("Backpressure:") {
+                        self.pending_request_save_due_at =
+                            Some(Instant::now() + Duration::from_millis(100));
+                    }
                 }
-                if this.pending_request_save_due_at.is_some() && !this.request_save_tick_scheduled {
-                    this.request_save_tick_scheduled = true;
-                    this.schedule_request_save_tick(cx);
-                }
-            });
-        })
-        .detach();
+            }
+            Err(error) => eprintln!("{error}"),
+        }
+        self.request_save_in_flight = false;
+        if self.pending_request_save_due_at.is_some() && !self.request_save_tick_scheduled {
+            self.request_save_tick_scheduled = true;
+            self.schedule_request_save_tick(cx);
+        }
     }
 
     fn rebuild_request_param_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2659,6 +2722,129 @@ impl BeamView {
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 
+    fn publish_app_command(&self, command: AppCommand) -> Result<(), String> {
+        let operation = command.operation();
+        self.app_command_tx
+            .try_send(command)
+            .map_err(|error| match error {
+                std::sync::mpsc::TrySendError::Full(_) => format!(
+                    "Backpressure: data sync queue is full for operation '{}'.",
+                    operation.as_str()
+                ),
+                std::sync::mpsc::TrySendError::Disconnected(_) => {
+                    "Failed to send command to data sync worker: worker disconnected.".to_string()
+                }
+            })
+    }
+
+    fn schedule_app_event_poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.app_event_poll_scheduled {
+            return;
+        }
+        self.app_event_poll_scheduled = true;
+        let view = cx.entity();
+        cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor()
+                .spawn(async move {
+                    std::thread::sleep(Duration::from_millis(25));
+                })
+                .await;
+            let _ = view.update_in(cx, |this, window, cx| {
+                this.app_event_poll_scheduled = false;
+                this.process_app_events(window, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn process_app_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut did_apply_any = false;
+        let mut should_sync_editor = false;
+
+        while let Ok(event) = self.app_event_rx.try_recv() {
+            did_apply_any = true;
+            match &event {
+                AppEvent::RequestUpserted {
+                    request,
+                    command_id,
+                } => {
+                    if self
+                        .active_request_cache
+                        .as_ref()
+                        .is_some_and(|cached| cached.meta.request_id == request.meta.request_id)
+                    {
+                        self.active_request_cache = Some(request.clone());
+                    }
+                    self.shell.apply_event(&event);
+                    if let Some(placement) = self.pending_request_placements.remove(command_id) {
+                        match placement {
+                            PendingRequestPlacement::Append { parent } => {
+                                let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+                                self.shell.collections.insert_request_child(
+                                    parent_id,
+                                    request.meta.request_id,
+                                    request.meta.name.clone(),
+                                    request.request.method,
+                                    request.request.url.clone(),
+                                );
+                            }
+                            PendingRequestPlacement::After {
+                                parent,
+                                after_request_id,
+                            } => {
+                                let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+                                self.shell.collections.insert_request_child_after(
+                                    parent_id,
+                                    after_request_id,
+                                    request.meta.request_id,
+                                    request.meta.name.clone(),
+                                    request.request.method,
+                                    request.request.url.clone(),
+                                );
+                            }
+                        }
+                        self.shell
+                            .collections
+                            .select_request(request.meta.request_id);
+                        should_sync_editor = true;
+                    }
+                }
+                AppEvent::RequestDeleted { request_id, .. } => {
+                    let deleted_selected =
+                        self.shell.collections.selected_request_id() == Some(*request_id);
+                    self.shell.apply_event(&event);
+                    if deleted_selected {
+                        should_sync_editor = true;
+                    }
+                }
+                AppEvent::SyncFailed {
+                    command_id,
+                    operation,
+                    error,
+                } => {
+                    self.pending_request_placements.remove(command_id);
+                    self.shell.apply_event(&event);
+                    eprintln!(
+                        "sync_failure command_id={} operation={} error={}",
+                        command_id,
+                        operation.as_str(),
+                        error
+                    );
+                    window.push_notification(error.clone(), cx);
+                }
+                _ => self.shell.apply_event(&event),
+            }
+        }
+
+        if should_sync_editor {
+            self.sync_request_editor_from_selection(window, cx);
+        }
+        self.schedule_app_event_poll(window, cx);
+        if did_apply_any {
+            cx.notify();
+        }
+    }
+
     fn add_request_from_tree_node(
         &mut self,
         node_id: Ulid,
@@ -2669,36 +2855,23 @@ impl BeamView {
             window.push_notification("Unable to determine request parent.", cx);
             return;
         };
-        let request_name = self.next_new_request_name(parent);
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths);
-                    storage
-                        .create_request(CreateRequestInput {
-                            parent,
-                            name: request_name,
-                            method: HttpMethod::Get,
-                            url: String::new(),
-                        })
-                        .map_err(|error| format!("Failed to add request: {error}"))
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(request_file) => {
-                    this.add_request_to_shell(&request_file, parent, window, cx);
-                    window.push_notification("Request added.", cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    window.push_notification(error, cx);
-                }
-            });
-        })
-        .detach();
+        let command_id = next_command_id();
+        self.pending_request_placements.insert(
+            command_id.clone(),
+            PendingRequestPlacement::Append { parent },
+        );
+        let command = AppCommand::CreateRequest {
+            input: CreateRequestInput {
+                parent,
+                name: self.next_new_request_name(parent),
+                method: HttpMethod::Get,
+                url: String::new(),
+            },
+            command_id,
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
     }
 
     fn add_folder_from_tree_node(
@@ -2907,6 +3080,23 @@ impl BeamView {
         let persisted_name = validated_name;
         window.close_dialog(cx);
         cx.notify();
+        if node_kind == TreeNodeKind::Request {
+            let _ = self
+                .shell
+                .collections
+                .rename_node(node_id, confirmed_name.clone());
+            let command = AppCommand::RenameRequest {
+                request_id: node_id,
+                new_name: persisted_name,
+                command_id: next_command_id(),
+            };
+            match self.publish_app_command(command) {
+                Ok(()) => window.push_notification(success_message, cx),
+                Err(error) => window.push_notification(error, cx),
+            }
+            cx.notify();
+            return;
+        }
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
@@ -2925,9 +3115,7 @@ impl BeamView {
                         TreeNodeKind::Folder => {
                             storage.rename_folder(node_id, &persisted_name).map(|_| ())
                         }
-                        TreeNodeKind::Request => {
-                            storage.rename_request(node_id, &persisted_name).map(|_| ())
-                        }
+                        TreeNodeKind::Request => Ok(()),
                     };
                     if let Err(error) = rename_result {
                         return Err(format!("Failed to rename: {error}"));
@@ -2978,46 +3166,27 @@ impl BeamView {
             window.push_notification("Unable to determine request parent.", cx);
             return;
         };
-        let request_name = self.next_new_request_name(parent);
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths);
-                    storage
-                        .create_request_after(
-                            CreateRequestInput {
-                                parent,
-                                name: request_name,
-                                method: HttpMethod::Get,
-                                url: String::new(),
-                            },
-                            active_request_id,
-                        )
-                        .map_err(|error| format!("Failed to add request: {error}"))
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(request_file) => {
-                    this.add_request_after_to_shell(
-                        &request_file,
-                        parent,
-                        active_request_id,
-                        window,
-                        cx,
-                    );
-                    this.focus_url_input(window, cx);
-                    window.push_notification("Request added.", cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    window.push_notification(error, cx);
-                }
-            });
-        })
-        .detach();
+        let command_id = next_command_id();
+        self.pending_request_placements.insert(
+            command_id.clone(),
+            PendingRequestPlacement::After {
+                parent,
+                after_request_id: active_request_id,
+            },
+        );
+        let command = AppCommand::CreateRequestAfter {
+            input: CreateRequestInput {
+                parent,
+                name: self.next_new_request_name(parent),
+                method: HttpMethod::Get,
+                url: String::new(),
+            },
+            source_request_id: active_request_id,
+            command_id,
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
     }
 
     fn focus_url_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3082,30 +3251,25 @@ impl BeamView {
             window.push_notification("Unable to determine request parent.", cx);
             return;
         };
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths);
-                    storage
-                        .duplicate_request(request_id, &duplicate_name, parent)
-                        .map_err(|error| format!("Failed to duplicate request: {error}"))
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(request_file) => {
-                    this.duplicate_request_to_shell(&request_file, parent, request_id, window, cx);
-                    window.push_notification("Request duplicated.", cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    window.push_notification(error, cx);
-                }
-            });
-        })
-        .detach();
+        let command_id = next_command_id();
+        self.pending_request_placements.insert(
+            command_id.clone(),
+            PendingRequestPlacement::After {
+                parent,
+                after_request_id: request_id,
+            },
+        );
+        let command = AppCommand::DuplicateRequest {
+            request_id,
+            duplicate_name,
+            parent,
+            command_id,
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        } else {
+            window.push_notification("Duplicating request...", cx);
+        }
     }
 
     fn delete_request_from_tree_node(
@@ -3114,39 +3278,13 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths.clone());
-                    storage
-                        .delete_request(request_id)
-                        .map_err(|error| format!("Failed to delete request: {error}"))?;
-                    let reload_storage = TomlWorkspaceStorage::new(paths.clone());
-                    match startup_preload(&reload_storage, &paths) {
-                        StartupLoad::Ready { state, messages } => Ok((state, messages)),
-                        StartupLoad::Fatal { message } => {
-                            Err(format!("Failed to reload workspace: {}", message.text))
-                        }
-                    }
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok((state, messages)) => {
-                    this.shell = state;
-                    this.startup_messages = messages;
-                    this.sync_request_editor_from_selection(window, cx);
-                    window.push_notification("Request deleted.", cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    window.push_notification(error, cx);
-                }
-            });
-        })
-        .detach();
+        let command = AppCommand::DeleteRequest {
+            request_id,
+            command_id: next_command_id(),
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
     }
 
     fn delete_collection_from_tree_node(
@@ -3517,17 +3655,22 @@ impl BeamView {
             pending_request_save_due_at: None,
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
-            _app_command_tx: sync_runtime.command_tx,
-            _app_event_rx: sync_runtime.event_rx,
+            active_request_cache: None,
+            app_command_tx: sync_runtime.command_tx,
+            app_event_rx: sync_runtime.event_rx,
+            app_event_poll_scheduled: false,
+            pending_request_placements: HashMap::new(),
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
         };
+        view.refresh_active_request_cache();
         view.rebuild_request_param_inputs(window, cx);
         view.rebuild_request_header_inputs(window, cx);
         view.sync_request_auth_inputs(window, cx);
         view.rebuild_request_auth_input_subscriptions(window, cx);
         view.sync_response_pane_from_selection(window, cx);
+        view.schedule_app_event_poll(window, cx);
         view
     }
 
@@ -3537,8 +3680,7 @@ impl BeamView {
         let request_id = self.shell.collections.selected_request_id();
         let selected_environment_id = self.selected_environment_id_for_view();
         let no_environment_selected = selected_environment_id.is_none();
-        let (environment_path, environment_variables) =
-            self.load_environment_for_script(selected_environment_id);
+        let environment_variables = self.load_environment_for_script(selected_environment_id);
         let request_snapshot =
             resolve_request_with_environment(self.request.clone(), &environment_variables);
         if !matches!(request_snapshot.send_button_state(), SendButtonState::Ready) {
@@ -3558,7 +3700,6 @@ impl BeamView {
                         request_snapshot,
                         request_id,
                         no_environment_selected,
-                        environment_path,
                         environment_variables,
                     )
                 })
@@ -3580,6 +3721,21 @@ impl BeamView {
                 });
                 this.response_headers_raw = response_headers;
                 this.script_result = outcome.script_result.clone();
+                if let (Some(environment_id), Some(variables)) = (
+                    selected_environment_id,
+                    outcome.updated_environment_variables,
+                ) {
+                    let command = AppCommand::UpdateEnvironmentVariables {
+                        environment_id,
+                        variables,
+                        command_id: next_command_id(),
+                    };
+                    if let Err(error) = this.publish_app_command(command) {
+                        eprintln!(
+                            "Failed to queue script-driven environment update command: {error}"
+                        );
+                    }
+                }
                 if let Some(request_id) = request_id {
                     if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
                         eprintln!("Failed to persist response snapshot: {error}");
@@ -3611,7 +3767,6 @@ impl BeamView {
         request: RequestAuthoringState,
         request_id: Option<Ulid>,
         no_environment_selected: bool,
-        environment_path: Option<PathBuf>,
         environment_variables: Vec<EnvironmentVariable>,
     ) -> SendRequestOutcome {
         let response = execute_http_request(request.clone());
@@ -3620,6 +3775,7 @@ impl BeamView {
             return SendRequestOutcome {
                 response,
                 script_result: None,
+                updated_environment_variables: None,
             };
         }
 
@@ -3639,12 +3795,16 @@ impl BeamView {
         );
         let no_environment_selected_with_env_writes =
             no_environment_selected && Self::script_contains_environment_mutation(&script_text);
-
-        if let Some(path) = environment_path.as_ref() {
-            if let Err(error) = Self::apply_script_environment_changes(path, &script_exec_result) {
-                eprintln!("Failed to apply script environment changes: {error}");
-            }
-        }
+        let updated_environment_variables = if script_exec_result.environment_changes.is_empty()
+            && script_exec_result.removed_env_keys.is_empty()
+        {
+            None
+        } else {
+            Some(Self::apply_script_environment_changes_to_variables(
+                &environment_variables,
+                &script_exec_result,
+            ))
+        };
 
         let request_id_text = request_id
             .map(|id| id.to_string())
@@ -3656,37 +3816,35 @@ impl BeamView {
                 request_id_text,
                 no_environment_selected_with_env_writes,
             )),
+            updated_environment_variables,
         }
     }
 
     fn load_environment_for_script(
         &self,
         selected_environment_id: Option<Ulid>,
-    ) -> (Option<PathBuf>, Vec<EnvironmentVariable>) {
+    ) -> Vec<EnvironmentVariable> {
         let Some(environment_id) = selected_environment_id else {
-            return (None, Vec::new());
+            return Vec::new();
         };
         let Some(path) = self.environment_file_path_from_shell(environment_id) else {
-            return (None, Vec::new());
+            return Vec::new();
         };
         let Ok(content) = fs::read_to_string(&path) else {
-            return (None, Vec::new());
+            return Vec::new();
         };
         let Ok(parsed) = EnvironmentManagerDialogView::parse_environment_file(&content) else {
-            return (None, Vec::new());
+            return Vec::new();
         };
-        (Some(path), parsed.variables)
+        parsed.variables
     }
 
-    fn apply_script_environment_changes(
-        environment_file_path: &PathBuf,
+    fn apply_script_environment_changes_to_variables(
+        current_variables: &[EnvironmentVariable],
         script_result: &ScriptExecutionResult,
-    ) -> Result<(), String> {
-        let content = fs::read_to_string(environment_file_path)
-            .map_err(|error| format!("Failed to read environment file: {error}"))?;
-        let mut parsed = EnvironmentManagerDialogView::parse_environment_file(&content)?;
-
-        parsed.variables.retain(|var| {
+    ) -> Vec<EnvironmentVariable> {
+        let mut next_variables = current_variables.to_vec();
+        next_variables.retain(|var| {
             !script_result
                 .removed_env_keys
                 .iter()
@@ -3694,11 +3852,11 @@ impl BeamView {
         });
 
         for (key, value) in &script_result.environment_changes {
-            if let Some(var) = parsed.variables.iter_mut().find(|var| var.name == *key) {
+            if let Some(var) = next_variables.iter_mut().find(|var| var.name == *key) {
                 var.value = value.clone();
                 var.enabled = true;
             } else {
-                parsed.variables.push(EnvironmentVariable {
+                next_variables.push(EnvironmentVariable {
                     name: key.clone(),
                     value: value.clone(),
                     enabled: true,
@@ -3707,12 +3865,7 @@ impl BeamView {
                 });
             }
         }
-
-        parsed.environment.updated_at = Utc::now();
-        let updated_content = toml::to_string_pretty(&parsed)
-            .map_err(|error| format!("Failed to encode environment file: {error}"))?;
-        fs::write(environment_file_path, updated_content)
-            .map_err(|error| format!("Failed to write environment file: {error}"))
+        next_variables
     }
 
     fn to_persisted_script_result(
@@ -6568,6 +6721,7 @@ struct HttpResponseView {
 struct SendRequestOutcome {
     response: HttpResponseView,
     script_result: Option<PersistedScriptResult>,
+    updated_environment_variables: Option<Vec<EnvironmentVariable>>,
 }
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();

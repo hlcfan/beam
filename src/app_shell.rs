@@ -1,8 +1,9 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
+use std::time::Instant;
 
 use ulid::Ulid;
 
@@ -19,6 +20,8 @@ use crate::storage::{
 
 const MIN_SPLIT_RATIO: f32 = 0.1;
 const MAX_SPLIT_RATIO: f32 = 0.9;
+const APP_COMMAND_QUEUE_CAPACITY: usize = 256;
+const WORKER_BATCH_DRAIN_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PaneSplit {
@@ -313,6 +316,92 @@ impl CollectionsTreeState {
             },
         );
     }
+
+    pub fn upsert_request_node(
+        &mut self,
+        request_id: Ulid,
+        parent_id: Option<Ulid>,
+        name: String,
+        method: HttpMethod,
+        url: String,
+    ) -> bool {
+        if self.nodes.contains_key(&request_id) {
+            let (kind, current_parent) = {
+                let node = self.nodes.get(&request_id).expect("request node exists");
+                (node.kind, node.parent_id)
+            };
+            if kind != TreeNodeKind::Request {
+                return false;
+            }
+
+            let next_parent = parent_id.filter(|next| Some(*next) != current_parent);
+            if next_parent.is_some()
+                && let Some(current_parent_id) = current_parent
+                && let Some(existing_parent) = self.nodes.get_mut(&current_parent_id)
+            {
+                existing_parent.children.retain(|id| *id != request_id);
+            }
+            if let Some(next_parent_id) = next_parent
+                && let Some(new_parent) = self.nodes.get_mut(&next_parent_id)
+                && !new_parent.children.contains(&request_id)
+            {
+                new_parent.children.push(request_id);
+            }
+
+            let node = self
+                .nodes
+                .get_mut(&request_id)
+                .expect("request node exists for update");
+            if let Some(next_parent_id) = next_parent {
+                node.parent_id = Some(next_parent_id);
+            }
+            node.name = name;
+            node.request_method = Some(method);
+            node.request_url = Some(url);
+            return true;
+        }
+
+        let Some(parent_id) = parent_id else {
+            return false;
+        };
+        let Some(parent) = self.nodes.get_mut(&parent_id) else {
+            return false;
+        };
+        if !parent.children.contains(&request_id) {
+            parent.children.push(request_id);
+        }
+        self.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name,
+                kind: TreeNodeKind::Request,
+                request_method: Some(method),
+                request_url: Some(url),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+        true
+    }
+
+    pub fn remove_request(&mut self, request_id: Ulid) -> bool {
+        let Some(node) = self.nodes.get(&request_id) else {
+            return false;
+        };
+        if node.kind != TreeNodeKind::Request {
+            return false;
+        }
+        let parent_id = node.parent_id;
+        self.nodes.remove(&request_id);
+        if let Some(parent) = parent_id.and_then(|id| self.nodes.get_mut(&id)) {
+            parent.children.retain(|id| *id != request_id);
+        }
+        if self.selected_request_id == Some(request_id) {
+            self.selected_request_id = None;
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -325,6 +414,14 @@ pub struct WorkspacePlaceholderState {
 pub struct LocalEnvironmentSelectionState {
     pub active_global_environment_id: Option<Ulid>,
     pub active_collection_environment_ids: HashMap<Ulid, Ulid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SyncLifecycleState {
+    pub inflight_count: usize,
+    pub last_error: Option<String>,
+    pub last_operation: Option<String>,
+    pub last_success_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +445,7 @@ pub struct AppShellState {
     pub environments: Vec<EnvironmentMeta>,
     pub environment_selection: LocalEnvironmentSelectionState,
     pub workspace: WorkspacePlaceholderState,
+    pub sync_lifecycle: SyncLifecycleState,
 }
 
 impl Default for AppShellState {
@@ -363,6 +461,7 @@ impl Default for AppShellState {
                 request_panel_title: "Request".to_string(),
                 response_panel_title: "Response".to_string(),
             },
+            sync_lifecycle: SyncLifecycleState::default(),
         }
     }
 }
@@ -382,6 +481,98 @@ impl AppShellState {
             }
         }
     }
+
+    pub fn apply_event(&mut self, event: &AppEvent) {
+        match event {
+            AppEvent::SyncStarted { operation, .. } => {
+                self.sync_lifecycle.inflight_count =
+                    self.sync_lifecycle.inflight_count.saturating_add(1);
+                self.sync_lifecycle.last_operation = Some(operation.as_str().to_string());
+            }
+            AppEvent::SyncCompleted { operation, .. } => {
+                self.sync_lifecycle.inflight_count =
+                    self.sync_lifecycle.inflight_count.saturating_sub(1);
+                self.sync_lifecycle.last_error = None;
+                self.sync_lifecycle.last_operation = Some(operation.as_str().to_string());
+                self.sync_lifecycle.last_success_at = Some(Instant::now());
+            }
+            AppEvent::SyncFailed {
+                operation, error, ..
+            } => {
+                self.sync_lifecycle.inflight_count =
+                    self.sync_lifecycle.inflight_count.saturating_sub(1);
+                self.sync_lifecycle.last_operation = Some(operation.as_str().to_string());
+                self.sync_lifecycle.last_error = Some(error.clone());
+            }
+            AppEvent::EnvironmentUpserted { environment, .. } => {
+                if let Some(existing) = self
+                    .environments
+                    .iter_mut()
+                    .find(|entry| entry.environment_id == environment.environment_id)
+                {
+                    *existing = environment.clone();
+                } else {
+                    self.environments.push(environment.clone());
+                }
+                sort_environments(&mut self.environments);
+            }
+            AppEvent::EnvironmentDeleted { environment_id, .. } => {
+                self.environments
+                    .retain(|environment| environment.environment_id != *environment_id);
+                if self.environment_selection.active_global_environment_id == Some(*environment_id)
+                {
+                    self.environment_selection.active_global_environment_id = None;
+                }
+                self.environment_selection
+                    .active_collection_environment_ids
+                    .retain(|_, selected_environment_id| {
+                        *selected_environment_id != *environment_id
+                    });
+            }
+            AppEvent::RequestUpserted { request, .. } => {
+                self.request_pane_data.insert(
+                    request.meta.request_id,
+                    RequestPaneData {
+                        method: request.request.method,
+                        url: request.request.url.clone(),
+                        headers: request.request.headers.clone(),
+                        query_params: request.request.query_params.clone(),
+                        auth: request.auth.clone(),
+                        body: request.body.clone(),
+                        post_script: request.scripts.post_response.clone(),
+                    },
+                );
+                let _ = self.collections.upsert_request_node(
+                    request.meta.request_id,
+                    None,
+                    request.meta.name.clone(),
+                    request.request.method,
+                    request.request.url.clone(),
+                );
+            }
+            AppEvent::RequestDeleted { request_id, .. } => {
+                self.request_pane_data.remove(request_id);
+                let _ = self.collections.remove_request(*request_id);
+            }
+        }
+    }
+}
+
+fn sort_environments(environments: &mut [EnvironmentMeta]) {
+    let scope_rank = |scope: EnvironmentScope| match scope {
+        EnvironmentScope::Global => 0_u8,
+        EnvironmentScope::Collection => 1_u8,
+    };
+    environments.sort_by(|a, b| {
+        scope_rank(a.scope)
+            .cmp(&scope_rank(b.scope))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| {
+                a.environment_id
+                    .to_string()
+                    .cmp(&b.environment_id.to_string())
+            })
+    });
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -427,15 +618,11 @@ pub enum AppCommand {
     },
     RenameEnvironment {
         environment_id: Ulid,
-        file_name: Option<String>,
         new_name: String,
-        variables: Vec<EnvironmentVariable>,
         command_id: String,
     },
     UpdateEnvironmentVariables {
         environment_id: Ulid,
-        file_name: Option<String>,
-        name: String,
         variables: Vec<EnvironmentVariable>,
         command_id: String,
     },
@@ -547,7 +734,7 @@ pub enum AppEvent {
 }
 
 pub struct DataSyncRuntime {
-    pub command_tx: Sender<AppCommand>,
+    pub command_tx: SyncSender<AppCommand>,
     pub event_rx: Receiver<AppEvent>,
 }
 
@@ -559,7 +746,7 @@ pub fn start_data_sync_worker<S>(storage: S) -> DataSyncRuntime
 where
     S: WorkspaceStorage + Send + 'static,
 {
-    let (command_tx, command_rx) = mpsc::channel::<AppCommand>();
+    let (command_tx, command_rx) = mpsc::sync_channel::<AppCommand>(APP_COMMAND_QUEUE_CAPACITY);
     let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
 
     thread::Builder::new()
@@ -576,37 +763,164 @@ where
 fn data_sync_worker_loop<S>(
     storage: S,
     command_rx: Receiver<AppCommand>,
-    event_tx: Sender<AppEvent>,
+    event_tx: mpsc::Sender<AppEvent>,
 ) where
     S: WorkspaceStorage,
 {
-    while let Ok(command) = command_rx.recv() {
-        let command_id = command.command_id().to_string();
-        let operation = command.operation();
-        let _ = event_tx.send(AppEvent::SyncStarted {
-            command_id: command_id.clone(),
-            operation,
-        });
-
-        match handle_command(&storage, command) {
-            Ok(domain_events) => {
-                for event in domain_events {
-                    let _ = event_tx.send(event);
-                }
-                let _ = event_tx.send(AppEvent::SyncCompleted {
-                    command_id,
-                    operation,
-                });
+    while let Ok(first_command) = command_rx.recv() {
+        let mut command_batch = vec![first_command];
+        while command_batch.len() < WORKER_BATCH_DRAIN_LIMIT {
+            match command_rx.try_recv() {
+                Ok(command) => command_batch.push(command),
+                Err(mpsc::TryRecvError::Empty | mpsc::TryRecvError::Disconnected) => break,
             }
-            Err(error) => {
+        }
+
+        for command in coalesce_commands(command_batch) {
+            let command_id = command.command_id().to_string();
+            let operation = command.operation();
+            let _ = event_tx.send(AppEvent::SyncStarted {
+                command_id: command_id.clone(),
+                operation,
+            });
+
+            if let Err(error) = validate_command_payload(&command) {
+                log_sync_failure(&command_id, operation, &error);
                 let _ = event_tx.send(AppEvent::SyncFailed {
                     command_id,
                     operation,
                     error,
                 });
+                continue;
+            }
+
+            match handle_command(&storage, command) {
+                Ok(domain_events) => {
+                    for event in domain_events {
+                        let _ = event_tx.send(event);
+                    }
+                    let _ = event_tx.send(AppEvent::SyncCompleted {
+                        command_id,
+                        operation,
+                    });
+                }
+                Err(error) => {
+                    log_sync_failure(&command_id, operation, &error);
+                    let _ = event_tx.send(AppEvent::SyncFailed {
+                        command_id,
+                        operation,
+                        error,
+                    });
+                }
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum CommandCoalesceKey {
+    Request(Ulid),
+    EnvironmentVariables(Ulid),
+}
+
+fn command_coalesce_key(command: &AppCommand) -> Option<CommandCoalesceKey> {
+    match command {
+        AppCommand::UpdateRequest { request_file, .. }
+        | AppCommand::SaveRequest { request_file, .. } => {
+            Some(CommandCoalesceKey::Request(request_file.meta.request_id))
+        }
+        AppCommand::UpdateEnvironmentVariables { environment_id, .. } => {
+            Some(CommandCoalesceKey::EnvironmentVariables(*environment_id))
+        }
+        _ => None,
+    }
+}
+
+/// Coalesces a drained worker batch using latest-wins semantics for high-frequency edits.
+///
+/// How it works:
+/// - Build a key for coalescable commands (currently request saves/updates and environment variable updates).
+/// - Record the last index seen for each key in the batch.
+/// - Keep command order stable while dropping earlier superseded commands for the same key.
+///
+/// Result:
+/// - Only the most recent mutation per entity/field key is executed in this batch.
+/// - Non-coalescable commands (create/delete/rename, etc.) are always preserved.
+fn coalesce_commands(commands: Vec<AppCommand>) -> Vec<AppCommand> {
+    let mut latest_indices: HashMap<CommandCoalesceKey, usize> = HashMap::new();
+    for (index, command) in commands.iter().enumerate() {
+        if let Some(key) = command_coalesce_key(command) {
+            latest_indices.insert(key, index);
+        }
+    }
+
+    commands
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, command)| match command_coalesce_key(&command) {
+            Some(key) if latest_indices.get(&key).copied() == Some(index) => Some(command),
+            Some(_) => None,
+            None => Some(command),
+        })
+        .collect()
+}
+
+fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), String> {
+    match command {
+        AppCommand::CreateEnvironment { name, .. } => {
+            if name.trim().is_empty() {
+                return Err("Environment name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::RenameEnvironment { new_name, .. } => {
+            if new_name.trim().is_empty() {
+                return Err("Environment name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::UpdateEnvironmentVariables { variables, .. } => {
+            let mut seen = HashSet::new();
+            for variable in variables {
+                let normalized_name = variable.name.trim().to_lowercase();
+                if normalized_name.is_empty() {
+                    return Err("Environment variable name cannot be empty.".to_string());
+                }
+                if !seen.insert(normalized_name) {
+                    return Err("Environment variable names must be unique.".to_string());
+                }
+            }
+        }
+        AppCommand::CreateRequest { input, .. } | AppCommand::CreateRequestAfter { input, .. } => {
+            if input.name.trim().is_empty() {
+                return Err("Request name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::DuplicateRequest { duplicate_name, .. } => {
+            if duplicate_name.trim().is_empty() {
+                return Err("Request name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::RenameRequest { new_name, .. } => {
+            if new_name.trim().is_empty() {
+                return Err("Request name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::UpdateRequest { request_file, .. }
+        | AppCommand::SaveRequest { request_file, .. } => {
+            if request_file.meta.name.trim().is_empty() {
+                return Err("Request name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::DeleteEnvironment { .. } | AppCommand::DeleteRequest { .. } => {}
+    }
+    Ok(())
+}
+
+fn log_sync_failure(command_id: &str, operation: AppOperation, error: &str) {
+    eprintln!(
+        "sync_failure command_id={command_id} operation={} error={}",
+        operation.as_str(),
+        error
+    );
 }
 
 fn handle_command<S>(storage: &S, command: AppCommand) -> std::result::Result<Vec<AppEvent>, String>
@@ -634,13 +948,11 @@ where
         }
         AppCommand::RenameEnvironment {
             environment_id,
-            file_name,
             new_name,
-            variables,
             command_id,
         } => {
             let updated = storage
-                .update_environment(environment_id, file_name.as_deref(), &new_name, variables)
+                .rename_environment(environment_id, &new_name)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::EnvironmentUpserted {
                 environment: updated.environment,
@@ -649,22 +961,29 @@ where
         }
         AppCommand::UpdateEnvironmentVariables {
             environment_id,
-            file_name,
-            name,
             variables,
             command_id,
         } => {
             let updated = storage
-                .update_environment(environment_id, file_name.as_deref(), &name, variables)
+                .update_environment_variables(environment_id, variables)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::EnvironmentUpserted {
                 environment: updated.environment,
                 command_id,
             }])
         }
-        AppCommand::DeleteEnvironment { command_id, .. } => Err(format!(
-            "delete_environment is not implemented yet (command_id={command_id})"
-        )),
+        AppCommand::DeleteEnvironment {
+            environment_id,
+            command_id,
+        } => {
+            storage
+                .delete_environment(environment_id)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::EnvironmentDeleted {
+                environment_id,
+                command_id,
+            }])
+        }
         AppCommand::CreateRequest { input, command_id } => {
             let created = storage
                 .create_request(input)
@@ -974,20 +1293,7 @@ fn load_environments(paths: &BeamPaths, warnings: &mut Vec<String>) -> Vec<Envir
         }
     }
 
-    environments.sort_by(|a, b| {
-        let scope_rank = |scope: EnvironmentScope| match scope {
-            EnvironmentScope::Global => 0_u8,
-            EnvironmentScope::Collection => 1_u8,
-        };
-        scope_rank(a.scope)
-            .cmp(&scope_rank(b.scope))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-            .then_with(|| {
-                a.environment_id
-                    .to_string()
-                    .cmp(&b.environment_id.to_string())
-            })
-    });
+    sort_environments(&mut environments);
     environments
 }
 
@@ -1376,11 +1682,15 @@ fn parse_toml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::mpsc::Receiver;
+    use std::time::Duration;
 
     use tempfile::tempdir;
 
     use super::*;
-    use crate::models::{LocalState, TreeState, WorkspaceFile};
+    use crate::models::{
+        LocalState, RequestDefinition, RequestMeta, ScriptConfig, TreeState, WorkspaceFile,
+    };
     use crate::schema::SCHEMA_VERSION_V1;
     use crate::storage::toml_backend::TomlWorkspaceStorage;
     use chrono::Utc;
@@ -1393,6 +1703,646 @@ mod tests {
 
         split.set_ratio(0.02);
         assert!((split.ratio() - 0.1).abs() < f32::EPSILON);
+    }
+
+    fn sample_request_file(
+        request_id: Ulid,
+        name: &str,
+        method: HttpMethod,
+        url: &str,
+    ) -> RequestFile {
+        let now = Utc::now();
+        RequestFile {
+            meta: RequestMeta {
+                request_id,
+                name: name.to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            request: RequestDefinition {
+                method,
+                url: url.to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+            },
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            scripts: ScriptConfig::default(),
+        }
+    }
+
+    fn apply_events_for_command(
+        state: &mut AppShellState,
+        event_rx: &Receiver<AppEvent>,
+        command_id: &str,
+    ) -> Vec<AppEvent> {
+        let mut events = Vec::new();
+        loop {
+            let event = event_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("expected worker event");
+            let is_terminal = matches!(
+                &event,
+                AppEvent::SyncCompleted {
+                    command_id: event_command_id,
+                    ..
+                } if event_command_id == command_id
+            ) || matches!(
+                &event,
+                AppEvent::SyncFailed {
+                    command_id: event_command_id,
+                    ..
+                } if event_command_id == command_id
+            );
+            state.apply_event(&event);
+            events.push(event);
+            if is_terminal {
+                break;
+            }
+        }
+        events
+    }
+
+    #[test]
+    fn coalescing_keeps_latest_request_edit_commands() {
+        let request_id = Ulid::new();
+        let save_one = AppCommand::SaveRequest {
+            request_file: sample_request_file(
+                request_id,
+                "First Save",
+                HttpMethod::Get,
+                "https://example.com/first",
+            ),
+            command_id: Ulid::new().to_string(),
+        };
+        let save_two = AppCommand::SaveRequest {
+            request_file: sample_request_file(
+                request_id,
+                "Latest Save",
+                HttpMethod::Post,
+                "https://example.com/latest",
+            ),
+            command_id: Ulid::new().to_string(),
+        };
+        let create_environment = AppCommand::CreateEnvironment {
+            name: "Global".to_string(),
+            scope: EnvironmentScope::Global,
+            collection_id: None,
+            command_id: Ulid::new().to_string(),
+        };
+        let coalesced = coalesce_commands(vec![
+            save_one.clone(),
+            create_environment.clone(),
+            save_two.clone(),
+        ]);
+
+        assert_eq!(coalesced.len(), 2);
+        assert!(matches!(
+            &coalesced[0],
+            AppCommand::CreateEnvironment { name, .. } if name == "Global"
+        ));
+        assert!(matches!(
+            &coalesced[1],
+            AppCommand::SaveRequest { request_file, .. }
+                if request_file.meta.request_id == request_id
+                    && request_file.meta.name == "Latest Save"
+                    && request_file.request.method == HttpMethod::Post
+        ));
+    }
+
+    #[test]
+    fn command_validation_rejects_empty_rename_payload() {
+        let command = AppCommand::RenameRequest {
+            request_id: Ulid::new(),
+            new_name: "   ".to_string(),
+            command_id: Ulid::new().to_string(),
+        };
+        let error = validate_command_payload(&command).expect_err("expected validation error");
+        assert_eq!(error, "Request name cannot be empty.");
+    }
+
+    #[test]
+    fn app_shell_reducer_tracks_sync_lifecycle() {
+        let mut state = AppShellState::default();
+        let command_id = Ulid::new().to_string();
+        let operation = AppOperation::UpdateRequest;
+
+        state.apply_event(&AppEvent::SyncStarted {
+            command_id: command_id.clone(),
+            operation,
+        });
+        assert_eq!(state.sync_lifecycle.inflight_count, 1);
+        assert_eq!(
+            state.sync_lifecycle.last_operation.as_deref(),
+            Some(operation.as_str())
+        );
+        assert_eq!(state.sync_lifecycle.last_error, None);
+
+        state.apply_event(&AppEvent::SyncFailed {
+            command_id: command_id.clone(),
+            operation,
+            error: "disk write failed".to_string(),
+        });
+        assert_eq!(state.sync_lifecycle.inflight_count, 0);
+        assert_eq!(
+            state.sync_lifecycle.last_operation.as_deref(),
+            Some(operation.as_str())
+        );
+        assert_eq!(
+            state.sync_lifecycle.last_error.as_deref(),
+            Some("disk write failed")
+        );
+
+        state.apply_event(&AppEvent::SyncStarted {
+            command_id: command_id.clone(),
+            operation,
+        });
+        state.apply_event(&AppEvent::SyncCompleted {
+            command_id,
+            operation,
+        });
+        assert_eq!(state.sync_lifecycle.inflight_count, 0);
+        assert_eq!(state.sync_lifecycle.last_error, None);
+        assert!(state.sync_lifecycle.last_success_at.is_some());
+    }
+
+    #[test]
+    fn app_shell_reducer_applies_environment_upsert_and_delete() {
+        let mut state = AppShellState::default();
+        let global_env_id = Ulid::new();
+        let collection_env_id = Ulid::new();
+        let collection_id = Ulid::new();
+        let now = Utc::now();
+        let global_environment = EnvironmentMeta {
+            environment_id: global_env_id,
+            collection_id: None,
+            scope: EnvironmentScope::Global,
+            name: "Global".to_string(),
+            file_name: "global.env.toml".to_string(),
+            description: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let collection_environment = EnvironmentMeta {
+            environment_id: collection_env_id,
+            collection_id: Some(collection_id),
+            scope: EnvironmentScope::Collection,
+            name: "Collection".to_string(),
+            file_name: "collection.env.toml".to_string(),
+            description: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        state.apply_event(&AppEvent::EnvironmentUpserted {
+            environment: collection_environment.clone(),
+            command_id: Ulid::new().to_string(),
+        });
+        state.apply_event(&AppEvent::EnvironmentUpserted {
+            environment: global_environment.clone(),
+            command_id: Ulid::new().to_string(),
+        });
+
+        assert_eq!(state.environments.len(), 2);
+        assert_eq!(state.environments[0].environment_id, global_env_id);
+        state.environment_selection.active_global_environment_id = Some(global_env_id);
+        state
+            .environment_selection
+            .active_collection_environment_ids
+            .insert(collection_id, global_env_id);
+
+        state.apply_event(&AppEvent::EnvironmentDeleted {
+            environment_id: global_env_id,
+            command_id: Ulid::new().to_string(),
+        });
+        assert_eq!(state.environments.len(), 1);
+        assert_eq!(
+            state.environment_selection.active_global_environment_id,
+            None
+        );
+        assert!(
+            state
+                .environment_selection
+                .active_collection_environment_ids
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn environment_commands_propagate_to_shell_via_worker_events() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let storage = TomlWorkspaceStorage::new(paths);
+        storage.initialize().expect("init storage");
+        let runtime = start_data_sync_worker(storage);
+        let mut state = AppShellState::default();
+
+        let create_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::CreateEnvironment {
+                name: "Phase3 Global".to_string(),
+                scope: EnvironmentScope::Global,
+                collection_id: None,
+                command_id: create_command_id.clone(),
+            })
+            .expect("queue create environment");
+        let create_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &create_command_id);
+        let created_environment = create_events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::EnvironmentUpserted {
+                    environment,
+                    command_id,
+                } if command_id == &create_command_id => Some(environment.clone()),
+                _ => None,
+            })
+            .expect("create should emit EnvironmentUpserted");
+        assert!(
+            state
+                .environments
+                .iter()
+                .any(|entry| entry.environment_id == created_environment.environment_id)
+        );
+
+        let rename_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::RenameEnvironment {
+                environment_id: created_environment.environment_id,
+                new_name: "Phase3 Global Renamed".to_string(),
+                command_id: rename_command_id.clone(),
+            })
+            .expect("queue rename environment");
+        apply_events_for_command(&mut state, &runtime.event_rx, &rename_command_id);
+        assert_eq!(
+            state
+                .environments
+                .iter()
+                .find(|entry| entry.environment_id == created_environment.environment_id)
+                .map(|entry| entry.name.as_str()),
+            Some("Phase3 Global Renamed")
+        );
+
+        let update_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::UpdateEnvironmentVariables {
+                environment_id: created_environment.environment_id,
+                variables: vec![EnvironmentVariable {
+                    name: "api_base".to_string(),
+                    value: "https://api.example.com".to_string(),
+                    enabled: true,
+                    secret: false,
+                    description: None,
+                }],
+                command_id: update_command_id.clone(),
+            })
+            .expect("queue update environment variables");
+        let update_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &update_command_id);
+        assert!(update_events.iter().any(|event| matches!(
+            event,
+            AppEvent::EnvironmentUpserted {
+                environment,
+                command_id
+            } if command_id == &update_command_id
+                && environment.environment_id == created_environment.environment_id
+        )));
+
+        state.environment_selection.active_global_environment_id =
+            Some(created_environment.environment_id);
+        let delete_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::DeleteEnvironment {
+                environment_id: created_environment.environment_id,
+                command_id: delete_command_id.clone(),
+            })
+            .expect("queue delete environment");
+        apply_events_for_command(&mut state, &runtime.event_rx, &delete_command_id);
+        assert!(
+            state
+                .environments
+                .iter()
+                .all(|entry| entry.environment_id != created_environment.environment_id)
+        );
+        assert_eq!(
+            state.environment_selection.active_global_environment_id,
+            None
+        );
+    }
+
+    #[test]
+    fn request_commands_emit_expected_worker_events() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let storage = TomlWorkspaceStorage::new(paths.clone());
+        storage.initialize().expect("init storage");
+        let collection_id = Ulid::new();
+        let collection_dir = paths.collections_dir.join("sample");
+        fs::create_dir_all(&collection_dir).expect("create collection dir");
+        let collection_toml = format!(
+            r#"
+[collection]
+collection_id = "{collection_id}"
+name = "Phase4 Collection"
+description = ""
+created_at = "2026-01-01T00:00:00Z"
+updated_at = "2026-01-01T00:00:00Z"
+"#
+        );
+        fs::write(collection_dir.join("collection.toml"), collection_toml)
+            .expect("write collection");
+
+        let runtime = start_data_sync_worker(storage);
+        let mut state = AppShellState::default();
+        let parent = RequestParentRef {
+            collection_id,
+            folder_id: None,
+        };
+
+        let create_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::CreateRequest {
+                input: CreateRequestInput {
+                    parent,
+                    name: "Phase4 Request".to_string(),
+                    method: HttpMethod::Get,
+                    url: "https://example.com/phase4".to_string(),
+                },
+                command_id: create_command_id.clone(),
+            })
+            .expect("queue create request");
+        let create_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &create_command_id);
+        let created = create_events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::RequestUpserted {
+                    request,
+                    command_id,
+                } if command_id == &create_command_id => Some(request.clone()),
+                _ => None,
+            })
+            .expect("create should emit RequestUpserted");
+
+        let duplicate_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::DuplicateRequest {
+                request_id: created.meta.request_id,
+                duplicate_name: "Phase4 Request Copy".to_string(),
+                parent,
+                command_id: duplicate_command_id.clone(),
+            })
+            .expect("queue duplicate request");
+        let duplicate_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &duplicate_command_id);
+        let duplicated = duplicate_events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::RequestUpserted {
+                    request,
+                    command_id,
+                } if command_id == &duplicate_command_id => Some(request.clone()),
+                _ => None,
+            })
+            .expect("duplicate should emit RequestUpserted");
+        assert_ne!(duplicated.meta.request_id, created.meta.request_id);
+
+        let save_command_id = next_command_id();
+        let mut saved_request = duplicated.clone();
+        saved_request.request.method = HttpMethod::Post;
+        saved_request.request.url = "https://example.com/phase4/saved".to_string();
+        runtime
+            .command_tx
+            .send(AppCommand::SaveRequest {
+                request_file: saved_request.clone(),
+                command_id: save_command_id.clone(),
+            })
+            .expect("queue save request");
+        let save_events = apply_events_for_command(&mut state, &runtime.event_rx, &save_command_id);
+        assert!(save_events.iter().any(|event| matches!(
+            event,
+            AppEvent::RequestUpserted {
+                request,
+                command_id
+            } if command_id == &save_command_id
+                && request.meta.request_id == saved_request.meta.request_id
+                && request.request.method == HttpMethod::Post
+                && request.request.url == "https://example.com/phase4/saved"
+        )));
+
+        let rename_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::RenameRequest {
+                request_id: saved_request.meta.request_id,
+                new_name: "Phase4 Request Saved".to_string(),
+                command_id: rename_command_id.clone(),
+            })
+            .expect("queue rename request");
+        let rename_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &rename_command_id);
+        assert!(rename_events.iter().any(|event| matches!(
+            event,
+            AppEvent::RequestUpserted {
+                request,
+                command_id
+            } if command_id == &rename_command_id
+                && request.meta.request_id == saved_request.meta.request_id
+                && request.meta.name == "Phase4 Request Saved"
+        )));
+
+        let delete_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::DeleteRequest {
+                request_id: saved_request.meta.request_id,
+                command_id: delete_command_id.clone(),
+            })
+            .expect("queue delete request");
+        let delete_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &delete_command_id);
+        assert!(delete_events.iter().any(|event| matches!(
+            event,
+            AppEvent::RequestDeleted {
+                request_id,
+                command_id
+            } if command_id == &delete_command_id && *request_id == saved_request.meta.request_id
+        )));
+    }
+
+    #[test]
+    fn app_shell_reducer_applies_request_upsert_and_delete() {
+        let mut state = AppShellState::default();
+        let collection_id = Ulid::new();
+        let request_id = Ulid::new();
+
+        state.collections.roots.push(collection_id);
+        state.collections.nodes.insert(
+            collection_id,
+            TreeNode {
+                id: collection_id,
+                name: "Collection".to_string(),
+                kind: TreeNodeKind::Collection,
+                request_method: None,
+                request_url: None,
+                parent_id: None,
+                children: vec![request_id],
+            },
+        );
+        state.collections.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Old Name".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com/old".to_string()),
+                parent_id: Some(collection_id),
+                children: Vec::new(),
+            },
+        );
+        state.collections.set_selected_request(Some(request_id));
+
+        let updated = sample_request_file(
+            request_id,
+            "New Name",
+            HttpMethod::Post,
+            "https://example.com/new",
+        );
+        state.apply_event(&AppEvent::RequestUpserted {
+            request: updated,
+            command_id: Ulid::new().to_string(),
+        });
+
+        let node = state.collections.node(request_id).expect("request node");
+        assert_eq!(node.name, "New Name");
+        assert_eq!(node.request_method, Some(HttpMethod::Post));
+        assert_eq!(node.request_url.as_deref(), Some("https://example.com/new"));
+        let pane = state
+            .request_pane_data
+            .get(&request_id)
+            .expect("request pane data");
+        assert_eq!(pane.method, HttpMethod::Post);
+        assert_eq!(pane.url, "https://example.com/new");
+
+        state.apply_event(&AppEvent::RequestDeleted {
+            request_id,
+            command_id: Ulid::new().to_string(),
+        });
+        assert!(state.collections.node(request_id).is_none());
+        assert!(state.request_pane_data.get(&request_id).is_none());
+        assert_eq!(state.collections.selected_request_id(), None);
+    }
+
+    #[test]
+    fn worker_emits_sync_failed_for_invalid_payload_without_completion() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let storage = TomlWorkspaceStorage::new(paths);
+        storage.initialize().expect("init storage");
+        let runtime = start_data_sync_worker(storage);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::RenameRequest {
+                request_id: Ulid::new(),
+                new_name: "   ".to_string(),
+                command_id: command_id.clone(),
+            })
+            .expect("queue invalid rename request");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        assert!(matches!(
+            &events[0],
+            AppEvent::SyncStarted {
+                command_id: event_command_id,
+                operation: AppOperation::RenameRequest,
+            } if event_command_id == &command_id
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AppEvent::SyncFailed {
+                command_id: event_command_id,
+                operation: AppOperation::RenameRequest,
+                error
+            } if event_command_id == &command_id && error == "Request name cannot be empty."
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            AppEvent::SyncCompleted {
+                command_id: event_command_id,
+                ..
+            } if event_command_id == &command_id
+        )));
+    }
+
+    #[test]
+    fn sync_failed_does_not_rollback_existing_request_state() {
+        let mut state = AppShellState::default();
+        let collection_id = Ulid::new();
+        let request_id = Ulid::new();
+        state.collections.roots.push(collection_id);
+        state.collections.nodes.insert(
+            collection_id,
+            TreeNode {
+                id: collection_id,
+                name: "Collection".to_string(),
+                kind: TreeNodeKind::Collection,
+                request_method: None,
+                request_url: None,
+                parent_id: None,
+                children: vec![request_id],
+            },
+        );
+        state.collections.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Before Optimistic".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com/before".to_string()),
+                parent_id: Some(collection_id),
+                children: Vec::new(),
+            },
+        );
+
+        let command_id = next_command_id();
+        state.apply_event(&AppEvent::RequestUpserted {
+            request: sample_request_file(
+                request_id,
+                "Optimistic Name",
+                HttpMethod::Post,
+                "https://example.com/optimistic",
+            ),
+            command_id: command_id.clone(),
+        });
+        state.apply_event(&AppEvent::SyncFailed {
+            command_id,
+            operation: AppOperation::RenameRequest,
+            error: "disk write failed".to_string(),
+        });
+
+        let node = state
+            .collections
+            .node(request_id)
+            .expect("request should remain");
+        assert_eq!(node.name, "Optimistic Name");
+        assert_eq!(node.request_method, Some(HttpMethod::Post));
+        assert_eq!(
+            node.request_url.as_deref(),
+            Some("https://example.com/optimistic")
+        );
+        assert!(state.request_pane_data.contains_key(&request_id));
     }
 
     #[test]
