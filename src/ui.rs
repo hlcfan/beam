@@ -695,29 +695,17 @@ impl Render for EnvironmentManagerDialogView {
         );
         variables_panel = variables_panel.child(
             h_flex().w_full().items_center().gap_2().child(
-                div()
-                    .flex_1()
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().secondary)
-                    .px_2()
-                    .py_1()
-                    .child(
-                        Input::new(&self.environment_name_input)
-                            .small()
-                            .w_full()
-                            .appearance(false)
-                            .context_menu({
-                                move |menu, _, cx| {
-                                    BeamView::build_text_edit_context_menu(
-                                        menu,
-                                        environment_name_has_selection,
-                                        cx.theme().muted_foreground,
-                                    )
-                                }
-                            }),
-                    ),
+                Input::new(&self.environment_name_input)
+                    .w_full()
+                    .context_menu({
+                        move |menu, _, cx| {
+                            BeamView::build_text_edit_context_menu(
+                                menu,
+                                environment_name_has_selection,
+                                cx.theme().muted_foreground,
+                            )
+                        }
+                    }),
             ),
         );
         if let Some(error) = &self.error {
