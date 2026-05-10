@@ -7,13 +7,13 @@ use chrono::{Local, Utc};
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
-    ThemeMode, ThemeRegistry,
-    TitleBar, WindowExt as _,
-    button::{Button, ButtonVariants as _},
+    ThemeMode, ThemeRegistry, TitleBar, WindowExt as _,
+    button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
     input::{self, Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
+    radio::{Radio, RadioGroup},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     tag::Tag,
@@ -456,66 +456,76 @@ impl Render for SettingsDialogView {
                         "Choose how Beam looks. This controls whether light or dark mode is active.",
                     ))
                     .child(
-                        v_flex()
+                        RadioGroup::horizontal("settings-appearance-mode")
                             .w_full()
-                            .gap_2()
-                            .child(
-                                ListItem::new("settings-appearance-light")
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .selected(!is_dark_mode)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let _ = this.beam_view.update(cx, |_, cx| {
-                                            BeamView::apply_theme_mode(ThemeMode::Light, cx);
-                                        });
-                                        cx.notify();
-                                    }))
-                                    .child("Light"),
-                            )
-                            .child(
-                                ListItem::new("settings-appearance-dark")
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .selected(is_dark_mode)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let _ = this.beam_view.update(cx, |_, cx| {
-                                            BeamView::apply_theme_mode(ThemeMode::Dark, cx);
-                                        });
-                                        cx.notify();
-                                    }))
-                                    .child("Dark"),
-                            ),
+                            .gap_4()
+                            .child(Radio::new("settings-appearance-light-radio").label("Light"))
+                            .child(Radio::new("settings-appearance-dark-radio").label("Dark"))
+                            .selected_index(Some(usize::from(is_dark_mode)))
+                            .on_click(cx.listener(|this, selected_ix: &usize, _, cx| {
+                                let mode = if *selected_ix == 0 {
+                                    ThemeMode::Light
+                                } else {
+                                    ThemeMode::Dark
+                                };
+                                let _ = this.beam_view.update(cx, |_, cx| {
+                                    BeamView::apply_theme_mode(mode, cx);
+                                });
+                                cx.notify();
+                            })),
                     );
             }
             SettingsSection::Theme => {
+                let beam_view = self.beam_view.clone();
+                let active_theme_name_for_menu = active_theme_name.clone();
+                let theme_options_for_menu = theme_options.clone();
                 right_panel = right_panel
                     .child(div().text_sm().font_semibold().child("Theme"))
                     .child(
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("Choose a registered theme. The selected theme is also available from the system menu."),
+                            .child("Choose a theme. The selected theme is also available from the system menu."),
                     )
                     .child(
-                        div().w_full().flex_1().min_h_0().overflow_y_scrollbar().child(
-                            v_flex().w_full().gap_1().children(
-                                theme_options.into_iter().enumerate().map(|(index, theme_name)| {
-                                    let label = theme_name.clone();
-                                    ListItem::new(format!("settings-theme-{index}"))
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .selected(active_theme_name == theme_name)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            let selected_theme = label.clone();
-                                            let _ = this.beam_view.update(cx, |_, cx| {
-                                                BeamView::apply_named_theme(selected_theme, cx);
-                                            });
-                                            cx.notify();
-                                        }))
-                                        .child(theme_name.to_string())
-                                }),
-                            ),
-                        ),
+                        DropdownButton::new("settings-theme-dropdown")
+                            .w(px(320.0))
+                            .button(
+                                Button::new("settings-theme-dropdown-button")
+                                    .w(px(290.0))
+                                    .justify_start()
+                                    .label(active_theme_name.to_string()),
+                            )
+                            .dropdown_menu(move |menu, window, _| {
+                                theme_options_for_menu.clone().into_iter().fold(
+                                    menu.scrollable(true).max_h(px(220.0)),
+                                    |menu, theme_name| {
+                                        let selected_theme = theme_name.clone();
+                                    let target_view = beam_view.clone();
+                                    let checked = theme_name == active_theme_name_for_menu;
+                                    menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                div()
+                                                    .w_full()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .cursor_pointer()
+                                                    .child(theme_name.clone())
+                                            })
+                                        .checked(checked)
+                                        .on_click(window.listener_for(
+                                            &target_view,
+                                            move |_: &mut BeamView, _, _, cx| {
+                                                BeamView::apply_named_theme(
+                                                    selected_theme.clone(),
+                                                    cx,
+                                                );
+                                                cx.notify();
+                                            },
+                                        )),
+                                    )
+                                })
+                            }),
                     );
             }
         }
@@ -544,6 +554,9 @@ impl Render for SettingsDialogView {
                                 ListItem::new("settings-section-appearance")
                                     .w_full()
                                     .cursor_pointer()
+                                    .rounded(px(8.0))
+                                    .px_2()
+                                    .py_1()
                                     .selected(self.selected_section == SettingsSection::Appearance)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.selected_section = SettingsSection::Appearance;
@@ -555,6 +568,9 @@ impl Render for SettingsDialogView {
                                 ListItem::new("settings-section-theme")
                                     .w_full()
                                     .cursor_pointer()
+                                    .rounded(px(8.0))
+                                    .px_2()
+                                    .py_1()
                                     .selected(self.selected_section == SettingsSection::Theme)
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.selected_section = SettingsSection::Theme;
@@ -1386,61 +1402,62 @@ impl Render for EnvironmentManagerDialogView {
                                     .gap_1()
                                     .child(div().text_xs().font_semibold().child("Environments")),
                             )
-                            .child(
-                                v_flex().w_full().flex_1().min_h_0().child(
-                                    div().w_full().h_full().overflow_y_scrollbar().child(
-                                        v_flex().w_full().gap_1().children(
-                                            self.options.clone().into_iter().map(
-                                                |(environment_id, label)| {
-                                                    let is_current =
-                                                        Some(environment_id)
-                                                            == self.active_environment_id;
-                                                    let mut row_content = h_flex()
-                                                        .w_full()
-                                                        .items_center()
-                                                        .justify_between()
-                                                        .gap_2()
-                                                        .child(
-                                                            div()
-                                                                .min_w_0()
-                                                                .flex_1()
-                                                                .text_sm()
-                                                                .line_height(relative(1.0))
-                                                                .truncate()
-                                                                .child(label),
-                                                        );
-                                                    if is_current {
-                                                        row_content = row_content.child(
-                                                            Tag::success()
-                                                                .small()
-                                                                .outline()
-                                                                .rounded_full()
-                                                                .child("Current"),
-                                                        );
-                                                    }
-                                                    ListItem::new(format!(
-                                                        "environment-manager-select-{environment_id}"
-                                                    ))
+                            .child(v_flex().w_full().flex_1().min_h_0().child(
+                                div().w_full().h_full().overflow_y_scrollbar().child(
+                                    v_flex().w_full().gap_1().children(
+                                        self.options.clone().into_iter().map(
+                                            |(environment_id, label)| {
+                                                let is_current = Some(environment_id)
+                                                    == self.active_environment_id;
+                                                let mut row_content = h_flex()
                                                     .w_full()
-                                                    .cursor_pointer()
-                                                    .rounded(px(8.0))
-                                                    .px_3()
-                                                    .py_2()
-                                                    .selected(Some(environment_id) == self.selected_id)
-                                                    .on_click(cx.listener(
-                                                        move |this, _, window, cx| {
-                                                            this.selected_id = Some(environment_id);
-                                                            this.load_variables(environment_id, window, cx);
-                                                            cx.notify();
-                                                        },
-                                                    ))
-                                                    .child(row_content)
-                                                },
-                                            ),
+                                                    .items_center()
+                                                    .justify_between()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .min_w_0()
+                                                            .flex_1()
+                                                            .text_sm()
+                                                            .line_height(relative(1.0))
+                                                            .truncate()
+                                                            .child(label),
+                                                    );
+                                                if is_current {
+                                                    row_content = row_content.child(
+                                                        Tag::success()
+                                                            .small()
+                                                            .outline()
+                                                            .rounded_full()
+                                                            .child("Current"),
+                                                    );
+                                                }
+                                                ListItem::new(format!(
+                                                    "environment-manager-select-{environment_id}"
+                                                ))
+                                                .w_full()
+                                                .cursor_pointer()
+                                                .rounded(px(8.0))
+                                                .px_3()
+                                                .py_2()
+                                                .selected(Some(environment_id) == self.selected_id)
+                                                .on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.selected_id = Some(environment_id);
+                                                        this.load_variables(
+                                                            environment_id,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                        cx.notify();
+                                                    },
+                                                ))
+                                                .child(row_content)
+                                            },
                                         ),
                                     ),
                                 ),
-                            )
+                            ))
                             .child(
                                 Button::new("environment-manager-add-environment")
                                     .small()
