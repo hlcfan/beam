@@ -7243,6 +7243,7 @@ fn shared_http_client() -> Result<&'static Client, String> {
         .get_or_init(|| {
             Client::builder()
                 .user_agent(default_user_agent())
+                .danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|error| format!("Failed to initialize HTTP client: {error}"))
         })
