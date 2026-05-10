@@ -193,6 +193,7 @@ struct BeamView {
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
     active_request_cache: Option<RequestFile>,
+    environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
@@ -350,6 +351,52 @@ struct StoredResponseSnapshot {
 }
 
 impl EnvironmentManagerDialogView {
+    fn sync_environment_options(
+        &mut self,
+        next_options: Vec<(Ulid, String)>,
+        next_file_names: HashMap<Ulid, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let options_changed = self.options != next_options;
+        let file_names_changed = self.environment_file_names != next_file_names;
+        if options_changed {
+            self.options = next_options;
+        }
+        if file_names_changed {
+            self.environment_file_names = next_file_names;
+        }
+
+        let selected_exists = self
+            .selected_id
+            .is_some_and(|id| self.options.iter().any(|(option_id, _)| *option_id == id));
+        if selected_exists {
+            return options_changed || file_names_changed;
+        }
+
+        let previous_selection = self.selected_id;
+        self.selected_id = self.options.first().map(|(id, _)| *id);
+        if let Some(environment_id) = self.selected_id {
+            self.load_variables(environment_id, window, cx);
+            return true;
+        }
+
+        if previous_selection.is_none() && !options_changed && !file_names_changed {
+            return false;
+        }
+
+        self.variables.clear();
+        self.clear_variable_inputs();
+        self.loaded_environment_name = None;
+        self.suppress_environment_name_change_events = true;
+        self.environment_name_input.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+        });
+        self.suppress_environment_name_change_events = false;
+        self.error = Some("No environment available to manage.".to_string());
+        true
+    }
+
     fn parse_environment_file(content: &str) -> Result<EnvironmentFile, String> {
         if let Ok(current) = toml::from_str::<EnvironmentFile>(content) {
             return Ok(current);
@@ -453,18 +500,6 @@ impl EnvironmentManagerDialogView {
         view
     }
 
-    fn sync_environment_meta_to_beam_view(
-        &self,
-        environment_meta: crate::models::EnvironmentMeta,
-        cx: &mut Context<Self>,
-    ) {
-        let beam_view = self.beam_view.clone();
-        let _ = beam_view.update(cx, move |this, cx| {
-            this.upsert_environment_meta(environment_meta.clone());
-            cx.notify();
-        });
-    }
-
     fn environment_file_path(&self, environment_id: Ulid) -> Option<PathBuf> {
         let file_name = self.environment_file_names.get(&environment_id)?;
         let trimmed = file_name.trim();
@@ -476,11 +511,6 @@ impl EnvironmentManagerDialogView {
                 .environments_dir
                 .join(trimmed),
         )
-    }
-
-    fn update_environment_file_name(&mut self, environment_id: Ulid, file_name: String) {
-        self.environment_file_names
-            .insert(environment_id, file_name);
     }
 
     fn load_variables(
@@ -815,10 +845,22 @@ impl EnvironmentManagerDialogView {
         self.schedule_variables_save(cx);
         cx.notify();
     }
+
+    fn refresh_from_snapshot(
+        &mut self,
+        options: Vec<(Ulid, String)>,
+        environment_file_names: HashMap<Ulid, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.sync_environment_options(options, environment_file_names, window, cx) {
+            cx.notify();
+        }
+    }
 }
 
 impl Render for EnvironmentManagerDialogView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let environment_name_has_selection = !self
             .environment_name_input
             .read(cx)
@@ -1283,13 +1325,6 @@ impl BeamView {
         label
     }
 
-    fn upsert_environment_meta(&mut self, environment_meta: crate::models::EnvironmentMeta) {
-        self.shell.apply_event(&AppEvent::EnvironmentUpserted {
-            environment: environment_meta,
-            command_id: "ui_local".to_string(),
-        });
-    }
-
     fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let beam_view = cx.entity();
         let selected_option = self
@@ -1362,6 +1397,7 @@ impl BeamView {
                 cx,
             )
         });
+        self.environment_manager_dialog_view = Some(manager_view.clone());
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
                 let _ = root_window.update(cx, |_, window, cx| {
@@ -1378,6 +1414,21 @@ impl BeamView {
             }
         });
         cx.notify();
+    }
+
+    fn refresh_environment_manager_dialog_if_open(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog_view) = self.environment_manager_dialog_view.clone() else {
+            return;
+        };
+        let options = self.environment_manager_options();
+        let environment_file_names = self.environment_manager_file_names();
+        dialog_view.update(cx, |dialog, cx| {
+            dialog.refresh_from_snapshot(options, environment_file_names, window, cx);
+        });
     }
 
     fn environment_file_path_from_shell(&self, environment_id: Ulid) -> Option<PathBuf> {
@@ -2837,6 +2888,10 @@ impl BeamView {
                     );
                     window.push_notification(error.clone(), cx);
                 }
+                AppEvent::EnvironmentUpserted { .. } | AppEvent::EnvironmentDeleted { .. } => {
+                    self.shell.apply_event(&event);
+                    self.refresh_environment_manager_dialog_if_open(window, cx);
+                }
                 _ => self.shell.apply_event(&event),
             }
         }
@@ -3661,6 +3716,7 @@ impl BeamView {
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
             active_request_cache: None,
+            environment_manager_dialog_view: None,
             app_command_tx: sync_runtime.command_tx,
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
