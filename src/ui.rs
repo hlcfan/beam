@@ -743,7 +743,12 @@ impl EnvironmentManagerDialogView {
             cx.notify();
             return;
         }
-        let variables = self.variables.clone();
+        let variables: Vec<EnvironmentVariable> = self
+            .variables
+            .iter()
+            .filter(|variable| !variable.name.trim().is_empty())
+            .cloned()
+            .collect();
         if self
             .loaded_environment_name
             .as_deref()
