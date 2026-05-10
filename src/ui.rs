@@ -6,7 +6,8 @@ use std::{fs, path::PathBuf};
 use chrono::{Local, Utc};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
+    ThemeMode, ThemeRegistry,
     TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -56,13 +57,50 @@ actions!(
     ]
 );
 
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct SwitchTheme(pub SharedString);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct SwitchThemeMode(pub ThemeMode);
+
 #[cfg(target_os = "macos")]
-fn build_macos_system_menus() -> Vec<Menu> {
+fn build_macos_theme_menu(cx: &App) -> MenuItem {
+    let themes = ThemeRegistry::global(cx).sorted_themes();
+    let active_theme_name = cx.theme().theme_name().clone();
+    MenuItem::Submenu(Menu {
+        name: "Theme".into(),
+        items: themes
+            .iter()
+            .map(|theme| {
+                MenuItem::action(theme.name.clone(), SwitchTheme(theme.name.clone()))
+                    .checked(theme.name == active_theme_name)
+            })
+            .collect(),
+        disabled: false,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
     vec![
         Menu {
             name: "Beam".into(),
             items: vec![
                 MenuItem::action("Settings", OpenSettings),
+                MenuItem::separator(),
+                MenuItem::Submenu(Menu {
+                    name: "Appearance".into(),
+                    items: vec![
+                        MenuItem::action("Light", SwitchThemeMode(ThemeMode::Light))
+                            .checked(!cx.theme().mode.is_dark()),
+                        MenuItem::action("Dark", SwitchThemeMode(ThemeMode::Dark))
+                            .checked(cx.theme().mode.is_dark()),
+                    ],
+                    disabled: false,
+                }),
+                build_macos_theme_menu(cx),
                 MenuItem::separator(),
                 MenuItem::action("Quit Beam", QuitApp),
             ],
@@ -99,6 +137,18 @@ fn build_macos_system_menus() -> Vec<Menu> {
     ]
 }
 
+#[cfg(not(target_family = "wasm"))]
+fn init_theme_registry(cx: &mut App) {
+    let themes_dir = PathBuf::from("./themes");
+
+    if let Err(error) = ThemeRegistry::watch_dir(themes_dir.clone(), cx, |_| {}) {
+        eprintln!(
+            "Failed to watch themes directory {}: {error}",
+            themes_dir.display()
+        );
+    }
+}
+
 pub fn run_app(
     state: AppShellState,
     startup_messages: Vec<StartupMessage>,
@@ -107,6 +157,8 @@ pub fn run_app(
     let app = gpui_platform::application().with_assets(Assets);
     app.run(move |cx| {
         gpui_component::init(cx);
+        #[cfg(not(target_family = "wasm"))]
+        init_theme_registry(cx);
         cx.bind_keys([
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-q", QuitApp, None),
@@ -192,7 +244,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.open_environment_variables_sheet(window, cx);
+                                    beam_view.open_settings_dialog(window, cx);
                                 });
                             });
                         }
@@ -200,8 +252,24 @@ pub fn run_app(
                 }
             });
         });
+        cx.on_action(|switch: &SwitchThemeMode, cx: &mut App| {
+            BeamView::apply_theme_mode(switch.0, cx);
+        });
+        cx.on_action(|switch: &SwitchTheme, cx: &mut App| {
+            BeamView::apply_named_theme(switch.0.clone(), cx);
+        });
         #[cfg(target_os = "macos")]
-        cx.set_menus(build_macos_system_menus());
+        {
+            cx.set_menus(build_macos_system_menus(cx));
+            cx.observe_global::<Theme>(|cx| {
+                cx.set_menus(build_macos_system_menus(cx));
+            })
+            .detach();
+            cx.observe_global::<ThemeRegistry>(|cx| {
+                cx.set_menus(build_macos_system_menus(cx));
+            })
+            .detach();
+        }
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
@@ -258,6 +326,7 @@ struct BeamView {
     request_save_in_flight: bool,
     active_request_cache: Option<RequestFile>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
+    settings_dialog_view: Option<Entity<SettingsDialogView>>,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
@@ -346,6 +415,168 @@ struct EnvironmentManagerDialogView {
     environment_name_input_subscription: Option<Subscription>,
     loaded_environment_name: Option<String>,
     error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsSection {
+    Appearance,
+    Theme,
+}
+
+struct SettingsDialogView {
+    beam_view: Entity<BeamView>,
+    selected_section: SettingsSection,
+}
+
+impl SettingsDialogView {
+    fn new(beam_view: Entity<BeamView>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self {
+            beam_view,
+            selected_section: SettingsSection::Appearance,
+        }
+    }
+}
+
+impl Render for SettingsDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_dark_mode = cx.theme().mode.is_dark();
+        let active_theme_name = cx.theme().theme_name().clone();
+        let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
+            .sorted_themes()
+            .into_iter()
+            .map(|theme| theme.name.clone())
+            .collect();
+
+        let mut right_panel = v_flex().w_full().h_full().gap_3();
+        match self.selected_section {
+            SettingsSection::Appearance => {
+                right_panel = right_panel
+                    .child(div().text_sm().font_semibold().child("Appearance"))
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
+                        "Choose how Beam looks. This controls whether light or dark mode is active.",
+                    ))
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                ListItem::new("settings-appearance-light")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .selected(!is_dark_mode)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let _ = this.beam_view.update(cx, |_, cx| {
+                                            BeamView::apply_theme_mode(ThemeMode::Light, cx);
+                                        });
+                                        cx.notify();
+                                    }))
+                                    .child("Light"),
+                            )
+                            .child(
+                                ListItem::new("settings-appearance-dark")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .selected(is_dark_mode)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let _ = this.beam_view.update(cx, |_, cx| {
+                                            BeamView::apply_theme_mode(ThemeMode::Dark, cx);
+                                        });
+                                        cx.notify();
+                                    }))
+                                    .child("Dark"),
+                            ),
+                    );
+            }
+            SettingsSection::Theme => {
+                right_panel = right_panel
+                    .child(div().text_sm().font_semibold().child("Theme"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Choose a registered theme. The selected theme is also available from the system menu."),
+                    )
+                    .child(
+                        div().w_full().flex_1().min_h_0().overflow_y_scrollbar().child(
+                            v_flex().w_full().gap_1().children(
+                                theme_options.into_iter().enumerate().map(|(index, theme_name)| {
+                                    let label = theme_name.clone();
+                                    ListItem::new(format!("settings-theme-{index}"))
+                                        .w_full()
+                                        .cursor_pointer()
+                                        .selected(active_theme_name == theme_name)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            let selected_theme = label.clone();
+                                            let _ = this.beam_view.update(cx, |_, cx| {
+                                                BeamView::apply_named_theme(selected_theme, cx);
+                                            });
+                                            cx.notify();
+                                        }))
+                                        .child(theme_name.to_string())
+                                }),
+                            ),
+                        ),
+                    );
+            }
+        }
+
+        v_flex()
+            .w_full()
+            .h(px(520.0))
+            .p_3()
+            .gap_3()
+            .child(
+                h_flex()
+                    .w_full()
+                    .h_full()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .w(px(220.0))
+                            .h_full()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
+                            .p_2()
+                            .gap_1()
+                            .child(
+                                ListItem::new("settings-section-appearance")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .selected(self.selected_section == SettingsSection::Appearance)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.selected_section = SettingsSection::Appearance;
+                                        cx.notify();
+                                    }))
+                                    .child("Appearance"),
+                            )
+                            .child(
+                                ListItem::new("settings-section-theme")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .selected(self.selected_section == SettingsSection::Theme)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.selected_section = SettingsSection::Theme;
+                                        cx.notify();
+                                    }))
+                                    .child("Theme"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
+                            .p_3()
+                            .child(right_panel),
+                    ),
+            )
+            .into_any_element()
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -1453,6 +1684,44 @@ impl BeamView {
                 .size(px(520.0))
                 .child(sheet_view.clone())
         });
+    }
+
+    fn apply_theme_mode(mode: ThemeMode, cx: &mut App) {
+        Theme::change(mode, None, cx);
+        #[cfg(target_os = "macos")]
+        cx.set_menus(build_macos_system_menus(cx));
+        cx.refresh_windows();
+    }
+
+    fn apply_named_theme(theme_name: SharedString, cx: &mut App) {
+        if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
+            Theme::global_mut(cx).apply_config(&theme_config);
+            #[cfg(target_os = "macos")]
+            cx.set_menus(build_macos_system_menus(cx));
+            cx.refresh_windows();
+        }
+    }
+
+    fn open_settings_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let beam_view = cx.entity();
+        let settings_view = cx.new(|cx| SettingsDialogView::new(beam_view.clone(), _window, cx));
+        self.settings_dialog_view = Some(settings_view.clone());
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    window.defer(cx, move |window, cx| {
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            dialog
+                                .title("Settings")
+                                .w(px(920.0))
+                                .max_w(px(1200.0))
+                                .child(settings_view.clone())
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
     }
 
     fn environment_manager_options(&self) -> Vec<(Ulid, String)> {
@@ -3811,6 +4080,7 @@ impl BeamView {
             request_save_in_flight: false,
             active_request_cache: None,
             environment_manager_dialog_view: None,
+            settings_dialog_view: None,
             app_command_tx: sync_runtime.command_tx,
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
@@ -6801,16 +7071,28 @@ impl BeamView {
             .text_xs()
             .text_color(cx.theme().muted_foreground)
             .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
+                Button::new("status-bar-settings-modal")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .h(px(22.0))
+                    .px_1()
+                    .rounded(px(6.0))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_settings_dialog(window, cx);
+                    }))
                     .child(
-                        Icon::default()
-                            .path("icons/settings.svg")
-                            .size(px(14.0))
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child("Settings"),
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::default()
+                                    .path("icons/settings.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child("Settings"),
+                    ),
             )
             .child(
                 Button::new("status-bar-environment-sheet")
