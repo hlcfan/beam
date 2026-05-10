@@ -238,6 +238,8 @@ pub struct EnvironmentMeta {
     pub collection_id: Option<Ulid>,
     pub scope: EnvironmentScope,
     pub name: String,
+    #[serde(default)]
+    pub file_name: String,
     pub description: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

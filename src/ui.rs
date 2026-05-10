@@ -40,7 +40,8 @@ use crate::script::{
 };
 use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
-    CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef, WorkspaceStorage,
+    CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, FolderParentRef,
+    RequestParentRef, WorkspaceStorage,
 };
 
 actions!(
@@ -241,6 +242,7 @@ struct ConsoleMessageView {
 
 struct EnvironmentManagerDialogView {
     options: Vec<(Ulid, String)>,
+    environment_file_names: HashMap<Ulid, String>,
     selected_id: Option<Ulid>,
     show_environment_selector: bool,
     variables: Vec<EnvironmentVariable>,
@@ -337,6 +339,7 @@ impl EnvironmentManagerDialogView {
                 collection_id: legacy.environment.collection_id,
                 scope: legacy.environment.scope,
                 name: legacy.environment.name,
+                file_name: String::new(),
                 description: legacy.environment.description,
                 created_at: legacy.environment.created_at,
                 updated_at: legacy.environment.updated_at,
@@ -347,6 +350,7 @@ impl EnvironmentManagerDialogView {
 
     fn new(
         options: Vec<(Ulid, String)>,
+        environment_file_names: HashMap<Ulid, String>,
         selected_id: Option<Ulid>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -355,6 +359,7 @@ impl EnvironmentManagerDialogView {
             cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
         let mut view = Self {
             options,
+            environment_file_names,
             selected_id,
             show_environment_selector: true,
             variables: Vec::new(),
@@ -394,25 +399,41 @@ impl EnvironmentManagerDialogView {
     }
 
     fn new_for_sheet(
-        selected_option: Option<(Ulid, String)>,
+        selected_option: Option<(Ulid, String, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (options, selected_id) = if let Some((environment_id, label)) = selected_option {
-            (vec![(environment_id, label)], Some(environment_id))
-        } else {
-            (Vec::new(), None)
-        };
-        let mut view = Self::new(options, selected_id, window, cx);
+        let (options, environment_file_names, selected_id) =
+            if let Some((environment_id, label, file_name)) = selected_option {
+                (
+                    vec![(environment_id, label)],
+                    HashMap::from([(environment_id, file_name)]),
+                    Some(environment_id),
+                )
+            } else {
+                (Vec::new(), HashMap::new(), None)
+            };
+        let mut view = Self::new(options, environment_file_names, selected_id, window, cx);
         view.show_environment_selector = false;
         view
     }
 
-    fn environment_option_label(name: &str, scope: EnvironmentScope) -> String {
-        match scope {
-            EnvironmentScope::Global => name.to_string(),
-            EnvironmentScope::Collection => format!("Collection: {name}"),
+    fn environment_file_path(&self, environment_id: Ulid) -> Option<PathBuf> {
+        let file_name = self.environment_file_names.get(&environment_id)?;
+        let trimmed = file_name.trim();
+        if trimmed.is_empty() {
+            return None;
         }
+        Some(
+            BeamPaths::default_user_config()
+                .environments_dir
+                .join(trimmed),
+        )
+    }
+
+    fn update_environment_file_name(&mut self, environment_id: Ulid, file_name: String) {
+        self.environment_file_names
+            .insert(environment_id, file_name);
     }
 
     fn load_variables(
@@ -421,7 +442,7 @@ impl EnvironmentManagerDialogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = BeamView::find_environment_file_path(environment_id) else {
+        let Some(path) = self.environment_file_path(environment_id) else {
             self.variables.clear();
             self.clear_variable_inputs();
             self.error = Some("Environment file not found.".to_string());
@@ -465,27 +486,75 @@ impl EnvironmentManagerDialogView {
 
     fn save_variables_to_disk(
         environment_id: Ulid,
+        file_name: Option<String>,
         updated_name: String,
         variables: Vec<EnvironmentVariable>,
-    ) -> Result<EnvironmentScope, String> {
-        let Some(path) = BeamView::find_environment_file_path(environment_id) else {
-            return Err("Environment file not found.".to_string());
-        };
-        let content =
-            fs::read_to_string(&path).map_err(|error| format!("Failed to read file: {error}"))?;
-        let mut parsed = Self::parse_environment_file(&content)
-            .map_err(|error| format!("Failed to parse file: {error}"))?;
-        if updated_name.is_empty() {
-            return Err("Environment name cannot be empty.".to_string());
+    ) -> Result<crate::models::EnvironmentMeta, String> {
+        let storage = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
+        let updated = storage
+            .update_environment(
+                environment_id,
+                file_name.as_deref(),
+                &updated_name,
+                variables,
+            )
+            .map_err(|error| format!("Failed to save environment: {error}"))?;
+        Ok(updated.environment)
+    }
+
+    fn next_default_environment_name(&self) -> String {
+        let base_name = "New Environment";
+        if !self
+            .options
+            .iter()
+            .any(|(_, label)| label.eq_ignore_ascii_case(base_name))
+        {
+            return base_name.to_string();
         }
-        parsed.environment.name = updated_name;
-        parsed.variables = variables;
-        parsed.environment.updated_at = Utc::now();
-        let updated_content = toml::to_string_pretty(&parsed)
-            .map_err(|error| format!("Failed to serialize file: {error}"))?;
-        fs::write(&path, updated_content)
-            .map_err(|error| format!("Failed to write file: {error}"))?;
-        Ok(parsed.environment.scope)
+        let mut suffix = 2_u32;
+        loop {
+            let candidate = format!("{base_name} {suffix}");
+            if !self
+                .options
+                .iter()
+                .any(|(_, label)| label.eq_ignore_ascii_case(&candidate))
+            {
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
+    fn add_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let environment_name = self.next_default_environment_name();
+        let storage = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
+        let created = match storage.create_environment(CreateEnvironmentInput {
+            name: environment_name.clone(),
+            scope: EnvironmentScope::Global,
+            collection_id: None,
+        }) {
+            Ok(environment_file) => environment_file,
+            Err(error) => {
+                self.error = Some(format!("Failed to create environment file: {error}"));
+                cx.notify();
+                return;
+            }
+        };
+        let environment_id = created.environment.environment_id;
+        self.update_environment_file_name(environment_id, created.environment.file_name.clone());
+
+        let label = Self::environment_option_label(&environment_name, EnvironmentScope::Global);
+        self.options.push((environment_id, label));
+        self.selected_id = Some(environment_id);
+        self.load_variables(environment_id, window, cx);
+        self.error = None;
+        cx.notify();
+    }
+    fn environment_option_label(name: &str, scope: EnvironmentScope) -> String {
+        match scope {
+            EnvironmentScope::Global => name.to_string(),
+            EnvironmentScope::Collection => format!("Collection: {name}"),
+        }
     }
 
     fn clear_variable_inputs(&mut self) {
@@ -608,25 +677,33 @@ impl EnvironmentManagerDialogView {
             cx.notify();
             return;
         }
+        let file_name = self.environment_file_names.get(&environment_id).cloned();
         let variables = self.variables.clone();
         let updated_name_for_label = updated_name.clone();
         self.variables_save_in_flight = true;
         let view = cx.entity();
         cx.spawn(async move |_, cx| {
             let result = cx.background_executor().spawn(async move {
-                Self::save_variables_to_disk(environment_id, updated_name, variables)
+                Self::save_variables_to_disk(environment_id, file_name, updated_name, variables)
             });
             let result = result.await;
             let _ = view.update(cx, move |this, cx| {
                 this.variables_save_in_flight = false;
                 match result {
-                    Ok(scope) => {
+                    Ok(updated_environment) => {
+                        this.update_environment_file_name(
+                            environment_id,
+                            updated_environment.file_name.clone(),
+                        );
                         if let Some((_, label)) = this
                             .options
                             .iter_mut()
                             .find(|(option_id, _)| *option_id == environment_id)
                         {
-                            *label = Self::environment_option_label(&updated_name_for_label, scope);
+                            *label = Self::environment_option_label(
+                                &updated_name_for_label,
+                                updated_environment.scope,
+                            );
                         }
                         this.error = None;
                     }
@@ -854,78 +931,94 @@ impl Render for EnvironmentManagerDialogView {
                 .into_any_element();
         }
 
-        v_flex().w_full().h(px(520.0)).p_3().gap_3().child(
-            h_flex()
-                .w_full()
-                .h_full()
-                .gap_3()
-                .child(
-                    v_flex()
-                        .w(px(260.0))
-                        .h_full()
-                        .rounded(px(8.0))
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().background)
-                        .p_3()
-                        .gap_2()
-                        .child(
-                            v_flex()
-                                .w_full()
-                                .gap_1()
-                                .child(div().text_xs().font_semibold().child("Environments")),
-                        )
-                        .child(
-                            v_flex().w_full().gap_1().children(
-                                self.options
-                                    .clone()
-                                    .into_iter()
-                                    .map(|(environment_id, label)| {
-                                        Button::new(format!(
-                                            "environment-manager-select-{environment_id}"
-                                        ))
-                                        .small()
-                                        .ghost()
-                                        .selected(Some(environment_id) == self.selected_id)
-                                        .w_full()
-                                        .px_3()
-                                        .py_1()
-                                        .justify_start()
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.selected_id = Some(environment_id);
-                                            this.load_variables(environment_id, window, cx);
-                                            cx.notify();
-                                        }))
-                                        .child(
-                                            div()
-                                                .w_full()
-                                                .text_sm()
-                                                .line_height(relative(1.0))
-                                                .child(label),
-                                        )
-                                    }),
+        v_flex()
+            .w_full()
+            .h(px(520.0))
+            .p_3()
+            .gap_3()
+            .child(
+                h_flex()
+                    .w_full()
+                    .h_full()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .w(px(260.0))
+                            .h_full()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
+                            .p_3()
+                            .gap_2()
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .gap_1()
+                                    .child(div().text_xs().font_semibold().child("Environments")),
+                            )
+                            .child(
+                                v_flex()
+                                    .w_full()
+                                    .flex_1()
+                                    .gap_1()
+                                    .overflow_y_scrollbar()
+                                    .children(self.options.clone().into_iter().map(
+                                        |(environment_id, label)| {
+                                            Button::new(format!(
+                                                "environment-manager-select-{environment_id}"
+                                            ))
+                                            .small()
+                                            .ghost()
+                                            .selected(Some(environment_id) == self.selected_id)
+                                            .w_full()
+                                            .px_3()
+                                            .py_1()
+                                            .justify_start()
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.selected_id = Some(environment_id);
+                                                this.load_variables(environment_id, window, cx);
+                                                cx.notify();
+                                            }))
+                                            .child(
+                                                div()
+                                                    .w_full()
+                                                    .text_sm()
+                                                    .line_height(relative(1.0))
+                                                    .child(label),
+                                            )
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Button::new("environment-manager-add-environment")
+                                    .small()
+                                    .w_full()
+                                    .label("Add environment")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_environment(window, cx);
+                                    })),
                             ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .h_full()
-                        .rounded(px(8.0))
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().background)
-                        .p_2()
-                        .child(
-                            div()
-                                .w_full()
-                                .h_full()
-                                .overflow_y_scrollbar()
-                                .child(variables_panel),
-                        ),
-                ),
-        )
-        .into_any_element()
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
+                            .p_2()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h_full()
+                                    .overflow_y_scrollbar()
+                                    .child(variables_panel),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 }
 
@@ -972,7 +1065,6 @@ impl TreeRenameDialogView {
             this.rename_tree_node_from_modal(self.node_id, self.node_kind, next_name, window, cx);
         });
     }
-
 }
 
 impl Render for TreeRenameDialogView {
@@ -1110,17 +1202,30 @@ impl BeamView {
     }
 
     fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selected_option = self.selected_environment_id_for_view().and_then(|selected_id| {
-            self.active_environment_options()
-                .into_iter()
-                .find(|(environment_id, _)| *environment_id == selected_id)
-        });
+        let selected_option = self
+            .selected_environment_id_for_view()
+            .and_then(|selected_id| {
+                self.shell
+                    .environments
+                    .iter()
+                    .find(|environment| environment.environment_id == selected_id)
+                    .map(|environment| {
+                        (
+                            environment.environment_id,
+                            environment.name.clone(),
+                            environment.file_name.clone(),
+                        )
+                    })
+            });
         let sheet_view = cx.new(|cx| {
             EnvironmentManagerDialogView::new_for_sheet(selected_option.clone(), window, cx)
         });
 
         window.open_sheet_at(Placement::Right, cx, move |sheet, _, _| {
-            sheet.title("Environment Variables").size(px(520.0)).child(sheet_view.clone())
+            sheet
+                .title("Environment Variables")
+                .size(px(520.0))
+                .child(sheet_view.clone())
         });
     }
 
@@ -1138,12 +1243,28 @@ impl BeamView {
             .collect()
     }
 
+    fn environment_manager_file_names(&self) -> HashMap<Ulid, String> {
+        self.shell
+            .environments
+            .iter()
+            .map(|environment| (environment.environment_id, environment.file_name.clone()))
+            .collect()
+    }
+
     fn open_environment_manager(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let options = self.environment_manager_options();
+        let environment_file_names = self.environment_manager_file_names();
         let fallback_id = options.first().map(|(environment_id, _)| *environment_id);
         let selected = self.selected_environment_id_for_view().or(fallback_id);
-        let manager_view =
-            cx.new(|cx| EnvironmentManagerDialogView::new(options.clone(), selected, window, cx));
+        let manager_view = cx.new(|cx| {
+            EnvironmentManagerDialogView::new(
+                options.clone(),
+                environment_file_names.clone(),
+                selected,
+                window,
+                cx,
+            )
+        });
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
                 let _ = root_window.update(cx, |_, window, cx| {
@@ -1162,50 +1283,22 @@ impl BeamView {
         cx.notify();
     }
 
-    fn find_environment_file_path(environment_id: Ulid) -> Option<PathBuf> {
+    fn environment_file_path_from_shell(&self, environment_id: Ulid) -> Option<PathBuf> {
+        let environment = self
+            .shell
+            .environments
+            .iter()
+            .find(|environment| environment.environment_id == environment_id)?;
+        let file_name = environment.file_name.trim();
+        if file_name.is_empty() {
+            return None;
+        }
         let paths = BeamPaths::default_user_config();
-        let mut stack = vec![paths.environments_dir.clone(), paths.collections_dir];
-        let explicit_environments_dir =
-            dirs::home_dir().map(|home| home.join(".config").join("beam").join("environments"));
-        if let Some(explicit_environments_dir) = explicit_environments_dir {
-            if explicit_environments_dir != paths.environments_dir {
-                stack.push(explicit_environments_dir);
-            }
-        }
-        while let Some(dir) = stack.pop() {
-            let Ok(entries) = fs::read_dir(&dir) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
-                if !path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.ends_with(".env.toml"))
-                {
-                    continue;
-                }
-                let Ok(content) = fs::read_to_string(&path) else {
-                    continue;
-                };
-                let Ok(file) = EnvironmentManagerDialogView::parse_environment_file(&content)
-                else {
-                    continue;
-                };
-                if file.environment.environment_id == environment_id {
-                    return Some(path);
-                }
-            }
-        }
-        None
+        Some(paths.environments_dir.join(file_name))
     }
 
     fn load_environment_manager_variables(&mut self, environment_id: Ulid) {
-        let Some(path) = Self::find_environment_file_path(environment_id) else {
+        let Some(path) = self.environment_file_path_from_shell(environment_id) else {
             self.environment_manager_variables.clear();
             self.environment_manager_error = Some("Environment file not found.".to_string());
             return;
@@ -1233,7 +1326,7 @@ impl BeamView {
     }
 
     fn save_environment_manager_variables(&mut self, environment_id: Ulid) -> Result<(), String> {
-        let Some(path) = Self::find_environment_file_path(environment_id) else {
+        let Some(path) = self.environment_file_path_from_shell(environment_id) else {
             return Err("Environment file not found.".to_string());
         };
         let content =
@@ -3375,7 +3468,7 @@ impl BeamView {
         let selected_environment_id = self.selected_environment_id_for_view();
         let no_environment_selected = selected_environment_id.is_none();
         let (environment_path, environment_variables) =
-            Self::load_environment_for_script(selected_environment_id);
+            self.load_environment_for_script(selected_environment_id);
         let request_snapshot =
             resolve_request_with_environment(self.request.clone(), &environment_variables);
         if !matches!(request_snapshot.send_button_state(), SendButtonState::Ready) {
@@ -3497,12 +3590,13 @@ impl BeamView {
     }
 
     fn load_environment_for_script(
+        &self,
         selected_environment_id: Option<Ulid>,
     ) -> (Option<PathBuf>, Vec<EnvironmentVariable>) {
         let Some(environment_id) = selected_environment_id else {
             return (None, Vec::new());
         };
-        let Some(path) = Self::find_environment_file_path(environment_id) else {
+        let Some(path) = self.environment_file_path_from_shell(environment_id) else {
             return (None, Vec::new());
         };
         let Ok(content) = fs::read_to_string(&path) else {
@@ -5896,10 +5990,15 @@ impl BeamView {
                                 })),
                         ),
                 )
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!(
-                    "Updated {}",
-                    Self::format_human_timestamp(&result.updated_at)
-                )));
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "Updated {}",
+                            Self::format_human_timestamp(&result.updated_at)
+                        )),
+                );
 
             if let Some(error_message) = &result.error_message {
                 if !error_message.is_empty() {
@@ -6755,18 +6854,15 @@ impl Render for BeamView {
                                 .child(self.render_collections_panel(window, cx)),
                         )
                         .child(resizable_panel().child({
-                            let workspace = v_flex()
-                                .h_full()
-                                .w_full()
-                                .bg(cx.theme().background)
-                                .child(
-                                div()
-                                    .w_full()
-                                    .p_3()
-                                    .border_b_1()
-                                    .border_color(cx.theme().border)
-                                    .child(self.render_url_bar(cx)),
-                            );
+                            let workspace =
+                                v_flex().h_full().w_full().bg(cx.theme().background).child(
+                                    div()
+                                        .w_full()
+                                        .p_3()
+                                        .border_b_1()
+                                        .border_color(cx.theme().border)
+                                        .child(self.render_url_bar(cx)),
+                                );
                             workspace
                                 .child(
                                     div().flex_1().child(

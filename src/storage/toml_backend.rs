@@ -7,15 +7,16 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AuthConfig, BodyConfig, CollectionFile, CollectionItemRef, FolderFile, FolderMeta, HeaderField,
-    ItemType, LocalState, LocalStateFile, QueryParamField, RequestDefinition, RequestFile,
-    RequestMeta, ScriptConfig, TreeState, WorkspaceFile, WorkspaceMeta,
+    AuthConfig, BodyConfig, CollectionFile, CollectionItemRef, EnvironmentFile, EnvironmentMeta,
+    EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField, ItemType,
+    LocalState, LocalStateFile, QueryParamField, RequestDefinition, RequestFile, RequestMeta,
+    ScriptConfig, TreeState, WorkspaceFile, WorkspaceMeta,
 };
 use crate::paths::BeamPaths;
-use crate::schema::{SchemaKind, validate_schema_version};
+use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
 use crate::storage::{
-    BootstrapReport, CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef,
-    WorkspaceStorage,
+    BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput,
+    FolderParentRef, RequestParentRef, WorkspaceStorage,
 };
 
 #[derive(Debug, Clone)]
@@ -528,6 +529,93 @@ impl TomlWorkspaceStorage {
         }
     }
 
+    fn environment_file_path_for_name(
+        &self,
+        dir: &Path,
+        environment_name: &str,
+        exclude_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        let preferred_stem = slugify(environment_name);
+        let excluded = exclude_path.and_then(|path| path.file_name().map(|name| name.to_owned()));
+        let mut used_names = HashSet::new();
+        for entry in fs::read_dir(dir).map_err(|source| BeamError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| BeamError::Io {
+                path: dir.to_path_buf(),
+                source,
+            })?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let Some(file_name) = path.file_name() else {
+                continue;
+            };
+            if excluded
+                .as_ref()
+                .is_some_and(|excluded_name| excluded_name == file_name)
+            {
+                continue;
+            }
+            used_names.insert(file_name.to_string_lossy().to_string());
+        }
+
+        let mut suffix = 1_u32;
+        loop {
+            let file_name = if suffix == 1 {
+                format!("{preferred_stem}.env.toml")
+            } else {
+                format!("{preferred_stem}-{suffix}.env.toml")
+            };
+            if !used_names.contains(&file_name) {
+                return Ok(dir.join(file_name));
+            }
+            suffix += 1;
+        }
+    }
+
+    fn find_environment_file_by_id(&self, environment_id: Ulid) -> Result<PathBuf> {
+        let mut found: Option<PathBuf> = None;
+        for root in [&self.paths.environments_dir, &self.paths.collections_dir] {
+            if !root.exists() {
+                continue;
+            }
+            self.walk_files_recursive(root, |path| {
+                if !path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".env.toml"))
+                {
+                    return;
+                }
+                let Ok(file) = self.read_toml_file::<EnvironmentFile>(path) else {
+                    return;
+                };
+                if file.environment.environment_id == environment_id {
+                    found = Some(path.to_path_buf());
+                }
+            })?;
+            if found.is_some() {
+                break;
+            }
+        }
+
+        found.ok_or_else(|| BeamError::NotFound {
+            entity: "environment",
+            id: environment_id.to_string(),
+        })
+    }
+
+    fn environment_file_path_from_name(&self, file_name: &str) -> Option<PathBuf> {
+        let trimmed = file_name.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(self.paths.environments_dir.join(trimmed))
+    }
+
     fn find_request_file_by_id(&self, request_id: Ulid) -> Result<PathBuf> {
         let mut found: Option<PathBuf> = None;
         self.walk_files_recursive(&self.paths.collections_dir, |path| {
@@ -929,6 +1017,114 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         self.write_toml_file(&folder_dir.join("folder.toml"), &folder_file)?;
         self.append_folder_to_parent_manifest(input.parent, folder_file.folder.folder_id, name)?;
         Ok(folder_file)
+    }
+
+    fn create_environment(&self, input: CreateEnvironmentInput) -> Result<EnvironmentFile> {
+        let name = input.name.trim();
+        if name.is_empty() {
+            return Err(BeamError::Validation {
+                message: "Environment name cannot be empty".to_string(),
+            });
+        }
+
+        let collection_id = match input.scope {
+            EnvironmentScope::Global => None,
+            EnvironmentScope::Collection => input.collection_id,
+        };
+        if matches!(input.scope, EnvironmentScope::Collection) && collection_id.is_none() {
+            return Err(BeamError::Validation {
+                message: "Collection environment requires collection_id".to_string(),
+            });
+        }
+
+        fs::create_dir_all(&self.paths.environments_dir).map_err(|source| BeamError::Io {
+            path: self.paths.environments_dir.clone(),
+            source,
+        })?;
+        let file_path =
+            self.environment_file_path_for_name(&self.paths.environments_dir, name, None)?;
+        let file_name = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let environment_file = EnvironmentFile {
+            schema_version: SCHEMA_VERSION_V1,
+            environment: EnvironmentMeta {
+                environment_id: Ulid::new(),
+                collection_id,
+                scope: input.scope,
+                name: name.to_string(),
+                file_name,
+                description: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            variables: Vec::new(),
+        };
+        self.write_toml_file(&file_path, &environment_file)?;
+        Ok(environment_file)
+    }
+
+    fn update_environment(
+        &self,
+        environment_id: Ulid,
+        file_name: Option<&str>,
+        name: &str,
+        variables: Vec<EnvironmentVariable>,
+    ) -> Result<EnvironmentFile> {
+        let next_name = name.trim();
+        if next_name.is_empty() {
+            return Err(BeamError::Validation {
+                message: "Environment name cannot be empty".to_string(),
+            });
+        }
+
+        let existing_path = file_name
+            .and_then(|name| self.environment_file_path_from_name(name))
+            .filter(|path| path.exists())
+            .and_then(|path| {
+                self.read_toml_file::<EnvironmentFile>(&path)
+                    .ok()
+                    .filter(|file| file.environment.environment_id == environment_id)
+                    .map(|_| path)
+            })
+            .unwrap_or(self.find_environment_file_by_id(environment_id)?);
+        let mut environment_file: EnvironmentFile = self.read_toml_file(&existing_path)?;
+        environment_file.environment.name = next_name.to_string();
+        environment_file.environment.updated_at = Utc::now();
+        environment_file.variables = variables;
+        if environment_file.environment.file_name.trim().is_empty() {
+            environment_file.environment.file_name = existing_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string();
+        }
+
+        let parent_dir = existing_path.parent().ok_or_else(|| BeamError::NotFound {
+            entity: "environment_parent_dir",
+            id: existing_path.to_string_lossy().to_string(),
+        })?;
+        let next_path = self.environment_file_path_for_name(
+            parent_dir,
+            &environment_file.environment.name,
+            Some(&existing_path),
+        )?;
+        let next_file_name = next_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        if next_path != existing_path {
+            fs::rename(&existing_path, &next_path).map_err(|source| BeamError::Io {
+                path: existing_path.clone(),
+                source,
+            })?;
+        }
+        environment_file.environment.file_name = next_file_name;
+        self.write_toml_file(&next_path, &environment_file)?;
+        Ok(environment_file)
     }
 
     fn save_request(&self, request_file: &RequestFile) -> Result<()> {
@@ -1602,6 +1798,84 @@ environment_id = "{environment_id}"
             .find_request_file_by_id(created.meta.request_id)
             .expect("find renamed path");
         assert_eq!(created_path, renamed_path);
+    }
+
+    #[test]
+    fn environment_file_paths_use_slug_and_increment_suffix_when_colliding() {
+        let (_dir, storage, _, _) = init_storage_with_collection();
+        fs::create_dir_all(&storage.paths.environments_dir).expect("create environments dir");
+
+        fs::write(
+            storage
+                .paths
+                .environments_dir
+                .join("new-environment.env.toml"),
+            "reserved",
+        )
+        .expect("seed env collision");
+
+        let created = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "New Environment".to_string(),
+                scope: EnvironmentScope::Global,
+                collection_id: None,
+            })
+            .expect("create environment");
+
+        let expected = storage
+            .paths
+            .environments_dir
+            .join("new-environment-2.env.toml");
+        assert!(expected.exists());
+
+        let loaded: EnvironmentFile = storage
+            .read_toml_file(&expected)
+            .expect("read created environment file");
+        assert_eq!(
+            loaded.environment.environment_id,
+            created.environment.environment_id
+        );
+        assert_eq!(loaded.environment.name, "New Environment");
+    }
+
+    #[test]
+    fn update_environment_renames_file_with_slug_name() {
+        let (_dir, storage, _, _) = init_storage_with_collection();
+        let created = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "Old Name".to_string(),
+                scope: EnvironmentScope::Global,
+                collection_id: None,
+            })
+            .expect("create environment");
+        let old_path = storage
+            .find_environment_file_by_id(created.environment.environment_id)
+            .expect("find old environment path");
+
+        let updated = storage
+            .update_environment(
+                created.environment.environment_id,
+                Some(&created.environment.file_name),
+                "Renamed Environment",
+                Vec::new(),
+            )
+            .expect("update environment");
+
+        let new_path = storage
+            .find_environment_file_by_id(created.environment.environment_id)
+            .expect("find renamed environment path");
+        assert_eq!(updated.environment.name, "Renamed Environment");
+        assert!(new_path.exists());
+        assert!(!old_path.exists());
+        assert!(
+            new_path
+                .to_string_lossy()
+                .contains("renamed-environment.env.toml")
+        );
+        assert_eq!(
+            updated.environment.file_name,
+            "renamed-environment.env.toml"
+        );
     }
 
     #[test]

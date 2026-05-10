@@ -1,7 +1,10 @@
 pub mod toml_backend;
 
 use crate::error::Result;
-use crate::models::{LocalStateFile, RequestFile, WorkspaceFile};
+use crate::models::{
+    EnvironmentFile, EnvironmentScope, EnvironmentVariable, LocalStateFile, RequestFile,
+    WorkspaceFile,
+};
 use ulid::Ulid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,6 +39,13 @@ pub struct CreateFolderInput {
     pub name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateEnvironmentInput {
+    pub name: String,
+    pub scope: EnvironmentScope,
+    pub collection_id: Option<Ulid>,
+}
+
 pub trait WorkspaceStorage {
     fn initialize(&self) -> Result<BootstrapReport>;
     fn load_workspace(&self) -> Result<WorkspaceFile>;
@@ -50,6 +60,14 @@ pub trait WorkspaceStorage {
         source_request_id: Ulid,
     ) -> Result<RequestFile>;
     fn create_folder(&self, input: CreateFolderInput) -> Result<crate::models::FolderFile>;
+    fn create_environment(&self, input: CreateEnvironmentInput) -> Result<EnvironmentFile>;
+    fn update_environment(
+        &self,
+        environment_id: Ulid,
+        file_name: Option<&str>,
+        name: &str,
+        variables: Vec<EnvironmentVariable>,
+    ) -> Result<EnvironmentFile>;
     fn save_request(&self, request_file: &RequestFile) -> Result<()>;
     fn rename_request(&self, request_id: Ulid, new_name: &str) -> Result<RequestFile>;
     fn rename_collection(

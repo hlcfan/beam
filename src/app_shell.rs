@@ -601,8 +601,11 @@ fn load_environments(paths: &BeamPaths, warnings: &mut Vec<String>) -> Vec<Envir
                 ));
                 continue;
             }
-
-            environments.push(file.environment);
+            let mut environment = file.environment;
+            if let Some(file_name) = path.file_name().and_then(|name| name.to_str()) {
+                environment.file_name = file_name.to_string();
+            }
+            environments.push(environment);
         }
     }
 
@@ -636,6 +639,7 @@ fn parse_environment_file(path: &Path) -> Result<EnvironmentFile> {
             collection_id: legacy.environment.collection_id,
             scope: legacy.environment.scope,
             name: legacy.environment.name,
+            file_name: String::new(),
             description: legacy.environment.description,
             created_at: legacy.environment.created_at,
             updated_at: legacy.environment.updated_at,
