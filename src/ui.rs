@@ -865,8 +865,8 @@ impl Render for EnvironmentManagerDialogView {
                         .h_full()
                         .rounded(px(8.0))
                         .border_1()
-                        .border_color(rgb(0xd1d5db))
-                        .bg(rgb(0xffffff))
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
                         .p_3()
                         .gap_2()
                         .child(
@@ -913,8 +913,8 @@ impl Render for EnvironmentManagerDialogView {
                         .h_full()
                         .rounded(px(8.0))
                         .border_1()
-                        .border_color(rgb(0xd1d5db))
-                        .bg(rgb(0xffffff))
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
                         .p_2()
                         .child(
                             div()
@@ -983,7 +983,7 @@ impl TreeRenameDialogView {
 }
 
 impl Render for TreeRenameDialogView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let target_view = self.target_view.clone();
         let node_id = self.node_id;
         let node_kind = self.node_kind;
@@ -999,8 +999,8 @@ impl Render for TreeRenameDialogView {
                     .w_full()
                     .rounded(px(6.0))
                     .border_1()
-                    .border_color(rgb(0xd1d5db))
-                    .bg(rgb(0xf8fafc))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
                     .px_2()
                     .py_1()
                     .child(
@@ -3083,13 +3083,13 @@ impl BeamView {
         .detach();
     }
 
-    fn render_key_value_lines(lines: Vec<String>) -> AnyElement {
+    fn render_key_value_lines(lines: Vec<String>, cx: &App) -> AnyElement {
         if lines.is_empty() {
             return div()
                 .h_full()
                 .w_full()
                 .text_sm()
-                .text_color(rgb(0x6b7280))
+                .text_color(cx.theme().muted_foreground)
                 .child("No configured entries.")
                 .into_any_element();
         }
@@ -3103,7 +3103,7 @@ impl BeamView {
                 div()
                     .text_sm()
                     .font_family(".SystemUIFont")
-                    .text_color(rgb(0x1f2937))
+                    .text_color(cx.theme().foreground)
                     .child(line)
             }))
             .into_any_element()
@@ -4079,6 +4079,7 @@ impl BeamView {
         let row_id = row.id;
         let row_kind = row.kind;
         let view = cx.entity();
+        let muted_foreground = cx.theme().muted_foreground;
         let mut menu = menu.min_w(px(180.0));
         match row_kind {
             TreeNodeKind::Collection => {
@@ -4095,7 +4096,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/add.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Add Request")
                     })
@@ -4119,7 +4120,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/folder-add.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Add Folder")
                     })
@@ -4144,7 +4145,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/edit.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Rename")
                     })
@@ -4173,7 +4174,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/trash.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Delete")
                     })
@@ -4199,7 +4200,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/add.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Add Request")
                     })
@@ -4223,7 +4224,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/folder-add.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Add Folder")
                     })
@@ -4248,7 +4249,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/edit.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Rename")
                     })
@@ -4277,7 +4278,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/trash.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Delete")
                     })
@@ -4303,7 +4304,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/send.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Send Request")
                     })
@@ -4327,7 +4328,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/copy.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Copy as cURL")
                     })
@@ -4352,7 +4353,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/edit.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Rename")
                     })
@@ -4381,7 +4382,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/duplicate.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Duplicate")
                     })
@@ -4405,7 +4406,7 @@ impl BeamView {
                                 Icon::default()
                                     .path("icons/trash.svg")
                                     .size(px(14.0))
-                                    .text_color(rgb(0x6b7280)),
+                                    .text_color(muted_foreground),
                             )
                             .child("Delete")
                     })
@@ -4529,8 +4530,8 @@ impl BeamView {
                     .flex_1()
                     .rounded(px(10.0))
                     .border_1()
-                    .border_color(rgb(0xd1d5db))
-                    .bg(rgb(0xf8fafc))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
                     .p_1()
                     .child(
                         h_flex()
@@ -4597,7 +4598,7 @@ impl BeamView {
                                         Icon::default()
                                             .path("icons/send.svg")
                                             .size(px(16.0))
-                                            .text_color(rgb(0x6b7280)),
+                                            .text_color(cx.theme().muted_foreground),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.send_request(window, cx);
@@ -4615,8 +4616,8 @@ impl BeamView {
                     .px_2()
                     .rounded(px(8.0))
                     .border_1()
-                    .border_color(rgb(0xd1d5db))
-                    .bg(rgb(0xf8fafc))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
                     .cursor_pointer()
                     .justify_start()
                     .child(div().w_full().child(env_label))
@@ -4859,9 +4860,9 @@ impl BeamView {
             .h(px(420.0))
             .p_3()
             .gap_3()
-            .bg(rgb(0xf3f4f6))
+            .bg(cx.theme().secondary)
             .border_b_1()
-            .border_color(rgb(0xd1d5db))
+            .border_color(cx.theme().border)
             .child(
                 h_flex()
                     .w_full()
@@ -4873,8 +4874,8 @@ impl BeamView {
                             .h_full()
                             .rounded(px(8.0))
                             .border_1()
-                            .border_color(rgb(0xd1d5db))
-                            .bg(rgb(0xffffff))
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
                             .p_2()
                             .gap_2()
                             .child(
@@ -4885,7 +4886,7 @@ impl BeamView {
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(rgb(0x6b7280))
+                                            .text_color(cx.theme().muted_foreground)
                                             .child(format!("{} total", environment_options.len())),
                                     ),
                             )
@@ -4931,8 +4932,8 @@ impl BeamView {
                             .h_full()
                             .rounded(px(8.0))
                             .border_1()
-                            .border_color(rgb(0xd1d5db))
-                            .bg(rgb(0xffffff))
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
                             .p_2()
                             .child(variables_panel),
                     ),
@@ -4953,7 +4954,7 @@ impl BeamView {
                     Icon::default()
                         .path("icons/chevron-down.svg")
                         .size(px(12.0))
-                        .text_color(rgb(0x6b7280)),
+                        .text_color(cx.theme().muted_foreground),
                 ),
             );
         if self.request.active_tab == RequestTab::Body {
@@ -5025,12 +5026,12 @@ impl BeamView {
             None
         } else if let Some(result) = self.script_result.as_ref() {
             Some(if result.success {
-                rgb(0x10b981)
+                cx.theme().success
             } else {
-                rgb(0xef4444)
+                cx.theme().danger
             })
         } else {
-            Some(rgb(0x9ca3af))
+            Some(cx.theme().muted_foreground)
         };
         let post_script_label = if let Some(color) = indicator_color {
             h_flex()
@@ -5563,13 +5564,18 @@ impl BeamView {
                         match &self.request.auth {
                             AuthConfig::None => div()
                                 .text_sm()
-                                .text_color(rgb(0x6b7280))
+                                .text_color(cx.theme().muted_foreground)
                                 .child("No auth header will be added.")
                                 .into_any_element(),
                             AuthConfig::Bearer { .. } => v_flex()
                                 .w_full()
                                 .gap_2()
-                                .child(div().text_xs().text_color(rgb(0x6b7280)).child("Token"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Token"),
+                                )
                                 .child(
                                     Input::new(&self.request_auth_bearer_token_input)
                                         .small()
@@ -5588,7 +5594,12 @@ impl BeamView {
                             AuthConfig::Basic { .. } => v_flex()
                                 .w_full()
                                 .gap_2()
-                                .child(div().text_xs().text_color(rgb(0x6b7280)).child("Username"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Username"),
+                                )
                                 .child(
                                     Input::new(&self.request_auth_basic_username_input)
                                         .small()
@@ -5603,7 +5614,12 @@ impl BeamView {
                                             }
                                         }),
                                 )
-                                .child(div().text_xs().text_color(rgb(0x6b7280)).child("Password"))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Password"),
+                                )
                                 .child(
                                     Input::new(&self.request_auth_basic_password_input)
                                         .small()
@@ -5676,7 +5692,12 @@ impl BeamView {
                                             })),
                                     ),
                             )
-                            .child(div().text_xs().text_color(rgb(0x6b7280)).child("Key Value"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Key Value"),
+                            )
                             .child(
                                 Input::new(&self.request_auth_api_key_value_input)
                                     .small()
@@ -5694,7 +5715,7 @@ impl BeamView {
                             .child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(0x6b7280))
+                                    .text_color(cx.theme().muted_foreground)
                                     .child("Header / Query Name"),
                             )
                             .child(
@@ -5720,11 +5741,11 @@ impl BeamView {
         }
     }
 
-    fn render_script_tests_section(&self, result: &PersistedScriptResult) -> AnyElement {
+    fn render_script_tests_section(&self, result: &PersistedScriptResult, cx: &App) -> AnyElement {
         if result.test_results.is_empty() {
             return div()
                 .text_xs()
-                .text_color(rgb(0x6b7280))
+                .text_color(cx.theme().muted_foreground)
                 .child("No tests recorded.")
                 .into_any_element();
         }
@@ -5732,9 +5753,9 @@ impl BeamView {
         for test in &result.test_results {
             let status = if test.passed { "PASS" } else { "FAIL" };
             let color = if test.passed {
-                rgb(0x15803d)
+                cx.theme().success_foreground
             } else {
-                rgb(0xb91c1c)
+                cx.theme().danger_foreground
             };
             let summary = match (&test.expected, &test.actual) {
                 (Some(expected), Some(actual)) if expected != actual => {
@@ -5753,7 +5774,7 @@ impl BeamView {
                     column = column.child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0x7f1d1d))
+                            .text_color(cx.theme().danger_foreground)
                             .child(format!("  {error}")),
                     );
                 }
@@ -5762,13 +5783,17 @@ impl BeamView {
         column.into_any_element()
     }
 
-    fn render_script_env_changes_section(&self, result: &PersistedScriptResult) -> AnyElement {
+    fn render_script_env_changes_section(
+        &self,
+        result: &PersistedScriptResult,
+        cx: &App,
+    ) -> AnyElement {
         let mut column = v_flex().w_full().gap_1();
         if result.no_environment_selected_with_env_writes {
             column = column.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0xb91c1c))
+                    .text_color(cx.theme().danger_foreground)
                     .child("Warning: Script wrote environment changes, but \"No environment\" was selected. Changes were not persisted."),
             );
         }
@@ -5777,7 +5802,7 @@ impl BeamView {
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x6b7280))
+                        .text_color(cx.theme().muted_foreground)
                         .child("No environment changes."),
                 )
                 .into_any_element();
@@ -5808,11 +5833,15 @@ impl BeamView {
         column.into_any_element()
     }
 
-    fn render_script_console_section(&self, result: &PersistedScriptResult) -> AnyElement {
+    fn render_script_console_section(
+        &self,
+        result: &PersistedScriptResult,
+        cx: &App,
+    ) -> AnyElement {
         if result.console_output.is_empty() {
             return div()
                 .text_xs()
-                .text_color(rgb(0x6b7280))
+                .text_color(cx.theme().muted_foreground)
                 .child("No console output.")
                 .into_any_element();
         }
@@ -5875,7 +5904,7 @@ impl BeamView {
                                 })),
                         ),
                 )
-                .child(div().text_xs().text_color(rgb(0x6b7280)).child(format!(
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!(
                     "Updated {}",
                     Self::format_human_timestamp(&result.updated_at)
                 )));
@@ -5885,18 +5914,18 @@ impl BeamView {
                     content = content.child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0xb91c1c))
+                            .text_color(cx.theme().danger_foreground)
                             .child(format!("Error: {error_message}")),
                     );
                 }
             }
 
             content = content.child(div().text_xs().font_semibold().child("Tests"));
-            content = content.child(self.render_script_tests_section(result));
+            content = content.child(self.render_script_tests_section(result, cx));
             content = content.child(div().text_xs().font_semibold().child("Environment Changes"));
-            content = content.child(self.render_script_env_changes_section(result));
+            content = content.child(self.render_script_env_changes_section(result, cx));
             content = content.child(div().text_xs().font_semibold().child("Console"));
-            content = content.child(self.render_script_console_section(result));
+            content = content.child(self.render_script_console_section(result, cx));
 
             panel = panel.child(
                 div()
@@ -5909,7 +5938,7 @@ impl BeamView {
             panel = panel.child(
                 div()
                     .text_sm()
-                    .text_color(rgb(0x6b7280))
+                    .text_color(cx.theme().muted_foreground)
                     .child("Send a request to see script results"),
             );
         }
@@ -6093,7 +6122,7 @@ impl BeamView {
                     })
                     .into_any_element()
             }
-            ResponseTab::Headers => self.render_response_headers_table(),
+            ResponseTab::Headers => self.render_response_headers_table(cx),
         }
     }
 
@@ -6190,14 +6219,14 @@ impl BeamView {
             .collect()
     }
 
-    fn render_response_headers_table(&self) -> AnyElement {
+    fn render_response_headers_table(&self, cx: &App) -> AnyElement {
         let rows = Self::parse_response_headers(&self.response_headers_raw);
         if rows.is_empty() {
             return div()
                 .h_full()
                 .w_full()
                 .text_sm()
-                .text_color(rgb(0x6b7280))
+                .text_color(cx.theme().muted_foreground)
                 .child("No response headers. Send a request to view headers.")
                 .into_any_element();
         }
@@ -6213,9 +6242,9 @@ impl BeamView {
         let mut table = String::from(
             "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
              <thead>\
-             <tr style=\"background:#f3f4f6;\">\
-             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid #e5e7eb; width:220px;\">Header</th>\
-             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid #e5e7eb;\">Value</th>\
+             <tr>\
+             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
+             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
              </tr>\
              </thead><tbody>",
         );
@@ -6223,8 +6252,8 @@ impl BeamView {
         for (key, value) in rows {
             table.push_str(&format!(
                 "<tr>\
-                 <td style=\"padding:6px 8px; border-bottom:1px solid #f3f4f6; vertical-align:top; white-space:pre-wrap;\">{}</td>\
-                 <td style=\"padding:6px 8px; border-bottom:1px solid #f3f4f6; vertical-align:top; white-space:pre-wrap;\">{}</td>\
+                 <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
+                 <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
                  </tr>",
                 escape_html(&key),
                 escape_html(&value)
@@ -6734,12 +6763,16 @@ impl Render for BeamView {
                                 .child(self.render_collections_panel(window, cx)),
                         )
                         .child(resizable_panel().child({
-                            let workspace = v_flex().h_full().w_full().bg(rgb(0xffffff)).child(
+                            let workspace = v_flex()
+                                .h_full()
+                                .w_full()
+                                .bg(cx.theme().background)
+                                .child(
                                 div()
                                     .w_full()
                                     .p_3()
                                     .border_b_1()
-                                    .border_color(rgb(0xd1d5db))
+                                    .border_color(cx.theme().border)
                                     .child(self.render_url_bar(cx)),
                             );
                             workspace
