@@ -138,14 +138,29 @@ fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn init_theme_registry(cx: &mut App) {
+fn init_theme_registry(preferred_theme_name: Option<SharedString>, cx: &mut App) {
     let themes_dir = PathBuf::from("./themes");
 
-    if let Err(error) = ThemeRegistry::watch_dir(themes_dir.clone(), cx, |_| {}) {
-        eprintln!(
-            "Failed to watch themes directory {}: {error}",
-            themes_dir.display()
-        );
+    if let Ok(entries) = fs::read_dir(&themes_dir) {
+        let registry = ThemeRegistry::global_mut(cx);
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file()
+                || path.extension().and_then(|extension| extension.to_str()) != Some("json")
+            {
+                continue;
+            }
+            let Ok(content) = fs::read_to_string(&path) else {
+                continue;
+            };
+            if let Err(error) = registry.load_themes_from_str(&content) {
+                eprintln!("Failed to preload theme file {}: {error}", path.display());
+            }
+        }
+    }
+
+    if let Some(theme_name) = preferred_theme_name.as_ref() {
+        let _ = BeamView::apply_named_theme_by_name(theme_name.as_ref(), cx, false);
     }
 }
 
@@ -158,7 +173,7 @@ pub fn run_app(
     app.run(move |cx| {
         gpui_component::init(cx);
         #[cfg(not(target_family = "wasm"))]
-        init_theme_registry(cx);
+        init_theme_registry(state.theme.theme_name.clone().map(Into::into), cx);
         cx.bind_keys([
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-q", QuitApp, None),
@@ -1712,15 +1727,36 @@ impl BeamView {
         #[cfg(target_os = "macos")]
         cx.set_menus(build_macos_system_menus(cx));
         cx.refresh_windows();
+        if let Err(error) = Self::persist_theme_state_from_app(cx) {
+            eprintln!("{error}");
+        }
     }
 
     fn apply_named_theme(theme_name: SharedString, cx: &mut App) {
-        if let Some(theme_config) = ThemeRegistry::global(cx).themes().get(&theme_name).cloned() {
+        if Self::apply_named_theme_by_name(theme_name.as_ref(), cx, true) {
+            return;
+        }
+    }
+
+    fn apply_named_theme_by_name(theme_name: &str, cx: &mut App, persist: bool) -> bool {
+        let stored_theme_name: SharedString = theme_name.to_string().into();
+        let theme_config = ThemeRegistry::global(cx)
+            .themes()
+            .get(&stored_theme_name)
+            .cloned();
+        if let Some(theme_config) = theme_config {
             Theme::global_mut(cx).apply_config(&theme_config);
             #[cfg(target_os = "macos")]
             cx.set_menus(build_macos_system_menus(cx));
             cx.refresh_windows();
+            if persist {
+                if let Err(error) = Self::persist_theme_state_from_app(cx) {
+                    eprintln!("{error}");
+                }
+            }
+            return true;
         }
+        false
     }
 
     fn open_settings_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -3170,6 +3206,15 @@ impl BeamView {
         local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
+    fn persist_theme_state_from_app(cx: &App) -> Result<(), String> {
+        let paths = BeamPaths::default_user_config();
+        let storage = TomlWorkspaceStorage::new(paths);
+        let active_theme_name = cx.theme().theme_name().to_string();
+        storage
+            .persist_theme_state(active_theme_name.as_str())
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 

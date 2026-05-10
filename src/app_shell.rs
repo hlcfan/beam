@@ -417,6 +417,11 @@ pub struct LocalEnvironmentSelectionState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LocalThemeState {
+    pub theme_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SyncLifecycleState {
     pub inflight_count: usize,
     pub last_error: Option<String>,
@@ -444,6 +449,7 @@ pub struct AppShellState {
     pub request_pane_data: HashMap<Ulid, RequestPaneData>,
     pub environments: Vec<EnvironmentMeta>,
     pub environment_selection: LocalEnvironmentSelectionState,
+    pub theme: LocalThemeState,
     pub workspace: WorkspacePlaceholderState,
     pub sync_lifecycle: SyncLifecycleState,
 }
@@ -457,6 +463,7 @@ impl Default for AppShellState {
             request_pane_data: HashMap::new(),
             environments: Vec::new(),
             environment_selection: LocalEnvironmentSelectionState::default(),
+            theme: LocalThemeState::default(),
             workspace: WorkspacePlaceholderState {
                 request_panel_title: "Request".to_string(),
                 response_panel_title: "Response".to_string(),
@@ -1148,6 +1155,9 @@ where
                     .into_iter()
                     .collect(),
             },
+            theme: LocalThemeState {
+                theme_name: local_state.local_state.theme_name.clone(),
+            },
             ..AppShellState::default()
         },
         messages,
@@ -1175,11 +1185,12 @@ fn load_local_state_file(paths: &BeamPaths) -> Result<LocalStateFile> {
     }
 
     let local_state_file: LocalStateTomlFile = parse_toml(&paths.local_state_file)?;
-    Ok(LocalStateFile {
+    let state = LocalStateFile {
         schema_version: local_state_file.local_state.schema_version,
         local_state: crate::models::LocalState {
             active_global_environment_id: local_state_file.local_state.active_global_environment_id,
             last_opened_request_id: local_state_file.local_state.last_opened_request_id,
+            theme_name: local_state_file.local_state.theme_name,
             updated_at: local_state_file.local_state.updated_at,
         },
         collection_environment_selection: local_state_file
@@ -1191,7 +1202,8 @@ fn load_local_state_file(paths: &BeamPaths) -> Result<LocalStateFile> {
         tree_state: crate::models::TreeState {
             expanded_item_ids: local_state_file.local_state.expanded_item_ids,
         },
-    })
+    };
+    Ok(state)
 }
 
 fn merge_nested_local_state_fields(path: &Path, state: &mut LocalStateFile) {
@@ -1642,6 +1654,8 @@ struct LocalStateToml {
     schema_version: u32,
     active_global_environment_id: Option<Ulid>,
     last_opened_request_id: Option<Ulid>,
+    #[serde(default)]
+    theme_name: Option<String>,
     #[serde(default)]
     updated_at: chrono::DateTime<chrono::Utc>,
     #[serde(default)]
@@ -2414,6 +2428,7 @@ order = 0
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(request_id),
+                theme_name: None,
                 updated_at: Utc::now(),
             },
             collection_environment_selection: Default::default(),
@@ -2449,6 +2464,7 @@ order = 0
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(Ulid::new()),
+                theme_name: None,
                 updated_at: Utc::now(),
             },
             collection_environment_selection: Default::default(),
@@ -2519,6 +2535,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
 schema_version = 2
 last_opened_request_id = "{request_id}"
 active_global_environment_id = "{env_id}"
+theme_name = "One Dark"
 expanded_item_ids = ["{collection_id}"]
 
 [[local_state.collection_environment_selections]]
@@ -2621,6 +2638,7 @@ post_response = "console.log(response.status)"
             pane_data.post_script.as_deref(),
             Some("console.log(response.status)")
         );
+        assert_eq!(state.theme.theme_name.as_deref(), Some("One Dark"));
     }
 
     #[test]
@@ -2672,6 +2690,7 @@ updated_at = "2026-01-01T00:00:00Z"
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
+                theme_name: None,
                 updated_at: Utc::now(),
             },
             collection_environment_selection: Default::default(),

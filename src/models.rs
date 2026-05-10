@@ -269,6 +269,8 @@ pub struct LocalStateFile {
 pub struct LocalState {
     pub active_global_environment_id: Option<Ulid>,
     pub last_opened_request_id: Option<Ulid>,
+    #[serde(default)]
+    pub theme_name: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -285,6 +287,7 @@ impl Default for LocalStateFile {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
+                theme_name: None,
                 updated_at: Utc::now(),
             },
             collection_environment_selection: BTreeMap::new(),

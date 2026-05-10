@@ -29,6 +29,22 @@ impl TomlWorkspaceStorage {
         Self { paths }
     }
 
+    pub fn persist_theme_state(&self, theme_name: &str) -> Result<()> {
+        let mut local_state = match self.load_local_state() {
+            Ok(state) => state,
+            Err(_) => LocalStateFile::default(),
+        };
+
+        let changed = local_state.local_state.theme_name.as_deref() != Some(theme_name);
+        if !changed {
+            return Ok(());
+        }
+
+        local_state.local_state.theme_name = Some(theme_name.to_string());
+        local_state.local_state.updated_at = Utc::now();
+        self.save_local_state(&local_state)
+    }
+
     fn create_required_dirs(&self) -> Result<()> {
         for dir in [
             self.paths.root.as_path(),
@@ -829,6 +845,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             local_state: LocalState {
                 active_global_environment_id: parsed_file.local_state.active_global_environment_id,
                 last_opened_request_id: parsed_file.local_state.last_opened_request_id,
+                theme_name: parsed_file.local_state.theme_name,
                 updated_at: parsed_file.local_state.updated_at,
             },
             collection_environment_selection: parsed_file
@@ -1453,6 +1470,8 @@ struct LocalStateToml {
     active_global_environment_id: Option<Ulid>,
     last_opened_request_id: Option<Ulid>,
     #[serde(default)]
+    theme_name: Option<String>,
+    #[serde(default)]
     updated_at: chrono::DateTime<chrono::Utc>,
     #[serde(default)]
     expanded_item_ids: Vec<Ulid>,
@@ -1556,6 +1575,20 @@ environment_id = "{environment_id}"
                 .copied(),
             Some(environment_id)
         );
+    }
+
+    #[test]
+    fn persist_theme_state_updates_theme_fields() {
+        let dir = tempdir().expect("tempdir");
+        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        storage.initialize().expect("initialize");
+
+        storage
+            .persist_theme_state("One Dark")
+            .expect("persist theme state");
+        let loaded = storage.load_local_state().expect("load local state");
+
+        assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
     }
 
     #[test]
