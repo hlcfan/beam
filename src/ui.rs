@@ -6583,9 +6583,9 @@ impl BeamView {
         for test in &result.test_results {
             let status = if test.passed { "PASS" } else { "FAIL" };
             let color = if test.passed {
-                cx.theme().success_foreground
+                cx.theme().success
             } else {
-                cx.theme().danger_foreground
+                cx.theme().danger
             };
             let summary = match (&test.expected, &test.actual) {
                 (Some(expected), Some(actual)) if expected != actual => {
