@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf};
 use chrono::{Local, Utc};
 use gpui::*;
 use gpui_component::{
-    ActiveTheme, Disableable, Icon, IconName, Placement, Root, Selectable, Sizable, StyledExt,
+    ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt,
     TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
@@ -15,7 +15,6 @@ use gpui_component::{
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
-    spinner::Spinner,
     tag::Tag,
     text::html,
     v_flex,
@@ -52,9 +51,53 @@ actions!(
         QuitApp,
         SendActiveRequest,
         CreateRequestBelowActive,
-        FocusUrlInput
+        FocusUrlInput,
+        OpenSettings
     ]
 );
+
+#[cfg(target_os = "macos")]
+fn build_macos_system_menus() -> Vec<Menu> {
+    vec![
+        Menu {
+            name: "Beam".into(),
+            items: vec![
+                MenuItem::action("Settings", OpenSettings),
+                MenuItem::separator(),
+                MenuItem::action("Quit Beam", QuitApp),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "File".into(),
+            items: vec![
+                MenuItem::action("New Request", CreateRequestBelowActive),
+                MenuItem::separator(),
+                MenuItem::action("Focus URL", FocusUrlInput),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::action("Undo", gpui_component::input::Undo),
+                MenuItem::action("Redo", gpui_component::input::Redo),
+                MenuItem::separator(),
+                MenuItem::action("Cut", gpui_component::input::Cut),
+                MenuItem::action("Copy", gpui_component::input::Copy),
+                MenuItem::action("Paste", gpui_component::input::Paste),
+                MenuItem::separator(),
+                MenuItem::action("Select All", gpui_component::input::SelectAll),
+            ],
+            disabled: false,
+        },
+        Menu {
+            name: "View".into(),
+            items: vec![MenuItem::action("Focus URL", FocusUrlInput)],
+            disabled: false,
+        },
+    ]
+}
 
 pub fn run_app(
     state: AppShellState,
@@ -139,6 +182,26 @@ pub fn run_app(
                 }
             });
         });
+        cx.on_action(|_: &OpenSettings, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.open_environment_variables_sheet(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        #[cfg(target_os = "macos")]
+        cx.set_menus(build_macos_system_menus());
 
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
@@ -3561,23 +3624,12 @@ impl BeamView {
     fn render_title_bar_content(&self, cx: &App) -> Div {
         h_flex()
             .items_center()
-            .justify_between()
+            .justify_end()
             .w_full()
             .h_full()
             .px_2()
             .text_sm()
             .text_color(cx.theme().foreground)
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_3()
-                    .child("Beam")
-                    .child("File")
-                    .child("Edit")
-                    .child("View")
-                    .child("Run")
-                    .child("Help"),
-            )
             .child(
                 h_flex()
                     .items_center()
@@ -6734,32 +6786,8 @@ impl BeamView {
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
-        // Placeholder visual state only; save behavior wiring is added separately.
-        let is_saving = false;
         let selected_environment_label = self.selected_environment_label();
         let status_bar_environment_label = format!("Environment: {selected_environment_label}");
-        let save_status = if is_saving {
-            h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    Spinner::new()
-                        .icon(IconName::LoaderCircle)
-                        .xsmall()
-                        .color(cx.theme().muted_foreground),
-                )
-                .child("Saving")
-        } else {
-            h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    Icon::new(IconName::Check)
-                        .size(px(12.0))
-                        .text_color(cx.theme().muted_foreground),
-                )
-                .child("Saved")
-        };
 
         h_flex()
             .items_center()
@@ -6784,7 +6812,6 @@ impl BeamView {
                     )
                     .child("Settings"),
             )
-            .child(save_status)
             .child(
                 Button::new("status-bar-environment-sheet")
                     .small()
