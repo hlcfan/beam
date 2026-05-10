@@ -13,7 +13,6 @@ use gpui_component::{
     input::{self, Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
-    radio::{Radio, RadioGroup},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     tag::Tag,
@@ -331,6 +330,7 @@ struct BeamView {
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
     active_request_cache: Option<RequestFile>,
+    request_file_index: HashMap<Ulid, PathBuf>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
@@ -402,6 +402,16 @@ struct ConsoleMessageView {
     timestamp: String,
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RequestMetaIdFile {
+    meta: RequestMetaIdOnly,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct RequestMetaIdOnly {
+    request_id: Ulid,
+}
+
 struct EnvironmentManagerDialogView {
     beam_view: Entity<BeamView>,
     options: Vec<(Ulid, String)>,
@@ -425,7 +435,6 @@ struct EnvironmentManagerDialogView {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
-    Appearance,
     Theme,
 }
 
@@ -438,14 +447,13 @@ impl SettingsDialogView {
     fn new(beam_view: Entity<BeamView>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {
             beam_view,
-            selected_section: SettingsSection::Appearance,
+            selected_section: SettingsSection::Theme,
         }
     }
 }
 
 impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_dark_mode = cx.theme().mode.is_dark();
         let active_theme_name = cx.theme().theme_name().clone();
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
             .sorted_themes()
@@ -455,32 +463,6 @@ impl Render for SettingsDialogView {
 
         let mut right_panel = v_flex().w_full().h_full().gap_3();
         match self.selected_section {
-            SettingsSection::Appearance => {
-                right_panel = right_panel
-                    .child(div().text_sm().font_semibold().child("Appearance"))
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(
-                        "Choose how Beam looks. This controls whether light or dark mode is active.",
-                    ))
-                    .child(
-                        RadioGroup::horizontal("settings-appearance-mode")
-                            .w_full()
-                            .gap_4()
-                            .child(Radio::new("settings-appearance-light-radio").label("Light"))
-                            .child(Radio::new("settings-appearance-dark-radio").label("Dark"))
-                            .selected_index(Some(usize::from(is_dark_mode)))
-                            .on_click(cx.listener(|this, selected_ix: &usize, _, cx| {
-                                let mode = if *selected_ix == 0 {
-                                    ThemeMode::Light
-                                } else {
-                                    ThemeMode::Dark
-                                };
-                                let _ = this.beam_view.update(cx, |_, cx| {
-                                    BeamView::apply_theme_mode(mode, cx);
-                                });
-                                cx.notify();
-                            })),
-                    );
-            }
             SettingsSection::Theme => {
                 let beam_view = self.beam_view.clone();
                 let active_theme_name_for_menu = active_theme_name.clone();
@@ -556,20 +538,6 @@ impl Render for SettingsDialogView {
                             .bg(cx.theme().background)
                             .p_2()
                             .gap_1()
-                            .child(
-                                ListItem::new("settings-section-appearance")
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .rounded(px(8.0))
-                                    .px_2()
-                                    .py_1()
-                                    .selected(self.selected_section == SettingsSection::Appearance)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.selected_section = SettingsSection::Appearance;
-                                        cx.notify();
-                                    }))
-                                    .child("Appearance"),
-                            )
                             .child(
                                 ListItem::new("settings-section-theme")
                                     .w_full()
@@ -2062,11 +2030,27 @@ impl BeamView {
             return;
         };
 
+        if let Some(request_path) = self.request_file_index.get(&request_id).cloned() {
+            match fs::read_to_string(&request_path)
+                .ok()
+                .and_then(|content| toml::from_str::<RequestFile>(&content).ok())
+            {
+                Some(request_file) => {
+                    self.active_request_cache = Some(request_file);
+                    return;
+                }
+                None => {
+                    self.request_file_index.remove(&request_id);
+                }
+            }
+        }
+
         let paths = BeamPaths::default_user_config();
         let storage = TomlWorkspaceStorage::new(paths);
         match storage.load_request(request_id) {
             Ok(request_file) => {
                 self.active_request_cache = Some(request_file);
+                self.request_file_index = Self::build_request_file_index();
             }
             Err(error) => {
                 eprintln!("Failed to load active request cache for {request_id}: {error}");
@@ -3295,6 +3279,7 @@ impl BeamView {
                 AppEvent::RequestDeleted { request_id, .. } => {
                     let deleted_selected =
                         self.shell.collections.selected_request_id() == Some(*request_id);
+                    self.request_file_index.remove(request_id);
                     self.shell.apply_event(&event);
                     if deleted_selected {
                         should_sync_editor = true;
@@ -3963,6 +3948,35 @@ impl BeamView {
             )
     }
 
+    fn build_request_file_index() -> HashMap<Ulid, PathBuf> {
+        let mut index = HashMap::new();
+        let paths = BeamPaths::default_user_config();
+        let mut stack = vec![paths.collections_dir];
+        while let Some(dir) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
+                    continue;
+                }
+                let Ok(content) = fs::read_to_string(&path) else {
+                    continue;
+                };
+                let Ok(file) = toml::from_str::<RequestMetaIdFile>(&content) else {
+                    continue;
+                };
+                index.insert(file.meta.request_id, path);
+            }
+        }
+        index
+    }
+
     fn new(
         shell: AppShellState,
         startup_messages: Vec<StartupMessage>,
@@ -4132,6 +4146,7 @@ impl BeamView {
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
             active_request_cache: None,
+            request_file_index: Self::build_request_file_index(),
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
             app_command_tx: sync_runtime.command_tx,
