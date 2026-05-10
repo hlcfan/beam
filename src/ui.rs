@@ -242,6 +242,7 @@ struct ConsoleMessageView {
 struct EnvironmentManagerDialogView {
     options: Vec<(Ulid, String)>,
     selected_id: Option<Ulid>,
+    show_environment_selector: bool,
     variables: Vec<EnvironmentVariable>,
     environment_name_input: Entity<InputState>,
     variable_name_inputs: Vec<Entity<InputState>>,
@@ -355,6 +356,7 @@ impl EnvironmentManagerDialogView {
         let mut view = Self {
             options,
             selected_id,
+            show_environment_selector: true,
             variables: Vec::new(),
             environment_name_input,
             variable_name_inputs: Vec::new(),
@@ -388,6 +390,21 @@ impl EnvironmentManagerDialogView {
         } else {
             view.error = Some("No environment available to manage.".to_string());
         }
+        view
+    }
+
+    fn new_for_sheet(
+        selected_option: Option<(Ulid, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let (options, selected_id) = if let Some((environment_id, label)) = selected_option {
+            (vec![(environment_id, label)], Some(environment_id))
+        } else {
+            (Vec::new(), None)
+        };
+        let mut view = Self::new(options, selected_id, window, cx);
+        view.show_environment_selector = false;
         view
     }
 
@@ -834,6 +851,21 @@ impl Render for EnvironmentManagerDialogView {
         );
         variables_panel = variables_panel.child(div().w_full().child(variables_rows));
 
+        if !self.show_environment_selector {
+            return v_flex()
+                .w_full()
+                .h_full()
+                .p_2()
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .overflow_y_scrollbar()
+                        .child(variables_panel),
+                )
+                .into_any_element();
+        }
+
         v_flex().w_full().h(px(520.0)).p_3().gap_3().child(
             h_flex()
                 .w_full()
@@ -905,6 +937,7 @@ impl Render for EnvironmentManagerDialogView {
                         ),
                 ),
         )
+        .into_any_element()
     }
 }
 
@@ -1096,114 +1129,18 @@ impl BeamView {
         label
     }
 
-    fn load_selected_environment_variables(&self) -> Result<Vec<EnvironmentVariable>, String> {
-        let Some(environment_id) = self.selected_environment_id_for_view() else {
-            return Err("No environment selected.".to_string());
-        };
-        let Some(path) = Self::find_environment_file_path(environment_id) else {
-            return Err("Environment file not found.".to_string());
-        };
-        let content =
-            fs::read_to_string(&path).map_err(|error| format!("Failed to read file: {error}"))?;
-        let parsed = EnvironmentManagerDialogView::parse_environment_file(&content)
-            .map_err(|error| format!("Failed to parse file: {error}"))?;
-        Ok(parsed.variables)
-    }
-
     fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let selected_label = self.selected_environment_label();
-        let variables_result = self.load_selected_environment_variables();
+        let selected_option = self.selected_environment_id_for_view().and_then(|selected_id| {
+            self.active_environment_options()
+                .into_iter()
+                .find(|(environment_id, _)| *environment_id == selected_id)
+        });
+        let sheet_view = cx.new(|cx| {
+            EnvironmentManagerDialogView::new_for_sheet(selected_option.clone(), window, cx)
+        });
 
-        window.open_sheet_at(Placement::Right, cx, move |sheet, _, cx| {
-            let mut content = v_flex().size_full().gap_3();
-            content = content.child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_semibold()
-                            .child(selected_label.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(match &variables_result {
-                                Ok(variables) => format!("{} variables", variables.len()),
-                                Err(_) => "0 variables".to_string(),
-                            }),
-                    ),
-            );
-
-            match &variables_result {
-                Ok(variables) if variables.is_empty() => {
-                    content = content.child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("No variables in the selected environment."),
-                    );
-                }
-                Ok(variables) => {
-                    let mut table = v_flex()
-                        .w_full()
-                        .rounded(px(8.0))
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().background);
-                    table = table.child(
-                        h_flex()
-                            .w_full()
-                            .items_center()
-                            .gap_3()
-                            .px_2()
-                            .py_1()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().secondary)
-                            .child(div().w(px(120.0)).text_xs().font_semibold().child("Name"))
-                            .child(div().flex_1().text_xs().font_semibold().child("Value"))
-                            .child(div().w(px(72.0)).text_xs().font_semibold().child("Enabled")),
-                    );
-                    for variable in variables {
-                        table = table.child(
-                            h_flex()
-                                .w_full()
-                                .items_center()
-                                .gap_3()
-                                .px_2()
-                                .py_1()
-                                .border_b_1()
-                                .border_color(cx.theme().border)
-                                .child(div().w(px(120.0)).text_sm().child(variable.name.clone()))
-                                .child(div().flex_1().text_sm().child(variable.value.clone()))
-                                .child(div().w(px(72.0)).text_sm().child(if variable.enabled {
-                                    "Yes"
-                                } else {
-                                    "No"
-                                })),
-                        );
-                    }
-                    content =
-                        content.child(div().w_full().flex_1().overflow_y_scrollbar().child(table));
-                }
-                Err(error) => {
-                    content = content.child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().danger_foreground)
-                            .child(error.clone()),
-                    );
-                }
-            }
-
-            sheet
-                .title("Environment Variables")
-                .size(px(520.0))
-                .child(content)
+        window.open_sheet_at(Placement::Right, cx, move |sheet, _, _| {
+            sheet.title("Environment Variables").size(px(520.0)).child(sheet_view.clone())
         });
     }
 
