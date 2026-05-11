@@ -9,8 +9,8 @@ use crate::error::{BeamError, Result};
 use crate::models::{
     AuthConfig, BodyConfig, CollectionFile, CollectionItemRef, EnvironmentFile, EnvironmentMeta,
     EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField, ItemType,
-    LocalState, LocalStateFile, QueryParamField, RequestDefinition, RequestFile, RequestMeta,
-    ScriptConfig, TreeState, WorkspaceFile, WorkspaceMeta,
+    LocalStateFile, QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
+    WorkspaceFile,
 };
 use crate::paths::BeamPaths;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
@@ -69,43 +69,27 @@ impl TomlWorkspaceStorage {
         atomic_write(path, encoded.as_bytes())
     }
 
-    fn read_toml_file<T: for<'de> serde::Deserialize<'de>>(&self, path: &Path) -> Result<T> {
-        let content = fs::read_to_string(path).map_err(|source| BeamError::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        toml::from_str(&content).map_err(|source| BeamError::TomlDecode {
+    fn read_toml_string(&self, path: &Path) -> Result<String> {
+        fs::read_to_string(path).map_err(|source| BeamError::Io {
             path: path.to_path_buf(),
             source,
         })
     }
 
-    fn merge_nested_local_state_fields(&self, local_state: &mut LocalStateFile) {
-        let Ok(parsed_file) =
-            self.read_toml_file::<LocalStateNestedFile>(&self.paths.local_state_file)
-        else {
-            return;
-        };
+    fn parse_toml_str<T: for<'de> serde::Deserialize<'de>>(
+        &self,
+        path: &Path,
+        content: &str,
+    ) -> Result<T> {
+        toml::from_str(content).map_err(|source| BeamError::TomlDecode {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
 
-        if local_state.tree_state.expanded_item_ids.is_empty()
-            && !parsed_file.local_state.expanded_item_ids.is_empty()
-        {
-            local_state.tree_state.expanded_item_ids = parsed_file.local_state.expanded_item_ids;
-        }
-
-        if local_state.collection_environment_selection.is_empty()
-            && !parsed_file
-                .local_state
-                .collection_environment_selections
-                .is_empty()
-        {
-            local_state.collection_environment_selection = parsed_file
-                .local_state
-                .collection_environment_selections
-                .into_iter()
-                .map(|entry| (entry.collection_id, entry.environment_id))
-                .collect();
-        }
+    fn read_toml_file<T: for<'de> serde::Deserialize<'de>>(&self, path: &Path) -> Result<T> {
+        let content = self.read_toml_string(path)?;
+        self.parse_toml_str(path, &content)
     }
 
     fn walk_files_recursive<F>(&self, root: &Path, mut visitor: F) -> Result<()>
@@ -796,24 +780,11 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
     }
 
     fn load_workspace(&self) -> Result<WorkspaceFile> {
-        if let Ok(workspace) = self.read_toml_file::<WorkspaceFile>(&self.paths.workspace_file) {
-            validate_schema_version(SchemaKind::Workspace, workspace.schema_version)?;
-            return Ok(workspace);
-        }
-
-        // TODO: the workspace file is read twice, can consolidate this.
-        let parsed_file: WorkspaceTomlFile = self.read_toml_file(&self.paths.workspace_file)?;
-        validate_schema_version(SchemaKind::Workspace, parsed_file.workspace.schema_version)?;
-        Ok(WorkspaceFile {
-            schema_version: parsed_file.workspace.schema_version,
-            workspace: WorkspaceMeta {
-                workspace_id: parsed_file.workspace.workspace_id,
-                name: parsed_file.workspace.name,
-                description: parsed_file.workspace.description,
-                created_at: parsed_file.workspace.created_at,
-                updated_at: parsed_file.workspace.updated_at,
-            },
-        })
+        let content = self.read_toml_string(&self.paths.workspace_file)?;
+        let workspace: WorkspaceFile =
+            self.parse_toml_str(&self.paths.workspace_file, &content)?;
+        validate_schema_version(SchemaKind::Workspace, workspace.schema_version)?;
+        Ok(workspace)
     }
 
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()> {
@@ -822,39 +793,11 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
     }
 
     fn load_local_state(&self) -> Result<LocalStateFile> {
-        if let Ok(mut local_state) =
-            self.read_toml_file::<LocalStateFile>(&self.paths.local_state_file)
-        {
-            validate_schema_version(SchemaKind::LocalState, local_state.schema_version)?;
-            self.merge_nested_local_state_fields(&mut local_state);
-            return Ok(local_state);
-        }
-
-        // TODO: the local-state file is read twice, consolidate this.
-        let parsed_file: LocalStateTomlFile = self.read_toml_file(&self.paths.local_state_file)?;
-        validate_schema_version(
-            SchemaKind::LocalState,
-            parsed_file.local_state.schema_version,
-        )?;
-        Ok(LocalStateFile {
-            schema_version: parsed_file.local_state.schema_version,
-            local_state: LocalState {
-                active_global_environment_id: parsed_file.local_state.active_global_environment_id,
-                last_opened_request_id: parsed_file.local_state.last_opened_request_id,
-                theme_name: parsed_file.local_state.theme_name,
-                updated_at: parsed_file.local_state.updated_at,
-            },
-            collection_environment_selection: parsed_file
-                .local_state
-                .collection_environment_selections
-                .into_iter()
-                .map(|entry| (entry.collection_id, entry.environment_id))
-                .collect(),
-            // TODO: tree_state isn't better named?
-            tree_state: TreeState {
-                expanded_item_ids: parsed_file.local_state.expanded_item_ids,
-            },
-        })
+        let content = self.read_toml_string(&self.paths.local_state_file)?;
+        let local_state: LocalStateFile =
+            self.parse_toml_str(&self.paths.local_state_file, &content)?;
+        validate_schema_version(SchemaKind::LocalState, local_state.schema_version)?;
+        Ok(local_state)
     }
 
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
@@ -1436,61 +1379,6 @@ fn slugify(input: &str) -> String {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct WorkspaceTomlFile {
-    workspace: WorkspaceTomlMeta,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct WorkspaceTomlMeta {
-    schema_version: u32,
-    workspace_id: Ulid,
-    name: String,
-    description: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct LocalStateTomlFile {
-    local_state: LocalStateToml,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct CollectionEnvironmentSelectionToml {
-    collection_id: Ulid,
-    environment_id: Ulid,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct LocalStateToml {
-    schema_version: u32,
-    active_global_environment_id: Option<Ulid>,
-    last_opened_request_id: Option<Ulid>,
-    #[serde(default)]
-    theme_name: Option<String>,
-    #[serde(default)]
-    updated_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default)]
-    expanded_item_ids: Vec<Ulid>,
-    #[serde(default, rename = "collection_environment_selections")]
-    collection_environment_selections: Vec<CollectionEnvironmentSelectionToml>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
-struct LocalStateNestedFile {
-    #[serde(default)]
-    local_state: LocalStateNestedState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
-struct LocalStateNestedState {
-    #[serde(default)]
-    expanded_item_ids: Vec<Ulid>,
-    #[serde(default, rename = "collection_environment_selections")]
-    collection_environment_selections: Vec<CollectionEnvironmentSelectionToml>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 struct RequestMetaIdFile {
     meta: RequestMetaIdOnly,
 }
@@ -1540,7 +1428,7 @@ mod tests {
     }
 
     #[test]
-    fn load_local_state_recovers_nested_expanded_and_selection_fields() {
+    fn load_local_state_ignores_nested_expanded_and_selection_fields() {
         let dir = tempdir().expect("tempdir");
         let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
         storage.initialize().expect("initialize");
@@ -1564,14 +1452,8 @@ environment_id = "{environment_id}"
         fs::write(&storage.paths.local_state_file, local_state_toml).expect("write local state");
 
         let loaded = storage.load_local_state().expect("load local state");
-        assert_eq!(loaded.tree_state.expanded_item_ids, vec![expanded_id]);
-        assert_eq!(
-            loaded
-                .collection_environment_selection
-                .get(&collection_id)
-                .copied(),
-            Some(environment_id)
-        );
+        assert!(loaded.tree_state.expanded_item_ids.is_empty());
+        assert!(loaded.collection_environment_selection.is_empty());
     }
 
     #[test]
