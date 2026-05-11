@@ -785,15 +785,11 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         if !self.paths.workspace_file.exists() {
             self.save_workspace(&WorkspaceFile::default())?;
             report.created_workspace_file = true;
-        } else {
-            self.load_workspace()?;
         }
 
         if !self.paths.local_state_file.exists() {
             self.save_local_state(&LocalStateFile::default())?;
             report.created_local_state_file = true;
-        } else {
-            self.load_local_state()?;
         }
 
         Ok(report)
@@ -1590,6 +1586,22 @@ environment_id = "{environment_id}"
         let loaded = storage.load_local_state().expect("load local state");
 
         assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
+    }
+
+    #[test]
+    fn initialize_does_not_validate_existing_workspace_or_local_state_files() {
+        let dir = tempdir().expect("tempdir");
+        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        storage.create_required_dirs().expect("create dirs");
+
+        fs::write(&storage.paths.workspace_file, "not = valid = toml").expect("write workspace");
+        fs::write(&storage.paths.local_state_file, "not = valid = toml")
+            .expect("write local state");
+
+        let report = storage.initialize().expect("initialize");
+
+        assert!(!report.created_workspace_file);
+        assert!(!report.created_local_state_file);
     }
 
     #[test]

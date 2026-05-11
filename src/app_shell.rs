@@ -1098,11 +1098,11 @@ struct FolderManifest {
     items: Vec<CollectionItemRef>,
 }
 
-pub fn startup_preload<S>(_storage: &S, paths: &BeamPaths) -> StartupLoad
+pub fn startup_preload<S>(storage: &S, paths: &BeamPaths) -> StartupLoad
 where
     S: WorkspaceStorage,
 {
-    if let Err(error) = load_workspace_file(paths) {
+    if let Err(error) = storage.load_workspace() {
         return StartupLoad::Fatal {
             message: StartupMessage {
                 severity: StartupMessageSeverity::Fatal,
@@ -1111,7 +1111,7 @@ where
         };
     }
 
-    let local_state = match load_local_state_file(paths) {
+    let local_state = match storage.load_local_state() {
         Ok(state) => state,
         Err(error) => {
             return StartupLoad::Fatal {
@@ -1164,74 +1164,6 @@ where
     }
 }
 
-fn load_workspace_file(paths: &BeamPaths) -> Result<()> {
-    // Accept both current in-code schema and real on-disk schema.
-    if parse_toml::<crate::models::WorkspaceFile>(&paths.workspace_file).is_ok() {
-        return Ok(());
-    }
-    let workspace_file: WorkspaceTomlFile = parse_toml(&paths.workspace_file)?;
-    if workspace_file.workspace.schema_version == 0 {
-        return Err(BeamError::Validation {
-            message: "Invalid workspace schema_version 0".to_string(),
-        });
-    }
-    Ok(())
-}
-
-fn load_local_state_file(paths: &BeamPaths) -> Result<LocalStateFile> {
-    if let Ok(mut state) = parse_toml::<LocalStateFile>(&paths.local_state_file) {
-        merge_nested_local_state_fields(&paths.local_state_file, &mut state);
-        return Ok(state);
-    }
-
-    let local_state_file: LocalStateTomlFile = parse_toml(&paths.local_state_file)?;
-    let state = LocalStateFile {
-        schema_version: local_state_file.local_state.schema_version,
-        local_state: crate::models::LocalState {
-            active_global_environment_id: local_state_file.local_state.active_global_environment_id,
-            last_opened_request_id: local_state_file.local_state.last_opened_request_id,
-            theme_name: local_state_file.local_state.theme_name,
-            updated_at: local_state_file.local_state.updated_at,
-        },
-        collection_environment_selection: local_state_file
-            .local_state
-            .collection_environment_selections
-            .into_iter()
-            .map(|entry| (entry.collection_id, entry.environment_id))
-            .collect(),
-        tree_state: crate::models::TreeState {
-            expanded_item_ids: local_state_file.local_state.expanded_item_ids,
-        },
-    };
-    Ok(state)
-}
-
-fn merge_nested_local_state_fields(path: &Path, state: &mut LocalStateFile) {
-    let Ok(parsed_file) = parse_toml::<LocalStateNestedFile>(path) else {
-        return;
-    };
-
-    if state.tree_state.expanded_item_ids.is_empty()
-        && !parsed_file.local_state.expanded_item_ids.is_empty()
-    {
-        state.tree_state.expanded_item_ids = parsed_file.local_state.expanded_item_ids;
-    }
-
-    if state.collection_environment_selection.is_empty()
-        && !parsed_file
-            .local_state
-            .collection_environment_selections
-            .is_empty()
-    {
-        state.collection_environment_selection = parsed_file
-            .local_state
-            .collection_environment_selections
-            .into_iter()
-            .map(|entry| (entry.collection_id, entry.environment_id))
-            .collect();
-    }
-}
-
 fn load_collection_tree(
     paths: &BeamPaths,
     local_state: &LocalStateFile,
@@ -1241,6 +1173,7 @@ fn load_collection_tree(
     Vec<String>,
 ) {
     let mut warnings = Vec::new();
+    // TODO: can loading manifest file be done concurrently?
     let (collections, folders, requests_by_id, request_pane_data) =
         load_navigation_manifest(paths, &mut warnings);
     let mut tree = build_tree(&collections, &folders, &requests_by_id, &mut warnings);
@@ -1626,56 +1559,6 @@ struct EnvironmentTomlMeta {
     description: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct WorkspaceTomlFile {
-    workspace: WorkspaceTomlMeta,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct WorkspaceTomlMeta {
-    schema_version: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct LocalStateTomlFile {
-    local_state: LocalStateToml,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct CollectionEnvironmentSelectionToml {
-    collection_id: Ulid,
-    environment_id: Ulid,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct LocalStateToml {
-    schema_version: u32,
-    active_global_environment_id: Option<Ulid>,
-    last_opened_request_id: Option<Ulid>,
-    #[serde(default)]
-    theme_name: Option<String>,
-    #[serde(default)]
-    updated_at: chrono::DateTime<chrono::Utc>,
-    #[serde(default)]
-    expanded_item_ids: Vec<Ulid>,
-    #[serde(default, rename = "collection_environment_selections")]
-    collection_environment_selections: Vec<CollectionEnvironmentSelectionToml>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
-struct LocalStateNestedFile {
-    #[serde(default)]
-    local_state: LocalStateNestedState,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
-struct LocalStateNestedState {
-    #[serde(default)]
-    expanded_item_ids: Vec<Ulid>,
-    #[serde(default, rename = "collection_environment_selections")]
-    collection_environment_selections: Vec<CollectionEnvironmentSelectionToml>,
 }
 
 fn file_name(path: &Path) -> Option<&str> {
