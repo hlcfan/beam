@@ -19,7 +19,9 @@ use gpui_component::{
     text::html,
     v_flex,
 };
-use reqwest::{Method, blocking::Client};
+use reqwest::{Client, Method};
+use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
+use tokio::sync::oneshot;
 use ulid::Ulid;
 
 use crate::app_shell::next_command_id;
@@ -34,7 +36,8 @@ use crate::models::{
 };
 use crate::paths::BeamPaths;
 use crate::request_authoring::{
-    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, validate_rename,
+    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState,
+    SendDisabledReason, validate_rename,
 };
 use crate::script::{
     ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult,
@@ -195,7 +198,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.send_request(window, cx);
+                                    beam_view.handle_send_or_cancel_action(window, cx);
                                 });
                             });
                         }
@@ -334,7 +337,7 @@ struct BeamView {
     request_file_index: HashMap<Ulid, PathBuf>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
-    active_request_run_id: Option<u64>,
+    request_execution_states: HashMap<Ulid, RequestExecutionState>,
     next_request_run_id: u64,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
@@ -360,6 +363,20 @@ enum PendingRequestPlacement {
         parent: RequestParentRef,
         after_request_id: Ulid,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RequestExecutionStatus {
+    Idle,
+    Sending,
+    Canceled,
+    Failed,
+}
+
+struct RequestExecutionState {
+    run_id: u64,
+    status: RequestExecutionStatus,
+    cancel_tx: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1167,7 +1184,8 @@ impl EnvironmentManagerDialogView {
     ) {
         let active_environment_changed = self.active_environment_id != active_environment_id;
         self.active_environment_id = active_environment_id;
-        let mut should_notify = self.sync_environment_options(options, environment_file_names, window, cx);
+        let mut should_notify =
+            self.sync_environment_options(options, environment_file_names, window, cx);
         if let Some((environment_id, command_id)) = latest_upsert {
             if self.pending_new_environment_command_id.as_deref() == Some(command_id.as_str())
                 && self
@@ -1618,16 +1636,78 @@ impl Render for TreeRenameDialogView {
 }
 
 impl BeamView {
-    fn begin_request_run(&mut self) -> u64 {
+    fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
         let run_id = self.next_request_run_id;
         self.next_request_run_id = self.next_request_run_id.saturating_add(1);
-        self.active_request_run_id = Some(run_id);
+        self.request_execution_states.insert(
+            request_id,
+            RequestExecutionState {
+                run_id,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
         run_id
     }
 
+    fn cancel_request_run_for(&mut self, request_id: Ulid) {
+        let Some(state) = self.request_execution_states.get_mut(&request_id) else {
+            return;
+        };
+        if let Some(cancel_tx) = state.cancel_tx.take() {
+            let _ = cancel_tx.send(());
+        }
+        state.status = RequestExecutionStatus::Canceled;
+    }
+
+    fn clear_request_execution_state(&mut self, request_id: Ulid) {
+        let Some(mut state) = self.request_execution_states.remove(&request_id) else {
+            return;
+        };
+        if let Some(cancel_tx) = state.cancel_tx.take() {
+            let _ = cancel_tx.send(());
+        }
+    }
+
+    fn prune_request_execution_states(&mut self) {
+        let request_pane_data = &self.shell.request_pane_data;
+        self.request_execution_states.retain(|request_id, state| {
+            let keep = request_pane_data.contains_key(request_id);
+            if !keep {
+                if let Some(cancel_tx) = state.cancel_tx.take() {
+                    let _ = cancel_tx.send(());
+                }
+            }
+            keep
+        });
+    }
+
+    fn is_request_sending(&self, request_id: Ulid) -> bool {
+        self.request_execution_states
+            .get(&request_id)
+            .is_some_and(|state| state.status == RequestExecutionStatus::Sending)
+    }
+
     fn cancel_active_request_wait(&mut self) {
-        self.active_request_run_id = None;
-        self.request.is_sending = false;
+        let Some(request_id) = self.shell.collections.selected_request_id() else {
+            return;
+        };
+        let request_id_text = self
+            .shell
+            .collections
+            .selected_request_id()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let run_id_text = self
+            .request_execution_states
+            .get(&request_id)
+            .map(|state| state.run_id)
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        eprintln!(
+            "request_send_finish request_id={request_id_text} run_id={run_id_text} outcome=canceled_by_user"
+        );
+        self.cancel_request_run_for(request_id);
         self.response_status = "Canceled".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
@@ -1648,17 +1728,31 @@ impl BeamView {
     }
 
     fn send_button_state_for_view(&self) -> SendButtonState {
-        let state = self.request.send_button_state();
-        if matches!(
-            state,
-            SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::InvalidUrl)
-        ) && self.selected_environment_id_for_view().is_some()
-            && self.request.url.contains("{{")
-            && self.request.url.contains("}}")
-        {
-            return SendButtonState::Ready;
+        send_button_state_for_selected_request(
+            self.shell.collections.selected_request_id(),
+            &self.request_execution_states,
+            &self.request,
+            self.selected_environment_id_for_view(),
+        )
+    }
+
+    fn send_button_state_without_runtime(request: &RequestAuthoringState) -> SendButtonState {
+        let trimmed = request.url.trim();
+        if trimmed.is_empty() {
+            return SendButtonState::Disabled(SendDisabledReason::EmptyUrl);
         }
-        state
+        if !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+            return SendButtonState::Disabled(SendDisabledReason::InvalidUrl);
+        }
+        SendButtonState::Ready
+    }
+
+    fn handle_send_or_cancel_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.send_button_state_for_view() {
+            SendButtonState::Sending => self.cancel_active_request_wait(),
+            SendButtonState::Disabled(SendDisabledReason::EmptyUrl) => {}
+            _ => self.send_request(window, cx),
+        }
     }
 
     fn format_human_timestamp(timestamp: &str) -> String {
@@ -2142,20 +2236,29 @@ impl BeamView {
             return;
         };
 
-        let Some(snapshot) = Self::load_latest_response_snapshot(request_id) else {
+        if let Some(snapshot) = Self::load_latest_response_snapshot(request_id) {
+            self.response_status = snapshot.status;
+            self.response_time = snapshot.time;
+            self.response_size = snapshot.size;
+            self.response_headers_raw = snapshot.headers_raw;
+            self.response_body_editor.update(cx, |input, cx| {
+                input.set_value(snapshot.body, window, cx);
+            });
+        } else {
             self.clear_response_pane(window, cx);
-            self.script_result = Self::load_script_result(request_id);
-            return;
-        };
-
-        self.response_status = snapshot.status;
-        self.response_time = snapshot.time;
-        self.response_size = snapshot.size;
-        self.response_headers_raw = snapshot.headers_raw;
-        self.response_body_editor.update(cx, |input, cx| {
-            input.set_value(snapshot.body, window, cx);
-        });
+        }
         self.script_result = Self::load_script_result(request_id);
+
+        let (status, time, size) = response_summary_for_selected_request(
+            Some(request_id),
+            &self.request_execution_states,
+            &self.response_status,
+            &self.response_time,
+            &self.response_size,
+        );
+        self.response_status = status;
+        self.response_time = time;
+        self.response_size = size;
     }
 
     fn load_latest_response_snapshot(request_id: Ulid) -> Option<StoredResponseSnapshot> {
@@ -3064,6 +3167,7 @@ impl BeamView {
         match startup_preload(&storage, &paths) {
             StartupLoad::Ready { state, messages } => {
                 self.shell = state;
+                self.prune_request_execution_states();
                 self.startup_messages = messages;
                 if let Some(request_id) = preferred_selected_request_id {
                     self.shell.collections.select_request(request_id);
@@ -3341,6 +3445,7 @@ impl BeamView {
                 AppEvent::RequestDeleted { request_id, .. } => {
                     let deleted_selected =
                         self.shell.collections.selected_request_id() == Some(*request_id);
+                    self.clear_request_execution_state(*request_id);
                     self.request_file_index.remove(request_id);
                     self.shell.apply_event(&event);
                     if deleted_selected {
@@ -3768,7 +3873,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.send_request(window, cx);
+        self.handle_send_or_cancel_action(window, cx);
     }
 
     fn copy_request_as_curl_from_tree_node(
@@ -3861,6 +3966,7 @@ impl BeamView {
             let _ = view.update_in(cx, move |this, window, cx| match result {
                 Ok((state, messages)) => {
                     this.shell = state;
+                    this.prune_request_execution_states();
                     this.startup_messages = messages;
                     this.sync_request_editor_from_selection(window, cx);
                     window.push_notification("Collection deleted.", cx);
@@ -3903,6 +4009,7 @@ impl BeamView {
             let _ = view.update_in(cx, move |this, window, cx| match result {
                 Ok((state, messages)) => {
                     this.shell = state;
+                    this.prune_request_execution_states();
                     this.startup_messages = messages;
                     if let Some(request_id) = preferred_request {
                         this.shell.collections.select_request(request_id);
@@ -4151,7 +4258,7 @@ impl BeamView {
                     InputEvent::PressEnter { .. } => {
                         this.request.url = url_input.read(cx).value().to_string();
                         this.schedule_request_save(cx);
-                        this.send_request(window, cx);
+                        this.handle_send_or_cancel_action(window, cx);
                         cx.notify();
                     }
                     _ => {}
@@ -4225,7 +4332,7 @@ impl BeamView {
             request_file_index: Self::build_request_file_index(),
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
-            active_request_run_id: None,
+            request_execution_states: HashMap::new(),
             next_request_run_id: 1,
             app_command_tx: sync_runtime.command_tx,
             app_event_rx: sync_runtime.event_rx,
@@ -4246,11 +4353,17 @@ impl BeamView {
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        struct RequestRunCompletion {
+            request_id: Ulid,
+            run_id: u64,
+            outcome: Option<SendRequestOutcome>,
+        }
+
         let latest_script = self.post_script_editor.read(cx).value().to_string();
         self.request.post_script = (!latest_script.trim().is_empty()).then_some(latest_script);
         if matches!(
             self.send_button_state_for_view(),
-            SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::InvalidUrl)
+            SendButtonState::Disabled(SendDisabledReason::InvalidUrl)
         ) {
             self.show_invalid_url_border = true;
             cx.notify();
@@ -4258,55 +4371,136 @@ impl BeamView {
         }
         self.show_invalid_url_border = false;
         let request_id = self.shell.collections.selected_request_id();
+        let Some(request_id) = request_id else {
+            return;
+        };
+        let request_id_text = request_id.to_string();
         let selected_environment_id = self.selected_environment_id_for_view();
         let no_environment_selected = selected_environment_id.is_none();
         let environment_variables = self.load_environment_for_script(selected_environment_id);
         let request_snapshot =
             resolve_request_with_environment(self.request.clone(), &environment_variables);
-        if !matches!(request_snapshot.send_button_state(), SendButtonState::Ready) {
+        if !matches!(
+            Self::send_button_state_without_runtime(&request_snapshot),
+            SendButtonState::Ready
+        ) {
             if matches!(
-                request_snapshot.send_button_state(),
-                SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::InvalidUrl)
+                Self::send_button_state_without_runtime(&request_snapshot),
+                SendButtonState::Disabled(SendDisabledReason::InvalidUrl)
             ) {
                 self.show_invalid_url_border = true;
                 cx.notify();
             }
             return;
         }
-        self.request.is_sending = true;
-        let run_id = self.begin_request_run();
-        self.response_status = "Sending... (click cancel to stop waiting)".to_string();
+        let run_id = self.begin_request_run_for(request_id);
+        eprintln!("request_send_start request_id={request_id_text} run_id={run_id}");
+        self.response_status = "Sending...".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
+        let http_runtime = match shared_http_runtime() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                if let Some(state) = self.request_execution_states.get_mut(&request_id) {
+                    if state.run_id == run_id {
+                        state.cancel_tx = None;
+                        state.status = RequestExecutionStatus::Failed;
+                    }
+                }
+                eprintln!(
+                    "request_send_finish request_id={request_id_text} run_id={run_id} outcome=runtime_error"
+                );
+                self.response_status = "Error".to_string();
+                self.response_body_editor.update(cx, |input, cx| {
+                    input.set_value(error, window, cx);
+                });
+                cx.notify();
+                return;
+            }
+        };
         let view = cx.entity();
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let (result_tx, result_rx) = oneshot::channel::<RequestRunCompletion>();
+        if let Some(state) = self.request_execution_states.get_mut(&request_id) {
+            if state.run_id == run_id {
+                state.cancel_tx = Some(cancel_tx);
+            }
+        }
+
+        http_runtime.spawn(async move {
+            let request_future = Self::execute_request_with_script(
+                request_snapshot,
+                Some(request_id),
+                no_environment_selected,
+                environment_variables,
+            );
+            let outcome = tokio::select! {
+                _ = async {
+                    let _ = cancel_rx.await;
+                } => None,
+                outcome = request_future => Some(outcome),
+            };
+            let _ = result_tx.send(RequestRunCompletion {
+                request_id,
+                run_id,
+                outcome,
+            });
+        });
 
         cx.spawn_in(window, async move |_, cx| {
-            let outcome = cx
-                .background_executor()
-                .spawn(async move {
-                    Self::execute_request_with_script(
-                        request_snapshot,
-                        request_id,
-                        no_environment_selected,
-                        environment_variables,
-                    )
-                })
-                .await;
-
+            let Some(completion) = result_rx.await.ok() else {
+                return;
+            };
             let _ = view.update_in(cx, |this, window, cx| {
-                if this.active_request_run_id != Some(run_id) {
+                let request_id = completion.request_id;
+                let run_id = completion.run_id;
+                let maybe_outcome = completion.outcome;
+                // Phase 2 assumption: only the latest run for this request is allowed to mutate
+                // request-local execution state, so stale completions are dropped by run-id check.
+                let active_run_id_text = this
+                    .request_execution_states
+                    .get(&request_id)
+                    .map(|state| state.run_id)
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "none".to_string());
+                if !request_run_completion_is_current(
+                    &this.request_execution_states,
+                    request_id,
+                    run_id,
+                ) {
+                    eprintln!(
+                        "request_send_finish request_id={request_id_text} run_id={run_id} outcome=stale_ignored active_run_id={active_run_id_text}"
+                    );
                     return;
                 }
-                this.active_request_run_id = None;
-                this.request.is_sending = false;
+                apply_request_run_completion_status(
+                    &mut this.request_execution_states,
+                    request_id,
+                    run_id,
+                    maybe_outcome.is_some(),
+                );
+                let should_update_visible_response = completion_updates_selected_request_ui(
+                    this.shell.collections.selected_request_id(),
+                    request_id,
+                );
+                let Some(outcome) = maybe_outcome else {
+                    eprintln!(
+                        "request_send_finish request_id={request_id_text} run_id={run_id} outcome=canceled"
+                    );
+                    if should_update_visible_response {
+                        this.response_status = "Canceled".to_string();
+                        this.response_time = "—".to_string();
+                        this.response_size = "—".to_string();
+                    }
+                    cx.notify();
+                    return;
+                };
                 let response = outcome.response;
                 let response_status = response.status.clone();
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
                 let response_body = response.body.clone();
                 let response_headers = response.headers.clone();
-                let should_update_visible_response =
-                    this.shell.collections.selected_request_id() == request_id;
                 if should_update_visible_response {
                     this.response_status = response_status;
                     this.response_time = response_time;
@@ -4332,25 +4526,24 @@ impl BeamView {
                         );
                     }
                 }
-                if let Some(request_id) = request_id {
-                    if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
-                        eprintln!("Failed to persist response snapshot: {error}");
-                    }
-                    match outcome.script_result.as_ref() {
-                        Some(script_result) => {
-                            if let Err(error) =
-                                Self::persist_script_result(request_id, script_result)
-                            {
-                                eprintln!("Failed to persist script result: {error}");
-                            }
+                if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
+                    eprintln!("Failed to persist response snapshot: {error}");
+                }
+                match outcome.script_result.as_ref() {
+                    Some(script_result) => {
+                        if let Err(error) = Self::persist_script_result(request_id, script_result) {
+                            eprintln!("Failed to persist script result: {error}");
                         }
-                        None => {
-                            if let Err(error) = Self::clear_script_result_for_request(request_id) {
-                                eprintln!("Failed to clear script result: {error}");
-                            }
+                    }
+                    None => {
+                        if let Err(error) = Self::clear_script_result_for_request(request_id) {
+                            eprintln!("Failed to clear script result: {error}");
                         }
                     }
                 }
+                eprintln!(
+                    "request_send_finish request_id={request_id_text} run_id={run_id} outcome=completed"
+                );
                 cx.notify();
             });
         })
@@ -4359,13 +4552,13 @@ impl BeamView {
         cx.notify();
     }
 
-    fn execute_request_with_script(
+    async fn execute_request_with_script(
         request: RequestAuthoringState,
         request_id: Option<Ulid>,
         no_environment_selected: bool,
         environment_variables: Vec<EnvironmentVariable>,
     ) -> SendRequestOutcome {
-        let response = execute_http_request(request.clone());
+        let response = execute_http_request(request.clone()).await;
         let script_text = request.post_script.clone().unwrap_or_default();
         if script_text.trim().is_empty() {
             return SendRequestOutcome {
@@ -5419,7 +5612,7 @@ impl BeamView {
         let send_state = self.send_button_state_for_view();
         let send_disabled = matches!(
             send_state,
-            SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::EmptyUrl)
+            SendButtonState::Disabled(SendDisabledReason::EmptyUrl)
         );
         let send_icon_path = if matches!(send_state, SendButtonState::Sending) {
             "icons/cancel.svg"
@@ -5519,11 +5712,7 @@ impl BeamView {
                                             .text_color(cx.theme().muted_foreground),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        if this.request.is_sending {
-                                            this.cancel_active_request_wait();
-                                        } else {
-                                            this.send_request(window, cx);
-                                        }
+                                        this.handle_send_or_cancel_action(window, cx);
                                         cx.notify();
                                     })),
                             ),
@@ -6685,7 +6874,13 @@ impl BeamView {
                 .as_ref()
                 .filter(|message| !message.is_empty())
                 .cloned()
-                .or_else(|| if summary.is_empty() { None } else { Some(summary) });
+                .or_else(|| {
+                    if summary.is_empty() {
+                        None
+                    } else {
+                        Some(summary)
+                    }
+                });
             let line = if let Some(detail) = detail {
                 format!("[{status}] {} ({detail})", test.name)
             } else {
@@ -7316,9 +7511,23 @@ struct SendRequestOutcome {
 }
 
 static HTTP_CLIENT: OnceLock<Result<Client, String>> = OnceLock::new();
+static HTTP_RUNTIME: OnceLock<Result<TokioRuntime, String>> = OnceLock::new();
 
 fn default_user_agent() -> String {
     format!("Beam/{}", env!("CARGO_PKG_VERSION"))
+}
+
+fn shared_http_runtime() -> Result<&'static TokioRuntime, String> {
+    HTTP_RUNTIME
+        .get_or_init(|| {
+            TokioRuntimeBuilder::new_multi_thread()
+                .enable_all()
+                .worker_threads(2)
+                .build()
+                .map_err(|error| format!("Failed to initialize HTTP runtime: {error}"))
+        })
+        .as_ref()
+        .map_err(Clone::clone)
 }
 
 fn shared_http_client() -> Result<&'static Client, String> {
@@ -7327,13 +7536,98 @@ fn shared_http_client() -> Result<&'static Client, String> {
             Client::builder()
                 .user_agent(default_user_agent())
                 .danger_accept_invalid_certs(true)
-                // Requests wait indefinitely unless user cancels from the UI.
-                .timeout(None)
                 .build()
                 .map_err(|error| format!("Failed to initialize HTTP client: {error}"))
         })
         .as_ref()
         .map_err(Clone::clone)
+}
+
+fn request_run_completion_is_current(
+    execution_states: &HashMap<Ulid, RequestExecutionState>,
+    request_id: Ulid,
+    run_id: u64,
+) -> bool {
+    execution_states
+        .get(&request_id)
+        .is_some_and(|state| state.run_id == run_id)
+}
+
+fn apply_request_run_completion_status(
+    execution_states: &mut HashMap<Ulid, RequestExecutionState>,
+    request_id: Ulid,
+    run_id: u64,
+    completed: bool,
+) {
+    let Some(state) = execution_states.get_mut(&request_id) else {
+        return;
+    };
+    if state.run_id != run_id {
+        return;
+    }
+    state.cancel_tx = None;
+    state.status = if completed {
+        RequestExecutionStatus::Idle
+    } else {
+        RequestExecutionStatus::Canceled
+    };
+}
+
+fn completion_updates_selected_request_ui(
+    selected_request_id: Option<Ulid>,
+    completed_request_id: Ulid,
+) -> bool {
+    selected_request_id == Some(completed_request_id)
+}
+
+fn response_summary_for_selected_request(
+    selected_request_id: Option<Ulid>,
+    execution_states: &HashMap<Ulid, RequestExecutionState>,
+    fallback_status: &str,
+    fallback_time: &str,
+    fallback_size: &str,
+) -> (String, String, String) {
+    if let Some(request_id) = selected_request_id {
+        if execution_states
+            .get(&request_id)
+            .is_some_and(|state| state.status == RequestExecutionStatus::Sending)
+        {
+            return ("Sending...".to_string(), "—".to_string(), "—".to_string());
+        }
+    }
+
+    (
+        fallback_status.to_string(),
+        fallback_time.to_string(),
+        fallback_size.to_string(),
+    )
+}
+
+fn send_button_state_for_selected_request(
+    selected_request_id: Option<Ulid>,
+    execution_states: &HashMap<Ulid, RequestExecutionState>,
+    request: &RequestAuthoringState,
+    selected_environment_id: Option<Ulid>,
+) -> SendButtonState {
+    if let Some(request_id) = selected_request_id {
+        if execution_states
+            .get(&request_id)
+            .is_some_and(|state| state.status == RequestExecutionStatus::Sending)
+        {
+            return SendButtonState::Sending;
+        }
+    }
+    let state = BeamView::send_button_state_without_runtime(request);
+    if matches!(
+        state,
+        SendButtonState::Disabled(SendDisabledReason::InvalidUrl)
+    ) && selected_environment_id.is_some()
+        && request.url.contains("{{")
+        && request.url.contains("}}")
+    {
+        return SendButtonState::Ready;
+    }
+    state
 }
 
 fn resolve_request_with_environment(
@@ -7449,7 +7743,7 @@ fn resolve_template_variables(input: &str, resolved_env: &HashMap<String, String
     output
 }
 
-fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
+async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
     let start = Instant::now();
     let client = match shared_http_client() {
         Ok(client) => client,
@@ -7552,7 +7846,7 @@ fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
             builder = builder.form(&pairs);
         }
         BodyConfig::Multipart { fields } => {
-            let mut form = reqwest::blocking::multipart::Form::new();
+            let mut form = reqwest::multipart::Form::new();
             for field in fields
                 .iter()
                 .filter(|field| field.enabled && !field.name.trim().is_empty())
@@ -7581,7 +7875,7 @@ fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
         }
     }
 
-    match builder.send() {
+    match builder.send().await {
         Ok(response) => {
             let status = response.status();
             let status_text = status
@@ -7597,7 +7891,7 @@ fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            match response.bytes() {
+            match response.bytes().await {
                 Ok(bytes) => {
                     let body = String::from_utf8_lossy(&bytes).to_string();
                     HttpResponseView {
@@ -7705,5 +7999,245 @@ impl Render for BeamView {
             .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use ulid::Ulid;
+
+    use super::{
+        RequestExecutionState, RequestExecutionStatus, apply_request_run_completion_status,
+        completion_updates_selected_request_ui, request_run_completion_is_current,
+        response_summary_for_selected_request, send_button_state_for_selected_request,
+    };
+    use crate::request_authoring::{RequestAuthoringState, SendButtonState};
+
+    fn ready_request() -> RequestAuthoringState {
+        RequestAuthoringState {
+            url: "https://example.com".to_string(),
+            ..RequestAuthoringState::default()
+        }
+    }
+
+    #[::core::prelude::v1::test]
+    fn send_button_state_is_scoped_to_selected_request() {
+        let request_a = Ulid::new();
+        let request_b = Ulid::new();
+        let mut execution_states = HashMap::new();
+        execution_states.insert(
+            request_a,
+            RequestExecutionState {
+                run_id: 10,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+        let request = ready_request();
+
+        assert_eq!(
+            send_button_state_for_selected_request(
+                Some(request_a),
+                &execution_states,
+                &request,
+                None
+            ),
+            SendButtonState::Sending
+        );
+        assert_eq!(
+            send_button_state_for_selected_request(
+                Some(request_b),
+                &execution_states,
+                &request,
+                None
+            ),
+            SendButtonState::Ready
+        );
+
+        execution_states.insert(
+            request_b,
+            RequestExecutionState {
+                run_id: 20,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+        assert_eq!(
+            send_button_state_for_selected_request(
+                Some(request_a),
+                &execution_states,
+                &request,
+                None
+            ),
+            SendButtonState::Sending
+        );
+        assert_eq!(
+            send_button_state_for_selected_request(
+                Some(request_b),
+                &execution_states,
+                &request,
+                None
+            ),
+            SendButtonState::Sending
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn stale_completion_does_not_overwrite_newer_run_state() {
+        let request_id = Ulid::new();
+        let mut execution_states = HashMap::new();
+        execution_states.insert(
+            request_id,
+            RequestExecutionState {
+                run_id: 2,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+
+        assert!(!request_run_completion_is_current(
+            &execution_states,
+            request_id,
+            1
+        ));
+        apply_request_run_completion_status(&mut execution_states, request_id, 1, true);
+        assert_eq!(
+            execution_states
+                .get(&request_id)
+                .expect("request execution state should exist")
+                .status,
+            RequestExecutionStatus::Sending
+        );
+
+        assert!(request_run_completion_is_current(
+            &execution_states,
+            request_id,
+            2
+        ));
+        apply_request_run_completion_status(&mut execution_states, request_id, 2, true);
+        assert_eq!(
+            execution_states
+                .get(&request_id)
+                .expect("request execution state should exist")
+                .status,
+            RequestExecutionStatus::Idle
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn completion_for_non_selected_request_keeps_selected_send_state() {
+        let request_a = Ulid::new();
+        let request_b = Ulid::new();
+        let mut execution_states = HashMap::new();
+        execution_states.insert(
+            request_a,
+            RequestExecutionState {
+                run_id: 7,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+        let request = ready_request();
+
+        let before = send_button_state_for_selected_request(
+            Some(request_b),
+            &execution_states,
+            &request,
+            None,
+        );
+        apply_request_run_completion_status(&mut execution_states, request_a, 7, true);
+        let after = send_button_state_for_selected_request(
+            Some(request_b),
+            &execution_states,
+            &request,
+            None,
+        );
+
+        assert_eq!(before, SendButtonState::Ready);
+        assert_eq!(after, SendButtonState::Ready);
+    }
+
+    #[::core::prelude::v1::test]
+    fn completion_updates_only_selected_request_ui_flow() {
+        let request_a = Ulid::new();
+        let request_b = Ulid::new();
+        let mut execution_states = HashMap::new();
+        execution_states.insert(
+            request_a,
+            RequestExecutionState {
+                run_id: 11,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+        let request = ready_request();
+
+        // Simulate "A sending -> switch to B -> A completes".
+        let selected_request_id = Some(request_b);
+        assert!(!completion_updates_selected_request_ui(
+            selected_request_id,
+            request_a
+        ));
+        let before = send_button_state_for_selected_request(
+            selected_request_id,
+            &execution_states,
+            &request,
+            None,
+        );
+        apply_request_run_completion_status(&mut execution_states, request_a, 11, true);
+        let after = send_button_state_for_selected_request(
+            selected_request_id,
+            &execution_states,
+            &request,
+            None,
+        );
+
+        assert_eq!(before, SendButtonState::Ready);
+        assert_eq!(after, SendButtonState::Ready);
+        assert!(completion_updates_selected_request_ui(
+            Some(request_a),
+            request_a
+        ));
+    }
+
+    #[::core::prelude::v1::test]
+    fn selected_request_runtime_state_overrides_response_summary() {
+        let request_a = Ulid::new();
+        let request_b = Ulid::new();
+        let mut execution_states = HashMap::new();
+        execution_states.insert(
+            request_a,
+            RequestExecutionState {
+                run_id: 42,
+                status: RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+
+        let selected_a = response_summary_for_selected_request(
+            Some(request_a),
+            &execution_states,
+            "200",
+            "120 ms",
+            "1.2 KB",
+        );
+        let selected_b = response_summary_for_selected_request(
+            Some(request_b),
+            &execution_states,
+            "200",
+            "120 ms",
+            "1.2 KB",
+        );
+
+        assert_eq!(
+            selected_a,
+            ("Sending...".to_string(), "—".to_string(), "—".to_string())
+        );
+        assert_eq!(
+            selected_b,
+            ("200".to_string(), "120 ms".to_string(), "1.2 KB".to_string())
+        );
     }
 }

@@ -37,7 +37,6 @@ pub struct RequestAuthoringState {
     pub auth: AuthConfig,
     pub body: BodyConfig,
     pub post_script: Option<String>,
-    pub is_sending: bool,
 }
 
 impl Default for RequestAuthoringState {
@@ -62,17 +61,12 @@ impl Default for RequestAuthoringState {
             auth: AuthConfig::None,
             body: BodyConfig::None,
             post_script: None,
-            is_sending: false,
         }
     }
 }
 
 impl RequestAuthoringState {
     pub fn send_button_state(&self) -> SendButtonState {
-        if self.is_sending {
-            return SendButtonState::Sending;
-        }
-
         let trimmed = self.url.trim();
         if trimmed.is_empty() {
             return SendButtonState::Disabled(SendDisabledReason::EmptyUrl);
@@ -241,9 +235,6 @@ mod tests {
 
         state.url = "https://example.com".to_string();
         assert_eq!(state.send_button_state(), SendButtonState::Ready);
-
-        state.is_sending = true;
-        assert_eq!(state.send_button_state(), SendButtonState::Sending);
     }
 
     #[test]
