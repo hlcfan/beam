@@ -1161,6 +1161,7 @@ impl Render for EnvironmentManagerDialogView {
             .read(cx)
             .selected_range()
             .is_empty();
+        let has_selected_environment = self.selected_id.is_some();
         let selected_label = self.selected_id.and_then(|id| {
             self.options
                 .iter()
@@ -1452,13 +1453,24 @@ impl Render for EnvironmentManagerDialogView {
                             .border_color(cx.theme().border)
                             .bg(cx.theme().background)
                             .p_2()
-                            .child(
+                            .child(if has_selected_environment {
                                 div()
                                     .w_full()
                                     .h_full()
                                     .overflow_y_scrollbar()
-                                    .child(variables_panel),
-                            ),
+                                    .child(variables_panel)
+                                    .into_any_element()
+                            } else {
+                                v_flex()
+                                    .w_full()
+                                    .h_full()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Select an environment from the left pane.")
+                                    .into_any_element()
+                            }),
                     ),
             )
             .into_any_element()
@@ -3302,8 +3314,15 @@ impl BeamView {
                     );
                     window.push_notification(error.clone(), cx);
                 }
-                AppEvent::EnvironmentUpserted { .. } | AppEvent::EnvironmentDeleted { .. } => {
+                AppEvent::EnvironmentUpserted { .. } => {
                     self.shell.apply_event(&event);
+                    self.refresh_environment_manager_dialog_if_open(window, cx);
+                }
+                AppEvent::EnvironmentDeleted { .. } => {
+                    self.shell.apply_event(&event);
+                    if let Err(error) = self.persist_environment_selection_state() {
+                        window.push_notification(error, cx);
+                    }
                     self.refresh_environment_manager_dialog_if_open(window, cx);
                 }
                 _ => self.shell.apply_event(&event),
