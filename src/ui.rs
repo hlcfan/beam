@@ -3755,8 +3755,6 @@ impl BeamView {
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
-        } else {
-            window.push_notification("Duplicating request...", cx);
         }
     }
 
