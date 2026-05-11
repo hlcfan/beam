@@ -6601,22 +6601,18 @@ impl BeamView {
                 }
                 _ => String::new(),
             };
-            let line = if summary.is_empty() {
-                format!("[{status}] {}", test.name)
+            let detail = test
+                .error_message
+                .as_ref()
+                .filter(|message| !message.is_empty())
+                .cloned()
+                .or_else(|| if summary.is_empty() { None } else { Some(summary) });
+            let line = if let Some(detail) = detail {
+                format!("[{status}] {} ({detail})", test.name)
             } else {
-                format!("[{status}] {} ({summary})", test.name)
+                format!("[{status}] {}", test.name)
             };
             column = column.child(div().text_xs().text_color(color).child(line));
-            if let Some(error) = &test.error_message {
-                if !error.is_empty() {
-                    column = column.child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().danger_foreground)
-                            .child(format!("  {error}")),
-                    );
-                }
-            }
         }
         column.into_any_element()
     }
@@ -6631,7 +6627,7 @@ impl BeamView {
             column = column.child(
                 div()
                     .text_xs()
-                    .text_color(cx.theme().danger_foreground)
+                    .text_color(cx.theme().danger)
                     .child("Warning: Script wrote environment changes, but \"No environment\" was selected. Changes were not persisted."),
             );
         }
