@@ -2737,16 +2737,13 @@ impl BeamView {
         if index >= self.request.query_params.len() {
             return;
         }
-        self.request.query_params.remove(index);
-        if self.request.query_params.is_empty() {
-            self.request
-                .query_params
-                .push(crate::models::QueryParamField {
-                    name: String::new(),
-                    value: String::new(),
-                    enabled: true,
-                    description: None,
-                });
+        if self.request.query_params.len() == 1 {
+            if let Some(param) = self.request.query_params.get_mut(index) {
+                param.name.clear();
+                param.value.clear();
+            }
+        } else {
+            self.request.query_params.remove(index);
         }
         self.rebuild_request_param_inputs(window, cx);
         self.schedule_request_save(cx);
@@ -2762,15 +2759,13 @@ impl BeamView {
         if index >= self.request.headers.len() {
             return;
         }
-        self.request.headers.remove(index);
-        if self.request.headers.is_empty() {
-            self.request.headers.push(crate::models::HeaderField {
-                name: String::new(),
-                value: String::new(),
-                enabled: true,
-                description: None,
-                secret: false,
-            });
+        if self.request.headers.len() == 1 {
+            if let Some(header) = self.request.headers.get_mut(index) {
+                header.name.clear();
+                header.value.clear();
+            }
+        } else {
+            self.request.headers.remove(index);
         }
         self.rebuild_request_header_inputs(window, cx);
         self.schedule_request_save(cx);
@@ -6169,7 +6164,7 @@ impl BeamView {
                                         }),
                                 ),
                             )
-                            .child(if self.request.query_params.len() > 1 {
+                            .child(
                                 div().w(px(28.0)).child(
                                     Button::new(format!("delete-request-param-{index}"))
                                         .small()
@@ -6184,10 +6179,8 @@ impl BeamView {
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.delete_request_param_row(index, window, cx);
                                         })),
-                                )
-                            } else {
-                                div().w(px(28.0))
-                            }),
+                                ),
+                            ),
                     );
                 }
 
@@ -6264,7 +6257,7 @@ impl BeamView {
                                         }),
                                 ),
                             )
-                            .child(if self.request.headers.len() > 1 {
+                            .child(
                                 div().w(px(28.0)).child(
                                     Button::new(format!("delete-request-header-{index}"))
                                         .small()
@@ -6279,10 +6272,8 @@ impl BeamView {
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.delete_request_header_row(index, window, cx);
                                         })),
-                                )
-                            } else {
-                                div().w(px(28.0))
-                            }),
+                                ),
+                            ),
                     );
                 }
 
