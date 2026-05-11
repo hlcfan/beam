@@ -786,16 +786,14 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             self.save_workspace(&WorkspaceFile::default())?;
             report.created_workspace_file = true;
         } else {
-            let existing = self.load_workspace()?;
-            validate_schema_version(SchemaKind::Workspace, existing.schema_version)?;
+            self.load_workspace()?;
         }
 
         if !self.paths.local_state_file.exists() {
             self.save_local_state(&LocalStateFile::default())?;
             report.created_local_state_file = true;
         } else {
-            let existing = self.load_local_state()?;
-            validate_schema_version(SchemaKind::LocalState, existing.schema_version)?;
+            self.load_local_state()?;
         }
 
         Ok(report)
@@ -807,6 +805,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             return Ok(workspace);
         }
 
+        // TODO: the workspace file is read twice, can consolidate this.
         let parsed_file: WorkspaceTomlFile = self.read_toml_file(&self.paths.workspace_file)?;
         validate_schema_version(SchemaKind::Workspace, parsed_file.workspace.schema_version)?;
         Ok(WorkspaceFile {
@@ -835,6 +834,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             return Ok(local_state);
         }
 
+        // TODO: the local-state file is read twice, consolidate this.
         let parsed_file: LocalStateTomlFile = self.read_toml_file(&self.paths.local_state_file)?;
         validate_schema_version(
             SchemaKind::LocalState,
@@ -854,6 +854,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 .into_iter()
                 .map(|entry| (entry.collection_id, entry.environment_id))
                 .collect(),
+            // TODO: tree_state isn't better named?
             tree_state: TreeState {
                 expanded_item_ids: parsed_file.local_state.expanded_item_ids,
             },
