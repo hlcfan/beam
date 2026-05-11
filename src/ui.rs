@@ -334,6 +334,8 @@ struct BeamView {
     request_file_index: HashMap<Ulid, PathBuf>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
+    active_request_run_id: Option<u64>,
+    next_request_run_id: u64,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
@@ -1616,6 +1618,21 @@ impl Render for TreeRenameDialogView {
 }
 
 impl BeamView {
+    fn begin_request_run(&mut self) -> u64 {
+        let run_id = self.next_request_run_id;
+        self.next_request_run_id = self.next_request_run_id.saturating_add(1);
+        self.active_request_run_id = Some(run_id);
+        run_id
+    }
+
+    fn cancel_active_request_wait(&mut self) {
+        self.active_request_run_id = None;
+        self.request.is_sending = false;
+        self.response_status = "Canceled".to_string();
+        self.response_time = "—".to_string();
+        self.response_size = "—".to_string();
+    }
+
     fn script_contains_environment_mutation(script: &str) -> bool {
         let lowered = script.to_ascii_lowercase();
         [
@@ -4208,6 +4225,8 @@ impl BeamView {
             request_file_index: Self::build_request_file_index(),
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
+            active_request_run_id: None,
+            next_request_run_id: 1,
             app_command_tx: sync_runtime.command_tx,
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
@@ -4255,7 +4274,8 @@ impl BeamView {
             return;
         }
         self.request.is_sending = true;
-        self.response_status = "Sending...".to_string();
+        let run_id = self.begin_request_run();
+        self.response_status = "Sending... (click cancel to stop waiting)".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
         let view = cx.entity();
@@ -4274,6 +4294,10 @@ impl BeamView {
                 .await;
 
             let _ = view.update_in(cx, |this, window, cx| {
+                if this.active_request_run_id != Some(run_id) {
+                    return;
+                }
+                this.active_request_run_id = None;
                 this.request.is_sending = false;
                 let response = outcome.response;
                 let response_status = response.status.clone();
@@ -4281,14 +4305,18 @@ impl BeamView {
                 let response_size = response.size.clone();
                 let response_body = response.body.clone();
                 let response_headers = response.headers.clone();
-                this.response_status = response_status;
-                this.response_time = response_time;
-                this.response_size = response_size;
-                this.response_body_editor.update(cx, |input, cx| {
-                    input.set_value(response_body.clone(), window, cx);
-                });
-                this.response_headers_raw = response_headers;
-                this.script_result = outcome.script_result.clone();
+                let should_update_visible_response =
+                    this.shell.collections.selected_request_id() == request_id;
+                if should_update_visible_response {
+                    this.response_status = response_status;
+                    this.response_time = response_time;
+                    this.response_size = response_size;
+                    this.response_body_editor.update(cx, |input, cx| {
+                        input.set_value(response_body.clone(), window, cx);
+                    });
+                    this.response_headers_raw = response_headers;
+                    this.script_result = outcome.script_result.clone();
+                }
                 if let (Some(environment_id), Some(variables)) = (
                     selected_environment_id,
                     outcome.updated_environment_variables,
@@ -5392,8 +5420,12 @@ impl BeamView {
         let send_disabled = matches!(
             send_state,
             SendButtonState::Disabled(crate::request_authoring::SendDisabledReason::EmptyUrl)
-                | SendButtonState::Sending
         );
+        let send_icon_path = if matches!(send_state, SendButtonState::Sending) {
+            "icons/cancel.svg"
+        } else {
+            "icons/send.svg"
+        };
         let highlight_invalid_url = self.show_invalid_url_border;
         let current_method = self.request.method;
         let url_has_selection = !self.url_input.read(cx).selected_range().is_empty();
@@ -5482,12 +5514,16 @@ impl BeamView {
                                     .disabled(send_disabled)
                                     .icon(
                                         Icon::default()
-                                            .path("icons/send.svg")
+                                            .path(send_icon_path)
                                             .size(px(16.0))
                                             .text_color(cx.theme().muted_foreground),
                                     )
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.send_request(window, cx);
+                                        if this.request.is_sending {
+                                            this.cancel_active_request_wait();
+                                        } else {
+                                            this.send_request(window, cx);
+                                        }
                                         cx.notify();
                                     })),
                             ),
@@ -7291,6 +7327,8 @@ fn shared_http_client() -> Result<&'static Client, String> {
             Client::builder()
                 .user_agent(default_user_agent())
                 .danger_accept_invalid_certs(true)
+                // Requests wait indefinitely unless user cancels from the UI.
+                .timeout(None)
                 .build()
                 .map_err(|error| format!("Failed to initialize HTTP client: {error}"))
         })
