@@ -431,6 +431,7 @@ struct EnvironmentManagerDialogView {
     suppress_environment_name_change_events: bool,
     environment_name_input_subscription: Option<Subscription>,
     loaded_environment_name: Option<String>,
+    pending_new_environment_command_id: Option<String>,
     error: Option<String>,
 }
 
@@ -735,6 +736,7 @@ impl EnvironmentManagerDialogView {
             suppress_environment_name_change_events: false,
             environment_name_input_subscription: None,
             loaded_environment_name: None,
+            pending_new_environment_command_id: None,
             error: None,
         };
         let environment_name_input_handle = view.environment_name_input.clone();
@@ -878,19 +880,35 @@ impl EnvironmentManagerDialogView {
 
     fn add_environment(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let environment_name = self.next_default_environment_name();
+        let command_id = next_command_id();
         let command = AppCommand::CreateEnvironment {
             name: environment_name,
             scope: EnvironmentScope::Global,
             collection_id: None,
-            command_id: next_command_id(),
+            command_id: command_id.clone(),
         };
         let send_result = self
             .beam_view
             .update(cx, move |this, _| this.publish_app_command(command));
-        self.error = send_result
-            .err()
-            .map(|error| format!("Failed to queue environment creation: {error}"));
+        match send_result {
+            Ok(()) => {
+                self.pending_new_environment_command_id = Some(command_id);
+                self.error = None;
+            }
+            Err(error) => {
+                self.pending_new_environment_command_id = None;
+                self.error = Some(format!("Failed to queue environment creation: {error}"));
+            }
+        }
         cx.notify();
+    }
+
+    fn focus_environment_name_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.environment_name_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            let cursor_end = input.value().encode_utf16().count() as u32;
+            input.set_cursor_position(Position::new(0, cursor_end), window, cx);
+        });
     }
 
     fn delete_selected_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1141,12 +1159,28 @@ impl EnvironmentManagerDialogView {
         options: Vec<(Ulid, String)>,
         environment_file_names: HashMap<Ulid, String>,
         active_environment_id: Option<Ulid>,
+        latest_upsert: Option<(Ulid, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let active_environment_changed = self.active_environment_id != active_environment_id;
         self.active_environment_id = active_environment_id;
-        if self.sync_environment_options(options, environment_file_names, window, cx) {
+        let mut should_notify = self.sync_environment_options(options, environment_file_names, window, cx);
+        if let Some((environment_id, command_id)) = latest_upsert {
+            if self.pending_new_environment_command_id.as_deref() == Some(command_id.as_str())
+                && self
+                    .options
+                    .iter()
+                    .any(|(option_id, _)| *option_id == environment_id)
+            {
+                self.pending_new_environment_command_id = None;
+                self.selected_id = Some(environment_id);
+                self.load_variables(environment_id, window, cx);
+                self.focus_environment_name_input(window, cx);
+                should_notify = true;
+            }
+        }
+        if should_notify {
             cx.notify();
         } else if active_environment_changed {
             cx.notify();
@@ -1810,6 +1844,7 @@ impl BeamView {
 
     fn refresh_environment_manager_dialog_if_open(
         &mut self,
+        latest_upsert: Option<(Ulid, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1824,6 +1859,7 @@ impl BeamView {
                 options,
                 environment_file_names,
                 active_environment_id,
+                latest_upsert,
                 window,
                 cx,
             );
@@ -3309,16 +3345,23 @@ impl BeamView {
                     );
                     window.push_notification(error.clone(), cx);
                 }
-                AppEvent::EnvironmentUpserted { .. } => {
+                AppEvent::EnvironmentUpserted {
+                    environment,
+                    command_id,
+                } => {
                     self.shell.apply_event(&event);
-                    self.refresh_environment_manager_dialog_if_open(window, cx);
+                    self.refresh_environment_manager_dialog_if_open(
+                        Some((environment.environment_id, command_id.clone())),
+                        window,
+                        cx,
+                    );
                 }
                 AppEvent::EnvironmentDeleted { .. } => {
                     self.shell.apply_event(&event);
                     if let Err(error) = self.persist_environment_selection_state() {
                         window.push_notification(error, cx);
                     }
-                    self.refresh_environment_manager_dialog_if_open(window, cx);
+                    self.refresh_environment_manager_dialog_if_open(None, window, cx);
                 }
                 _ => self.shell.apply_event(&event),
             }
