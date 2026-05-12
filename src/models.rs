@@ -133,6 +133,7 @@ pub struct RequestFile {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestMeta {
+    //TOCHECK: we need file path here, so can write to the file directly
     pub request_id: Ulid,
     pub name: String,
     pub description: Option<String>,
@@ -238,6 +239,7 @@ pub struct EnvironmentMeta {
     pub collection_id: Option<Ulid>,
     pub scope: EnvironmentScope,
     pub name: String,
+    // TOCHECK: file path should be file_path to fast write
     #[serde(default)]
     pub file_name: String,
     pub description: Option<String>,
@@ -258,6 +260,7 @@ pub struct EnvironmentVariable {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LocalStateFile {
     pub schema_version: u32,
+    // TODO: why local state is in a dedicated struct?
     pub local_state: LocalState,
     #[serde(default)]
     pub collection_environment_selection: BTreeMap<Ulid, Ulid>,

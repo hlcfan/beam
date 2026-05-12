@@ -1124,6 +1124,7 @@ where
     };
 
     let (collections, request_pane_data, mut warnings) = load_collection_tree(paths, &local_state);
+    // TOCHECK: environments can be load with collection tree in parallel
     let environments = load_environments(paths, &mut warnings);
     let mut messages: Vec<StartupMessage> = warnings
         .drain(..)
@@ -1243,25 +1244,7 @@ fn load_environments(paths: &BeamPaths, warnings: &mut Vec<String>) -> Vec<Envir
 }
 
 fn parse_environment_file(path: &Path) -> Result<EnvironmentFile> {
-    if let Ok(current) = parse_toml::<EnvironmentFile>(path) {
-        return Ok(current);
-    }
-
-    let legacy: EnvironmentTomlFile = parse_toml(path)?;
-    Ok(EnvironmentFile {
-        schema_version: legacy.environment.schema_version,
-        environment: crate::models::EnvironmentMeta {
-            environment_id: legacy.environment.environment_id,
-            collection_id: legacy.environment.collection_id,
-            scope: legacy.environment.scope,
-            name: legacy.environment.name,
-            file_name: String::new(),
-            description: legacy.environment.description,
-            created_at: legacy.environment.created_at,
-            updated_at: legacy.environment.updated_at,
-        },
-        variables: legacy.variables,
-    })
+    parse_toml(path)
 }
 
 fn load_navigation_manifest(
@@ -1427,6 +1410,7 @@ fn build_tree(
         );
     }
 
+    // TOCHECK: can we save one more for loop, the collections were iterated above at line 1399
     for collection in collections {
         for item in &collection.items {
             attach_item(
@@ -1440,6 +1424,7 @@ fn build_tree(
         }
     }
 
+    // TOCHECK: can we save one more for loop, the folders were iterated above at line 1415
     for folder in folders {
         for item in &folder.items {
             attach_item(
@@ -1520,6 +1505,7 @@ fn parse_request_tree_meta(path: &Path) -> Result<(RequestTreeMetaWithName, Requ
         request_id: request_file.meta.request_id,
         name: request_file.meta.name,
         method: request_file.request.method,
+        // TODO: Do we need the url?
         url: request_file.request.url.clone(),
     };
     let pane_data = RequestPaneData {
@@ -1540,25 +1526,6 @@ struct RequestTreeMetaWithName {
     name: String,
     method: HttpMethod,
     url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct EnvironmentTomlFile {
-    environment: EnvironmentTomlMeta,
-    #[serde(default)]
-    variables: Vec<crate::models::EnvironmentVariable>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct EnvironmentTomlMeta {
-    schema_version: u32,
-    environment_id: Ulid,
-    collection_id: Option<Ulid>,
-    scope: EnvironmentScope,
-    name: String,
-    description: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 fn file_name(path: &Path) -> Option<&str> {
