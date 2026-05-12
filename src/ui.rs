@@ -5697,7 +5697,7 @@ impl BeamView {
                 panel = panel.child(
                     div()
                         .text_xs()
-                        .text_color(cx.theme().warning_foreground)
+                        .text_color(cx.theme().warning)
                         .child(msg.text.clone()),
                 );
             }
