@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -85,6 +86,8 @@ pub struct CollectionFile {
     pub collection: CollectionMeta,
     #[serde(default)]
     pub items: Vec<CollectionItemRef>,
+    #[serde(skip)]
+    pub manifest_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +112,8 @@ pub struct FolderFile {
     pub folder: FolderMeta,
     #[serde(default)]
     pub items: Vec<CollectionItemRef>,
+    #[serde(skip)]
+    pub manifest_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,14 +131,16 @@ pub struct FolderMeta {
 pub struct RequestFile {
     pub meta: RequestMeta,
     pub request: RequestDefinition,
+    // TODO: auth, body, scripts belong to the RequestDefinition instead of new fields
     pub auth: AuthConfig,
     pub body: BodyConfig,
     pub scripts: ScriptConfig,
+    #[serde(skip)]
+    pub file_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestMeta {
-    //TOCHECK: we need file path here, so can write to the file directly
     pub request_id: Ulid,
     pub name: String,
     pub description: Option<String>,
@@ -231,6 +238,8 @@ pub struct EnvironmentFile {
     pub environment: EnvironmentMeta,
     #[serde(default)]
     pub variables: Vec<EnvironmentVariable>,
+    #[serde(skip)]
+    pub file_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -239,7 +248,6 @@ pub struct EnvironmentMeta {
     pub collection_id: Option<Ulid>,
     pub scope: EnvironmentScope,
     pub name: String,
-    // TOCHECK: file path should be file_path to fast write
     #[serde(default)]
     pub file_name: String,
     pub description: Option<String>,
@@ -299,9 +307,44 @@ impl Default for LocalStateFile {
     }
 }
 
+impl CollectionFile {
+    pub fn with_manifest_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.manifest_path = Some(path.into());
+        self
+    }
+}
+
+impl FolderFile {
+    pub fn with_manifest_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.manifest_path = Some(path.into());
+        self
+    }
+}
+
+impl RequestFile {
+    pub fn with_file_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.file_path = Some(path.into());
+        self
+    }
+}
+
+impl EnvironmentFile {
+    pub fn with_file_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.file_path = Some(path.into());
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{AuthConfig, BodyConfig};
+    use super::{
+        AuthConfig, BodyConfig, CollectionFile, CollectionMeta, EnvironmentFile, EnvironmentMeta,
+        EnvironmentScope, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
+    };
+    use crate::schema::SCHEMA_VERSION_V1;
+    use chrono::Utc;
+    use std::path::PathBuf;
+    use ulid::Ulid;
 
     #[test]
     fn auth_config_accepts_title_case_type_values() {
@@ -330,5 +373,84 @@ mod tests {
         let json_body: BodyConfig =
             toml::from_str("mode = \"Json\"\ntext = \"{}\"").expect("parse json body");
         assert!(matches!(json_body, BodyConfig::Json { .. }));
+    }
+
+    #[test]
+    fn request_file_runtime_path_is_not_serialized() {
+        let now = Utc::now();
+        let request = RequestFile {
+            meta: RequestMeta {
+                request_id: Ulid::new(),
+                name: "Get User".to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            request: RequestDefinition {
+                method: super::HttpMethod::Get,
+                url: "https://api.example.com/users/1".to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+            },
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            scripts: ScriptConfig::default(),
+            file_path: Some(PathBuf::from("/tmp/request.toml")),
+        };
+
+        let encoded = toml::to_string_pretty(&request).expect("encode request");
+        assert!(!encoded.contains("file_path"));
+    }
+
+    #[test]
+    fn collection_and_environment_runtime_paths_are_not_serialized() {
+        let now = Utc::now();
+        let collection = CollectionFile {
+            collection: CollectionMeta {
+                collection_id: Ulid::new(),
+                name: "Sample".to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            items: Vec::new(),
+            manifest_path: Some(PathBuf::from("/tmp/collection.toml")),
+        };
+        let environment = EnvironmentFile {
+            schema_version: SCHEMA_VERSION_V1,
+            environment: EnvironmentMeta {
+                environment_id: Ulid::new(),
+                collection_id: None,
+                scope: EnvironmentScope::Global,
+                name: "Global".to_string(),
+                file_name: "global.toml".to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            variables: Vec::new(),
+            file_path: Some(PathBuf::from("/tmp/global.toml")),
+        };
+        let folder = super::FolderFile {
+            folder: super::FolderMeta {
+                folder_id: Ulid::new(),
+                collection_id: Ulid::new(),
+                parent_folder_id: None,
+                name: "Auth".to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            items: Vec::new(),
+            manifest_path: Some(PathBuf::from("/tmp/folder.toml")),
+        };
+
+        let collection_encoded = toml::to_string_pretty(&collection).expect("encode collection");
+        let environment_encoded = toml::to_string_pretty(&environment).expect("encode environment");
+        let folder_encoded = toml::to_string_pretty(&folder).expect("encode folder");
+
+        assert!(!collection_encoded.contains("manifest_path"));
+        assert!(!environment_encoded.contains("file_path"));
+        assert!(!folder_encoded.contains("manifest_path"));
     }
 }

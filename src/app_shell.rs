@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Instant;
@@ -14,8 +15,11 @@ use crate::models::{
     LocalStateFile, QueryParamField, RequestFile,
 };
 use crate::paths::BeamPaths;
+#[cfg(test)]
+use crate::storage::RequestParentRef;
 use crate::storage::{
-    CreateEnvironmentInput, CreateRequestInput, RequestParentRef, WorkspaceStorage,
+    CreateEnvironmentInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
+    RenameRequestInput, WorkspaceStorage,
 };
 
 const MIN_SPLIT_RATIO: f32 = 0.1;
@@ -117,6 +121,7 @@ pub struct TreeNode {
     pub kind: TreeNodeKind,
     pub request_method: Option<HttpMethod>,
     pub request_url: Option<String>,
+    pub manifest_path: Option<PathBuf>,
     pub parent_id: Option<Ulid>,
     pub children: Vec<Ulid>,
 }
@@ -211,6 +216,20 @@ impl CollectionsTreeState {
         true
     }
 
+    pub fn rename_node_with_manifest_path(
+        &mut self,
+        id: Ulid,
+        new_name: String,
+        manifest_path: Option<PathBuf>,
+    ) -> bool {
+        let Some(node) = self.nodes.get_mut(&id) else {
+            return false;
+        };
+        node.name = new_name;
+        node.manifest_path = manifest_path;
+        true
+    }
+
     pub fn visible_rows(&self) -> Vec<TreeRow> {
         let mut rows = Vec::new();
         for root in &self.roots {
@@ -265,6 +284,7 @@ impl CollectionsTreeState {
         name: String,
         method: HttpMethod,
         url: String,
+        manifest_path: Option<PathBuf>,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
             parent.children.push(request_id);
@@ -277,6 +297,7 @@ impl CollectionsTreeState {
                 kind: TreeNodeKind::Request,
                 request_method: Some(method),
                 request_url: Some(url),
+                manifest_path,
                 parent_id: Some(parent_id),
                 children: Vec::new(),
             },
@@ -291,6 +312,7 @@ impl CollectionsTreeState {
         name: String,
         method: HttpMethod,
         url: String,
+        manifest_path: Option<PathBuf>,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
             if let Some(index) = parent
@@ -311,6 +333,7 @@ impl CollectionsTreeState {
                 kind: TreeNodeKind::Request,
                 request_method: Some(method),
                 request_url: Some(url),
+                manifest_path,
                 parent_id: Some(parent_id),
                 children: Vec::new(),
             },
@@ -324,6 +347,7 @@ impl CollectionsTreeState {
         name: String,
         method: HttpMethod,
         url: String,
+        manifest_path: Option<PathBuf>,
     ) -> bool {
         if self.nodes.contains_key(&request_id) {
             let (kind, current_parent) = {
@@ -358,6 +382,7 @@ impl CollectionsTreeState {
             node.name = name;
             node.request_method = Some(method);
             node.request_url = Some(url);
+            node.manifest_path = manifest_path;
             return true;
         }
 
@@ -378,6 +403,7 @@ impl CollectionsTreeState {
                 kind: TreeNodeKind::Request,
                 request_method: Some(method),
                 request_url: Some(url),
+                manifest_path,
                 parent_id: Some(parent_id),
                 children: Vec::new(),
             },
@@ -401,6 +427,82 @@ impl CollectionsTreeState {
             self.selected_request_id = None;
         }
         true
+    }
+
+    fn collect_subtree_ids(&self, root_id: Ulid, out: &mut Vec<Ulid>) {
+        let Some(node) = self.nodes.get(&root_id) else {
+            return;
+        };
+        out.push(root_id);
+        for child_id in &node.children {
+            self.collect_subtree_ids(*child_id, out);
+        }
+    }
+
+    pub fn subtree_request_ids(&self, root_id: Ulid) -> Vec<Ulid> {
+        let mut ids = Vec::new();
+        self.collect_subtree_ids(root_id, &mut ids);
+        ids.into_iter()
+            .filter(|id| {
+                self.nodes
+                    .get(id)
+                    .is_some_and(|node| node.kind == TreeNodeKind::Request)
+            })
+            .collect()
+    }
+
+    pub fn replace_subtree_path_prefix(&mut self, root_id: Ulid, old_root: &Path, new_root: &Path) {
+        let mut ids = Vec::new();
+        self.collect_subtree_ids(root_id, &mut ids);
+        for id in ids {
+            let Some(node) = self.nodes.get_mut(&id) else {
+                continue;
+            };
+            let Some(existing_path) = node.manifest_path.as_ref() else {
+                continue;
+            };
+            let Ok(relative) = existing_path.strip_prefix(old_root) else {
+                continue;
+            };
+            node.manifest_path = Some(new_root.join(relative));
+        }
+    }
+
+    pub fn remove_subtree(&mut self, root_id: Ulid) -> Vec<Ulid> {
+        let Some(root_node) = self.nodes.get(&root_id).cloned() else {
+            return Vec::new();
+        };
+        let mut ids = Vec::new();
+        self.collect_subtree_ids(root_id, &mut ids);
+        let request_ids: Vec<Ulid> = ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.nodes
+                    .get(id)
+                    .is_some_and(|node| node.kind == TreeNodeKind::Request)
+            })
+            .collect();
+
+        if let Some(parent_id) = root_node.parent_id {
+            if let Some(parent) = self.nodes.get_mut(&parent_id) {
+                parent.children.retain(|id| *id != root_id);
+            }
+        } else {
+            self.roots.retain(|id| *id != root_id);
+        }
+
+        for id in &ids {
+            self.nodes.remove(id);
+            self.expanded.remove(id);
+        }
+        if self
+            .selected_request_id
+            .is_some_and(|selected_id| request_ids.contains(&selected_id))
+        {
+            self.selected_request_id = None;
+        }
+        request_ids
     }
 }
 
@@ -555,6 +657,7 @@ impl AppShellState {
                     request.meta.name.clone(),
                     request.request.method,
                     request.request.url.clone(),
+                    request.file_path.clone(),
                 );
             }
             AppEvent::RequestDeleted { request_id, .. } => {
@@ -647,14 +750,11 @@ pub enum AppCommand {
         command_id: String,
     },
     DuplicateRequest {
-        request_id: Ulid,
-        duplicate_name: String,
-        parent: RequestParentRef,
+        input: DuplicateRequestInput,
         command_id: String,
     },
     RenameRequest {
-        request_id: Ulid,
-        new_name: String,
+        input: RenameRequestInput,
         command_id: String,
     },
     UpdateRequest {
@@ -666,7 +766,7 @@ pub enum AppCommand {
         command_id: String,
     },
     DeleteRequest {
-        request_id: Ulid,
+        input: DeleteRequestInput,
         command_id: String,
     },
 }
@@ -901,13 +1001,13 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
                 return Err("Request name cannot be empty.".to_string());
             }
         }
-        AppCommand::DuplicateRequest { duplicate_name, .. } => {
-            if duplicate_name.trim().is_empty() {
+        AppCommand::DuplicateRequest { input, .. } => {
+            if input.duplicate_name.trim().is_empty() {
                 return Err("Request name cannot be empty.".to_string());
             }
         }
-        AppCommand::RenameRequest { new_name, .. } => {
-            if new_name.trim().is_empty() {
+        AppCommand::RenameRequest { input, .. } => {
+            if input.new_name.trim().is_empty() {
                 return Err("Request name cannot be empty.".to_string());
             }
         }
@@ -1013,27 +1113,18 @@ where
                 command_id,
             }])
         }
-        AppCommand::DuplicateRequest {
-            request_id,
-            duplicate_name,
-            parent,
-            command_id,
-        } => {
+        AppCommand::DuplicateRequest { input, command_id } => {
             let duplicated = storage
-                .duplicate_request(request_id, &duplicate_name, parent)
+                .duplicate_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: duplicated,
                 command_id,
             }])
         }
-        AppCommand::RenameRequest {
-            request_id,
-            new_name,
-            command_id,
-        } => {
+        AppCommand::RenameRequest { input, command_id } => {
             let renamed = storage
-                .rename_request(request_id, &new_name)
+                .rename_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: renamed,
@@ -1056,15 +1147,12 @@ where
                 command_id,
             }])
         }
-        AppCommand::DeleteRequest {
-            request_id,
-            command_id,
-        } => {
+        AppCommand::DeleteRequest { input, command_id } => {
             storage
-                .delete_request(request_id)
+                .delete_request(input.clone())
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestDeleted {
-                request_id,
+                request_id: input.request_id,
                 command_id,
             }])
         }
@@ -1087,6 +1175,7 @@ struct CollectionManifest {
     collection_id: Ulid,
     name: String,
     items: Vec<CollectionItemRef>,
+    manifest_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1096,6 +1185,7 @@ struct FolderManifest {
     name: String,
     parent_folder_id: Option<Ulid>,
     items: Vec<CollectionItemRef>,
+    manifest_path: Option<PathBuf>,
 }
 
 pub fn startup_preload<S>(storage: &S, paths: &BeamPaths) -> StartupLoad
@@ -1134,6 +1224,7 @@ where
         })
         .collect();
 
+    // TOCHECK: if no last open request id found, shall default to first request?
     if collections.selected_request_id().is_none()
         && local_state.local_state.last_opened_request_id.is_some()
     {
@@ -1244,7 +1335,8 @@ fn load_environments(paths: &BeamPaths, warnings: &mut Vec<String>) -> Vec<Envir
 }
 
 fn parse_environment_file(path: &Path) -> Result<EnvironmentFile> {
-    parse_toml(path)
+    let file: EnvironmentFile = parse_toml(path)?;
+    Ok(file.with_file_path(path))
 }
 
 fn load_navigation_manifest(
@@ -1286,6 +1378,7 @@ fn load_navigation_manifest(
                                 collection_id: file.collection.collection_id,
                                 name: file.collection.name,
                                 items: file.items,
+                                manifest_path: file.manifest_path,
                             });
                         } else {
                             warnings.push(format!(
@@ -1310,6 +1403,7 @@ fn load_navigation_manifest(
                                 name: file.folder.name,
                                 parent_folder_id: file.folder.parent_folder_id,
                                 items: file.items,
+                                manifest_path: file.manifest_path,
                             });
                         } else {
                             warnings.push(format!(
@@ -1389,6 +1483,7 @@ fn build_tree(
                 kind: TreeNodeKind::Collection,
                 request_method: None,
                 request_url: None,
+                manifest_path: collection.manifest_path.clone(),
                 parent_id: None,
                 children: Vec::new(),
             },
@@ -1404,13 +1499,13 @@ fn build_tree(
                 kind: TreeNodeKind::Folder,
                 request_method: None,
                 request_url: None,
+                manifest_path: folder.manifest_path.clone(),
                 parent_id: folder.parent_folder_id.or(Some(folder.collection_id)),
                 children: Vec::new(),
             },
         );
     }
 
-    // TOCHECK: can we save one more for loop, the collections were iterated above at line 1399
     for collection in collections {
         for item in &collection.items {
             attach_item(
@@ -1424,7 +1519,6 @@ fn build_tree(
         }
     }
 
-    // TOCHECK: can we save one more for loop, the folders were iterated above at line 1415
     for folder in folders {
         for item in &folder.items {
             attach_item(
@@ -1472,6 +1566,7 @@ fn attach_item(
                 kind: TreeNodeKind::Request,
                 request_method,
                 request_url,
+                manifest_path: request_meta.and_then(|meta| meta.file_path.clone()),
                 parent_id: parent_ref,
                 children: Vec::new(),
             });
@@ -1484,11 +1579,13 @@ fn attach_item(
 }
 
 fn parse_collection_manifest(path: &Path) -> Result<CollectionFile> {
-    parse_toml(path)
+    let file: CollectionFile = parse_toml(path)?;
+    Ok(file.with_manifest_path(path))
 }
 
 fn parse_folder_manifest(path: &Path) -> Result<FolderFile> {
-    parse_toml(path)
+    let file: FolderFile = parse_toml(path)?;
+    Ok(file.with_manifest_path(path))
 }
 
 fn sort_items(items: &mut [CollectionItemRef]) {
@@ -1501,12 +1598,14 @@ fn sort_items(items: &mut [CollectionItemRef]) {
 
 fn parse_request_tree_meta(path: &Path) -> Result<(RequestTreeMetaWithName, RequestPaneData)> {
     let request_file: RequestFile = parse_toml(path)?;
+    let request_file = request_file.with_file_path(path);
     let tree_meta = RequestTreeMetaWithName {
         request_id: request_file.meta.request_id,
         name: request_file.meta.name,
         method: request_file.request.method,
         // TODO: Do we need the url?
         url: request_file.request.url.clone(),
+        file_path: request_file.file_path.clone(),
     };
     let pane_data = RequestPaneData {
         method: request_file.request.method,
@@ -1526,6 +1625,7 @@ struct RequestTreeMetaWithName {
     name: String,
     method: HttpMethod,
     url: String,
+    file_path: Option<PathBuf>,
 }
 
 fn file_name(path: &Path) -> Option<&str> {
@@ -1593,6 +1693,7 @@ mod tests {
             auth: AuthConfig::None,
             body: BodyConfig::None,
             scripts: ScriptConfig::default(),
+            file_path: None,
         }
     }
 
@@ -1678,8 +1779,12 @@ mod tests {
     #[test]
     fn command_validation_rejects_empty_rename_payload() {
         let command = AppCommand::RenameRequest {
-            request_id: Ulid::new(),
-            new_name: "   ".to_string(),
+            input: RenameRequestInput {
+                request_id: Ulid::new(),
+                new_name: "   ".to_string(),
+                known_request_path: None,
+                known_parent_manifest_path: None,
+            },
             command_id: Ulid::new().to_string(),
         };
         let error = validate_command_payload(&command).expect_err("expected validation error");
@@ -1934,6 +2039,7 @@ updated_at = "2026-01-01T00:00:00Z"
             .send(AppCommand::CreateRequest {
                 input: CreateRequestInput {
                     parent,
+                    known_parent_manifest_path: None,
                     name: "Phase4 Request".to_string(),
                     method: HttpMethod::Get,
                     url: "https://example.com/phase4".to_string(),
@@ -1958,9 +2064,13 @@ updated_at = "2026-01-01T00:00:00Z"
         runtime
             .command_tx
             .send(AppCommand::DuplicateRequest {
-                request_id: created.meta.request_id,
-                duplicate_name: "Phase4 Request Copy".to_string(),
-                parent,
+                input: DuplicateRequestInput {
+                    request_id: created.meta.request_id,
+                    duplicate_name: "Phase4 Request Copy".to_string(),
+                    parent,
+                    known_request_path: created.file_path.clone(),
+                    known_parent_manifest_path: None,
+                },
                 command_id: duplicate_command_id.clone(),
             })
             .expect("queue duplicate request");
@@ -2005,8 +2115,12 @@ updated_at = "2026-01-01T00:00:00Z"
         runtime
             .command_tx
             .send(AppCommand::RenameRequest {
-                request_id: saved_request.meta.request_id,
-                new_name: "Phase4 Request Saved".to_string(),
+                input: RenameRequestInput {
+                    request_id: saved_request.meta.request_id,
+                    new_name: "Phase4 Request Saved".to_string(),
+                    known_request_path: saved_request.file_path.clone(),
+                    known_parent_manifest_path: None,
+                },
                 command_id: rename_command_id.clone(),
             })
             .expect("queue rename request");
@@ -2026,7 +2140,11 @@ updated_at = "2026-01-01T00:00:00Z"
         runtime
             .command_tx
             .send(AppCommand::DeleteRequest {
-                request_id: saved_request.meta.request_id,
+                input: DeleteRequestInput {
+                    request_id: saved_request.meta.request_id,
+                    known_request_path: saved_request.file_path.clone(),
+                    known_parent_manifest_path: None,
+                },
                 command_id: delete_command_id.clone(),
             })
             .expect("queue delete request");
@@ -2056,6 +2174,7 @@ updated_at = "2026-01-01T00:00:00Z"
                 kind: TreeNodeKind::Collection,
                 request_method: None,
                 request_url: None,
+                manifest_path: None,
                 parent_id: None,
                 children: vec![request_id],
             },
@@ -2068,6 +2187,7 @@ updated_at = "2026-01-01T00:00:00Z"
                 kind: TreeNodeKind::Request,
                 request_method: Some(HttpMethod::Get),
                 request_url: Some("https://example.com/old".to_string()),
+                manifest_path: None,
                 parent_id: Some(collection_id),
                 children: Vec::new(),
             },
@@ -2118,8 +2238,12 @@ updated_at = "2026-01-01T00:00:00Z"
         runtime
             .command_tx
             .send(AppCommand::RenameRequest {
-                request_id: Ulid::new(),
-                new_name: "   ".to_string(),
+                input: RenameRequestInput {
+                    request_id: Ulid::new(),
+                    new_name: "   ".to_string(),
+                    known_request_path: None,
+                    known_parent_manifest_path: None,
+                },
                 command_id: command_id.clone(),
             })
             .expect("queue invalid rename request");
@@ -2163,6 +2287,7 @@ updated_at = "2026-01-01T00:00:00Z"
                 kind: TreeNodeKind::Collection,
                 request_method: None,
                 request_url: None,
+                manifest_path: None,
                 parent_id: None,
                 children: vec![request_id],
             },
@@ -2175,6 +2300,7 @@ updated_at = "2026-01-01T00:00:00Z"
                 kind: TreeNodeKind::Request,
                 request_method: Some(HttpMethod::Get),
                 request_url: Some("https://example.com/before".to_string()),
+                manifest_path: None,
                 parent_id: Some(collection_id),
                 children: Vec::new(),
             },
@@ -2368,10 +2494,11 @@ order = 0
 
         let workspace_toml = format!(
             r#"
+schema_version = 1
+
 [workspace]
 workspace_id = "{}"
 name = "Beam Workspace"
-schema_version = 1
 created_at = "2026-05-01T03:42:36.157016+00:00"
 updated_at = "2026-05-01T03:42:36.157016+00:00"
 "#,
@@ -2379,20 +2506,24 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
         );
         fs::write(&paths.workspace_file, workspace_toml).expect("write workspace");
 
+        let env_id = Ulid::new();
         let local_state_toml = format!(
             r#"
+schema_version = 1
+
 [local_state]
-schema_version = 2
 last_opened_request_id = "{request_id}"
 active_global_environment_id = "{env_id}"
 theme_name = "One Dark"
-expanded_item_ids = ["{collection_id}"]
+updated_at = "2026-05-01T03:42:36.157016+00:00"
 
-[[local_state.collection_environment_selections]]
-collection_id = "{collection_id}"
-environment_id = "{env_id}"
+[collection_environment_selection]
+"{collection_id}" = "{env_id}"
+
+[tree_state]
+expanded_item_ids = ["{collection_id}"]
 "#,
-            env_id = Ulid::new()
+            env_id = env_id
         );
         fs::write(&paths.local_state_file, local_state_toml).expect("write local state");
 
@@ -2467,11 +2598,27 @@ post_response = "console.log(response.status)"
             .collections
             .node(request_id)
             .expect("request node should exist");
+        let collection_node = state
+            .collections
+            .node(collection_id)
+            .expect("collection node should exist");
+        assert_eq!(
+            collection_node.manifest_path.as_deref(),
+            Some(collection_dir.join("collection.toml").as_path())
+        );
         assert_eq!(request_node.name, "Request From File");
         assert_eq!(request_node.request_method, Some(HttpMethod::Get));
         assert_eq!(
             request_node.request_url.as_deref(),
             Some("https://httpbin.org/get")
+        );
+        assert_eq!(
+            request_node.manifest_path.as_deref(),
+            Some(
+                collection_dir
+                    .join(format!("requests/sample-request-{request_id}.toml"))
+                    .as_path()
+            )
         );
         let pane_data = state
             .request_pane_data
@@ -2489,6 +2636,95 @@ post_response = "console.log(response.status)"
             Some("console.log(response.status)")
         );
         assert_eq!(state.theme.theme_name.as_deref(), Some("One Dark"));
+    }
+
+    #[test]
+    fn startup_hydrates_folder_node_manifest_path() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let storage = TomlWorkspaceStorage::new(paths.clone());
+        storage.initialize().expect("init");
+
+        let collection_id = Ulid::new();
+        let folder_id = Ulid::new();
+        let collection_dir = paths.collections_dir.join("sample");
+        let folder_dir = collection_dir.join("nested");
+        fs::create_dir_all(&folder_dir).expect("create nested dir");
+
+        let collection_toml = format!(
+            r#"
+[collection]
+collection_id = "{collection_id}"
+name = "Sample"
+description = ""
+created_at = "2026-01-01T00:00:00Z"
+updated_at = "2026-01-01T00:00:00Z"
+
+[[items]]
+item_id = "{folder_id}"
+item_type = "folder"
+name = "Nested"
+order = 0
+"#
+        );
+        fs::write(collection_dir.join("collection.toml"), collection_toml)
+            .expect("write collection");
+
+        let folder_toml = format!(
+            r#"
+[folder]
+folder_id = "{folder_id}"
+collection_id = "{collection_id}"
+name = "Nested"
+description = ""
+created_at = "2026-01-01T00:00:00Z"
+updated_at = "2026-01-01T00:00:00Z"
+"#
+        );
+        let folder_manifest_path = folder_dir.join("folder.toml");
+        fs::write(&folder_manifest_path, folder_toml).expect("write folder");
+
+        let load = startup_preload(&storage, &paths);
+        let StartupLoad::Ready { state, .. } = load else {
+            panic!("startup should be ready");
+        };
+
+        let folder_node = state
+            .collections
+            .node(folder_id)
+            .expect("folder node should exist");
+        assert_eq!(
+            folder_node.manifest_path.as_deref(),
+            Some(folder_manifest_path.as_path())
+        );
+    }
+
+    #[test]
+    fn parse_environment_file_hydrates_runtime_path() {
+        let dir = tempdir().expect("tempdir");
+        let file_path = dir.path().join("global.env.toml");
+        fs::write(
+            &file_path,
+            format!(
+                r#"
+schema_version = 1
+
+[environment]
+environment_id = "{}"
+scope = "global"
+name = "Global"
+file_name = "global.env.toml"
+description = ""
+created_at = "2026-01-01T00:00:00Z"
+updated_at = "2026-01-01T00:00:00Z"
+"#,
+                Ulid::new()
+            ),
+        )
+        .expect("write environment");
+
+        let parsed = parse_environment_file(&file_path).expect("parse environment file");
+        assert_eq!(parsed.file_path.as_deref(), Some(file_path.as_path()));
     }
 
     #[test]
@@ -2562,7 +2798,7 @@ updated_at = "2026-01-01T00:00:00Z"
     }
 
     #[test]
-    fn startup_restores_nested_expanded_ids_when_current_shape_parses() {
+    fn startup_restores_expanded_ids_from_current_local_state_shape() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
@@ -2591,6 +2827,8 @@ schema_version = 1
 
 [local_state]
 updated_at = "2026-01-01T00:00:00Z"
+
+[tree_state]
 expanded_item_ids = ["{collection_id}"]
 "#
         );

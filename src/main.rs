@@ -15,19 +15,23 @@ fn main() {
         }
     };
 
+    // TODO: no need to log this.
     println!(
         "Beam foundation initialized at {}",
         storage.paths.root.display()
     );
+
+    // TODO: no need to log this.
     if report.created_workspace_file {
         println!("Created beam.workspace.toml");
     }
     if report.created_local_state_file {
         println!("Created .beam/local-state.toml");
     }
-
+    // TODO: check if this func can be called on storage itself.
     match startup_preload(&storage, &storage.paths) {
         StartupLoad::Ready { state, messages } => {
+            // TODO: delete these log.
             println!(
                 "App shell ready: collections/workspace split {:.0}%/{:.0}%, request/response split {:.0}%/{:.0}%",
                 state.layout.collections_workspace.ratio() * 100.0,

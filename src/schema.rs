@@ -33,6 +33,7 @@ pub fn validate_schema_version(kind: SchemaKind, found: u32) -> Result<()> {
     let expected = SCHEMA_VERSION_V1;
     let accepted = match kind {
         // Legacy local-state files use schema_version = 2.
+        // TODO: only support schema_version = 1 for now.
         SchemaKind::LocalState => found == expected || found == 2,
         _ => found == expected,
     };

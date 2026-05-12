@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 pub mod toml_backend;
 
 use crate::error::Result;
@@ -20,8 +22,15 @@ pub struct RequestParentRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KnownParentManifestPath {
+    Collection(PathBuf),
+    Folder(PathBuf),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateRequestInput {
     pub parent: RequestParentRef,
+    pub known_parent_manifest_path: Option<KnownParentManifestPath>,
     pub name: String,
     pub method: crate::models::HttpMethod,
     pub url: String,
@@ -36,7 +45,32 @@ pub struct FolderParentRef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFolderInput {
     pub parent: FolderParentRef,
+    pub known_parent_manifest_path: Option<KnownParentManifestPath>,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateRequestInput {
+    pub request_id: Ulid,
+    pub duplicate_name: String,
+    pub parent: RequestParentRef,
+    pub known_request_path: Option<PathBuf>,
+    pub known_parent_manifest_path: Option<KnownParentManifestPath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameRequestInput {
+    pub request_id: Ulid,
+    pub new_name: String,
+    pub known_request_path: Option<PathBuf>,
+    pub known_parent_manifest_path: Option<KnownParentManifestPath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteRequestInput {
+    pub request_id: Ulid,
+    pub known_request_path: Option<PathBuf>,
+    pub known_parent_manifest_path: Option<KnownParentManifestPath>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,20 +103,15 @@ pub trait WorkspaceStorage {
     ) -> Result<EnvironmentFile>;
     fn delete_environment(&self, environment_id: Ulid) -> Result<()>;
     fn save_request(&self, request_file: &RequestFile) -> Result<()>;
-    fn rename_request(&self, request_id: Ulid, new_name: &str) -> Result<RequestFile>;
+    fn rename_request(&self, input: RenameRequestInput) -> Result<RequestFile>;
     fn rename_collection(
         &self,
         collection_id: Ulid,
         new_name: &str,
     ) -> Result<crate::models::CollectionFile>;
     fn rename_folder(&self, folder_id: Ulid, new_name: &str) -> Result<crate::models::FolderFile>;
-    fn duplicate_request(
-        &self,
-        request_id: Ulid,
-        duplicate_name: &str,
-        parent: RequestParentRef,
-    ) -> Result<RequestFile>;
+    fn duplicate_request(&self, input: DuplicateRequestInput) -> Result<RequestFile>;
     fn delete_collection(&self, collection_id: Ulid) -> Result<()>;
     fn delete_folder(&self, folder_id: Ulid) -> Result<()>;
-    fn delete_request(&self, request_id: Ulid) -> Result<()>;
+    fn delete_request(&self, input: DeleteRequestInput) -> Result<()>;
 }

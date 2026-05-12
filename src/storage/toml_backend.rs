@@ -16,7 +16,8 @@ use crate::paths::BeamPaths;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
 use crate::storage::{
     BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput,
-    FolderParentRef, RequestParentRef, WorkspaceStorage,
+    DeleteRequestInput, DuplicateRequestInput, FolderParentRef, KnownParentManifestPath,
+    RenameRequestInput, RequestParentRef, WorkspaceStorage,
 };
 
 #[derive(Debug, Clone)]
@@ -92,6 +93,26 @@ impl TomlWorkspaceStorage {
         self.parse_toml_str(path, &content)
     }
 
+    fn hydrate_collection_manifest_path(
+        &self,
+        file: CollectionFile,
+        path: &Path,
+    ) -> CollectionFile {
+        file.with_manifest_path(path)
+    }
+
+    fn hydrate_folder_manifest_path(&self, file: FolderFile, path: &Path) -> FolderFile {
+        file.with_manifest_path(path)
+    }
+
+    fn hydrate_request_file_path(&self, file: RequestFile, path: &Path) -> RequestFile {
+        file.with_file_path(path)
+    }
+
+    fn hydrate_environment_file_path(&self, file: EnvironmentFile, path: &Path) -> EnvironmentFile {
+        file.with_file_path(path)
+    }
+
     fn walk_files_recursive<F>(&self, root: &Path, mut visitor: F) -> Result<()>
     where
         F: FnMut(&Path),
@@ -139,6 +160,7 @@ impl TomlWorkspaceStorage {
 
     fn find_folder_dir_by_id(&self, folder_id: Ulid) -> Result<PathBuf> {
         let mut found: Option<PathBuf> = None;
+        // TOCHECK: how to avoid walking through all collection files?
         self.walk_files_recursive(&self.paths.collections_dir, |path| {
             if path.file_name().and_then(|n| n.to_str()) != Some("folder.toml") {
                 return;
@@ -156,7 +178,71 @@ impl TomlWorkspaceStorage {
         })
     }
 
-    fn request_dir_for_parent(&self, parent: RequestParentRef) -> Result<PathBuf> {
+    fn manifest_parent_dir(&self, manifest_path: &Path) -> Result<PathBuf> {
+        manifest_path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "manifest_parent_dir",
+                id: manifest_path.to_string_lossy().to_string(),
+            })
+    }
+
+    fn resolve_collection_dir(
+        &self,
+        collection_id: Ulid,
+        known_manifest_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        if let Some(path) = known_manifest_path
+            && let Ok(file) = self.read_collection_file(path)
+            && file.collection.collection_id == collection_id
+        {
+            return self.manifest_parent_dir(path);
+        }
+        self.find_collection_dir_by_id(collection_id)
+    }
+
+    fn resolve_folder_dir(
+        &self,
+        folder_id: Ulid,
+        known_manifest_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        if let Some(path) = known_manifest_path
+            && let Ok(file) = self.read_folder_file(path)
+            && file.folder.folder_id == folder_id
+        {
+            return self.manifest_parent_dir(path);
+        }
+        self.find_folder_dir_by_id(folder_id)
+    }
+
+    fn resolve_request_file_path(
+        &self,
+        request_id: Ulid,
+        known_request_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        if let Some(path) = known_request_path
+            && let Ok(file) = self.read_request_meta_by_path(path)
+            && file.meta.request_id == request_id
+        {
+            return Ok(path.to_path_buf());
+        }
+        self.find_request_file_by_id(request_id)
+    }
+
+    fn request_dir_for_parent(
+        &self,
+        parent: RequestParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<PathBuf> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Collection(path) => {
+                    Ok(self.manifest_parent_dir(path)?.join("requests"))
+                }
+                KnownParentManifestPath::Folder(path) => self.manifest_parent_dir(path),
+            };
+        }
         if let Some(folder_id) = parent.folder_id {
             return self.find_folder_dir_by_id(folder_id);
         }
@@ -164,7 +250,17 @@ impl TomlWorkspaceStorage {
         Ok(collection_dir.join("requests"))
     }
 
-    fn folder_dir_for_parent(&self, parent: FolderParentRef) -> Result<PathBuf> {
+    fn folder_dir_for_parent(
+        &self,
+        parent: FolderParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<PathBuf> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return self.manifest_parent_dir(match known_parent_manifest_path {
+                KnownParentManifestPath::Collection(path)
+                | KnownParentManifestPath::Folder(path) => path,
+            });
+        }
         if let Some(parent_folder_id) = parent.parent_folder_id {
             return self.find_folder_dir_by_id(parent_folder_id);
         }
@@ -174,9 +270,48 @@ impl TomlWorkspaceStorage {
     fn append_folder_to_parent_manifest(
         &self,
         parent: FolderParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
         folder_id: Ulid,
         name: &str,
     ) -> Result<()> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Folder(path) => {
+                    let mut folder_file = self.read_folder_file(path)?;
+                    let next_order = folder_file
+                        .items
+                        .iter()
+                        .map(|item| item.order)
+                        .max()
+                        .unwrap_or(-1)
+                        + 1;
+                    folder_file.items.push(CollectionItemRef {
+                        item_id: folder_id,
+                        item_type: ItemType::Folder,
+                        name: name.to_string(),
+                        order: next_order,
+                    });
+                    self.write_toml_file(path, &folder_file)
+                }
+                KnownParentManifestPath::Collection(path) => {
+                    let mut collection_file = self.read_collection_file(path)?;
+                    let next_order = collection_file
+                        .items
+                        .iter()
+                        .map(|item| item.order)
+                        .max()
+                        .unwrap_or(-1)
+                        + 1;
+                    collection_file.items.push(CollectionItemRef {
+                        item_id: folder_id,
+                        item_type: ItemType::Folder,
+                        name: name.to_string(),
+                        order: next_order,
+                    });
+                    self.write_toml_file(path, &collection_file)
+                }
+            };
+        }
         if let Some(parent_folder_id) = parent.parent_folder_id {
             let folder_dir = self.find_folder_dir_by_id(parent_folder_id)?;
             let path = folder_dir.join("folder.toml");
@@ -219,9 +354,48 @@ impl TomlWorkspaceStorage {
     fn append_request_to_parent_manifest(
         &self,
         parent: RequestParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
         request_id: Ulid,
         name: &str,
     ) -> Result<()> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Folder(path) => {
+                    let mut folder_file = self.read_folder_file(path)?;
+                    let next_order = folder_file
+                        .items
+                        .iter()
+                        .map(|item| item.order)
+                        .max()
+                        .unwrap_or(-1)
+                        + 1;
+                    folder_file.items.push(CollectionItemRef {
+                        item_id: request_id,
+                        item_type: ItemType::Request,
+                        name: name.to_string(),
+                        order: next_order,
+                    });
+                    self.write_toml_file(path, &folder_file)
+                }
+                KnownParentManifestPath::Collection(path) => {
+                    let mut collection_file = self.read_collection_file(path)?;
+                    let next_order = collection_file
+                        .items
+                        .iter()
+                        .map(|item| item.order)
+                        .max()
+                        .unwrap_or(-1)
+                        + 1;
+                    collection_file.items.push(CollectionItemRef {
+                        item_id: request_id,
+                        item_type: ItemType::Request,
+                        name: name.to_string(),
+                        order: next_order,
+                    });
+                    self.write_toml_file(path, &collection_file)
+                }
+            };
+        }
         if let Some(folder_id) = parent.folder_id {
             let folder_dir = self.find_folder_dir_by_id(folder_id)?;
             let path = folder_dir.join("folder.toml");
@@ -333,8 +507,35 @@ impl TomlWorkspaceStorage {
         self.write_toml_file(&path, &collection_file)
     }
 
-    fn update_folder_name_in_parent_manifest(&self, folder_id: Ulid, new_name: &str) -> Result<()> {
-        let parent = self.find_folder_parent(folder_id)?;
+    fn update_folder_name_in_parent_manifest(
+        &self,
+        parent: FolderParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+        folder_id: Ulid,
+        new_name: &str,
+    ) -> Result<()> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Folder(path) => {
+                    let mut folder_file = self.read_folder_file(path)?;
+                    for item in &mut folder_file.items {
+                        if item.item_id == folder_id && item.item_type == ItemType::Folder {
+                            item.name = new_name.to_string();
+                        }
+                    }
+                    self.write_toml_file(path, &folder_file)
+                }
+                KnownParentManifestPath::Collection(path) => {
+                    let mut collection_file = self.read_collection_file(path)?;
+                    for item in &mut collection_file.items {
+                        if item.item_id == folder_id && item.item_type == ItemType::Folder {
+                            item.name = new_name.to_string();
+                        }
+                    }
+                    self.write_toml_file(path, &collection_file)
+                }
+            };
+        }
         if let Some(parent_folder_id) = parent.parent_folder_id {
             let parent_dir = self.find_folder_dir_by_id(parent_folder_id)?;
             let path = parent_dir.join("folder.toml");
@@ -361,8 +562,27 @@ impl TomlWorkspaceStorage {
     fn remove_request_from_parent_manifest(
         &self,
         parent: RequestParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
         request_id: Ulid,
     ) -> Result<()> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Folder(path) => {
+                    let mut folder_file = self.read_folder_file(path)?;
+                    folder_file.items.retain(|item| {
+                        !(item.item_id == request_id && item.item_type == ItemType::Request)
+                    });
+                    self.write_toml_file(path, &folder_file)
+                }
+                KnownParentManifestPath::Collection(path) => {
+                    let mut collection_file = self.read_collection_file(path)?;
+                    collection_file.items.retain(|item| {
+                        !(item.item_id == request_id && item.item_type == ItemType::Request)
+                    });
+                    self.write_toml_file(path, &collection_file)
+                }
+            };
+        }
         if let Some(folder_id) = parent.folder_id {
             let folder_dir = self.find_folder_dir_by_id(folder_id)?;
             let path = folder_dir.join("folder.toml");
@@ -382,8 +602,30 @@ impl TomlWorkspaceStorage {
         self.write_toml_file(&path, &collection_file)
     }
 
-    fn remove_folder_from_parent_manifest(&self, folder_id: Ulid) -> Result<()> {
-        let parent = self.find_folder_parent(folder_id)?;
+    fn remove_folder_from_parent_manifest(
+        &self,
+        parent: FolderParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+        folder_id: Ulid,
+    ) -> Result<()> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Folder(path) => {
+                    let mut parent_file = self.read_folder_file(path)?;
+                    parent_file.items.retain(|item| {
+                        !(item.item_id == folder_id && item.item_type == ItemType::Folder)
+                    });
+                    self.write_toml_file(path, &parent_file)
+                }
+                KnownParentManifestPath::Collection(path) => {
+                    let mut collection_file = self.read_collection_file(path)?;
+                    collection_file.items.retain(|item| {
+                        !(item.item_id == folder_id && item.item_type == ItemType::Folder)
+                    });
+                    self.write_toml_file(path, &collection_file)
+                }
+            };
+        }
         if let Some(parent_folder_id) = parent.parent_folder_id {
             let parent_dir = self.find_folder_dir_by_id(parent_folder_id)?;
             let path = parent_dir.join("folder.toml");
@@ -423,8 +665,39 @@ impl TomlWorkspaceStorage {
     fn sibling_folder_names(
         &self,
         parent: FolderParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
         skip_folder_id: Option<Ulid>,
     ) -> Result<Vec<String>> {
+        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
+            return match known_parent_manifest_path {
+                KnownParentManifestPath::Folder(path) => {
+                    let parent_file = self.read_folder_file(path)?;
+                    let names = parent_file
+                        .items
+                        .iter()
+                        .filter(|item| {
+                            item.item_type == ItemType::Folder
+                                && skip_folder_id.is_none_or(|skip_id| item.item_id != skip_id)
+                        })
+                        .map(|item| item.name.clone())
+                        .collect();
+                    Ok(names)
+                }
+                KnownParentManifestPath::Collection(path) => {
+                    let collection_file = self.read_collection_file(path)?;
+                    let names = collection_file
+                        .items
+                        .iter()
+                        .filter(|item| {
+                            item.item_type == ItemType::Folder
+                                && skip_folder_id.is_none_or(|skip_id| item.item_id != skip_id)
+                        })
+                        .map(|item| item.name.clone())
+                        .collect();
+                    Ok(names)
+                }
+            };
+        }
         if let Some(parent_folder_id) = parent.parent_folder_id {
             let parent_dir = self.find_folder_dir_by_id(parent_folder_id)?;
             let path = parent_dir.join("folder.toml");
@@ -460,8 +733,9 @@ impl TomlWorkspaceStorage {
         &self,
         request_file: &RequestFile,
         parent: RequestParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
     ) -> Result<PathBuf> {
-        let request_dir = self.request_dir_for_parent(parent)?;
+        let request_dir = self.request_dir_for_parent(parent, known_parent_manifest_path)?;
         self.write_request_new_path_with_dir(request_file, &request_dir)
     }
 
@@ -590,7 +864,7 @@ impl TomlWorkspaceStorage {
                 {
                     return;
                 }
-                let Ok(file) = self.read_toml_file::<EnvironmentFile>(path) else {
+                let Ok(file) = self.read_environment_file(path) else {
                     return;
                 };
                 if file.environment.environment_id == environment_id {
@@ -627,35 +901,6 @@ impl TomlWorkspaceStorage {
         })
     }
 
-    fn find_request_file_in_dir(&self, dir: &Path, request_id: Ulid) -> Result<PathBuf> {
-        for entry in fs::read_dir(dir).map_err(|source| BeamError::Io {
-            path: dir.to_path_buf(),
-            source,
-        })? {
-            let entry = entry.map_err(|source| BeamError::Io {
-                path: dir.to_path_buf(),
-                source,
-            })?;
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
-                continue;
-            }
-            let Ok(file) = self.read_request_meta_by_path(&path) else {
-                continue;
-            };
-            if file.meta.request_id == request_id {
-                return Ok(path);
-            }
-        }
-        Err(BeamError::NotFound {
-            entity: "request",
-            id: request_id.to_string(),
-        })
-    }
-
     fn read_request_meta_by_path(&self, path: &Path) -> Result<RequestMetaIdFile> {
         if let Ok(file) = self.read_toml_file::<RequestMetaIdFile>(path) {
             return Ok(file);
@@ -670,15 +915,23 @@ impl TomlWorkspaceStorage {
     }
 
     fn read_request_file(&self, path: &Path) -> Result<RequestFile> {
-        self.read_toml_file(path)
+        let file = self.read_toml_file(path)?;
+        Ok(self.hydrate_request_file_path(file, path))
     }
 
     fn read_collection_file(&self, path: &Path) -> Result<CollectionFile> {
-        self.read_toml_file(path)
+        let file = self.read_toml_file(path)?;
+        Ok(self.hydrate_collection_manifest_path(file, path))
     }
 
     fn read_folder_file(&self, path: &Path) -> Result<FolderFile> {
-        self.read_toml_file(path)
+        let file = self.read_toml_file(path)?;
+        Ok(self.hydrate_folder_manifest_path(file, path))
+    }
+
+    fn read_environment_file(&self, path: &Path) -> Result<EnvironmentFile> {
+        let file = self.read_toml_file(path)?;
+        Ok(self.hydrate_environment_file_path(file, path))
     }
 
     fn find_request_parent(&self, request_id: Ulid) -> Result<RequestParentRef> {
@@ -758,6 +1011,152 @@ impl TomlWorkspaceStorage {
             id: folder_id.to_string(),
         })
     }
+
+    pub fn rename_collection_with_manifest_path(
+        &self,
+        collection_id: Ulid,
+        new_name: &str,
+        known_manifest_path: Option<&Path>,
+    ) -> Result<CollectionFile> {
+        let next_name = new_name.trim();
+        if next_name.is_empty() {
+            return Err(BeamError::Validation {
+                message: "Collection name cannot be empty".to_string(),
+            });
+        }
+        let sibling_names = self.sibling_collection_names(Some(collection_id))?;
+        if sibling_names
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(next_name))
+        {
+            return Err(BeamError::Validation {
+                message: format!("A collection named '{next_name}' already exists"),
+            });
+        }
+
+        let old_dir = self.resolve_collection_dir(collection_id, known_manifest_path)?;
+        let path = old_dir.join("collection.toml");
+        let mut collection_file = self.read_collection_file(&path)?;
+        collection_file.collection.name = next_name.to_string();
+        collection_file.collection.updated_at = Utc::now();
+        self.write_toml_file(&path, &collection_file)?;
+
+        let parent_dir = old_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| self.paths.collections_dir.clone());
+        let old_name = old_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let new_dir_name = slugify(next_name);
+        let mut new_dir = old_dir.clone();
+        if !new_dir_name.is_empty() && new_dir_name != old_name {
+            let candidate_dir = parent_dir.join(&new_dir_name);
+            if !candidate_dir.exists() {
+                fs::rename(&old_dir, &candidate_dir).map_err(|source| BeamError::Io {
+                    path: old_dir,
+                    source,
+                })?;
+                new_dir = candidate_dir;
+            }
+        }
+        Ok(collection_file.with_manifest_path(new_dir.join("collection.toml")))
+    }
+
+    pub fn rename_folder_with_manifest_path(
+        &self,
+        folder_id: Ulid,
+        new_name: &str,
+        known_manifest_path: Option<&Path>,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<FolderFile> {
+        let next_name = new_name.trim();
+        if next_name.is_empty() {
+            return Err(BeamError::Validation {
+                message: "Folder name cannot be empty".to_string(),
+            });
+        }
+        let parent = self.find_folder_parent(folder_id)?;
+        let sibling_names =
+            self.sibling_folder_names(parent, known_parent_manifest_path, Some(folder_id))?;
+        if sibling_names
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(next_name))
+        {
+            return Err(BeamError::Validation {
+                message: format!("A folder named '{next_name}' already exists in this scope"),
+            });
+        }
+
+        let old_dir = self.resolve_folder_dir(folder_id, known_manifest_path)?;
+        let path = old_dir.join("folder.toml");
+        let mut folder_file = self.read_folder_file(&path)?;
+        folder_file.folder.name = next_name.to_string();
+        folder_file.folder.updated_at = Utc::now();
+        self.write_toml_file(&path, &folder_file)?;
+        self.update_folder_name_in_parent_manifest(
+            parent,
+            known_parent_manifest_path,
+            folder_id,
+            next_name,
+        )?;
+
+        let parent_dir =
+            old_dir
+                .parent()
+                .map(Path::to_path_buf)
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "folder_parent_dir",
+                    id: folder_id.to_string(),
+                })?;
+        let old_name = old_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let new_dir_name = format!("{}-{}", slugify(next_name), folder_id);
+        let mut new_dir = old_dir.clone();
+        if new_dir_name != old_name {
+            let candidate_dir = parent_dir.join(&new_dir_name);
+            if !candidate_dir.exists() {
+                fs::rename(&old_dir, &candidate_dir).map_err(|source| BeamError::Io {
+                    path: old_dir,
+                    source,
+                })?;
+                new_dir = candidate_dir;
+            }
+        }
+        Ok(folder_file.with_manifest_path(new_dir.join("folder.toml")))
+    }
+
+    pub fn delete_collection_with_manifest_path(
+        &self,
+        collection_id: Ulid,
+        known_manifest_path: Option<&Path>,
+    ) -> Result<()> {
+        let collection_dir = self.resolve_collection_dir(collection_id, known_manifest_path)?;
+        fs::remove_dir_all(&collection_dir).map_err(|source| BeamError::Io {
+            path: collection_dir,
+            source,
+        })
+    }
+
+    pub fn delete_folder_with_manifest_path(
+        &self,
+        folder_id: Ulid,
+        known_manifest_path: Option<&Path>,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<()> {
+        let folder_dir = self.resolve_folder_dir(folder_id, known_manifest_path)?;
+        let parent = self.find_folder_parent(folder_id)?;
+        self.remove_folder_from_parent_manifest(parent, known_parent_manifest_path, folder_id)?;
+        fs::remove_dir_all(&folder_dir).map_err(|source| BeamError::Io {
+            path: folder_dir,
+            source,
+        })
+    }
 }
 
 impl WorkspaceStorage for TomlWorkspaceStorage {
@@ -781,8 +1180,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
 
     fn load_workspace(&self) -> Result<WorkspaceFile> {
         let content = self.read_toml_string(&self.paths.workspace_file)?;
-        let workspace: WorkspaceFile =
-            self.parse_toml_str(&self.paths.workspace_file, &content)?;
+        let workspace: WorkspaceFile = self.parse_toml_str(&self.paths.workspace_file, &content)?;
         validate_schema_version(SchemaKind::Workspace, workspace.schema_version)?;
         Ok(workspace)
     }
@@ -811,7 +1209,14 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
     }
 
     fn create_request(&self, input: CreateRequestInput) -> Result<RequestFile> {
-        let name = input.name.trim();
+        let CreateRequestInput {
+            parent,
+            known_parent_manifest_path,
+            name,
+            method,
+            url,
+        } = input;
+        let name = name.trim();
         if name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Request name cannot be empty".to_string(),
@@ -827,8 +1232,8 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 updated_at: now,
             },
             request: RequestDefinition {
-                method: input.method,
-                url: input.url,
+                method,
+                url,
                 headers: vec![
                     HeaderField {
                         name: "Content-Type".to_string(),
@@ -855,10 +1260,17 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             auth: AuthConfig::None,
             body: BodyConfig::None,
             scripts: ScriptConfig::default(),
+            file_path: None,
         };
-        self.write_request_new_path(&request_file, input.parent)?;
+        let created_path = self.write_request_new_path(
+            &request_file,
+            parent,
+            known_parent_manifest_path.as_ref(),
+        )?;
+        let request_file = request_file.with_file_path(created_path);
         self.append_request_to_parent_manifest(
-            input.parent,
+            parent,
+            known_parent_manifest_path.as_ref(),
             request_file.meta.request_id,
             &request_file.meta.name,
         )?;
@@ -870,7 +1282,14 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         input: CreateRequestInput,
         source_request_id: Ulid,
     ) -> Result<RequestFile> {
-        let name = input.name.trim();
+        let CreateRequestInput {
+            parent,
+            known_parent_manifest_path,
+            name,
+            method,
+            url,
+        } = input;
+        let name = name.trim();
         if name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Request name cannot be empty".to_string(),
@@ -886,8 +1305,8 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 updated_at: now,
             },
             request: RequestDefinition {
-                method: input.method,
-                url: input.url,
+                method,
+                url,
                 headers: vec![
                     HeaderField {
                         name: "Content-Type".to_string(),
@@ -914,10 +1333,16 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             auth: AuthConfig::None,
             body: BodyConfig::None,
             scripts: ScriptConfig::default(),
+            file_path: None,
         };
-        self.write_request_new_path(&request_file, input.parent)?;
+        let created_path = self.write_request_new_path(
+            &request_file,
+            parent,
+            known_parent_manifest_path.as_ref(),
+        )?;
+        let request_file = request_file.with_file_path(created_path);
         self.insert_request_to_parent_manifest_after(
-            input.parent,
+            parent,
             source_request_id,
             request_file.meta.request_id,
             &request_file.meta.name,
@@ -932,7 +1357,11 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 message: "Folder name cannot be empty".to_string(),
             });
         }
-        let sibling_names = self.sibling_folder_names(input.parent, None)?;
+        let sibling_names = self.sibling_folder_names(
+            input.parent,
+            input.known_parent_manifest_path.as_ref(),
+            None,
+        )?;
         if sibling_names
             .iter()
             .any(|existing| existing.eq_ignore_ascii_case(name))
@@ -943,7 +1372,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         }
 
         let now = Utc::now();
-        let folder_file = FolderFile {
+        let mut folder_file = FolderFile {
             folder: FolderMeta {
                 folder_id: Ulid::new(),
                 collection_id: input.parent.collection_id,
@@ -954,17 +1383,26 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 updated_at: now,
             },
             items: Vec::new(),
+            manifest_path: None,
         };
 
-        let parent_dir = self.folder_dir_for_parent(input.parent)?;
+        let parent_dir =
+            self.folder_dir_for_parent(input.parent, input.known_parent_manifest_path.as_ref())?;
         let folder_dir_name = format!("{}-{}", slugify(name), folder_file.folder.folder_id);
         let folder_dir = parent_dir.join(folder_dir_name);
         fs::create_dir_all(&folder_dir).map_err(|source| BeamError::Io {
             path: folder_dir.clone(),
             source,
         })?;
-        self.write_toml_file(&folder_dir.join("folder.toml"), &folder_file)?;
-        self.append_folder_to_parent_manifest(input.parent, folder_file.folder.folder_id, name)?;
+        let manifest_path = folder_dir.join("folder.toml");
+        self.write_toml_file(&manifest_path, &folder_file)?;
+        folder_file = folder_file.with_manifest_path(manifest_path);
+        self.append_folder_to_parent_manifest(
+            input.parent,
+            input.known_parent_manifest_path.as_ref(),
+            folder_file.folder.folder_id,
+            name,
+        )?;
         Ok(folder_file)
     }
 
@@ -1010,7 +1448,9 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 updated_at: Utc::now(),
             },
             variables: Vec::new(),
-        };
+            file_path: None,
+        }
+        .with_file_path(&file_path);
         self.write_toml_file(&file_path, &environment_file)?;
         Ok(environment_file)
     }
@@ -1024,7 +1464,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         }
 
         let existing_path = self.find_environment_file_by_id(environment_id)?;
-        let mut environment_file: EnvironmentFile = self.read_toml_file(&existing_path)?;
+        let mut environment_file = self.read_environment_file(&existing_path)?;
         environment_file.environment.name = next_name.to_string();
         environment_file.environment.updated_at = Utc::now();
         if environment_file.environment.file_name.trim().is_empty() {
@@ -1056,6 +1496,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             })?;
         }
         environment_file.environment.file_name = next_file_name;
+        environment_file = environment_file.with_file_path(&next_path);
         self.write_toml_file(&next_path, &environment_file)?;
         Ok(environment_file)
     }
@@ -1066,7 +1507,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         variables: Vec<EnvironmentVariable>,
     ) -> Result<EnvironmentFile> {
         let existing_path = self.find_environment_file_by_id(environment_id)?;
-        let mut environment_file: EnvironmentFile = self.read_toml_file(&existing_path)?;
+        let mut environment_file = self.read_environment_file(&existing_path)?;
         environment_file.environment.updated_at = Utc::now();
         environment_file.variables = variables;
         if environment_file.environment.file_name.trim().is_empty() {
@@ -1085,11 +1526,16 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         self.write_toml_file(&request_path, request_file)
     }
 
-    fn rename_request(&self, request_id: Ulid, new_name: &str) -> Result<RequestFile> {
-        let existing_path = self.find_request_file_by_id(request_id)?;
+    fn rename_request(&self, input: RenameRequestInput) -> Result<RequestFile> {
+        let existing_path =
+            self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
         let mut request_file = self.read_request_file(&existing_path)?;
-        let parent = self.find_request_parent(request_id)?;
-        let next_name = new_name.trim();
+        let parent = if input.known_parent_manifest_path.is_some() {
+            None
+        } else {
+            Some(self.find_request_parent(input.request_id)?)
+        };
+        let next_name = input.new_name.trim();
         if next_name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Request name cannot be empty".to_string(),
@@ -1106,27 +1552,44 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             Folder(FolderFile, PathBuf),
             Collection(CollectionFile, PathBuf),
         }
-        let owner_manifest = if let Some(folder_id) = parent.folder_id {
-            let folder_dir = self.find_folder_dir_by_id(folder_id)?;
-            let folder_manifest = folder_dir.join("folder.toml");
-            OwnerManifest::Folder(self.read_folder_file(&folder_manifest)?, folder_manifest)
-        } else {
-            let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
-            let collection_manifest = collection_dir.join("collection.toml");
-            OwnerManifest::Collection(
-                self.read_collection_file(&collection_manifest)?,
-                collection_manifest,
-            )
-        };
+        let owner_manifest =
+            if let Some(known_parent_manifest_path) = input.known_parent_manifest_path.as_ref() {
+                match known_parent_manifest_path {
+                    KnownParentManifestPath::Folder(path) => {
+                        OwnerManifest::Folder(self.read_folder_file(path)?, path.clone())
+                    }
+                    KnownParentManifestPath::Collection(path) => {
+                        OwnerManifest::Collection(self.read_collection_file(path)?, path.clone())
+                    }
+                }
+            } else if let Some(parent) = parent {
+                if let Some(folder_id) = parent.folder_id {
+                    let folder_dir = self.find_folder_dir_by_id(folder_id)?;
+                    let folder_manifest = folder_dir.join("folder.toml");
+                    OwnerManifest::Folder(self.read_folder_file(&folder_manifest)?, folder_manifest)
+                } else {
+                    let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
+                    let collection_manifest = collection_dir.join("collection.toml");
+                    OwnerManifest::Collection(
+                        self.read_collection_file(&collection_manifest)?,
+                        collection_manifest,
+                    )
+                }
+            } else {
+                return Err(BeamError::NotFound {
+                    entity: "request_parent_manifest",
+                    id: input.request_id.to_string(),
+                });
+            };
         let has_duplicate_name = match &owner_manifest {
             OwnerManifest::Folder(file, _) => file.items.iter().any(|item| {
                 item.item_type == ItemType::Request
-                    && item.item_id != request_id
+                    && item.item_id != input.request_id
                     && item.name.eq_ignore_ascii_case(next_name)
             }),
             OwnerManifest::Collection(file, _) => file.items.iter().any(|item| {
                 item.item_type == ItemType::Request
-                    && item.item_id != request_id
+                    && item.item_id != input.request_id
                     && item.name.eq_ignore_ascii_case(next_name)
             }),
         };
@@ -1147,7 +1610,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         match owner_manifest {
             OwnerManifest::Folder(mut file, manifest_path) => {
                 for item in &mut file.items {
-                    if item.item_id == request_id && item.item_type == ItemType::Request {
+                    if item.item_id == input.request_id && item.item_type == ItemType::Request {
                         item.name = next_name.to_string();
                     }
                 }
@@ -1155,124 +1618,31 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
             }
             OwnerManifest::Collection(mut file, manifest_path) => {
                 for item in &mut file.items {
-                    if item.item_id == request_id && item.item_type == ItemType::Request {
+                    if item.item_id == input.request_id && item.item_type == ItemType::Request {
                         item.name = next_name.to_string();
                     }
                 }
                 self.write_toml_file(&manifest_path, &file)?;
             }
         }
-        Ok(request_file)
+        Ok(request_file.with_file_path(new_path))
     }
 
     fn rename_collection(&self, collection_id: Ulid, new_name: &str) -> Result<CollectionFile> {
-        let next_name = new_name.trim();
-        if next_name.is_empty() {
-            return Err(BeamError::Validation {
-                message: "Collection name cannot be empty".to_string(),
-            });
-        }
-        let sibling_names = self.sibling_collection_names(Some(collection_id))?;
-        if sibling_names
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(next_name))
-        {
-            return Err(BeamError::Validation {
-                message: format!("A collection named '{next_name}' already exists"),
-            });
-        }
-
-        let old_dir = self.find_collection_dir_by_id(collection_id)?;
-        let path = old_dir.join("collection.toml");
-        let mut collection_file = self.read_collection_file(&path)?;
-        collection_file.collection.name = next_name.to_string();
-        collection_file.collection.updated_at = Utc::now();
-        self.write_toml_file(&path, &collection_file)?;
-
-        let parent_dir = old_dir
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.paths.collections_dir.clone());
-        let old_name = old_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let new_dir_name = slugify(next_name);
-        if !new_dir_name.is_empty() && new_dir_name != old_name {
-            let new_dir = parent_dir.join(&new_dir_name);
-            if !new_dir.exists() {
-                fs::rename(&old_dir, &new_dir).map_err(|source| BeamError::Io {
-                    path: old_dir,
-                    source,
-                })?;
-            }
-        }
-        Ok(collection_file)
+        self.rename_collection_with_manifest_path(collection_id, new_name, None)
     }
 
     fn rename_folder(&self, folder_id: Ulid, new_name: &str) -> Result<FolderFile> {
-        let next_name = new_name.trim();
-        if next_name.is_empty() {
-            return Err(BeamError::Validation {
-                message: "Folder name cannot be empty".to_string(),
-            });
-        }
-        let parent = self.find_folder_parent(folder_id)?;
-        let sibling_names = self.sibling_folder_names(parent, Some(folder_id))?;
-        if sibling_names
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(next_name))
-        {
-            return Err(BeamError::Validation {
-                message: format!("A folder named '{next_name}' already exists in this scope"),
-            });
-        }
-
-        let old_dir = self.find_folder_dir_by_id(folder_id)?;
-        let path = old_dir.join("folder.toml");
-        let mut folder_file = self.read_folder_file(&path)?;
-        folder_file.folder.name = next_name.to_string();
-        folder_file.folder.updated_at = Utc::now();
-        self.write_toml_file(&path, &folder_file)?;
-        self.update_folder_name_in_parent_manifest(folder_id, next_name)?;
-
-        let parent_dir =
-            old_dir
-                .parent()
-                .map(Path::to_path_buf)
-                .ok_or_else(|| BeamError::NotFound {
-                    entity: "folder_parent_dir",
-                    id: folder_id.to_string(),
-                })?;
-        let old_name = old_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let new_dir_name = format!("{}-{}", slugify(next_name), folder_id);
-        if new_dir_name != old_name {
-            let new_dir = parent_dir.join(&new_dir_name);
-            if !new_dir.exists() {
-                fs::rename(&old_dir, &new_dir).map_err(|source| BeamError::Io {
-                    path: old_dir,
-                    source,
-                })?;
-            }
-        }
-        Ok(folder_file)
+        self.rename_folder_with_manifest_path(folder_id, new_name, None, None)
     }
 
-    fn duplicate_request(
-        &self,
-        request_id: Ulid,
-        duplicate_name: &str,
-        parent: RequestParentRef,
-    ) -> Result<RequestFile> {
-        let request_dir = self.request_dir_for_parent(parent)?;
-        let source_path = self.find_request_file_in_dir(&request_dir, request_id)?;
+    fn duplicate_request(&self, input: DuplicateRequestInput) -> Result<RequestFile> {
+        let request_dir =
+            self.request_dir_for_parent(input.parent, input.known_parent_manifest_path.as_ref())?;
+        let source_path =
+            self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
         let source = self.read_request_file(&source_path)?;
-        let name = duplicate_name.trim();
+        let name = input.duplicate_name.trim();
         if name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Duplicate request name cannot be empty".to_string(),
@@ -1285,42 +1655,45 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
         duplicated.meta.created_at = now;
         duplicated.meta.updated_at = now;
 
-        self.write_request_new_path_with_dir(&duplicated, &request_dir)?;
+        let duplicated_path = self.write_request_new_path_with_dir(&duplicated, &request_dir)?;
         self.insert_request_to_parent_manifest_after(
-            parent,
-            request_id,
+            input.parent,
+            input.request_id,
             duplicated.meta.request_id,
             &duplicated.meta.name,
         )?;
-        Ok(duplicated)
+        Ok(duplicated.with_file_path(duplicated_path))
     }
 
     fn delete_collection(&self, collection_id: Ulid) -> Result<()> {
-        let collection_dir = self.find_collection_dir_by_id(collection_id)?;
-        fs::remove_dir_all(&collection_dir).map_err(|source| BeamError::Io {
-            path: collection_dir,
-            source,
-        })
+        self.delete_collection_with_manifest_path(collection_id, None)
     }
 
     fn delete_folder(&self, folder_id: Ulid) -> Result<()> {
-        let folder_dir = self.find_folder_dir_by_id(folder_id)?;
-        self.remove_folder_from_parent_manifest(folder_id)?;
-        fs::remove_dir_all(&folder_dir).map_err(|source| BeamError::Io {
-            path: folder_dir,
-            source,
-        })
+        self.delete_folder_with_manifest_path(folder_id, None, None)
     }
 
-    fn delete_request(&self, request_id: Ulid) -> Result<()> {
-        let request_path = self.find_request_file_by_id(request_id)?;
-        let parent = self.find_request_parent(request_id)?;
+    fn delete_request(&self, input: DeleteRequestInput) -> Result<()> {
+        let request_path =
+            self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
+        let parent = if input.known_parent_manifest_path.is_some() {
+            None
+        } else {
+            Some(self.find_request_parent(input.request_id)?)
+        };
 
         fs::remove_file(&request_path).map_err(|source| BeamError::Io {
             path: request_path,
             source,
         })?;
-        self.remove_request_from_parent_manifest(parent, request_id)
+        self.remove_request_from_parent_manifest(
+            parent.unwrap_or(RequestParentRef {
+                collection_id: Ulid::nil(),
+                folder_id: None,
+            }),
+            input.known_parent_manifest_path.as_ref(),
+            input.request_id,
+        )
     }
 
     fn delete_environment(&self, environment_id: Ulid) -> Result<()> {
@@ -1511,6 +1884,7 @@ environment_id = "{environment_id}"
                 text: "{\"name\":\"Alice\"}".to_string(),
             },
             scripts: ScriptConfig::default(),
+            file_path: None,
         };
 
         let encoded = toml::to_string_pretty(&request).expect("encode request");
@@ -1540,6 +1914,7 @@ environment_id = "{environment_id}"
                 updated_at: Utc::now(),
             },
             items: Vec::new(),
+            manifest_path: None,
         };
         storage
             .write_toml_file(&collection_dir.join("collection.toml"), &collection_file)
@@ -1549,19 +1924,148 @@ environment_id = "{environment_id}"
     }
 
     #[test]
+    fn load_helpers_hydrate_runtime_paths_for_loaded_files() {
+        let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
+        let collection_manifest_path = collection_dir.join("collection.toml");
+
+        let loaded_collection = storage
+            .read_collection_file(&collection_manifest_path)
+            .expect("load collection with path");
+        assert_eq!(
+            loaded_collection.manifest_path.as_deref(),
+            Some(collection_manifest_path.as_path())
+        );
+
+        let folder = storage
+            .create_folder(CreateFolderInput {
+                parent: FolderParentRef {
+                    collection_id,
+                    parent_folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Auth".to_string(),
+            })
+            .expect("create folder");
+        let folder_manifest_path = storage
+            .find_folder_dir_by_id(folder.folder.folder_id)
+            .expect("find folder dir")
+            .join("folder.toml");
+        assert_eq!(
+            folder.manifest_path.as_deref(),
+            Some(folder_manifest_path.as_path())
+        );
+        let loaded_folder = storage
+            .read_folder_file(&folder_manifest_path)
+            .expect("load folder with path");
+        assert_eq!(
+            loaded_folder.manifest_path.as_deref(),
+            Some(folder_manifest_path.as_path())
+        );
+
+        let request = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "List Users".to_string(),
+                method: HttpMethod::Get,
+                url: "https://api.example.com/users".to_string(),
+            })
+            .expect("create request");
+        let request_path = storage
+            .find_request_file_by_id(request.meta.request_id)
+            .expect("find request path");
+        assert_eq!(request.file_path.as_deref(), Some(request_path.as_path()));
+        let loaded_request = storage
+            .load_request(request.meta.request_id)
+            .expect("load request with path");
+        assert_eq!(
+            loaded_request.file_path.as_deref(),
+            Some(request_path.as_path())
+        );
+
+        let environment = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "Global".to_string(),
+                scope: EnvironmentScope::Global,
+                collection_id: None,
+            })
+            .expect("create environment");
+        let environment_path = storage
+            .find_environment_file_by_id(environment.environment.environment_id)
+            .expect("find environment path");
+        assert_eq!(
+            environment.file_path.as_deref(),
+            Some(environment_path.as_path())
+        );
+        let loaded_environment = storage
+            .read_environment_file(&environment_path)
+            .expect("load environment with path");
+        assert_eq!(
+            loaded_environment.file_path.as_deref(),
+            Some(environment_path.as_path())
+        );
+    }
+
+    #[test]
+    fn created_folder_and_environment_toml_do_not_persist_runtime_paths() {
+        let (_dir, storage, collection_id, _) = init_storage_with_collection();
+
+        let folder = storage
+            .create_folder(CreateFolderInput {
+                parent: FolderParentRef {
+                    collection_id,
+                    parent_folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Auth".to_string(),
+            })
+            .expect("create folder");
+        let folder_manifest_path = folder
+            .manifest_path
+            .clone()
+            .expect("folder manifest path should be hydrated");
+        let folder_toml = fs::read_to_string(&folder_manifest_path).expect("read folder manifest");
+        assert!(!folder_toml.contains("manifest_path"));
+
+        let environment = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "Global".to_string(),
+                scope: EnvironmentScope::Global,
+                collection_id: None,
+            })
+            .expect("create environment");
+        let environment_path = environment
+            .file_path
+            .clone()
+            .expect("environment file path should be hydrated");
+        let environment_toml =
+            fs::read_to_string(&environment_path).expect("read environment manifest");
+        assert!(!environment_toml.contains("file_path"));
+    }
+
+    #[test]
     fn create_request_roundtrip_persists_and_links_manifest() {
-        let (_dir, storage, collection_id, _collection_dir) = init_storage_with_collection();
+        let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
+        let collection_manifest_path = collection_dir.join("collection.toml");
         let created = storage
             .create_request(CreateRequestInput {
                 parent: RequestParentRef {
                     collection_id,
                     folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "List Users".to_string(),
                 method: HttpMethod::Get,
                 url: "https://api.example.com/users".to_string(),
             })
             .expect("create request");
+        let created_path = storage
+            .find_request_file_by_id(created.meta.request_id)
+            .expect("find created request");
+        assert_eq!(created.file_path.as_deref(), Some(created_path.as_path()));
 
         let loaded = storage
             .load_request(created.meta.request_id)
@@ -1571,10 +2075,8 @@ environment_id = "{environment_id}"
         assert_eq!(loaded.request.method, HttpMethod::Get);
         assert_eq!(loaded.request.url, "https://api.example.com/users");
         assert_eq!(loaded.request.headers.len(), 2);
+        assert_eq!(loaded.file_path.as_deref(), Some(created_path.as_path()));
 
-        let collection_dir = storage
-            .find_collection_dir_by_id(collection_id)
-            .expect("find collection dir");
         let collection_file: CollectionFile = storage
             .read_toml_file(&collection_dir.join("collection.toml"))
             .expect("load collection");
@@ -1583,6 +2085,20 @@ environment_id = "{environment_id}"
                 && item.item_type == ItemType::Request
                 && item.name == "List Users"
         }));
+        assert_eq!(
+            storage
+                .request_dir_for_parent(
+                    RequestParentRef {
+                        collection_id: Ulid::new(),
+                        folder_id: None,
+                    },
+                    Some(&KnownParentManifestPath::Collection(
+                        collection_manifest_path
+                    )),
+                )
+                .expect("resolve request dir from known collection path"),
+            collection_dir.join("requests")
+        );
     }
 
     #[test]
@@ -1594,6 +2110,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "Get User".to_string(),
                 method: HttpMethod::Get,
                 url: "https://api.example.com/users/1".to_string(),
@@ -1605,6 +2122,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "List Users".to_string(),
                 method: HttpMethod::Get,
                 url: "https://api.example.com/users".to_string(),
@@ -1612,14 +2130,16 @@ environment_id = "{environment_id}"
             .expect("create second request");
 
         let duplicated = storage
-            .duplicate_request(
-                created.meta.request_id,
-                "Get User (Copy)",
-                RequestParentRef {
+            .duplicate_request(DuplicateRequestInput {
+                request_id: created.meta.request_id,
+                duplicate_name: "Get User (Copy)".to_string(),
+                parent: RequestParentRef {
                     collection_id,
                     folder_id: None,
                 },
-            )
+                known_request_path: created.file_path.clone(),
+                known_parent_manifest_path: None,
+            })
             .expect("duplicate request");
 
         assert_ne!(duplicated.meta.request_id, created.meta.request_id);
@@ -1665,6 +2185,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "Old Name".to_string(),
                 method: HttpMethod::Get,
                 url: "https://api.example.com/items".to_string(),
@@ -1675,7 +2196,12 @@ environment_id = "{environment_id}"
             .expect("find old request file");
 
         let renamed = storage
-            .rename_request(created.meta.request_id, "New Name")
+            .rename_request(RenameRequestInput {
+                request_id: created.meta.request_id,
+                new_name: "New Name".to_string(),
+                known_request_path: created.file_path.clone(),
+                known_parent_manifest_path: None,
+            })
             .expect("rename request");
 
         let new_path = storage
@@ -1707,6 +2233,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "Sample".to_string(),
                 method: HttpMethod::Get,
                 url: "https://api.example.com/sample".to_string(),
@@ -1723,7 +2250,12 @@ environment_id = "{environment_id}"
         );
 
         let renamed = storage
-            .rename_request(created.meta.request_id, "Sample")
+            .rename_request(RenameRequestInput {
+                request_id: created.meta.request_id,
+                new_name: "Sample".to_string(),
+                known_request_path: created.file_path.clone(),
+                known_parent_manifest_path: None,
+            })
             .expect("rename same");
         assert_eq!(renamed.meta.name, "Sample");
         let renamed_path = storage
@@ -1803,6 +2335,7 @@ environment_id = "{environment_id}"
             updated.environment.file_name,
             "renamed-environment.env.toml"
         );
+        assert_eq!(updated.file_path.as_deref(), Some(new_path.as_path()));
     }
 
     #[test]
@@ -1847,6 +2380,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     parent_folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "Auth".to_string(),
             })
             .expect("create folder");
@@ -1857,6 +2391,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     folder_id: Some(folder.folder.folder_id),
                 },
+                known_parent_manifest_path: None,
                 name: "Get Token".to_string(),
                 method: HttpMethod::Post,
                 url: "https://api.example.com/token".to_string(),
@@ -1874,7 +2409,15 @@ environment_id = "{environment_id}"
         );
 
         let renamed = storage
-            .rename_request(created.meta.request_id, "Issue Token")
+            .rename_request(RenameRequestInput {
+                request_id: created.meta.request_id,
+                new_name: "Issue Token".to_string(),
+                known_request_path: created.file_path.clone(),
+                known_parent_manifest_path: folder
+                    .manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Folder),
+            })
             .expect("rename request");
         assert_eq!(renamed.meta.name, "Issue Token");
         let renamed_path = storage
@@ -1888,13 +2431,14 @@ environment_id = "{environment_id}"
 
     #[test]
     fn create_and_rename_folder_updates_manifest_and_directory() {
-        let (_dir, storage, collection_id, _) = init_storage_with_collection();
+        let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
         let created = storage
             .create_folder(CreateFolderInput {
                 parent: FolderParentRef {
                     collection_id,
                     parent_folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "Auth".to_string(),
             })
             .expect("create folder");
@@ -1902,6 +2446,24 @@ environment_id = "{environment_id}"
             .find_folder_dir_by_id(created.folder.folder_id)
             .expect("find created folder dir");
         assert!(created_dir.exists());
+        assert_eq!(
+            created.manifest_path.as_deref(),
+            Some(created_dir.join("folder.toml").as_path())
+        );
+        assert_eq!(
+            storage
+                .folder_dir_for_parent(
+                    FolderParentRef {
+                        collection_id,
+                        parent_folder_id: None,
+                    },
+                    Some(&KnownParentManifestPath::Collection(
+                        collection_dir.join("collection.toml"),
+                    )),
+                )
+                .expect("resolve folder dir from known collection path"),
+            collection_dir
+        );
 
         let renamed = storage
             .rename_folder(created.folder.folder_id, "Security")
@@ -1961,6 +2523,7 @@ environment_id = "{environment_id}"
                     collection_id,
                     parent_folder_id: None,
                 },
+                known_parent_manifest_path: None,
                 name: "Temp".to_string(),
             })
             .expect("create folder");

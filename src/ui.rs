@@ -36,8 +36,8 @@ use crate::models::{
 };
 use crate::paths::BeamPaths;
 use crate::request_authoring::{
-    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState,
-    SendDisabledReason, validate_rename,
+    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
+    validate_rename,
 };
 use crate::script::{
     ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult,
@@ -45,7 +45,9 @@ use crate::script::{
 };
 use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
-    CreateFolderInput, CreateRequestInput, FolderParentRef, RequestParentRef, WorkspaceStorage,
+    CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
+    FolderParentRef, KnownParentManifestPath, RenameRequestInput, RequestParentRef,
+    WorkspaceStorage,
 };
 
 actions!(
@@ -723,6 +725,7 @@ impl EnvironmentManagerDialogView {
                 updated_at: legacy.environment.updated_at,
             },
             variables: legacy.variables,
+            file_path: None,
         })
     }
 
@@ -2197,6 +2200,7 @@ impl BeamView {
                 .and_then(|content| toml::from_str::<RequestFile>(&content).ok())
             {
                 Some(request_file) => {
+                    let request_file = request_file.with_file_path(request_path);
                     self.active_request_cache = Some(request_file);
                     return;
                 }
@@ -2939,57 +2943,117 @@ impl BeamView {
     }
 
     fn parent_ref_for_add_request(&self, node_id: Ulid) -> Option<RequestParentRef> {
+        self.request_parent_input_for_tree_node(node_id)
+            .map(|(parent, _)| parent)
+    }
+
+    fn parent_ref_for_add_folder(&self, node_id: Ulid) -> Option<FolderParentRef> {
+        self.folder_parent_input_for_tree_node(node_id)
+            .map(|(parent, _)| parent)
+    }
+
+    fn request_parent_input_for_tree_node(
+        &self,
+        node_id: Ulid,
+    ) -> Option<(RequestParentRef, Option<KnownParentManifestPath>)> {
         let node = self.shell.collections.node(node_id)?;
         match node.kind {
-            TreeNodeKind::Collection => Some(RequestParentRef {
-                collection_id: node.id,
-                folder_id: None,
-            }),
-            TreeNodeKind::Folder => Some(RequestParentRef {
-                collection_id: self.collection_ancestor_for_node(node.id)?,
-                folder_id: Some(node.id),
-            }),
+            TreeNodeKind::Collection => Some((
+                RequestParentRef {
+                    collection_id: node.id,
+                    folder_id: None,
+                },
+                node.manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Collection),
+            )),
+            TreeNodeKind::Folder => Some((
+                RequestParentRef {
+                    collection_id: self.collection_ancestor_for_node(node.id)?,
+                    folder_id: Some(node.id),
+                },
+                node.manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Folder),
+            )),
             TreeNodeKind::Request => {
                 let parent_id = node.parent_id?;
                 let parent_node = self.shell.collections.node(parent_id)?;
                 match parent_node.kind {
-                    TreeNodeKind::Collection => Some(RequestParentRef {
-                        collection_id: parent_node.id,
-                        folder_id: None,
-                    }),
-                    TreeNodeKind::Folder => Some(RequestParentRef {
-                        collection_id: self.collection_ancestor_for_node(parent_node.id)?,
-                        folder_id: Some(parent_node.id),
-                    }),
+                    TreeNodeKind::Collection => Some((
+                        RequestParentRef {
+                            collection_id: parent_node.id,
+                            folder_id: None,
+                        },
+                        parent_node
+                            .manifest_path
+                            .clone()
+                            .map(KnownParentManifestPath::Collection),
+                    )),
+                    TreeNodeKind::Folder => Some((
+                        RequestParentRef {
+                            collection_id: self.collection_ancestor_for_node(parent_node.id)?,
+                            folder_id: Some(parent_node.id),
+                        },
+                        parent_node
+                            .manifest_path
+                            .clone()
+                            .map(KnownParentManifestPath::Folder),
+                    )),
                     TreeNodeKind::Request => None,
                 }
             }
         }
     }
 
-    fn parent_ref_for_add_folder(&self, node_id: Ulid) -> Option<FolderParentRef> {
+    fn folder_parent_input_for_tree_node(
+        &self,
+        node_id: Ulid,
+    ) -> Option<(FolderParentRef, Option<KnownParentManifestPath>)> {
         let node = self.shell.collections.node(node_id)?;
         match node.kind {
-            TreeNodeKind::Collection => Some(FolderParentRef {
-                collection_id: node.id,
-                parent_folder_id: None,
-            }),
-            TreeNodeKind::Folder => Some(FolderParentRef {
-                collection_id: self.collection_ancestor_for_node(node.id)?,
-                parent_folder_id: Some(node.id),
-            }),
+            TreeNodeKind::Collection => Some((
+                FolderParentRef {
+                    collection_id: node.id,
+                    parent_folder_id: None,
+                },
+                node.manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Collection),
+            )),
+            TreeNodeKind::Folder => Some((
+                FolderParentRef {
+                    collection_id: self.collection_ancestor_for_node(node.id)?,
+                    parent_folder_id: Some(node.id),
+                },
+                node.manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Folder),
+            )),
             TreeNodeKind::Request => {
                 let parent_id = node.parent_id?;
                 let parent_node = self.shell.collections.node(parent_id)?;
                 match parent_node.kind {
-                    TreeNodeKind::Collection => Some(FolderParentRef {
-                        collection_id: parent_node.id,
-                        parent_folder_id: None,
-                    }),
-                    TreeNodeKind::Folder => Some(FolderParentRef {
-                        collection_id: self.collection_ancestor_for_node(parent_node.id)?,
-                        parent_folder_id: Some(parent_node.id),
-                    }),
+                    TreeNodeKind::Collection => Some((
+                        FolderParentRef {
+                            collection_id: parent_node.id,
+                            parent_folder_id: None,
+                        },
+                        parent_node
+                            .manifest_path
+                            .clone()
+                            .map(KnownParentManifestPath::Collection),
+                    )),
+                    TreeNodeKind::Folder => Some((
+                        FolderParentRef {
+                            collection_id: self.collection_ancestor_for_node(parent_node.id)?,
+                            parent_folder_id: Some(parent_node.id),
+                        },
+                        parent_node
+                            .manifest_path
+                            .clone()
+                            .map(KnownParentManifestPath::Folder),
+                    )),
                     TreeNodeKind::Request => None,
                 }
             }
@@ -3022,6 +3086,35 @@ impl BeamView {
             .filter(|child| child.kind == TreeNodeKind::Folder)
             .map(|child| child.name.clone())
             .collect()
+    }
+
+    fn request_file_path_for_tree_node(&self, node_id: Ulid) -> Option<PathBuf> {
+        self.shell
+            .collections
+            .node(node_id)
+            .filter(|node| node.kind == TreeNodeKind::Request)
+            .and_then(|node| node.manifest_path.clone())
+    }
+
+    fn sync_request_file_index_for_ids<I>(&mut self, request_ids: I)
+    where
+        I: IntoIterator<Item = Ulid>,
+    {
+        for request_id in request_ids {
+            let path = self
+                .shell
+                .collections
+                .node(request_id)
+                .and_then(|node| node.manifest_path.clone());
+            match path {
+                Some(path) => {
+                    self.request_file_index.insert(request_id, path);
+                }
+                None => {
+                    self.request_file_index.remove(&request_id);
+                }
+            }
+        }
     }
 
     fn next_new_request_name(&self, parent: RequestParentRef) -> String {
@@ -3194,6 +3287,7 @@ impl BeamView {
             request_file.meta.name.clone(),
             request_file.request.method,
             request_file.request.url.clone(),
+            request_file.file_path.clone(),
         );
         self.shell.request_pane_data.insert(
             request_file.meta.request_id,
@@ -3229,6 +3323,7 @@ impl BeamView {
             request_file.meta.name.clone(),
             request_file.request.method,
             request_file.request.url.clone(),
+            request_file.file_path.clone(),
         );
         self.shell.request_pane_data.insert(
             request_file.meta.request_id,
@@ -3264,6 +3359,7 @@ impl BeamView {
             request_file.meta.name.clone(),
             request_file.request.method,
             request_file.request.url.clone(),
+            request_file.file_path.clone(),
         );
         self.shell.request_pane_data.insert(
             request_file.meta.request_id,
@@ -3401,6 +3497,10 @@ impl BeamView {
                     request,
                     command_id,
                 } => {
+                    if let Some(path) = request.file_path.clone() {
+                        self.request_file_index
+                            .insert(request.meta.request_id, path);
+                    }
                     if self
                         .active_request_cache
                         .as_ref()
@@ -3419,6 +3519,7 @@ impl BeamView {
                                     request.meta.name.clone(),
                                     request.request.method,
                                     request.request.url.clone(),
+                                    request.file_path.clone(),
                                 );
                             }
                             PendingRequestPlacement::After {
@@ -3433,6 +3534,7 @@ impl BeamView {
                                     request.meta.name.clone(),
                                     request.request.method,
                                     request.request.url.clone(),
+                                    request.file_path.clone(),
                                 );
                             }
                         }
@@ -3504,7 +3606,9 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(parent) = self.parent_ref_for_add_request(node_id) else {
+        let Some((parent, known_parent_manifest_path)) =
+            self.request_parent_input_for_tree_node(node_id)
+        else {
             window.push_notification("Unable to determine request parent.", cx);
             return;
         };
@@ -3516,6 +3620,7 @@ impl BeamView {
         let command = AppCommand::CreateRequest {
             input: CreateRequestInput {
                 parent,
+                known_parent_manifest_path,
                 name: self.next_new_request_name(parent),
                 method: HttpMethod::Get,
                 url: String::new(),
@@ -3533,7 +3638,9 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(parent) = self.parent_ref_for_add_folder(node_id) else {
+        let Some((parent, known_parent_manifest_path)) =
+            self.folder_parent_input_for_tree_node(node_id)
+        else {
             window.push_notification("Unable to determine folder parent.", cx);
             return;
         };
@@ -3542,6 +3649,7 @@ impl BeamView {
         let storage = TomlWorkspaceStorage::new(paths);
         match storage.create_folder(CreateFolderInput {
             parent,
+            known_parent_manifest_path,
             name: folder_name,
         }) {
             Ok(folder_file) => {
@@ -3734,13 +3842,20 @@ impl BeamView {
         window.close_dialog(cx);
         cx.notify();
         if node_kind == TreeNodeKind::Request {
+            let (_, known_parent_manifest_path) = self
+                .request_parent_input_for_tree_node(node_id)
+                .expect("request parent exists during rename");
             let _ = self
                 .shell
                 .collections
                 .rename_node(node_id, confirmed_name.clone());
             let command = AppCommand::RenameRequest {
-                request_id: node_id,
-                new_name: persisted_name,
+                input: RenameRequestInput {
+                    request_id: node_id,
+                    new_name: persisted_name,
+                    known_request_path: node.manifest_path.clone(),
+                    known_parent_manifest_path,
+                },
                 command_id: next_command_id(),
             };
             match self.publish_app_command(command) {
@@ -3750,6 +3865,16 @@ impl BeamView {
             cx.notify();
             return;
         }
+        let folder_parent_input = if node_kind == TreeNodeKind::Folder {
+            self.folder_parent_input_for_tree_node(node_id)
+        } else {
+            None
+        };
+        let original_manifest_path = node.manifest_path.clone();
+        let old_root_dir = original_manifest_path
+            .as_ref()
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+        let subtree_request_ids = self.shell.collections.subtree_request_ids(node_id);
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
@@ -3757,32 +3882,60 @@ impl BeamView {
                 "rename: async start node_id={}, kind={:?}, validated_name='{}'",
                 node_id, node_kind, persisted_name
             );
-            let result = cx
+            let result: std::result::Result<Option<PathBuf>, String> = cx
                 .background_executor()
                 .spawn(async move {
                     let storage = TomlWorkspaceStorage::new(paths.clone());
-                    let rename_result = match node_kind {
+                    match node_kind {
                         TreeNodeKind::Collection => storage
-                            .rename_collection(node_id, &persisted_name)
-                            .map(|_| ()),
-                        TreeNodeKind::Folder => {
-                            storage.rename_folder(node_id, &persisted_name).map(|_| ())
+                            .rename_collection_with_manifest_path(
+                                node_id,
+                                &persisted_name,
+                                original_manifest_path.as_deref(),
+                            )
+                            .map(|file| file.manifest_path),
+                        TreeNodeKind::Folder => storage
+                            .rename_folder_with_manifest_path(
+                                node_id,
+                                &persisted_name,
+                                original_manifest_path.as_deref(),
+                                folder_parent_input
+                                    .as_ref()
+                                    .and_then(|(_, path)| path.as_ref()),
+                            )
+                            .map(|file| file.manifest_path),
+                        TreeNodeKind::Request => {
+                            Ok::<Option<PathBuf>, crate::error::BeamError>(None)
                         }
-                        TreeNodeKind::Request => Ok(()),
-                    };
-                    if let Err(error) = rename_result {
-                        return Err(format!("Failed to rename: {error}"));
                     }
-                    Ok(())
+                    .map_err(|error| format!("Failed to rename: {error}"))
                 })
                 .await;
             let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(()) => {
+                Ok(new_manifest_path) => {
                     eprintln!("rename: async success for node_id={node_id}");
-                    let _ = this
-                        .shell
-                        .collections
-                        .rename_node(node_id, confirmed_name.clone());
+                    let _ = this.shell.collections.rename_node_with_manifest_path(
+                        node_id,
+                        confirmed_name.clone(),
+                        new_manifest_path.clone(),
+                    );
+                    if let (Some(old_root_dir), Some(new_manifest_path)) =
+                        (old_root_dir.as_ref(), new_manifest_path.as_ref())
+                        && let Some(new_root_dir) = new_manifest_path.parent()
+                    {
+                        this.shell.collections.replace_subtree_path_prefix(
+                            node_id,
+                            old_root_dir,
+                            new_root_dir,
+                        );
+                        this.sync_request_file_index_for_ids(subtree_request_ids.iter().copied());
+                        if preferred_selection
+                            .is_some_and(|request_id| subtree_request_ids.contains(&request_id))
+                        {
+                            this.active_request_cache = None;
+                            this.refresh_active_request_cache();
+                        }
+                    }
                     if let Some(request_id) = preferred_selection {
                         this.shell.collections.select_request(request_id);
                     }
@@ -3815,7 +3968,9 @@ impl BeamView {
             window.push_notification("No active request selected.", cx);
             return;
         };
-        let Some(parent) = self.parent_ref_for_add_request(active_request_id) else {
+        let Some((parent, known_parent_manifest_path)) =
+            self.request_parent_input_for_tree_node(active_request_id)
+        else {
             window.push_notification("Unable to determine request parent.", cx);
             return;
         };
@@ -3830,6 +3985,7 @@ impl BeamView {
         let command = AppCommand::CreateRequestAfter {
             input: CreateRequestInput {
                 parent,
+                known_parent_manifest_path,
                 name: self.next_new_request_name(parent),
                 method: HttpMethod::Get,
                 url: String::new(),
@@ -3900,7 +4056,9 @@ impl BeamView {
             window.push_notification("Unable to duplicate this request.", cx);
             return;
         };
-        let Some(parent) = self.parent_ref_for_add_request(request_id) else {
+        let Some((parent, known_parent_manifest_path)) =
+            self.request_parent_input_for_tree_node(request_id)
+        else {
             window.push_notification("Unable to determine request parent.", cx);
             return;
         };
@@ -3913,9 +4071,13 @@ impl BeamView {
             },
         );
         let command = AppCommand::DuplicateRequest {
-            request_id,
-            duplicate_name,
-            parent,
+            input: DuplicateRequestInput {
+                request_id,
+                duplicate_name,
+                parent,
+                known_request_path: self.request_file_path_for_tree_node(request_id),
+                known_parent_manifest_path,
+            },
             command_id,
         };
         if let Err(error) = self.publish_app_command(command) {
@@ -3930,7 +4092,13 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let command = AppCommand::DeleteRequest {
-            request_id,
+            input: DeleteRequestInput {
+                request_id,
+                known_request_path: self.request_file_path_for_tree_node(request_id),
+                known_parent_manifest_path: self
+                    .request_parent_input_for_tree_node(request_id)
+                    .and_then(|(_, path)| path),
+            },
             command_id: next_command_id(),
         };
         if let Err(error) = self.publish_app_command(command) {
@@ -3944,30 +4112,35 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(node) = self.shell.collections.node(collection_id).cloned() else {
+            window.push_notification("Unable to delete: item not found.", cx);
+            return;
+        };
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
-            let result = cx
+            let result: std::result::Result<(), String> = cx
                 .background_executor()
                 .spawn(async move {
                     let storage = TomlWorkspaceStorage::new(paths.clone());
                     storage
-                        .delete_collection(collection_id)
+                        .delete_collection_with_manifest_path(
+                            collection_id,
+                            node.manifest_path.as_deref(),
+                        )
                         .map_err(|error| format!("Failed to delete collection: {error}"))?;
-                    let reload_storage = TomlWorkspaceStorage::new(paths.clone());
-                    match startup_preload(&reload_storage, &paths) {
-                        StartupLoad::Ready { state, messages } => Ok((state, messages)),
-                        StartupLoad::Fatal { message } => {
-                            Err(format!("Failed to reload workspace: {}", message.text))
-                        }
-                    }
+                    Ok(())
                 })
                 .await;
             let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok((state, messages)) => {
-                    this.shell = state;
-                    this.prune_request_execution_states();
-                    this.startup_messages = messages;
+                Ok(()) => {
+                    let removed_request_ids = this.shell.collections.remove_subtree(collection_id);
+                    for request_id in removed_request_ids.iter().copied() {
+                        this.clear_request_execution_state(request_id);
+                        this.request_file_index.remove(&request_id);
+                        this.shell.request_pane_data.remove(&request_id);
+                    }
+                    this.active_request_cache = None;
                     this.sync_request_editor_from_selection(window, cx);
                     window.push_notification("Collection deleted.", cx);
                     cx.notify();
@@ -3986,34 +4159,37 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let preferred_request = self.shell.collections.selected_request_id();
+        let Some(node) = self.shell.collections.node(folder_id).cloned() else {
+            window.push_notification("Unable to delete: item not found.", cx);
+            return;
+        };
+        let parent_input = self.folder_parent_input_for_tree_node(folder_id);
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
-            let result = cx
+            let result: std::result::Result<(), String> = cx
                 .background_executor()
                 .spawn(async move {
                     let storage = TomlWorkspaceStorage::new(paths.clone());
                     storage
-                        .delete_folder(folder_id)
+                        .delete_folder_with_manifest_path(
+                            folder_id,
+                            node.manifest_path.as_deref(),
+                            parent_input.as_ref().and_then(|(_, path)| path.as_ref()),
+                        )
                         .map_err(|error| format!("Failed to delete folder: {error}"))?;
-                    let reload_storage = TomlWorkspaceStorage::new(paths.clone());
-                    match startup_preload(&reload_storage, &paths) {
-                        StartupLoad::Ready { state, messages } => Ok((state, messages)),
-                        StartupLoad::Fatal { message } => {
-                            Err(format!("Failed to reload workspace: {}", message.text))
-                        }
-                    }
+                    Ok(())
                 })
                 .await;
             let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok((state, messages)) => {
-                    this.shell = state;
-                    this.prune_request_execution_states();
-                    this.startup_messages = messages;
-                    if let Some(request_id) = preferred_request {
-                        this.shell.collections.select_request(request_id);
+                Ok(()) => {
+                    let removed_request_ids = this.shell.collections.remove_subtree(folder_id);
+                    for request_id in removed_request_ids.iter().copied() {
+                        this.clear_request_execution_state(request_id);
+                        this.request_file_index.remove(&request_id);
+                        this.shell.request_pane_data.remove(&request_id);
                     }
+                    this.active_request_cache = None;
                     this.sync_request_editor_from_selection(window, cx);
                     window.push_notification("Folder deleted.", cx);
                     cx.notify();
@@ -8237,7 +8413,11 @@ mod tests {
         );
         assert_eq!(
             selected_b,
-            ("200".to_string(), "120 ms".to_string(), "1.2 KB".to_string())
+            (
+                "200".to_string(),
+                "120 ms".to_string(),
+                "1.2 KB".to_string()
+            )
         );
     }
 }
