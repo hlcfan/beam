@@ -3661,7 +3661,6 @@ impl BeamView {
                 if let Err(error) = self.persist_tree_expansion_state() {
                     window.push_notification(error, cx);
                 }
-                window.push_notification("Folder added.", cx);
                 cx.notify();
             }
             Err(error) => {
@@ -3832,11 +3831,6 @@ impl BeamView {
             TreeNodeKind::Request => selected_request.or(Some(node_id)),
             TreeNodeKind::Collection | TreeNodeKind::Folder => selected_request,
         };
-        let success_message = match node_kind {
-            TreeNodeKind::Collection => "Collection renamed.",
-            TreeNodeKind::Folder => "Folder renamed.",
-            TreeNodeKind::Request => "Request renamed.",
-        };
         let confirmed_name = validated_name.clone();
         let persisted_name = validated_name;
         window.close_dialog(cx);
@@ -3858,9 +3852,8 @@ impl BeamView {
                 },
                 command_id: next_command_id(),
             };
-            match self.publish_app_command(command) {
-                Ok(()) => window.push_notification(success_message, cx),
-                Err(error) => window.push_notification(error, cx),
+            if let Err(error) = self.publish_app_command(command) {
+                window.push_notification(error, cx);
             }
             cx.notify();
             return;
@@ -3939,7 +3932,6 @@ impl BeamView {
                     if let Some(request_id) = preferred_selection {
                         this.shell.collections.select_request(request_id);
                     }
-                    window.push_notification(success_message, cx);
                     cx.notify();
                 }
                 Err(error) => {
@@ -4043,7 +4035,6 @@ impl BeamView {
             return;
         };
         cx.write_to_clipboard(ClipboardItem::new_string(curl));
-        window.push_notification("Copied as cURL.", cx);
     }
 
     fn duplicate_request_from_tree_node(
@@ -4142,7 +4133,6 @@ impl BeamView {
                     }
                     this.active_request_cache = None;
                     this.sync_request_editor_from_selection(window, cx);
-                    window.push_notification("Collection deleted.", cx);
                     cx.notify();
                 }
                 Err(error) => {
@@ -4191,7 +4181,6 @@ impl BeamView {
                     }
                     this.active_request_cache = None;
                     this.sync_request_editor_from_selection(window, cx);
-                    window.push_notification("Folder deleted.", cx);
                     cx.notify();
                 }
                 Err(error) => {
@@ -5183,8 +5172,6 @@ impl BeamView {
                 };
 
                 if formatted == latest_text {
-                    window.push_notification("Body is already formatted.".to_string(), cx);
-                    cx.notify();
                     return;
                 }
 
@@ -5213,8 +5200,6 @@ impl BeamView {
         let current_text = self.response_body_editor.read(cx).value().to_string();
         let trimmed = current_text.trim();
         if trimmed.is_empty() {
-            window.push_notification("No response body to format.".to_string(), cx);
-            cx.notify();
             return;
         }
 
@@ -5234,8 +5219,6 @@ impl BeamView {
         };
 
         if formatted == current_text {
-            window.push_notification("Body is already formatted.".to_string(), cx);
-            cx.notify();
             return;
         }
 
