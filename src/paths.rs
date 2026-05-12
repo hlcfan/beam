@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 pub struct BeamPaths {
     pub root: PathBuf,
     pub collections_dir: PathBuf,
+    pub collections_root_order_file: PathBuf,
     pub environments_dir: PathBuf,
     pub local_dir: PathBuf,
     pub local_state_file: PathBuf,
@@ -13,6 +14,8 @@ pub struct BeamPaths {
 impl BeamPaths {
     pub fn from_root(root: PathBuf) -> Self {
         let collections_dir = root.join("collections");
+        let collections_root_order_file =
+            collections_dir.join(crate::tree_store::COLLECTION_ROOT_ORDER_FILE_NAME);
         let environments_dir = root.join("environments");
         let local_dir = root.join(".beam");
         let local_state_file = local_dir.join("local-state.toml");
@@ -21,6 +24,7 @@ impl BeamPaths {
         Self {
             root,
             collections_dir,
+            collections_root_order_file,
             environments_dir,
             local_dir,
             local_state_file,
@@ -80,5 +84,15 @@ mod tests {
         assert!(!has_workspace_data(dir.path()));
         fs::create_dir_all(dir.path().join("collections")).expect("create collections dir");
         assert!(has_workspace_data(dir.path()));
+    }
+
+    #[test]
+    fn derives_collections_root_order_file_path() {
+        let dir = tempdir().expect("tempdir");
+        let paths = super::BeamPaths::from_root(dir.path().to_path_buf());
+        assert_eq!(
+            paths.collections_root_order_file,
+            dir.path().join("collections").join(".root-order.toml")
+        );
     }
 }
