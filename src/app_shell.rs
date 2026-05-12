@@ -21,6 +21,7 @@ use crate::storage::{
     CreateEnvironmentInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
     RenameRequestInput, WorkspaceStorage,
 };
+use crate::tree_store::{Node, NodeKind, SharedStore, scope_key};
 
 const MIN_SPLIT_RATIO: f32 = 0.1;
 const MAX_SPLIT_RATIO: f32 = 0.9;
@@ -548,6 +549,7 @@ pub struct AppShellState {
     pub layout: AppShellLayout,
     pub modal_stack: ModalStack,
     pub collections: CollectionsTreeState,
+    pub shared_store: SharedStore,
     pub request_pane_data: HashMap<Ulid, RequestPaneData>,
     pub environments: Vec<EnvironmentMeta>,
     pub environment_selection: LocalEnvironmentSelectionState,
@@ -562,6 +564,7 @@ impl Default for AppShellState {
             layout: AppShellLayout::default(),
             modal_stack: ModalStack::default(),
             collections: CollectionsTreeState::default(),
+            shared_store: SharedStore::default(),
             request_pane_data: HashMap::new(),
             environments: Vec::new(),
             environment_selection: LocalEnvironmentSelectionState::default(),
@@ -639,6 +642,13 @@ impl AppShellState {
                     });
             }
             AppEvent::RequestUpserted { request, .. } => {
+                self.shared_store
+                    .requests
+                    .insert(request.meta.request_id, request.clone());
+                if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
+                    node.name = request.meta.name.clone();
+                }
+                let _ = self.shared_store.rebuild_name_index();
                 self.request_pane_data.insert(
                     request.meta.request_id,
                     RequestPaneData {
@@ -661,6 +671,21 @@ impl AppShellState {
                 );
             }
             AppEvent::RequestDeleted { request_id, .. } => {
+                self.shared_store.requests.remove(request_id);
+                if let Some(removed_node) = self.shared_store.nodes.remove(request_id) {
+                    if let Some(parent_id) = removed_node.parent_id {
+                        if let Some(parent) = self.shared_store.nodes.get_mut(&parent_id) {
+                            parent.children.retain(|child_id| child_id != request_id);
+                        }
+                    } else {
+                        self.shared_store
+                            .root_ids
+                            .retain(|root_id| root_id != request_id);
+                    }
+                    self.shared_store
+                        .name_index
+                        .retain(|_, indexed_id| indexed_id != request_id);
+                }
                 self.request_pane_data.remove(request_id);
                 let _ = self.collections.remove_request(*request_id);
             }
@@ -1213,7 +1238,8 @@ where
         }
     };
 
-    let (collections, request_pane_data, mut warnings) = load_collection_tree(paths, &local_state);
+    let (collections, shared_store, request_pane_data, mut warnings) =
+        load_collection_tree(paths, &local_state);
     // TOCHECK: environments can be load with collection tree in parallel
     let environments = load_environments(paths, &mut warnings);
     let mut messages: Vec<StartupMessage> = warnings
@@ -1237,6 +1263,7 @@ where
     StartupLoad::Ready {
         state: AppShellState {
             collections,
+            shared_store,
             request_pane_data,
             environments,
             environment_selection: LocalEnvironmentSelectionState {
@@ -1261,6 +1288,7 @@ fn load_collection_tree(
     local_state: &LocalStateFile,
 ) -> (
     CollectionsTreeState,
+    SharedStore,
     HashMap<Ulid, RequestPaneData>,
     Vec<String>,
 ) {
@@ -1269,6 +1297,7 @@ fn load_collection_tree(
     let (collections, folders, requests_by_id, request_pane_data) =
         load_navigation_manifest(paths, &mut warnings);
     let mut tree = build_tree(&collections, &folders, &requests_by_id, &mut warnings);
+    let shared_store = build_shared_store_from_tree(&tree, &requests_by_id, &mut warnings);
     tree.set_expanded(local_state.tree_state.expanded_item_ids.iter().copied());
 
     if let Some(request_id) = local_state.local_state.last_opened_request_id {
@@ -1277,7 +1306,7 @@ fn load_collection_tree(
         }
     }
 
-    (tree, request_pane_data, warnings)
+    (tree, shared_store, request_pane_data, warnings)
 }
 
 fn load_environments(paths: &BeamPaths, warnings: &mut Vec<String>) -> Vec<EnvironmentMeta> {
@@ -1345,7 +1374,7 @@ fn load_navigation_manifest(
 ) -> (
     Vec<CollectionManifest>,
     Vec<FolderManifest>,
-    HashMap<Ulid, RequestTreeMetaWithName>,
+    HashMap<Ulid, RequestFile>,
     HashMap<Ulid, RequestPaneData>,
 ) {
     let mut collections = Vec::new();
@@ -1420,15 +1449,15 @@ fn load_navigation_manifest(
                 },
                 Some(file) if file.ends_with(".request.toml") => {
                     match parse_request_tree_meta(path.as_path()) {
-                        Ok((request_meta, pane_data)) => {
-                            if seen_requests.insert(request_meta.request_id) {
-                                requests_by_id
-                                    .insert(request_meta.request_id, request_meta.clone());
-                                request_pane_data.insert(request_meta.request_id, pane_data);
+                        Ok((request_file, pane_data)) => {
+                            let request_id = request_file.meta.request_id;
+                            if seen_requests.insert(request_id) {
+                                requests_by_id.insert(request_id, request_file);
+                                request_pane_data.insert(request_id, pane_data);
                             } else {
                                 warnings.push(format!(
                                     "Duplicate request_id {} found in {}. Skipped duplicate.",
-                                    request_meta.request_id,
+                                    request_id,
                                     path.display()
                                 ));
                             }
@@ -1441,15 +1470,15 @@ fn load_navigation_manifest(
                 }
                 Some(_) if path.extension().and_then(|ext| ext.to_str()) == Some("toml") => {
                     match parse_request_tree_meta(path.as_path()) {
-                        Ok((request_meta, pane_data)) => {
-                            if seen_requests.insert(request_meta.request_id) {
-                                requests_by_id
-                                    .insert(request_meta.request_id, request_meta.clone());
-                                request_pane_data.insert(request_meta.request_id, pane_data);
+                        Ok((request_file, pane_data)) => {
+                            let request_id = request_file.meta.request_id;
+                            if seen_requests.insert(request_id) {
+                                requests_by_id.insert(request_id, request_file);
+                                request_pane_data.insert(request_id, pane_data);
                             } else {
                                 warnings.push(format!(
                                     "Duplicate request_id {} found in {}. Skipped duplicate.",
-                                    request_meta.request_id,
+                                    request_id,
                                     path.display()
                                 ));
                             }
@@ -1468,7 +1497,7 @@ fn load_navigation_manifest(
 fn build_tree(
     collections: &[CollectionManifest],
     folders: &[FolderManifest],
-    requests_by_id: &HashMap<Ulid, RequestTreeMetaWithName>,
+    requests_by_id: &HashMap<Ulid, RequestFile>,
     warnings: &mut Vec<String>,
 ) -> CollectionsTreeState {
     let mut tree = CollectionsTreeState::default();
@@ -1540,7 +1569,7 @@ fn attach_item(
     parent_id: Ulid,
     parent_ref: Option<Ulid>,
     item: &CollectionItemRef,
-    requests_by_id: &HashMap<Ulid, RequestTreeMetaWithName>,
+    requests_by_id: &HashMap<Ulid, RequestFile>,
     warnings: &mut Vec<String>,
 ) {
     match item.item_type {
@@ -1557,16 +1586,17 @@ fn attach_item(
         }
         ItemType::Request => {
             let request_meta = requests_by_id.get(&item.item_id);
-            let request_name = request_meta.map_or_else(|| item.name.clone(), |m| m.name.clone());
-            let request_method = request_meta.map(|m| m.method);
-            let request_url = request_meta.map(|m| m.url.clone());
+            let request_name =
+                request_meta.map_or_else(|| item.name.clone(), |request| request.meta.name.clone());
+            let request_method = request_meta.map(|request| request.request.method);
+            let request_url = request_meta.map(|request| request.request.url.clone());
             tree.nodes.entry(item.item_id).or_insert_with(|| TreeNode {
                 id: item.item_id,
                 name: request_name,
                 kind: TreeNodeKind::Request,
                 request_method,
                 request_url,
-                manifest_path: request_meta.and_then(|meta| meta.file_path.clone()),
+                manifest_path: request_meta.and_then(|request| request.file_path.clone()),
                 parent_id: parent_ref,
                 children: Vec::new(),
             });
@@ -1576,6 +1606,76 @@ fn attach_item(
     if let Some(parent) = tree.nodes.get_mut(&parent_id) {
         parent.children.push(item.item_id);
     }
+}
+
+fn build_shared_store_from_tree(
+    tree: &CollectionsTreeState,
+    requests_by_id: &HashMap<Ulid, RequestFile>,
+    warnings: &mut Vec<String>,
+) -> SharedStore {
+    let mut shared_store = SharedStore {
+        nodes: tree
+            .nodes
+            .iter()
+            .map(|(node_id, node)| {
+                let kind = match node.kind {
+                    TreeNodeKind::Collection => NodeKind::Collection,
+                    TreeNodeKind::Folder => NodeKind::Folder,
+                    TreeNodeKind::Request => NodeKind::Request,
+                };
+                (
+                    *node_id,
+                    Node {
+                        id: node.id,
+                        name: node.name.clone(),
+                        kind,
+                        parent_id: node.parent_id,
+                        children: node.children.clone(),
+                    },
+                )
+            })
+            .collect(),
+        requests: requests_by_id.clone(),
+        root_ids: tree.roots.clone(),
+        name_index: HashMap::new(),
+    };
+
+    let mut duplicate_scope_warnings = shared_store.rebuild_name_index();
+    warnings.append(&mut duplicate_scope_warnings);
+
+    for node in shared_store.nodes.values() {
+        if node.kind == NodeKind::Request && !shared_store.requests.contains_key(&node.id) {
+            warnings.push(format!(
+                "Request node {} is present in the tree but has no request payload file loaded.",
+                node.id
+            ));
+        }
+    }
+
+    for root_id in &shared_store.root_ids {
+        let Some(root_node) = shared_store.nodes.get(root_id) else {
+            warnings.push(format!(
+                "Root collection {} is missing from the shared store node map.",
+                root_id
+            ));
+            continue;
+        };
+        if root_node.kind != NodeKind::Collection {
+            warnings.push(format!(
+                "Root node {} has kind {:?} instead of collection.",
+                root_id, root_node.kind
+            ));
+        }
+        let key = scope_key(None, &root_node.name);
+        if shared_store.name_index.get(&key).copied() != Some(*root_id) {
+            warnings.push(format!(
+                "Root collection {} is missing the expected scoped name index entry `{key}`.",
+                root_id
+            ));
+        }
+    }
+
+    shared_store
 }
 
 fn parse_collection_manifest(path: &Path) -> Result<CollectionFile> {
@@ -1596,36 +1696,19 @@ fn sort_items(items: &mut [CollectionItemRef]) {
     });
 }
 
-fn parse_request_tree_meta(path: &Path) -> Result<(RequestTreeMetaWithName, RequestPaneData)> {
+fn parse_request_tree_meta(path: &Path) -> Result<(RequestFile, RequestPaneData)> {
     let request_file: RequestFile = parse_toml(path)?;
     let request_file = request_file.with_file_path(path);
-    let tree_meta = RequestTreeMetaWithName {
-        request_id: request_file.meta.request_id,
-        name: request_file.meta.name,
-        method: request_file.request.method,
-        // TODO: Do we need the url?
-        url: request_file.request.url.clone(),
-        file_path: request_file.file_path.clone(),
-    };
     let pane_data = RequestPaneData {
         method: request_file.request.method,
-        url: request_file.request.url,
-        headers: request_file.request.headers,
-        query_params: request_file.request.query_params,
-        auth: request_file.auth,
-        body: request_file.body,
-        post_script: request_file.scripts.post_response,
+        url: request_file.request.url.clone(),
+        headers: request_file.request.headers.clone(),
+        query_params: request_file.request.query_params.clone(),
+        auth: request_file.auth.clone(),
+        body: request_file.body.clone(),
+        post_script: request_file.scripts.post_response.clone(),
     };
-    Ok((tree_meta, pane_data))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RequestTreeMetaWithName {
-    request_id: Ulid,
-    name: String,
-    method: HttpMethod,
-    url: String,
-    file_path: Option<PathBuf>,
+    Ok((request_file, pane_data))
 }
 
 fn file_name(path: &Path) -> Option<&str> {
