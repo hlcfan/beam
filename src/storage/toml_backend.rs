@@ -1116,9 +1116,9 @@ impl TomlWorkspaceStorage {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_string();
-        let new_dir_name = format!("{}-{}", slugify(next_name), folder_id);
+        let new_dir_name = slugify(next_name);
         let mut new_dir = old_dir.clone();
-        if new_dir_name != old_name {
+        if !new_dir_name.is_empty() && new_dir_name != old_name {
             let candidate_dir = parent_dir.join(&new_dir_name);
             if !candidate_dir.exists() {
                 fs::rename(&old_dir, &candidate_dir).map_err(|source| BeamError::Io {
@@ -1388,7 +1388,7 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
 
         let parent_dir =
             self.folder_dir_for_parent(input.parent, input.known_parent_manifest_path.as_ref())?;
-        let folder_dir_name = format!("{}-{}", slugify(name), folder_file.folder.folder_id);
+        let folder_dir_name = slugify(name);
         let folder_dir = parent_dir.join(folder_dir_name);
         fs::create_dir_all(&folder_dir).map_err(|source| BeamError::Io {
             path: folder_dir.clone(),
@@ -2447,6 +2447,10 @@ environment_id = "{environment_id}"
             .expect("find created folder dir");
         assert!(created_dir.exists());
         assert_eq!(
+            created_dir.file_name().and_then(|name| name.to_str()),
+            Some("auth")
+        );
+        assert_eq!(
             created.manifest_path.as_deref(),
             Some(created_dir.join("folder.toml").as_path())
         );
@@ -2473,7 +2477,10 @@ environment_id = "{environment_id}"
             .find_folder_dir_by_id(created.folder.folder_id)
             .expect("find renamed folder dir");
         assert!(renamed_dir.exists());
-        assert!(renamed_dir.to_string_lossy().contains("security"));
+        assert_eq!(
+            renamed_dir.file_name().and_then(|name| name.to_str()),
+            Some("security")
+        );
         assert!(!created_dir.exists());
 
         let collection_dir = storage
