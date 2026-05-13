@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
 use chrono::{Local, Utc};
+use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
@@ -349,6 +350,7 @@ struct BeamView {
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
+    tree_drag_hover: Option<(Ulid, TreeDropPlacement)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -3205,6 +3207,7 @@ impl BeamView {
         _: &mut Window,
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
+        eprintln!("[drag] started dragging request '{}' (id={})", dragged.label, dragged.request_id);
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Request, position))
     }
 
@@ -3214,6 +3217,7 @@ impl BeamView {
         _: &mut Window,
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
+        eprintln!("[drag] started dragging folder '{}' (id={})", dragged.label, dragged.folder_id);
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Folder, position))
     }
 
@@ -3223,6 +3227,7 @@ impl BeamView {
         _: &mut Window,
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
+        eprintln!("[drag] started dragging collection '{}' (id={})", dragged.label, dragged.collection_id);
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Collection, position))
     }
 
@@ -3477,6 +3482,101 @@ impl BeamView {
         false
     }
 
+    fn tree_row_body_drop_placement(target_kind: TreeNodeKind) -> TreeDropPlacement {
+        match target_kind {
+            TreeNodeKind::Collection | TreeNodeKind::Folder => TreeDropPlacement::Into,
+            TreeNodeKind::Request => TreeDropPlacement::After,
+        }
+    }
+
+    fn can_accept_any_tree_drop(
+        &self,
+        dragged_value: &dyn Any,
+        target_id: Ulid,
+    ) -> bool {
+        if let Some(dragged) = dragged_value.downcast_ref::<DraggedCollection>() {
+            return self
+                .collection_reorder_action(dragged.collection_id, target_id, TreeDropPlacement::Before)
+                .is_some()
+                || self
+                    .collection_reorder_action(dragged.collection_id, target_id, TreeDropPlacement::After)
+                    .is_some();
+        }
+        if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
+            return self
+                .request_move_action(dragged.request_id, target_id, TreeDropPlacement::Before)
+                .is_some()
+                || self
+                    .request_move_action(dragged.request_id, target_id, TreeDropPlacement::After)
+                    .is_some()
+                || self
+                    .request_move_action(dragged.request_id, target_id, TreeDropPlacement::Into)
+                    .is_some();
+        }
+        if let Some(dragged) = dragged_value.downcast_ref::<DraggedFolder>() {
+            return self
+                .folder_move_action(dragged.folder_id, target_id, TreeDropPlacement::Before)
+                .is_some()
+                || self
+                    .folder_move_action(dragged.folder_id, target_id, TreeDropPlacement::After)
+                    .is_some()
+                || self
+                    .folder_move_action(dragged.folder_id, target_id, TreeDropPlacement::Into)
+                    .is_some();
+        }
+        false
+    }
+
+    fn update_tree_drag_hover(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        target_id: Ulid,
+        target_kind: TreeNodeKind,
+        dragged: &dyn Any,
+        cx: &mut Context<Self>,
+    ) {
+        let midpoint_y = bounds.origin.y + bounds.size.height / 2.0;
+        let threshold = bounds.size.height * 0.2;
+
+        let placement = match target_kind {
+            TreeNodeKind::Collection | TreeNodeKind::Folder => {
+                if position.y < midpoint_y - threshold * 0.5 {
+                    TreeDropPlacement::Before
+                } else if position.y > midpoint_y + threshold * 0.5 {
+                    TreeDropPlacement::After
+                } else {
+                    TreeDropPlacement::Into
+                }
+            }
+            TreeNodeKind::Request => {
+                if position.y < midpoint_y {
+                    TreeDropPlacement::Before
+                } else {
+                    TreeDropPlacement::After
+                }
+            }
+        };
+
+        if !self.can_accept_tree_drop(dragged, target_id, placement) {
+            self.clear_tree_drag_hover(cx);
+            return;
+        }
+
+        let new_hover = Some((target_id, placement));
+        if self.tree_drag_hover != new_hover {
+            self.tree_drag_hover = new_hover;
+            cx.notify();
+        }
+    }
+
+    fn clear_tree_drag_hover(&mut self, cx: &mut Context<Self>) {
+        if self.tree_drag_hover.is_some() {
+            self.tree_drag_hover = None;
+            cx.notify();
+        }
+    }
+
     fn perform_tree_move_action(
         &mut self,
         action: TreeMoveAction,
@@ -3595,7 +3695,7 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let view = cx.entity();
-        let base = div().h(px(6.0)).w_full().rounded(px(4.0)).can_drop(
+        let base = div().h(px(4.0)).w_full().rounded(px(2.0)).can_drop(
             move |dragged_value, _window, app| {
                 view.update(app, |this, _| {
                     this.can_accept_tree_drop(dragged_value, target_id, placement)
@@ -3605,7 +3705,7 @@ impl BeamView {
 
         let slot = match target_kind {
             TreeNodeKind::Collection => base
-                .drag_over::<DraggedCollection>(|style, _, _, cx| style.bg(cx.theme().selection))
+                .drag_over::<DraggedCollection>(|style, _, _, cx| style.bg(cx.theme().drag_border))
                 .on_drop(
                     cx.listener(move |this, dragged: &DraggedCollection, window, cx| {
                         this.handle_collection_tree_drop(
@@ -3615,11 +3715,12 @@ impl BeamView {
                             window,
                             cx,
                         );
+                        this.clear_tree_drag_hover(cx);
                     }),
                 ),
             TreeNodeKind::Folder | TreeNodeKind::Request => base
-                .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
-                .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
+                .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().drag_border))
+                .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().drag_border))
                 .on_drop(
                     cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
                         this.handle_request_tree_drop(
@@ -3629,6 +3730,7 @@ impl BeamView {
                             window,
                             cx,
                         );
+                        this.clear_tree_drag_hover(cx);
                     }),
                 )
                 .on_drop(
@@ -3640,6 +3742,7 @@ impl BeamView {
                             window,
                             cx,
                         );
+                        this.clear_tree_drag_hover(cx);
                     }),
                 ),
         };
@@ -5008,6 +5111,7 @@ impl BeamView {
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
+            tree_drag_hover: None,
         };
         view.refresh_active_request_cache();
         view.rebuild_request_param_inputs(window, cx);
@@ -5791,45 +5895,103 @@ impl BeamView {
         let row_data = *row;
         let row_id = row.id;
         let row_kind = row.kind;
+        let body_drop_placement = Self::tree_row_body_drop_placement(row_kind);
         let body_view = cx.entity();
+        let drag_hover = self.tree_drag_hover;
         let mut body = div()
+            .id(format!("tree-row-body-{}", row_id))
             .cursor_pointer()
             .can_drop(move |dragged_value, _window, app| {
                 body_view.update(app, |this, _| {
-                    this.can_accept_tree_drop(dragged_value, row_id, TreeDropPlacement::Into)
+                    this.can_accept_any_tree_drop(dragged_value, row_id)
                 })
             })
             .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
             .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
+            .drag_over::<DraggedCollection>(|style, _, _, cx| style.bg(cx.theme().selection))
+            .on_drag_move(cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
+                let dragged = drag.drag(cx).clone();
+                this.update_tree_drag_hover(drag.bounds, drag.event.position, row_id, row_kind, &dragged, cx);
+            }))
+            .on_drag_move(cx.listener(move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
+                let dragged = drag.drag(cx).clone();
+                this.update_tree_drag_hover(drag.bounds, drag.event.position, row_id, row_kind, &dragged, cx);
+            }))
+            .on_drag_move(cx.listener(move |this, drag: &DragMoveEvent<DraggedCollection>, _, cx| {
+                let dragged = drag.drag(cx).clone();
+                this.update_tree_drag_hover(drag.bounds, drag.event.position, row_id, row_kind, &dragged, cx);
+            }))
             .on_drop(
                 cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
+                    let placement = this
+                        .tree_drag_hover
+                        .filter(|(id, _)| *id == row_id)
+                        .map(|(_, p)| p)
+                        .unwrap_or(body_drop_placement);
                     this.handle_request_tree_drop(
                         dragged.request_id,
                         row_id,
-                        TreeDropPlacement::Into,
+                        placement,
                         window,
                         cx,
                     );
+                    this.clear_tree_drag_hover(cx);
                 }),
             )
             .on_drop(
                 cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
+                    let placement = this
+                        .tree_drag_hover
+                        .filter(|(id, _)| *id == row_id)
+                        .map(|(_, p)| p)
+                        .unwrap_or(body_drop_placement);
                     this.handle_folder_tree_drop(
                         dragged.folder_id,
                         row_id,
-                        TreeDropPlacement::Into,
+                        placement,
                         window,
                         cx,
                     );
+                    this.clear_tree_drag_hover(cx);
+                }),
+            )
+            .on_drop(
+                cx.listener(move |this, dragged: &DraggedCollection, window, cx| {
+                    let placement = this
+                        .tree_drag_hover
+                        .filter(|(id, _)| *id == row_id)
+                        .map(|(_, p)| p)
+                        .unwrap_or(body_drop_placement);
+                    this.handle_collection_tree_drop(
+                        dragged.collection_id,
+                        row_id,
+                        placement,
+                        window,
+                        cx,
+                    );
+                    this.clear_tree_drag_hover(cx);
                 }),
             )
             .child(
                 ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
                     .rounded(px(8.0))
+                    .py_0p5()
                     .px_1()
                     .pl(indent)
                     .selected(row.selected)
+                    .when(
+                        drag_hover.is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Before),
+                        |this| this.border_t_2().border_color(cx.theme().drag_border),
+                    )
+                    .when(
+                        drag_hover.is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::After),
+                        |this| this.border_b_2().border_color(cx.theme().drag_border),
+                    )
+                    .when(
+                        drag_hover.is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into),
+                        |this| this.bg(cx.theme().drop_target),
+                    )
                     .child(row_content)
                     .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                         TreeNodeKind::Collection | TreeNodeKind::Folder => {
@@ -6304,7 +6466,6 @@ impl BeamView {
                                 elements
                             }
                         })
-                        .py_1()
                         .flex_grow()
                         .size_full()
                         .with_sizing_behavior(ListSizingBehavior::Auto)
