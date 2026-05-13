@@ -271,7 +271,7 @@ pub fn request_file_path(
     })?;
     let parent = node_by_id(store, parent_id)?;
     let request_dir = match parent.kind {
-        NodeKind::Collection => collection_dir_path(paths, store, parent_id)?.join("requests"),
+        NodeKind::Collection => collection_dir_path(paths, store, parent_id)?,
         NodeKind::Folder => node_dir_path(paths, store, parent_id)?,
         NodeKind::Request => {
             return Err(BeamError::Validation {

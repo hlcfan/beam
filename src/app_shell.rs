@@ -1408,7 +1408,7 @@ fn load_collection_tree(
 
     if let Some(request_id) = local_state.local_state.last_opened_request_id {
         if tree.request_exists(request_id) {
-            tree.set_selected_request(Some(request_id));
+            tree.select_request(request_id);
         }
     }
 
@@ -1705,7 +1705,41 @@ fn load_manifest_node(
                 ));
             }
 
-            let request_path = parent_dir.join(request_file_name(&manifest_node.name));
+            let request_dir = match parent_id {
+                Some(parent_id) => match loaded.shared_store.nodes.get(&parent_id) {
+                    Some(parent_node) => match parent_node.kind {
+                        NodeKind::Collection => parent_dir.to_path_buf(),
+                        NodeKind::Folder => parent_dir.to_path_buf(),
+                        NodeKind::Request => {
+                            warnings.push(format!(
+                                "Request node {} in {} has invalid request parent {}. Skipped request.",
+                                manifest_node.id,
+                                manifest_path.display(),
+                                parent_id
+                            ));
+                            return None;
+                        }
+                    },
+                    None => {
+                        warnings.push(format!(
+                            "Request node {} in {} referenced missing parent {}. Skipped request.",
+                            manifest_node.id,
+                            manifest_path.display(),
+                            parent_id
+                        ));
+                        return None;
+                    }
+                },
+                None => {
+                    warnings.push(format!(
+                        "Request node {} in {} is missing a parent. Skipped request.",
+                        manifest_node.id,
+                        manifest_path.display()
+                    ));
+                    return None;
+                }
+            };
+            let request_path = request_dir.join(request_file_name(&manifest_node.name));
             let (mut request_file, pane_data) = match parse_request_tree_meta(&request_path) {
                 Ok(parsed) => parsed,
                 Err(error) => {
@@ -1998,8 +2032,9 @@ mod tests {
         method: HttpMethod,
         url: &str,
     ) -> PathBuf {
-        fs::create_dir_all(parent_dir).expect("create parent dir");
-        let request_path = parent_dir.join(request_file_name(name));
+        let request_dir = parent_dir.to_path_buf();
+        fs::create_dir_all(&request_dir).expect("create request dir");
+        let request_path = request_dir.join(request_file_name(name));
         let request_file =
             sample_request_file(request_id, name, method, url).with_file_path(&request_path);
         let encoded = toml::to_string_pretty(&request_file).expect("encode request file");
@@ -2845,7 +2880,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_restores_last_request_without_overriding_tree_expansion_state() {
+    fn startup_restores_last_request_and_expands_ancestors() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
@@ -2915,8 +2950,8 @@ mod tests {
         };
 
         assert_eq!(state.collections.selected_request_id(), Some(request_id));
-        assert!(!state.collections.expanded().contains(&folder_id));
-        assert!(!state.collections.expanded().contains(&collection_id));
+        assert!(state.collections.expanded().contains(&folder_id));
+        assert!(state.collections.expanded().contains(&collection_id));
     }
 
     #[test]

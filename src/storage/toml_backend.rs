@@ -291,14 +291,8 @@ impl TomlWorkspaceStorage {
     fn resolve_request_file_path(
         &self,
         request_id: Ulid,
-        known_request_path: Option<&Path>,
+        _known_request_path: Option<&Path>,
     ) -> Result<PathBuf> {
-        if let Some(path) = known_request_path
-            && let Ok(file) = self.read_request_meta_by_path(path)
-            && file.meta.request_id == request_id
-        {
-            return Ok(path.to_path_buf());
-        }
         self.find_request_file_by_id(request_id)
     }
 
@@ -316,7 +310,6 @@ impl TomlWorkspaceStorage {
             return folder_dir_path(&self.paths, &store, folder_id);
         }
         self.manifest_parent_dir(&manifest_path)
-            .map(|collection_dir| collection_dir.join("requests"))
     }
 
     fn folder_dir_for_parent(
@@ -951,35 +944,9 @@ impl TomlWorkspaceStorage {
     }
 
     fn find_request_file_by_id(&self, request_id: Ulid) -> Result<PathBuf> {
-        let mut found: Option<PathBuf> = None;
-        self.walk_files_recursive(&self.paths.collections_dir, |path| {
-            if path.extension().and_then(|ext| ext.to_str()) != Some("toml") {
-                return;
-            }
-            let Ok(file) = self.read_request_meta_by_path(path) else {
-                return;
-            };
-            if file.meta.request_id == request_id {
-                found = Some(path.to_path_buf());
-            }
-        })?;
-        found.ok_or_else(|| BeamError::NotFound {
-            entity: "request",
-            id: request_id.to_string(),
-        })
-    }
-
-    fn read_request_meta_by_path(&self, path: &Path) -> Result<RequestMetaIdFile> {
-        if let Ok(file) = self.read_toml_file::<RequestMetaIdFile>(path) {
-            return Ok(file);
-        }
-
-        let request_file: RequestFile = self.read_toml_file(path)?;
-        Ok(RequestMetaIdFile {
-            meta: RequestMetaIdOnly {
-                request_id: request_file.meta.request_id,
-            },
-        })
+        let manifest_path = self.find_collection_manifest_path_containing_node(request_id)?;
+        let store = self.load_store_from_manifest_path(&manifest_path)?;
+        request_file_path(&self.paths, &store, request_id)
     }
 
     fn read_request_file(&self, path: &Path) -> Result<RequestFile> {
@@ -1120,23 +1087,13 @@ impl TomlWorkspaceStorage {
     fn resolve_collection_manifest_path_for_request(
         &self,
         request_id: Ulid,
-        known_request_path: Option<&Path>,
+        _known_request_path: Option<&Path>,
         known_parent_manifest_path: Option<&KnownParentManifestPath>,
     ) -> Result<PathBuf> {
         if let Some(path) =
             self.collection_manifest_path_from_known_parent(known_parent_manifest_path)
         {
             return Ok(path);
-        }
-        if let Some(request_path) = known_request_path {
-            let mut cursor = request_path.parent();
-            while let Some(dir) = cursor {
-                let manifest_path = dir.join(COLLECTION_MANIFEST_FILE_NAME);
-                if manifest_path.exists() {
-                    return Ok(manifest_path);
-                }
-                cursor = dir.parent();
-            }
         }
         self.find_collection_manifest_path_containing_node(request_id)
     }
@@ -2621,16 +2578,6 @@ fn slugify(input: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct RequestMetaIdFile {
-    meta: RequestMetaIdOnly,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
-struct RequestMetaIdOnly {
-    request_id: Ulid,
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -3070,7 +3017,7 @@ environment_id = "{environment_id}"
                     )),
                 )
                 .expect("resolve request dir from known collection path"),
-            collection_dir.join("requests")
+            collection_dir
         );
     }
 
@@ -3207,7 +3154,7 @@ environment_id = "{environment_id}"
             .expect("find request path");
         assert_eq!(
             created_path,
-            collection_dir.join("requests").join("sample.request.toml")
+            collection_dir.join("sample.request.toml")
         );
 
         let renamed = storage
