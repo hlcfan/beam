@@ -28,6 +28,10 @@ fn main() {
     if report.created_local_state_file {
         println!("Created .beam/local-state.toml");
     }
+    if let Err(error) = storage.bootstrap_sample_workspace_if_needed() {
+        eprintln!("Failed to create sample workspace content: {error}");
+        std::process::exit(1);
+    }
     // TODO: check if this func can be called on storage itself.
     match startup_preload(&storage, &storage.paths) {
         StartupLoad::Ready { state, messages } => {

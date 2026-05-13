@@ -22,9 +22,9 @@ use crate::storage::{
 };
 use crate::tree_store::{
     COLLECTION_MANIFEST_FILE_NAME, Node, NodeKind, SharedStore, assert_name_unique,
-    collection_dir_path, folder_dir_path, request_file_path, root_collection_id_of,
-    shared_store_from_collection_manifest_path, write_collection_manifest, write_request_payload,
-    write_root_order,
+    collection_dir_path, folder_dir_path, persist_shared_tree, request_file_path,
+    root_collection_id_of, shared_store_from_collection_manifest_path, write_collection_manifest,
+    write_request_payload, write_root_order,
 };
 
 #[derive(Debug, Clone)]
@@ -35,6 +35,81 @@ pub struct TomlWorkspaceStorage {
 impl TomlWorkspaceStorage {
     pub fn new(paths: BeamPaths) -> Self {
         Self { paths }
+    }
+
+    pub fn bootstrap_sample_workspace_if_needed(&self) -> Result<()> {
+        if self.collections_dir_has_entries()? {
+            return Ok(());
+        }
+        let local_state = self.load_local_state()?;
+        if local_state.local_state.last_opened_request_id.is_some() {
+            return Ok(());
+        }
+
+        let now = Utc::now();
+        let collection_id = Ulid::new();
+        let request_id = Ulid::new();
+        let mut store = SharedStore::default();
+        store.root_ids.push(collection_id);
+        store.nodes.insert(
+            collection_id,
+            Node {
+                id: collection_id,
+                name: "Sample Collection".to_string(),
+                kind: NodeKind::Collection,
+                description: Some("Try Beam with a sample GET request.".to_string()),
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: None,
+                children: vec![request_id],
+            },
+        );
+        store.nodes.insert(
+            request_id,
+            Node {
+                id: request_id,
+                name: "Sample Request".to_string(),
+                kind: NodeKind::Request,
+                description: Some(
+                    "Calls httpbin.org/get so you can send a request right away.".to_string(),
+                ),
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: Some(collection_id),
+                children: Vec::new(),
+            },
+        );
+        store.requests.insert(
+            request_id,
+            RequestFile {
+                meta: RequestMeta {
+                    request_id,
+                    name: "Sample Request".to_string(),
+                    description: Some(
+                        "Calls httpbin.org/get so you can send a request right away.".to_string(),
+                    ),
+                    created_at: now,
+                    updated_at: now,
+                },
+                request: RequestDefinition {
+                    method: crate::models::HttpMethod::Get,
+                    url: "https://httpbin.org/get".to_string(),
+                    headers: Vec::new(),
+                    query_params: Vec::new(),
+                },
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                scripts: ScriptConfig::default(),
+                file_path: None,
+            },
+        );
+        store.rebuild_name_index();
+        persist_shared_tree(&self.paths, &store)?;
+
+        let mut local_state = local_state;
+        local_state.local_state.last_opened_request_id = Some(request_id);
+        local_state.local_state.updated_at = now;
+        self.save_local_state(&local_state)
     }
 
     pub fn persist_theme_state(&self, theme_name: &str) -> Result<()> {
@@ -70,6 +145,24 @@ impl TomlWorkspaceStorage {
             })?;
         }
         Ok(())
+    }
+
+    fn collections_dir_has_entries(&self) -> Result<bool> {
+        let entries =
+            fs::read_dir(&self.paths.collections_dir).map_err(|source| BeamError::Io {
+                path: self.paths.collections_dir.clone(),
+                source,
+            })?;
+
+        for entry in entries {
+            entry.map_err(|source| BeamError::Io {
+                path: self.paths.collections_dir.clone(),
+                source,
+            })?;
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     fn write_toml_file<T: serde::Serialize>(&self, path: &Path, value: &T) -> Result<()> {
@@ -2566,6 +2659,64 @@ mod tests {
         assert!(report.created_local_state_file);
         assert!(storage.paths.workspace_file.exists());
         assert!(storage.paths.local_state_file.exists());
+    }
+
+    #[test]
+    fn bootstrap_sample_workspace_if_needed_seeds_first_request() {
+        let dir = tempdir().expect("tempdir");
+        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+
+        storage.initialize().expect("initialize");
+        storage
+            .bootstrap_sample_workspace_if_needed()
+            .expect("bootstrap sample workspace");
+
+        let local_state = storage.load_local_state().expect("load local state");
+        let request_id = local_state
+            .local_state
+            .last_opened_request_id
+            .expect("sample request should be selected");
+        let request = storage
+            .load_request(request_id)
+            .expect("load sample request");
+        let manifest_path = storage
+            .paths
+            .collections_dir
+            .join("sample-collection")
+            .join(COLLECTION_MANIFEST_FILE_NAME);
+        let store = shared_store_from_collection_manifest_path(&manifest_path)
+            .expect("load sample collection manifest");
+
+        assert_eq!(store.root_ids.len(), 1);
+        assert_eq!(request.meta.name, "Sample Request");
+        assert_eq!(request.request.method, HttpMethod::Get);
+        assert_eq!(request.request.url, "https://httpbin.org/get");
+        assert_eq!(
+            store.root_ids[0],
+            store.nodes[&request_id].parent_id.expect("parent id")
+        );
+        assert_eq!(store.nodes[&store.root_ids[0]].name, "Sample Collection");
+    }
+
+    #[test]
+    fn bootstrap_sample_workspace_if_needed_seeds_existing_empty_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+
+        storage.initialize().expect("initialize");
+        storage
+            .bootstrap_sample_workspace_if_needed()
+            .expect("bootstrap sample workspace");
+
+        let local_state = storage.load_local_state().expect("load local state");
+        assert!(local_state.local_state.last_opened_request_id.is_some());
+        assert!(
+            storage
+                .paths
+                .collections_dir
+                .join("sample-collection")
+                .exists()
+        );
     }
 
     #[test]
