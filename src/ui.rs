@@ -3345,6 +3345,7 @@ impl BeamView {
     ) -> Option<TreeMoveAction> {
         let request_node = self.shell.collections.node(request_id)?;
         if request_node.kind != TreeNodeKind::Request {
+            eprintln!("[drag] request_move_action rejected: node {request_id} is not a request");
             return None;
         }
 
@@ -3352,23 +3353,30 @@ impl BeamView {
             TreeDropPlacement::Into => {
                 let target = self.shell.collections.node(target_id)?;
                 if !matches!(target.kind, TreeNodeKind::Collection | TreeNodeKind::Folder) {
+                    eprintln!("[drag] request_move_action rejected: Into target {target_id} is not a collection/folder");
                     return None;
                 }
                 (target.id, target.children.len())
             }
             TreeDropPlacement::Before | TreeDropPlacement::After => {
                 if target_id == request_id {
+                    eprintln!("[drag] request_move_action rejected: cannot drop request {request_id} relative to itself");
                     return None;
                 }
                 self.sibling_destination_for_target(target_id, placement)?
             }
         };
         if self.has_name_conflict_in_scope(destination_parent_id, request_id, &request_node.name) {
+            eprintln!(
+                "[drag] request_move_action rejected: name conflict for '{}' in parent {destination_parent_id}",
+                request_node.name
+            );
             return None;
         }
 
         let (new_parent, known_target_manifest_path) =
             self.request_parent_input_for_parent_node(destination_parent_id)?;
+        eprintln!("[drag] request_move_action accepted: request={request_id} target={target_id} placement={placement:?} dest_parent={destination_parent_id} index={insertion_index}");
         Some(TreeMoveAction::MoveRequest(MoveRequestInput {
             request_id,
             new_parent,
@@ -3470,9 +3478,16 @@ impl BeamView {
                 .is_some();
         }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
-            return self
+            let accepted = self
                 .request_move_action(dragged.request_id, target_id, placement)
                 .is_some();
+            if !accepted {
+                eprintln!(
+                    "[drag] can_accept_tree_drop rejected: request={} target={} placement={:?}",
+                    dragged.request_id, target_id, placement
+                );
+            }
+            return accepted;
         }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedFolder>() {
             return self
@@ -3536,6 +3551,11 @@ impl BeamView {
         dragged: &dyn Any,
         cx: &mut Context<Self>,
     ) {
+        // Only process hover for the element actually under the mouse.
+        if position.y < bounds.origin.y || position.y > bounds.origin.y + bounds.size.height {
+            return;
+        }
+
         let midpoint_y = bounds.origin.y + bounds.size.height / 2.0;
         let threshold = bounds.size.height * 0.2;
 
