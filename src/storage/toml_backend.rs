@@ -17,7 +17,14 @@ use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
 use crate::storage::{
     BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput,
     DeleteRequestInput, DuplicateRequestInput, FolderParentRef, KnownParentManifestPath,
-    RenameRequestInput, RequestParentRef, WorkspaceStorage,
+    MoveFolderInput, MoveRequestInput, RenameRequestInput, ReorderCollectionInput,
+    RequestParentRef, WorkspaceStorage,
+};
+use crate::tree_store::{
+    COLLECTION_MANIFEST_FILE_NAME, Node, NodeKind, SharedStore, assert_name_unique,
+    collection_dir_path, folder_dir_path, request_file_path, root_collection_id_of,
+    shared_store_from_collection_manifest_path, write_collection_manifest, write_request_payload,
+    write_root_order,
 };
 
 #[derive(Debug, Clone)]
@@ -140,42 +147,14 @@ impl TomlWorkspaceStorage {
     }
 
     fn find_collection_dir_by_id(&self, collection_id: Ulid) -> Result<PathBuf> {
-        let mut found: Option<PathBuf> = None;
-        self.walk_files_recursive(&self.paths.collections_dir, |path| {
-            if path.file_name().and_then(|n| n.to_str()) != Some("collection.toml") {
-                return;
-            }
-            let Ok(file) = self.read_collection_file(path) else {
-                return;
-            };
-            if file.collection.collection_id == collection_id {
-                found = path.parent().map(Path::to_path_buf);
-            }
-        })?;
-        found.ok_or_else(|| BeamError::NotFound {
-            entity: "collection",
-            id: collection_id.to_string(),
-        })
+        let manifest_path = self.find_collection_manifest_path_by_collection_id(collection_id)?;
+        self.manifest_parent_dir(&manifest_path)
     }
 
     fn find_folder_dir_by_id(&self, folder_id: Ulid) -> Result<PathBuf> {
-        let mut found: Option<PathBuf> = None;
-        // TOCHECK: how to avoid walking through all collection files?
-        self.walk_files_recursive(&self.paths.collections_dir, |path| {
-            if path.file_name().and_then(|n| n.to_str()) != Some("folder.toml") {
-                return;
-            }
-            let Ok(file) = self.read_folder_file(path) else {
-                return;
-            };
-            if file.folder.folder_id == folder_id {
-                found = path.parent().map(Path::to_path_buf);
-            }
-        })?;
-        found.ok_or_else(|| BeamError::NotFound {
-            entity: "folder",
-            id: folder_id.to_string(),
-        })
+        let manifest_path = self.find_collection_manifest_path_containing_node(folder_id)?;
+        let store = self.load_store_from_manifest_path(&manifest_path)?;
+        folder_dir_path(&self.paths, &store, folder_id)
     }
 
     fn manifest_parent_dir(&self, manifest_path: &Path) -> Result<PathBuf> {
@@ -193,11 +172,11 @@ impl TomlWorkspaceStorage {
         collection_id: Ulid,
         known_manifest_path: Option<&Path>,
     ) -> Result<PathBuf> {
-        if let Some(path) = known_manifest_path
-            && let Ok(file) = self.read_collection_file(path)
-            && file.collection.collection_id == collection_id
-        {
-            return self.manifest_parent_dir(path);
+        if let Some(path) = known_manifest_path {
+            let store = self.load_store_from_manifest_path(path)?;
+            if store.root_ids.first().copied() == Some(collection_id) {
+                return self.manifest_parent_dir(path);
+            }
         }
         self.find_collection_dir_by_id(collection_id)
     }
@@ -207,11 +186,11 @@ impl TomlWorkspaceStorage {
         folder_id: Ulid,
         known_manifest_path: Option<&Path>,
     ) -> Result<PathBuf> {
-        if let Some(path) = known_manifest_path
-            && let Ok(file) = self.read_folder_file(path)
-            && file.folder.folder_id == folder_id
-        {
-            return self.manifest_parent_dir(path);
+        if let Some(path) = known_manifest_path {
+            let store = self.load_store_from_manifest_path(path)?;
+            if store.nodes.contains_key(&folder_id) {
+                return folder_dir_path(&self.paths, &store, folder_id);
+            }
         }
         self.find_folder_dir_by_id(folder_id)
     }
@@ -235,19 +214,16 @@ impl TomlWorkspaceStorage {
         parent: RequestParentRef,
         known_parent_manifest_path: Option<&KnownParentManifestPath>,
     ) -> Result<PathBuf> {
-        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
-            return match known_parent_manifest_path {
-                KnownParentManifestPath::Collection(path) => {
-                    Ok(self.manifest_parent_dir(path)?.join("requests"))
-                }
-                KnownParentManifestPath::Folder(path) => self.manifest_parent_dir(path),
-            };
-        }
+        let manifest_path = self.resolve_collection_manifest_path_for_request_parent(
+            parent,
+            known_parent_manifest_path,
+        )?;
+        let store = self.load_store_from_manifest_path(&manifest_path)?;
         if let Some(folder_id) = parent.folder_id {
-            return self.find_folder_dir_by_id(folder_id);
+            return folder_dir_path(&self.paths, &store, folder_id);
         }
-        let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
-        Ok(collection_dir.join("requests"))
+        self.manifest_parent_dir(&manifest_path)
+            .map(|collection_dir| collection_dir.join("requests"))
     }
 
     fn folder_dir_for_parent(
@@ -255,16 +231,15 @@ impl TomlWorkspaceStorage {
         parent: FolderParentRef,
         known_parent_manifest_path: Option<&KnownParentManifestPath>,
     ) -> Result<PathBuf> {
-        if let Some(known_parent_manifest_path) = known_parent_manifest_path {
-            return self.manifest_parent_dir(match known_parent_manifest_path {
-                KnownParentManifestPath::Collection(path)
-                | KnownParentManifestPath::Folder(path) => path,
-            });
-        }
+        let manifest_path = self.resolve_collection_manifest_path_for_folder_parent(
+            parent,
+            known_parent_manifest_path,
+        )?;
+        let store = self.load_store_from_manifest_path(&manifest_path)?;
         if let Some(parent_folder_id) = parent.parent_folder_id {
-            return self.find_folder_dir_by_id(parent_folder_id);
+            return folder_dir_path(&self.paths, &store, parent_folder_id);
         }
-        self.find_collection_dir_by_id(parent.collection_id)
+        self.manifest_parent_dir(&manifest_path)
     }
 
     fn append_folder_to_parent_manifest(
@@ -934,6 +909,472 @@ impl TomlWorkspaceStorage {
         Ok(self.hydrate_environment_file_path(file, path))
     }
 
+    fn collection_manifest_path_from_known_parent(
+        &self,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Option<PathBuf> {
+        known_parent_manifest_path.map(|known| match known {
+            KnownParentManifestPath::Collection(path) | KnownParentManifestPath::Folder(path) => {
+                path.clone()
+            }
+        })
+    }
+
+    fn find_collection_manifest_path_by_collection_id(
+        &self,
+        collection_id: Ulid,
+    ) -> Result<PathBuf> {
+        let mut found: Option<PathBuf> = None;
+        self.walk_files_recursive(&self.paths.collections_dir, |path| {
+            if path.file_name().and_then(|name| name.to_str())
+                != Some(COLLECTION_MANIFEST_FILE_NAME)
+            {
+                return;
+            }
+            let Ok(store) = shared_store_from_collection_manifest_path(path) else {
+                return;
+            };
+            if store.root_ids.first().copied() == Some(collection_id) {
+                found = Some(path.to_path_buf());
+            }
+        })?;
+        found.ok_or_else(|| BeamError::NotFound {
+            entity: "collection_manifest",
+            id: collection_id.to_string(),
+        })
+    }
+
+    fn root_collection_names_from_manifests(
+        &self,
+        skip_collection_id: Option<Ulid>,
+    ) -> Result<Vec<String>> {
+        let mut names = Vec::new();
+        self.walk_files_recursive(&self.paths.collections_dir, |path| {
+            if path.file_name().and_then(|name| name.to_str())
+                != Some(COLLECTION_MANIFEST_FILE_NAME)
+            {
+                return;
+            }
+            let Ok(store) = shared_store_from_collection_manifest_path(path) else {
+                return;
+            };
+            let Some(collection_id) = store.root_ids.first().copied() else {
+                return;
+            };
+            if skip_collection_id == Some(collection_id) {
+                return;
+            }
+            if let Some(collection) = store.nodes.get(&collection_id) {
+                names.push(collection.name.clone());
+            }
+        })?;
+        Ok(names)
+    }
+
+    fn find_collection_manifest_path_containing_node(&self, node_id: Ulid) -> Result<PathBuf> {
+        let mut found: Option<PathBuf> = None;
+        self.walk_files_recursive(&self.paths.collections_dir, |path| {
+            if path.file_name().and_then(|name| name.to_str())
+                != Some(COLLECTION_MANIFEST_FILE_NAME)
+            {
+                return;
+            }
+            let Ok(store) = shared_store_from_collection_manifest_path(path) else {
+                return;
+            };
+            if store.nodes.contains_key(&node_id) {
+                found = Some(path.to_path_buf());
+            }
+        })?;
+        found.ok_or_else(|| BeamError::NotFound {
+            entity: "collection_manifest_for_node",
+            id: node_id.to_string(),
+        })
+    }
+
+    fn resolve_collection_manifest_path_for_request_parent(
+        &self,
+        parent: RequestParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<PathBuf> {
+        if let Some(path) =
+            self.collection_manifest_path_from_known_parent(known_parent_manifest_path)
+        {
+            return Ok(path);
+        }
+        if let Some(folder_id) = parent.folder_id {
+            return self.find_collection_manifest_path_containing_node(folder_id);
+        }
+        self.find_collection_manifest_path_by_collection_id(parent.collection_id)
+    }
+
+    fn resolve_collection_manifest_path_for_folder_parent(
+        &self,
+        parent: FolderParentRef,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<PathBuf> {
+        if let Some(path) =
+            self.collection_manifest_path_from_known_parent(known_parent_manifest_path)
+        {
+            return Ok(path);
+        }
+        if let Some(parent_folder_id) = parent.parent_folder_id {
+            return self.find_collection_manifest_path_containing_node(parent_folder_id);
+        }
+        self.find_collection_manifest_path_by_collection_id(parent.collection_id)
+    }
+
+    fn resolve_collection_manifest_path_for_request(
+        &self,
+        request_id: Ulid,
+        known_request_path: Option<&Path>,
+        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+    ) -> Result<PathBuf> {
+        if let Some(path) =
+            self.collection_manifest_path_from_known_parent(known_parent_manifest_path)
+        {
+            return Ok(path);
+        }
+        if let Some(request_path) = known_request_path {
+            let mut cursor = request_path.parent();
+            while let Some(dir) = cursor {
+                let manifest_path = dir.join(COLLECTION_MANIFEST_FILE_NAME);
+                if manifest_path.exists() {
+                    return Ok(manifest_path);
+                }
+                cursor = dir.parent();
+            }
+        }
+        self.find_collection_manifest_path_containing_node(request_id)
+    }
+
+    fn resolve_collection_manifest_path_for_folder(
+        &self,
+        folder_id: Ulid,
+        known_manifest_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        if let Some(path) = known_manifest_path {
+            return Ok(path.to_path_buf());
+        }
+        self.find_collection_manifest_path_containing_node(folder_id)
+    }
+
+    fn resolve_collection_manifest_path_for_collection(
+        &self,
+        collection_id: Ulid,
+        known_manifest_path: Option<&Path>,
+    ) -> Result<PathBuf> {
+        if let Some(path) = known_manifest_path {
+            return Ok(path.to_path_buf());
+        }
+        self.find_collection_manifest_path_by_collection_id(collection_id)
+    }
+
+    fn load_store_from_manifest_path(&self, manifest_path: &Path) -> Result<SharedStore> {
+        shared_store_from_collection_manifest_path(manifest_path)
+    }
+
+    fn default_request_file(
+        &self,
+        name: &str,
+        method: crate::models::HttpMethod,
+        url: String,
+    ) -> RequestFile {
+        let now = Utc::now();
+        RequestFile {
+            meta: RequestMeta {
+                request_id: Ulid::new(),
+                name: name.to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            request: RequestDefinition {
+                method,
+                url,
+                headers: vec![
+                    HeaderField {
+                        name: "Content-Type".to_string(),
+                        value: "application/json".to_string(),
+                        enabled: true,
+                        description: None,
+                        secret: false,
+                    },
+                    HeaderField {
+                        name: "User-Agent".to_string(),
+                        value: "BeamApp/1.0".to_string(),
+                        enabled: true,
+                        description: None,
+                        secret: false,
+                    },
+                ],
+                query_params: vec![QueryParamField {
+                    name: String::new(),
+                    value: String::new(),
+                    enabled: true,
+                    description: None,
+                }],
+            },
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            scripts: ScriptConfig::default(),
+            file_path: None,
+        }
+    }
+
+    fn insert_child(parent: &mut Node, child_id: Ulid) {
+        parent.children.push(child_id);
+    }
+
+    fn insert_child_after(parent: &mut Node, after_child_id: Ulid, child_id: Ulid) {
+        if let Some(index) = parent.children.iter().position(|id| *id == after_child_id) {
+            parent.children.insert(index + 1, child_id);
+        } else {
+            parent.children.push(child_id);
+        }
+    }
+
+    fn insert_child_at(parent: &mut Node, insertion_index: usize, child_id: Ulid) {
+        let index = insertion_index.min(parent.children.len());
+        parent.children.insert(index, child_id);
+    }
+
+    fn remove_child(parent: &mut Node, child_id: Ulid) -> Option<usize> {
+        let index = parent.children.iter().position(|id| *id == child_id)?;
+        parent.children.remove(index);
+        Some(index)
+    }
+
+    fn ensure_parent_kind(store: &SharedStore, parent_id: Ulid) -> Result<NodeKind> {
+        let parent = store
+            .nodes
+            .get(&parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "parent_node",
+                id: parent_id.to_string(),
+            })?;
+        match parent.kind {
+            NodeKind::Collection | NodeKind::Folder => Ok(parent.kind),
+            NodeKind::Request => Err(BeamError::Validation {
+                message: format!("request node {parent_id} cannot accept child nodes"),
+            }),
+        }
+    }
+
+    fn merge_shared_stores(
+        &self,
+        mut left: SharedStore,
+        right: SharedStore,
+    ) -> Result<SharedStore> {
+        for (node_id, node) in right.nodes {
+            if left.nodes.insert(node_id, node).is_some() {
+                return Err(BeamError::Validation {
+                    message: format!("duplicate node {node_id} found while merging stores"),
+                });
+            }
+        }
+        for (request_id, request) in right.requests {
+            if left.requests.insert(request_id, request).is_some() {
+                return Err(BeamError::Validation {
+                    message: format!("duplicate request {request_id} found while merging stores"),
+                });
+            }
+        }
+        left.root_ids.extend(right.root_ids);
+        let _ = left.rebuild_name_index();
+        Ok(left)
+    }
+
+    fn write_collection_manifests(
+        &self,
+        store: &SharedStore,
+        collection_ids: &[Ulid],
+    ) -> Result<()> {
+        let mut written = HashSet::new();
+        for collection_id in collection_ids.iter().copied() {
+            if written.insert(collection_id) {
+                write_collection_manifest(&self.paths, store, collection_id)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_child_move(
+        store: &mut SharedStore,
+        child_id: Ulid,
+        source_parent_id: Ulid,
+        destination_parent_id: Ulid,
+        insertion_index: usize,
+    ) -> Result<()> {
+        let removed_index = {
+            let source_parent =
+                store
+                    .nodes
+                    .get_mut(&source_parent_id)
+                    .ok_or_else(|| BeamError::NotFound {
+                        entity: "source_parent",
+                        id: source_parent_id.to_string(),
+                    })?;
+            Self::remove_child(source_parent, child_id).ok_or_else(|| BeamError::NotFound {
+                entity: "child_in_source_parent",
+                id: child_id.to_string(),
+            })?
+        };
+
+        let adjusted_index =
+            if source_parent_id == destination_parent_id && removed_index < insertion_index {
+                insertion_index.saturating_sub(1)
+            } else {
+                insertion_index
+            };
+
+        let destination_parent =
+            store
+                .nodes
+                .get_mut(&destination_parent_id)
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "destination_parent",
+                    id: destination_parent_id.to_string(),
+                })?;
+        Self::insert_child_at(destination_parent, adjusted_index, child_id);
+        Ok(())
+    }
+
+    fn reposition_root(
+        root_ids: &mut Vec<Ulid>,
+        collection_id: Ulid,
+        insertion_index: usize,
+    ) -> Result<()> {
+        let Some(current_index) = root_ids.iter().position(|id| *id == collection_id) else {
+            return Err(BeamError::NotFound {
+                entity: "collection",
+                id: collection_id.to_string(),
+            });
+        };
+        let root_id = root_ids.remove(current_index);
+        let adjusted_index = if current_index < insertion_index {
+            insertion_index.saturating_sub(1)
+        } else {
+            insertion_index
+        };
+        let index = adjusted_index.min(root_ids.len());
+        root_ids.insert(index, root_id);
+        Ok(())
+    }
+
+    fn load_ordered_collection_ids(&self) -> Result<Vec<Ulid>> {
+        let mut collection_ids = Vec::new();
+        self.walk_files_recursive(&self.paths.collections_dir, |path| {
+            if path.file_name().and_then(|name| name.to_str())
+                != Some(COLLECTION_MANIFEST_FILE_NAME)
+            {
+                return;
+            }
+            let Ok(store) = shared_store_from_collection_manifest_path(path) else {
+                return;
+            };
+            if let Some(collection_id) = store.root_ids.first().copied() {
+                collection_ids.push(collection_id);
+            }
+        })?;
+
+        let root_order = if self.paths.collections_root_order_file.exists() {
+            self.read_toml_file::<crate::tree_store::RootOrderFile>(
+                &self.paths.collections_root_order_file,
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        let available_ids: HashSet<Ulid> = collection_ids.iter().copied().collect();
+        let mut ordered_ids = Vec::with_capacity(collection_ids.len());
+        let mut seen = HashSet::new();
+
+        if let Some(root_order) = root_order {
+            for root_id in root_order.root_ids {
+                if available_ids.contains(&root_id) && seen.insert(root_id) {
+                    ordered_ids.push(root_id);
+                }
+            }
+        }
+
+        for collection_id in collection_ids {
+            if seen.insert(collection_id) {
+                ordered_ids.push(collection_id);
+            }
+        }
+
+        Ok(ordered_ids)
+    }
+
+    fn collection_file_from_store(
+        &self,
+        store: &SharedStore,
+        manifest_path: &Path,
+    ) -> Result<CollectionFile> {
+        let collection_id = *store.root_ids.first().ok_or_else(|| BeamError::NotFound {
+            entity: "collection",
+            id: "root".to_string(),
+        })?;
+        let collection = store
+            .nodes
+            .get(&collection_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "collection",
+                id: collection_id.to_string(),
+            })?;
+        Ok(CollectionFile {
+            collection: crate::models::CollectionMeta {
+                collection_id,
+                name: collection.name.clone(),
+                description: collection.description.clone(),
+                created_at: collection.created_at.unwrap_or_else(Utc::now),
+                updated_at: collection.updated_at.unwrap_or_else(Utc::now),
+            },
+            items: Vec::new(),
+            manifest_path: Some(manifest_path.to_path_buf()),
+        })
+    }
+
+    fn folder_file_from_store(
+        &self,
+        store: &SharedStore,
+        folder_id: Ulid,
+        manifest_path: &Path,
+    ) -> Result<FolderFile> {
+        let folder = store
+            .nodes
+            .get(&folder_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "folder",
+                id: folder_id.to_string(),
+            })?;
+        let collection_id =
+            root_collection_id_of(store, folder_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder",
+                id: folder_id.to_string(),
+            })?;
+        Ok(FolderFile {
+            folder: FolderMeta {
+                folder_id,
+                collection_id,
+                parent_folder_id: folder.parent_id.filter(|parent_id| {
+                    store
+                        .nodes
+                        .get(parent_id)
+                        .is_some_and(|parent| parent.kind == NodeKind::Folder)
+                }),
+                name: folder.name.clone(),
+                description: folder.description.clone(),
+                created_at: folder.created_at.unwrap_or_else(Utc::now),
+                updated_at: folder.updated_at.unwrap_or_else(Utc::now),
+            },
+            items: Vec::new(),
+            manifest_path: Some(manifest_path.to_path_buf()),
+        })
+    }
+
     fn find_request_parent(&self, request_id: Ulid) -> Result<RequestParentRef> {
         let mut found: Option<RequestParentRef> = None;
         self.walk_files_recursive(&self.paths.collections_dir, |path| {
@@ -1012,6 +1453,21 @@ impl TomlWorkspaceStorage {
         })
     }
 
+    fn path_has_ancestor(store: &SharedStore, start_id: Ulid, ancestor_id: Ulid) -> bool {
+        let mut cursor = Some(start_id);
+        let mut seen = HashSet::new();
+        while let Some(node_id) = cursor {
+            if node_id == ancestor_id {
+                return true;
+            }
+            if !seen.insert(node_id) {
+                return false;
+            }
+            cursor = store.nodes.get(&node_id).and_then(|node| node.parent_id);
+        }
+        false
+    }
+
     pub fn rename_collection_with_manifest_path(
         &self,
         collection_id: Ulid,
@@ -1024,7 +1480,7 @@ impl TomlWorkspaceStorage {
                 message: "Collection name cannot be empty".to_string(),
             });
         }
-        let sibling_names = self.sibling_collection_names(Some(collection_id))?;
+        let sibling_names = self.root_collection_names_from_manifests(Some(collection_id))?;
         if sibling_names
             .iter()
             .any(|existing| existing.eq_ignore_ascii_case(next_name))
@@ -1033,36 +1489,48 @@ impl TomlWorkspaceStorage {
                 message: format!("A collection named '{next_name}' already exists"),
             });
         }
-
-        let old_dir = self.resolve_collection_dir(collection_id, known_manifest_path)?;
-        let path = old_dir.join("collection.toml");
-        let mut collection_file = self.read_collection_file(&path)?;
-        collection_file.collection.name = next_name.to_string();
-        collection_file.collection.updated_at = Utc::now();
-        self.write_toml_file(&path, &collection_file)?;
-
-        let parent_dir = old_dir
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| self.paths.collections_dir.clone());
-        let old_name = old_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let new_dir_name = slugify(next_name);
-        let mut new_dir = old_dir.clone();
-        if !new_dir_name.is_empty() && new_dir_name != old_name {
-            let candidate_dir = parent_dir.join(&new_dir_name);
-            if !candidate_dir.exists() {
-                fs::rename(&old_dir, &candidate_dir).map_err(|source| BeamError::Io {
-                    path: old_dir,
-                    source,
-                })?;
-                new_dir = candidate_dir;
-            }
+        let manifest_path = self
+            .resolve_collection_manifest_path_for_collection(collection_id, known_manifest_path)?;
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
+        let old_dir = collection_dir_path(&self.paths, &store, collection_id)?;
+        let old_manifest_path = old_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+        let old_name = store
+            .nodes
+            .get(&collection_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "collection",
+                id: collection_id.to_string(),
+            })?
+            .name
+            .clone();
+        if let Some(collection) = store.nodes.get_mut(&collection_id) {
+            collection.name = next_name.to_string();
+            collection.updated_at = Some(Utc::now());
         }
-        Ok(collection_file.with_manifest_path(new_dir.join("collection.toml")))
+
+        let new_dir = collection_dir_path(&self.paths, &store, collection_id)?;
+        if new_dir != old_dir {
+            fs::rename(&old_dir, &new_dir).map_err(|source| BeamError::Io {
+                path: old_dir.clone(),
+                source,
+            })?;
+        }
+        let write_result = write_collection_manifest(&self.paths, &store, collection_id);
+        if let Err(error) = write_result {
+            if new_dir != old_dir {
+                let _ = fs::rename(&new_dir, &old_dir);
+            }
+            if let Some(collection) = store.nodes.get_mut(&collection_id) {
+                collection.name = old_name;
+            }
+            return Err(error);
+        }
+        let next_manifest_path = if new_dir == old_dir {
+            old_manifest_path
+        } else {
+            new_dir.join(COLLECTION_MANIFEST_FILE_NAME)
+        };
+        self.collection_file_from_store(&store, &next_manifest_path)
     }
 
     pub fn rename_folder_with_manifest_path(
@@ -1070,7 +1538,7 @@ impl TomlWorkspaceStorage {
         folder_id: Ulid,
         new_name: &str,
         known_manifest_path: Option<&Path>,
-        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+        _known_parent_manifest_path: Option<&KnownParentManifestPath>,
     ) -> Result<FolderFile> {
         let next_name = new_name.trim();
         if next_name.is_empty() {
@@ -1078,57 +1546,67 @@ impl TomlWorkspaceStorage {
                 message: "Folder name cannot be empty".to_string(),
             });
         }
-        let parent = self.find_folder_parent(folder_id)?;
-        let sibling_names =
-            self.sibling_folder_names(parent, known_parent_manifest_path, Some(folder_id))?;
-        if sibling_names
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(next_name))
-        {
-            return Err(BeamError::Validation {
-                message: format!("A folder named '{next_name}' already exists in this scope"),
-            });
-        }
-
-        let old_dir = self.resolve_folder_dir(folder_id, known_manifest_path)?;
-        let path = old_dir.join("folder.toml");
-        let mut folder_file = self.read_folder_file(&path)?;
-        folder_file.folder.name = next_name.to_string();
-        folder_file.folder.updated_at = Utc::now();
-        self.write_toml_file(&path, &folder_file)?;
-        self.update_folder_name_in_parent_manifest(
-            parent,
-            known_parent_manifest_path,
-            folder_id,
+        let manifest_path =
+            self.resolve_collection_manifest_path_for_folder(folder_id, known_manifest_path)?;
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
+        let parent_id = store
+            .nodes
+            .get(&folder_id)
+            .and_then(|node| node.parent_id)
+            .ok_or_else(|| BeamError::Validation {
+                message: format!("folder node {folder_id} is missing parent_id"),
+            })?;
+        assert_name_unique(
+            &store.name_index,
+            Some(parent_id),
             next_name,
-        )?;
+            Some(folder_id),
+        )
+        .map_err(|_| BeamError::Validation {
+            message: format!("A folder named '{next_name}' already exists in this scope"),
+        })?;
 
-        let parent_dir =
-            old_dir
-                .parent()
-                .map(Path::to_path_buf)
-                .ok_or_else(|| BeamError::NotFound {
-                    entity: "folder_parent_dir",
-                    id: folder_id.to_string(),
-                })?;
-        let old_name = old_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let new_dir_name = slugify(next_name);
-        let mut new_dir = old_dir.clone();
-        if !new_dir_name.is_empty() && new_dir_name != old_name {
-            let candidate_dir = parent_dir.join(&new_dir_name);
-            if !candidate_dir.exists() {
-                fs::rename(&old_dir, &candidate_dir).map_err(|source| BeamError::Io {
-                    path: old_dir,
-                    source,
-                })?;
-                new_dir = candidate_dir;
-            }
+        let old_dir = folder_dir_path(&self.paths, &store, folder_id)?;
+        let old_name = store
+            .nodes
+            .get(&folder_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "folder",
+                id: folder_id.to_string(),
+            })?
+            .name
+            .clone();
+        store
+            .name_index
+            .remove(&crate::tree_store::scope_key(Some(parent_id), &old_name));
+        if let Some(folder) = store.nodes.get_mut(&folder_id) {
+            folder.name = next_name.to_string();
+            folder.updated_at = Some(Utc::now());
         }
-        Ok(folder_file.with_manifest_path(new_dir.join("folder.toml")))
+        store.name_index.insert(
+            crate::tree_store::scope_key(Some(parent_id), next_name),
+            folder_id,
+        );
+
+        let new_dir = folder_dir_path(&self.paths, &store, folder_id)?;
+        if new_dir != old_dir {
+            fs::rename(&old_dir, &new_dir).map_err(|source| BeamError::Io {
+                path: old_dir.clone(),
+                source,
+            })?;
+        }
+        let collection_id =
+            root_collection_id_of(&store, folder_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder",
+                id: folder_id.to_string(),
+            })?;
+        if let Err(error) = write_collection_manifest(&self.paths, &store, collection_id) {
+            if new_dir != old_dir {
+                let _ = fs::rename(&new_dir, &old_dir);
+            }
+            return Err(error);
+        }
+        self.folder_file_from_store(&store, folder_id, &manifest_path)
     }
 
     pub fn delete_collection_with_manifest_path(
@@ -1147,11 +1625,55 @@ impl TomlWorkspaceStorage {
         &self,
         folder_id: Ulid,
         known_manifest_path: Option<&Path>,
-        known_parent_manifest_path: Option<&KnownParentManifestPath>,
+        _known_parent_manifest_path: Option<&KnownParentManifestPath>,
     ) -> Result<()> {
-        let folder_dir = self.resolve_folder_dir(folder_id, known_manifest_path)?;
-        let parent = self.find_folder_parent(folder_id)?;
-        self.remove_folder_from_parent_manifest(parent, known_parent_manifest_path, folder_id)?;
+        let manifest_path =
+            self.resolve_collection_manifest_path_for_folder(folder_id, known_manifest_path)?;
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
+        let folder_dir = folder_dir_path(&self.paths, &store, folder_id)?;
+        let parent_id = store
+            .nodes
+            .get(&folder_id)
+            .and_then(|node| node.parent_id)
+            .ok_or_else(|| BeamError::Validation {
+                message: format!("folder node {folder_id} is missing parent_id"),
+            })?;
+        let folder_name = store
+            .nodes
+            .get(&folder_id)
+            .map(|node| node.name.clone())
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "folder",
+                id: folder_id.to_string(),
+            })?;
+        store
+            .name_index
+            .remove(&crate::tree_store::scope_key(Some(parent_id), &folder_name));
+        let child_ids = store
+            .nodes
+            .get(&folder_id)
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        let mut stack = child_ids;
+        while let Some(node_id) = stack.pop() {
+            if let Some(node) = store.nodes.remove(&node_id) {
+                store
+                    .name_index
+                    .remove(&crate::tree_store::scope_key(node.parent_id, &node.name));
+                stack.extend(node.children);
+            }
+            store.requests.remove(&node_id);
+        }
+        store.nodes.remove(&folder_id);
+        if let Some(parent) = store.nodes.get_mut(&parent_id) {
+            parent.children.retain(|child_id| *child_id != folder_id);
+        }
+        let collection_id =
+            root_collection_id_of(&store, parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder",
+                id: folder_id.to_string(),
+            })?;
+        write_collection_manifest(&self.paths, &store, collection_id)?;
         fs::remove_dir_all(&folder_dir).map_err(|source| BeamError::Io {
             path: folder_dir,
             source,
@@ -1222,59 +1744,51 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 message: "Request name cannot be empty".to_string(),
             });
         }
-        let now = Utc::now();
-        let request_file = RequestFile {
-            meta: RequestMeta {
-                request_id: Ulid::new(),
-                name: name.to_string(),
-                description: None,
-                created_at: now,
-                updated_at: now,
-            },
-            request: RequestDefinition {
-                method,
-                url,
-                headers: vec![
-                    HeaderField {
-                        name: "Content-Type".to_string(),
-                        value: "application/json".to_string(),
-                        enabled: true,
-                        description: None,
-                        secret: false,
-                    },
-                    HeaderField {
-                        name: "User-Agent".to_string(),
-                        value: "BeamApp/1.0".to_string(),
-                        enabled: true,
-                        description: None,
-                        secret: false,
-                    },
-                ],
-                query_params: vec![QueryParamField {
-                    name: String::new(),
-                    value: String::new(),
-                    enabled: true,
-                    description: None,
-                }],
-            },
-            auth: AuthConfig::None,
-            body: BodyConfig::None,
-            scripts: ScriptConfig::default(),
-            file_path: None,
-        };
-        let created_path = self.write_request_new_path(
-            &request_file,
+        let manifest_path = self.resolve_collection_manifest_path_for_request_parent(
             parent,
             known_parent_manifest_path.as_ref(),
         )?;
-        let request_file = request_file.with_file_path(created_path);
-        self.append_request_to_parent_manifest(
-            parent,
-            known_parent_manifest_path.as_ref(),
-            request_file.meta.request_id,
-            &request_file.meta.name,
-        )?;
-        Ok(request_file)
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
+        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+        assert_name_unique(&store.name_index, Some(parent_id), name, None).map_err(|_| {
+            BeamError::Validation {
+                message: format!("A request named '{name}' already exists in this scope"),
+            }
+        })?;
+
+        let request_file = self.default_request_file(name, method, url);
+        let request_id = request_file.meta.request_id;
+        let collection_id =
+            root_collection_id_of(&store, parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: parent_id.to_string(),
+            })?;
+        let now = request_file.meta.created_at;
+        if let Some(parent_node) = store.nodes.get_mut(&parent_id) {
+            Self::insert_child(parent_node, request_id);
+        }
+        store.nodes.insert(
+            request_id,
+            Node {
+                id: request_id,
+                name: request_file.meta.name.clone(),
+                kind: NodeKind::Request,
+                description: request_file.meta.description.clone(),
+                created_at: Some(now),
+                updated_at: Some(request_file.meta.updated_at),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+        store.name_index.insert(
+            crate::tree_store::scope_key(Some(parent_id), &request_file.meta.name),
+            request_id,
+        );
+        store.requests.insert(request_id, request_file.clone());
+
+        let created_path = write_request_payload(&self.paths, &store, request_id)?;
+        write_collection_manifest(&self.paths, &store, collection_id)?;
+        Ok(request_file.with_file_path(created_path))
     }
 
     fn create_request_after(
@@ -1295,59 +1809,51 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 message: "Request name cannot be empty".to_string(),
             });
         }
-        let now = Utc::now();
-        let request_file = RequestFile {
-            meta: RequestMeta {
-                request_id: Ulid::new(),
-                name: name.to_string(),
-                description: None,
-                created_at: now,
-                updated_at: now,
-            },
-            request: RequestDefinition {
-                method,
-                url,
-                headers: vec![
-                    HeaderField {
-                        name: "Content-Type".to_string(),
-                        value: "application/json".to_string(),
-                        enabled: true,
-                        description: None,
-                        secret: false,
-                    },
-                    HeaderField {
-                        name: "User-Agent".to_string(),
-                        value: "BeamApp/1.0".to_string(),
-                        enabled: true,
-                        description: None,
-                        secret: false,
-                    },
-                ],
-                query_params: vec![QueryParamField {
-                    name: String::new(),
-                    value: String::new(),
-                    enabled: true,
-                    description: None,
-                }],
-            },
-            auth: AuthConfig::None,
-            body: BodyConfig::None,
-            scripts: ScriptConfig::default(),
-            file_path: None,
-        };
-        let created_path = self.write_request_new_path(
-            &request_file,
+        let manifest_path = self.resolve_collection_manifest_path_for_request_parent(
             parent,
             known_parent_manifest_path.as_ref(),
         )?;
-        let request_file = request_file.with_file_path(created_path);
-        self.insert_request_to_parent_manifest_after(
-            parent,
-            source_request_id,
-            request_file.meta.request_id,
-            &request_file.meta.name,
-        )?;
-        Ok(request_file)
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
+        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
+        assert_name_unique(&store.name_index, Some(parent_id), name, None).map_err(|_| {
+            BeamError::Validation {
+                message: format!("A request named '{name}' already exists in this scope"),
+            }
+        })?;
+
+        let request_file = self.default_request_file(name, method, url);
+        let request_id = request_file.meta.request_id;
+        let collection_id =
+            root_collection_id_of(&store, parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: parent_id.to_string(),
+            })?;
+        let now = request_file.meta.created_at;
+        if let Some(parent_node) = store.nodes.get_mut(&parent_id) {
+            Self::insert_child_after(parent_node, source_request_id, request_id);
+        }
+        store.nodes.insert(
+            request_id,
+            Node {
+                id: request_id,
+                name: request_file.meta.name.clone(),
+                kind: NodeKind::Request,
+                description: request_file.meta.description.clone(),
+                created_at: Some(now),
+                updated_at: Some(request_file.meta.updated_at),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+        store.name_index.insert(
+            crate::tree_store::scope_key(Some(parent_id), &request_file.meta.name),
+            request_id,
+        );
+        store.requests.insert(request_id, request_file.clone());
+
+        let created_path = write_request_payload(&self.paths, &store, request_id)?;
+        write_collection_manifest(&self.paths, &store, collection_id)?;
+        Ok(request_file.with_file_path(created_path))
     }
 
     fn create_folder(&self, input: CreateFolderInput) -> Result<FolderFile> {
@@ -1357,53 +1863,55 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 message: "Folder name cannot be empty".to_string(),
             });
         }
-        let sibling_names = self.sibling_folder_names(
+        let manifest_path = self.resolve_collection_manifest_path_for_folder_parent(
             input.parent,
             input.known_parent_manifest_path.as_ref(),
-            None,
         )?;
-        if sibling_names
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(name))
-        {
-            return Err(BeamError::Validation {
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
+        let parent_id = input
+            .parent
+            .parent_folder_id
+            .unwrap_or(input.parent.collection_id);
+        assert_name_unique(&store.name_index, Some(parent_id), name, None).map_err(|_| {
+            BeamError::Validation {
                 message: format!("A folder named '{name}' already exists in this scope"),
-            });
-        }
+            }
+        })?;
 
         let now = Utc::now();
-        let mut folder_file = FolderFile {
-            folder: FolderMeta {
-                folder_id: Ulid::new(),
-                collection_id: input.parent.collection_id,
-                parent_folder_id: input.parent.parent_folder_id,
+        let folder_id = Ulid::new();
+        if let Some(parent_node) = store.nodes.get_mut(&parent_id) {
+            Self::insert_child(parent_node, folder_id);
+        }
+        store.nodes.insert(
+            folder_id,
+            Node {
+                id: folder_id,
                 name: name.to_string(),
+                kind: NodeKind::Folder,
                 description: None,
-                created_at: now,
-                updated_at: now,
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
             },
-            items: Vec::new(),
-            manifest_path: None,
-        };
-
-        let parent_dir =
-            self.folder_dir_for_parent(input.parent, input.known_parent_manifest_path.as_ref())?;
-        let folder_dir_name = slugify(name);
-        let folder_dir = parent_dir.join(folder_dir_name);
+        );
+        store.name_index.insert(
+            crate::tree_store::scope_key(Some(parent_id), name),
+            folder_id,
+        );
+        let collection_id =
+            root_collection_id_of(&store, parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder_parent",
+                id: parent_id.to_string(),
+            })?;
+        let folder_dir = folder_dir_path(&self.paths, &store, folder_id)?;
         fs::create_dir_all(&folder_dir).map_err(|source| BeamError::Io {
-            path: folder_dir.clone(),
+            path: folder_dir,
             source,
         })?;
-        let manifest_path = folder_dir.join("folder.toml");
-        self.write_toml_file(&manifest_path, &folder_file)?;
-        folder_file = folder_file.with_manifest_path(manifest_path);
-        self.append_folder_to_parent_manifest(
-            input.parent,
-            input.known_parent_manifest_path.as_ref(),
-            folder_file.folder.folder_id,
-            name,
-        )?;
-        Ok(folder_file)
+        write_collection_manifest(&self.paths, &store, collection_id)?;
+        self.folder_file_from_store(&store, folder_id, &manifest_path)
     }
 
     fn create_environment(&self, input: CreateEnvironmentInput) -> Result<EnvironmentFile> {
@@ -1527,103 +2035,74 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
     }
 
     fn rename_request(&self, input: RenameRequestInput) -> Result<RequestFile> {
+        let manifest_path = self.resolve_collection_manifest_path_for_request(
+            input.request_id,
+            input.known_request_path.as_deref(),
+            input.known_parent_manifest_path.as_ref(),
+        )?;
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
         let existing_path =
             self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
         let mut request_file = self.read_request_file(&existing_path)?;
-        let parent = if input.known_parent_manifest_path.is_some() {
-            None
-        } else {
-            Some(self.find_request_parent(input.request_id)?)
-        };
         let next_name = input.new_name.trim();
         if next_name.is_empty() {
             return Err(BeamError::Validation {
                 message: "Request name cannot be empty".to_string(),
             });
         }
+        let node = store
+            .nodes
+            .get(&input.request_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "request",
+                id: input.request_id.to_string(),
+            })?
+            .clone();
+        let parent_id = node.parent_id.ok_or_else(|| BeamError::Validation {
+            message: format!("request node {} is missing parent_id", input.request_id),
+        })?;
+        assert_name_unique(
+            &store.name_index,
+            Some(parent_id),
+            next_name,
+            Some(input.request_id),
+        )
+        .map_err(|_| BeamError::Validation {
+            message: format!("A request named '{next_name}' already exists in this scope"),
+        })?;
 
+        store
+            .name_index
+            .remove(&crate::tree_store::scope_key(Some(parent_id), &node.name));
+        if let Some(request_node) = store.nodes.get_mut(&input.request_id) {
+            request_node.name = next_name.to_string();
+            request_node.updated_at = Some(Utc::now());
+        }
+        store.name_index.insert(
+            crate::tree_store::scope_key(Some(parent_id), next_name),
+            input.request_id,
+        );
         request_file.meta.name = next_name.to_string();
         request_file.meta.updated_at = Utc::now();
-        let request_dir = existing_path.parent().ok_or_else(|| BeamError::NotFound {
-            entity: "request_parent_dir",
-            id: existing_path.to_string_lossy().to_string(),
-        })?;
-        enum OwnerManifest {
-            Folder(FolderFile, PathBuf),
-            Collection(CollectionFile, PathBuf),
-        }
-        let owner_manifest =
-            if let Some(known_parent_manifest_path) = input.known_parent_manifest_path.as_ref() {
-                match known_parent_manifest_path {
-                    KnownParentManifestPath::Folder(path) => {
-                        OwnerManifest::Folder(self.read_folder_file(path)?, path.clone())
-                    }
-                    KnownParentManifestPath::Collection(path) => {
-                        OwnerManifest::Collection(self.read_collection_file(path)?, path.clone())
-                    }
-                }
-            } else if let Some(parent) = parent {
-                if let Some(folder_id) = parent.folder_id {
-                    let folder_dir = self.find_folder_dir_by_id(folder_id)?;
-                    let folder_manifest = folder_dir.join("folder.toml");
-                    OwnerManifest::Folder(self.read_folder_file(&folder_manifest)?, folder_manifest)
-                } else {
-                    let collection_dir = self.find_collection_dir_by_id(parent.collection_id)?;
-                    let collection_manifest = collection_dir.join("collection.toml");
-                    OwnerManifest::Collection(
-                        self.read_collection_file(&collection_manifest)?,
-                        collection_manifest,
-                    )
-                }
-            } else {
-                return Err(BeamError::NotFound {
-                    entity: "request_parent_manifest",
-                    id: input.request_id.to_string(),
-                });
-            };
-        let has_duplicate_name = match &owner_manifest {
-            OwnerManifest::Folder(file, _) => file.items.iter().any(|item| {
-                item.item_type == ItemType::Request
-                    && item.item_id != input.request_id
-                    && item.name.eq_ignore_ascii_case(next_name)
-            }),
-            OwnerManifest::Collection(file, _) => file.items.iter().any(|item| {
-                item.item_type == ItemType::Request
-                    && item.item_id != input.request_id
-                    && item.name.eq_ignore_ascii_case(next_name)
-            }),
-        };
-        if has_duplicate_name {
-            return Err(BeamError::Validation {
-                message: format!("A request named '{next_name}' already exists in this scope"),
-            });
-        }
-        let new_path =
-            self.request_file_path_for_name(request_dir, next_name, Some(&existing_path))?;
+        store
+            .requests
+            .insert(input.request_id, request_file.clone());
+
+        let new_path = request_file_path(&self.paths, &store, input.request_id)?;
+        write_request_payload(&self.paths, &store, input.request_id)?;
+        write_collection_manifest(
+            &self.paths,
+            &store,
+            root_collection_id_of(&store, input.request_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request",
+                id: input.request_id.to_string(),
+            })?,
+        )?;
         if new_path != existing_path {
-            fs::rename(&existing_path, &new_path).map_err(|source| BeamError::Io {
-                path: existing_path.clone(),
+            fs::remove_file(&existing_path).map_err(|source| BeamError::Io {
+                path: existing_path,
                 source,
             })?;
-        }
-        self.write_toml_file(&new_path, &request_file)?;
-        match owner_manifest {
-            OwnerManifest::Folder(mut file, manifest_path) => {
-                for item in &mut file.items {
-                    if item.item_id == input.request_id && item.item_type == ItemType::Request {
-                        item.name = next_name.to_string();
-                    }
-                }
-                self.write_toml_file(&manifest_path, &file)?;
-            }
-            OwnerManifest::Collection(mut file, manifest_path) => {
-                for item in &mut file.items {
-                    if item.item_id == input.request_id && item.item_type == ItemType::Request {
-                        item.name = next_name.to_string();
-                    }
-                }
-                self.write_toml_file(&manifest_path, &file)?;
-            }
         }
         Ok(request_file.with_file_path(new_path))
     }
@@ -1637,8 +2116,11 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
     }
 
     fn duplicate_request(&self, input: DuplicateRequestInput) -> Result<RequestFile> {
-        let request_dir =
-            self.request_dir_for_parent(input.parent, input.known_parent_manifest_path.as_ref())?;
+        let manifest_path = self.resolve_collection_manifest_path_for_request_parent(
+            input.parent,
+            input.known_parent_manifest_path.as_ref(),
+        )?;
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
         let source_path =
             self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
         let source = self.read_request_file(&source_path)?;
@@ -1648,19 +2130,51 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
                 message: "Duplicate request name cannot be empty".to_string(),
             });
         }
+        let parent_id = input.parent.folder_id.unwrap_or(input.parent.collection_id);
+        assert_name_unique(&store.name_index, Some(parent_id), name, None).map_err(|_| {
+            BeamError::Validation {
+                message: format!("A request named '{name}' already exists in this scope"),
+            }
+        })?;
         let now = Utc::now();
         let mut duplicated = source.clone();
         duplicated.meta.request_id = Ulid::new();
         duplicated.meta.name = name.to_string();
         duplicated.meta.created_at = now;
         duplicated.meta.updated_at = now;
-
-        let duplicated_path = self.write_request_new_path_with_dir(&duplicated, &request_dir)?;
-        self.insert_request_to_parent_manifest_after(
-            input.parent,
-            input.request_id,
+        if let Some(parent_node) = store.nodes.get_mut(&parent_id) {
+            Self::insert_child_after(parent_node, input.request_id, duplicated.meta.request_id);
+        }
+        store.nodes.insert(
             duplicated.meta.request_id,
-            &duplicated.meta.name,
+            Node {
+                id: duplicated.meta.request_id,
+                name: duplicated.meta.name.clone(),
+                kind: NodeKind::Request,
+                description: duplicated.meta.description.clone(),
+                created_at: Some(duplicated.meta.created_at),
+                updated_at: Some(duplicated.meta.updated_at),
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+        store.name_index.insert(
+            crate::tree_store::scope_key(Some(parent_id), &duplicated.meta.name),
+            duplicated.meta.request_id,
+        );
+        store
+            .requests
+            .insert(duplicated.meta.request_id, duplicated.clone());
+
+        let duplicated_path =
+            write_request_payload(&self.paths, &store, duplicated.meta.request_id)?;
+        write_collection_manifest(
+            &self.paths,
+            &store,
+            root_collection_id_of(&store, parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: parent_id.to_string(),
+            })?,
         )?;
         Ok(duplicated.with_file_path(duplicated_path))
     }
@@ -1674,26 +2188,289 @@ impl WorkspaceStorage for TomlWorkspaceStorage {
     }
 
     fn delete_request(&self, input: DeleteRequestInput) -> Result<()> {
+        let manifest_path = self.resolve_collection_manifest_path_for_request(
+            input.request_id,
+            input.known_request_path.as_deref(),
+            input.known_parent_manifest_path.as_ref(),
+        )?;
+        let mut store = self.load_store_from_manifest_path(&manifest_path)?;
         let request_path =
             self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
-        let parent = if input.known_parent_manifest_path.is_some() {
-            None
-        } else {
-            Some(self.find_request_parent(input.request_id)?)
-        };
-
+        let node = store
+            .nodes
+            .get(&input.request_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "request",
+                id: input.request_id.to_string(),
+            })?
+            .clone();
+        let parent_id = node.parent_id.ok_or_else(|| BeamError::Validation {
+            message: format!("request node {} is missing parent_id", input.request_id),
+        })?;
+        store
+            .name_index
+            .remove(&crate::tree_store::scope_key(Some(parent_id), &node.name));
+        store.nodes.remove(&input.request_id);
+        store.requests.remove(&input.request_id);
+        if let Some(parent_node) = store.nodes.get_mut(&parent_id) {
+            parent_node
+                .children
+                .retain(|child_id| *child_id != input.request_id);
+        }
+        write_collection_manifest(
+            &self.paths,
+            &store,
+            root_collection_id_of(&store, parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: parent_id.to_string(),
+            })?,
+        )?;
         fs::remove_file(&request_path).map_err(|source| BeamError::Io {
             path: request_path,
             source,
-        })?;
-        self.remove_request_from_parent_manifest(
-            parent.unwrap_or(RequestParentRef {
-                collection_id: Ulid::nil(),
-                folder_id: None,
-            }),
-            input.known_parent_manifest_path.as_ref(),
+        })
+    }
+
+    fn move_request(&self, input: MoveRequestInput) -> Result<RequestFile> {
+        let source_manifest_path = self.resolve_collection_manifest_path_for_request(
             input.request_id,
+            input.known_request_path.as_deref(),
+            None,
+        )?;
+        let target_manifest_path = self.resolve_collection_manifest_path_for_request_parent(
+            input.new_parent,
+            input.known_target_manifest_path.as_ref(),
+        )?;
+        let old_request_path =
+            self.resolve_request_file_path(input.request_id, input.known_request_path.as_deref())?;
+        let request_file = self.read_request_file(&old_request_path)?;
+
+        let mut store = if source_manifest_path == target_manifest_path {
+            self.load_store_from_manifest_path(&source_manifest_path)?
+        } else {
+            let source_store = self.load_store_from_manifest_path(&source_manifest_path)?;
+            let target_store = self.load_store_from_manifest_path(&target_manifest_path)?;
+            self.merge_shared_stores(source_store, target_store)?
+        };
+
+        let request_node = store
+            .nodes
+            .get(&input.request_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "request",
+                id: input.request_id.to_string(),
+            })?
+            .clone();
+        if request_node.kind != NodeKind::Request {
+            return Err(BeamError::Validation {
+                message: format!("node {} is not a request", input.request_id),
+            });
+        }
+        let source_parent_id = request_node
+            .parent_id
+            .ok_or_else(|| BeamError::Validation {
+                message: format!("request node {} is missing parent_id", input.request_id),
+            })?;
+        let destination_parent_id = input
+            .new_parent
+            .folder_id
+            .unwrap_or(input.new_parent.collection_id);
+        Self::ensure_parent_kind(&store, destination_parent_id)?;
+        assert_name_unique(
+            &store.name_index,
+            Some(destination_parent_id),
+            &request_node.name,
+            Some(input.request_id),
         )
+        .map_err(|_| BeamError::Validation {
+            message: format!(
+                "A request named '{}' already exists in this scope",
+                request_node.name
+            ),
+        })?;
+
+        if source_parent_id != destination_parent_id {
+            store.name_index.remove(&crate::tree_store::scope_key(
+                Some(source_parent_id),
+                &request_node.name,
+            ));
+        }
+        Self::apply_child_move(
+            &mut store,
+            input.request_id,
+            source_parent_id,
+            destination_parent_id,
+            input.insertion_index,
+        )?;
+        if let Some(node) = store.nodes.get_mut(&input.request_id) {
+            node.parent_id = Some(destination_parent_id);
+        }
+        if source_parent_id != destination_parent_id {
+            store.name_index.insert(
+                crate::tree_store::scope_key(Some(destination_parent_id), &request_node.name),
+                input.request_id,
+            );
+        }
+
+        let new_request_path = request_file_path(&self.paths, &store, input.request_id)?;
+        if new_request_path != old_request_path {
+            if let Some(parent_dir) = new_request_path.parent() {
+                fs::create_dir_all(parent_dir).map_err(|source| BeamError::Io {
+                    path: parent_dir.to_path_buf(),
+                    source,
+                })?;
+            }
+            fs::rename(&old_request_path, &new_request_path).map_err(|source| BeamError::Io {
+                path: old_request_path.clone(),
+                source,
+            })?;
+        }
+
+        let source_collection_id =
+            root_collection_id_of(&store, source_parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: source_parent_id.to_string(),
+            })?;
+        let destination_collection_id = root_collection_id_of(&store, destination_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: destination_parent_id.to_string(),
+            })?;
+        self.write_collection_manifests(
+            &store,
+            &[source_collection_id, destination_collection_id],
+        )?;
+
+        Ok(request_file.with_file_path(new_request_path))
+    }
+
+    fn move_folder(&self, input: MoveFolderInput) -> Result<FolderFile> {
+        let source_manifest_path = self.resolve_collection_manifest_path_for_folder(
+            input.folder_id,
+            input.known_folder_manifest_path.as_deref(),
+        )?;
+        let target_manifest_path = self.resolve_collection_manifest_path_for_folder_parent(
+            input.new_parent,
+            input.known_target_manifest_path.as_ref(),
+        )?;
+
+        let mut store = if source_manifest_path == target_manifest_path {
+            self.load_store_from_manifest_path(&source_manifest_path)?
+        } else {
+            let source_store = self.load_store_from_manifest_path(&source_manifest_path)?;
+            let target_store = self.load_store_from_manifest_path(&target_manifest_path)?;
+            self.merge_shared_stores(source_store, target_store)?
+        };
+
+        let folder_node = store
+            .nodes
+            .get(&input.folder_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "folder",
+                id: input.folder_id.to_string(),
+            })?
+            .clone();
+        if folder_node.kind != NodeKind::Folder {
+            return Err(BeamError::Validation {
+                message: format!("node {} is not a folder", input.folder_id),
+            });
+        }
+        let source_parent_id = folder_node.parent_id.ok_or_else(|| BeamError::Validation {
+            message: format!("folder node {} is missing parent_id", input.folder_id),
+        })?;
+        let destination_parent_id = input
+            .new_parent
+            .parent_folder_id
+            .unwrap_or(input.new_parent.collection_id);
+        Self::ensure_parent_kind(&store, destination_parent_id)?;
+        if destination_parent_id == input.folder_id
+            || Self::path_has_ancestor(&store, destination_parent_id, input.folder_id)
+        {
+            return Err(BeamError::Validation {
+                message: "Cannot move a folder into itself or its own descendant.".to_string(),
+            });
+        }
+        assert_name_unique(
+            &store.name_index,
+            Some(destination_parent_id),
+            &folder_node.name,
+            Some(input.folder_id),
+        )
+        .map_err(|_| BeamError::Validation {
+            message: format!(
+                "A folder named '{}' already exists in this scope",
+                folder_node.name
+            ),
+        })?;
+
+        let old_folder_dir = folder_dir_path(&self.paths, &store, input.folder_id)?;
+        if source_parent_id != destination_parent_id {
+            store.name_index.remove(&crate::tree_store::scope_key(
+                Some(source_parent_id),
+                &folder_node.name,
+            ));
+        }
+        Self::apply_child_move(
+            &mut store,
+            input.folder_id,
+            source_parent_id,
+            destination_parent_id,
+            input.insertion_index,
+        )?;
+        if let Some(node) = store.nodes.get_mut(&input.folder_id) {
+            node.parent_id = Some(destination_parent_id);
+        }
+        if source_parent_id != destination_parent_id {
+            store.name_index.insert(
+                crate::tree_store::scope_key(Some(destination_parent_id), &folder_node.name),
+                input.folder_id,
+            );
+        }
+
+        let new_folder_dir = folder_dir_path(&self.paths, &store, input.folder_id)?;
+        if new_folder_dir != old_folder_dir {
+            if let Some(parent_dir) = new_folder_dir.parent() {
+                fs::create_dir_all(parent_dir).map_err(|source| BeamError::Io {
+                    path: parent_dir.to_path_buf(),
+                    source,
+                })?;
+            }
+            fs::rename(&old_folder_dir, &new_folder_dir).map_err(|source| BeamError::Io {
+                path: old_folder_dir.clone(),
+                source,
+            })?;
+        }
+
+        let source_collection_id =
+            root_collection_id_of(&store, source_parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder_parent",
+                id: source_parent_id.to_string(),
+            })?;
+        let destination_collection_id = root_collection_id_of(&store, destination_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder_parent",
+                id: destination_parent_id.to_string(),
+            })?;
+        self.write_collection_manifests(
+            &store,
+            &[source_collection_id, destination_collection_id],
+        )?;
+
+        let manifest_path = if source_collection_id == destination_collection_id {
+            source_manifest_path
+        } else {
+            target_manifest_path
+        };
+        self.folder_file_from_store(&store, input.folder_id, &manifest_path)
+    }
+
+    fn reorder_collection(&self, input: ReorderCollectionInput) -> Result<()> {
+        let mut root_ids = self.load_ordered_collection_ids()?;
+        Self::reposition_root(&mut root_ids, input.collection_id, input.insertion_index)?;
+        let mut store = SharedStore::default();
+        store.root_ids = root_ids;
+        write_root_order(&self.paths, &store)?;
+        Ok(())
     }
 
     fn delete_environment(&self, environment_id: Ulid) -> Result<()> {
@@ -1769,8 +2546,12 @@ mod tests {
 
     use super::*;
     use crate::models::{
-        AuthConfig, BodyConfig, CollectionFile, CollectionMeta, HttpMethod, RequestDefinition,
-        RequestFile, RequestMeta, ScriptConfig,
+        AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta,
+        ScriptConfig,
+    };
+    use crate::tree_store::{
+        COLLECTION_MANIFEST_FILE_NAME, CollectionManifestFile, NodeKind,
+        shared_store_from_collection_manifest_path,
     };
     use chrono::Utc;
     use ulid::Ulid;
@@ -1905,31 +2686,64 @@ environment_id = "{environment_id}"
         let collection_id = Ulid::new();
         let collection_dir = storage.paths.collections_dir.join("sample");
         fs::create_dir_all(&collection_dir).expect("create collection dir");
-        let collection_file = CollectionFile {
-            collection: CollectionMeta {
-                collection_id,
-                name: "Sample".to_string(),
-                description: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
-            },
-            items: Vec::new(),
-            manifest_path: None,
+        let now = Utc::now();
+        let collection_manifest = CollectionManifestFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            id: collection_id,
+            name: "Sample".to_string(),
+            kind: NodeKind::Collection,
+            description: None,
+            created_at: Some(now),
+            updated_at: Some(now),
+            children: Vec::new(),
         };
         storage
-            .write_toml_file(&collection_dir.join("collection.toml"), &collection_file)
-            .expect("save collection file");
+            .write_toml_file(
+                &collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
+                &collection_manifest,
+            )
+            .expect("save collection manifest");
 
         (dir, storage, collection_id, collection_dir)
+    }
+
+    fn create_collection_manifest(
+        storage: &TomlWorkspaceStorage,
+        dir_name: &str,
+        name: &str,
+    ) -> (Ulid, PathBuf) {
+        let collection_id = Ulid::new();
+        let collection_dir = storage.paths.collections_dir.join(dir_name);
+        fs::create_dir_all(&collection_dir).expect("create collection dir");
+        let now = Utc::now();
+        let collection_manifest = CollectionManifestFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            id: collection_id,
+            name: name.to_string(),
+            kind: NodeKind::Collection,
+            description: None,
+            created_at: Some(now),
+            updated_at: Some(now),
+            children: Vec::new(),
+        };
+        storage
+            .write_toml_file(
+                &collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
+                &collection_manifest,
+            )
+            .expect("save collection manifest");
+        (collection_id, collection_dir)
     }
 
     #[test]
     fn load_helpers_hydrate_runtime_paths_for_loaded_files() {
         let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
-        let collection_manifest_path = collection_dir.join("collection.toml");
-
+        let collection_manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+        let loaded_store = storage
+            .load_store_from_manifest_path(&collection_manifest_path)
+            .expect("load store from manifest");
         let loaded_collection = storage
-            .read_collection_file(&collection_manifest_path)
+            .collection_file_from_store(&loaded_store, &collection_manifest_path)
             .expect("load collection with path");
         assert_eq!(
             loaded_collection.manifest_path.as_deref(),
@@ -1947,15 +2761,21 @@ environment_id = "{environment_id}"
             })
             .expect("create folder");
         let folder_manifest_path = storage
-            .find_folder_dir_by_id(folder.folder.folder_id)
-            .expect("find folder dir")
-            .join("folder.toml");
+            .find_collection_manifest_path_containing_node(folder.folder.folder_id)
+            .expect("find folder manifest path");
         assert_eq!(
             folder.manifest_path.as_deref(),
             Some(folder_manifest_path.as_path())
         );
+        let loaded_store = storage
+            .load_store_from_manifest_path(&folder_manifest_path)
+            .expect("load store after folder create");
         let loaded_folder = storage
-            .read_folder_file(&folder_manifest_path)
+            .folder_file_from_store(
+                &loaded_store,
+                folder.folder.folder_id,
+                &folder_manifest_path,
+            )
             .expect("load folder with path");
         assert_eq!(
             loaded_folder.manifest_path.as_deref(),
@@ -2049,7 +2869,7 @@ environment_id = "{environment_id}"
     #[test]
     fn create_request_roundtrip_persists_and_links_manifest() {
         let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
-        let collection_manifest_path = collection_dir.join("collection.toml");
+        let collection_manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
         let created = storage
             .create_request(CreateRequestInput {
                 parent: RequestParentRef {
@@ -2077,14 +2897,16 @@ environment_id = "{environment_id}"
         assert_eq!(loaded.request.headers.len(), 2);
         assert_eq!(loaded.file_path.as_deref(), Some(created_path.as_path()));
 
-        let collection_file: CollectionFile = storage
-            .read_toml_file(&collection_dir.join("collection.toml"))
-            .expect("load collection");
-        assert!(collection_file.items.iter().any(|item| {
-            item.item_id == created.meta.request_id
-                && item.item_type == ItemType::Request
-                && item.name == "List Users"
-        }));
+        let store = shared_store_from_collection_manifest_path(&collection_manifest_path)
+            .expect("load collection manifest");
+        let collection_node = store.nodes.get(&collection_id).expect("collection node");
+        assert_eq!(collection_node.children, vec![created.meta.request_id]);
+        let request_node = store
+            .nodes
+            .get(&created.meta.request_id)
+            .expect("request node");
+        assert_eq!(request_node.name, "List Users");
+        assert_eq!(request_node.kind, NodeKind::Request);
         assert_eq!(
             storage
                 .request_dir_for_parent(
@@ -2104,6 +2926,9 @@ environment_id = "{environment_id}"
     #[test]
     fn duplicate_request_generates_new_id_and_new_file() {
         let (_dir, storage, collection_id, _) = init_storage_with_collection();
+        let collection_manifest_path = storage
+            .find_collection_manifest_path_by_collection_id(collection_id)
+            .expect("find collection manifest");
         let created = storage
             .create_request(CreateRequestInput {
                 parent: RequestParentRef {
@@ -2149,23 +2974,14 @@ environment_id = "{environment_id}"
             .expect("load duplicated request");
         assert_eq!(duplicated_loaded.meta.name, "Get User (Copy)");
 
-        let collection_dir = storage
-            .find_collection_dir_by_id(collection_id)
-            .expect("find collection dir");
-        let mut ordered_items = storage
-            .read_collection_file(&collection_dir.join("collection.toml"))
-            .expect("load collection")
-            .items;
-        ordered_items.sort_by(|a, b| {
-            a.order
-                .cmp(&b.order)
-                .then_with(|| a.item_id.to_string().cmp(&b.item_id.to_string()))
-        });
-        let request_ids: Vec<Ulid> = ordered_items
-            .into_iter()
-            .filter(|item| item.item_type == ItemType::Request)
-            .map(|item| item.item_id)
-            .collect();
+        let store = shared_store_from_collection_manifest_path(&collection_manifest_path)
+            .expect("load collection store");
+        let request_ids = store
+            .nodes
+            .get(&collection_id)
+            .expect("collection node")
+            .children
+            .clone();
         assert_eq!(
             request_ids,
             vec![
@@ -2219,13 +3035,8 @@ environment_id = "{environment_id}"
     }
 
     #[test]
-    fn request_file_paths_use_slug_and_increment_suffix_when_colliding() {
+    fn request_file_paths_use_manifest_slug_derivation() {
         let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
-        let request_dir = collection_dir.join("requests");
-        fs::create_dir_all(&request_dir).expect("create requests dir");
-
-        // Reserve the default file name to force numeric suffix allocation.
-        fs::write(request_dir.join("sample.request.toml"), "reserved").expect("seed collision");
 
         let created = storage
             .create_request(CreateRequestInput {
@@ -2243,10 +3054,9 @@ environment_id = "{environment_id}"
         let created_path = storage
             .find_request_file_by_id(created.meta.request_id)
             .expect("find request path");
-        assert!(
-            created_path
-                .to_string_lossy()
-                .contains("sample-2.request.toml")
+        assert_eq!(
+            created_path,
+            collection_dir.join("requests").join("sample.request.toml")
         );
 
         let renamed = storage
@@ -2452,7 +3262,7 @@ environment_id = "{environment_id}"
         );
         assert_eq!(
             created.manifest_path.as_deref(),
-            Some(created_dir.join("folder.toml").as_path())
+            Some(collection_dir.join(COLLECTION_MANIFEST_FILE_NAME).as_path())
         );
         assert_eq!(
             storage
@@ -2462,7 +3272,7 @@ environment_id = "{environment_id}"
                         parent_folder_id: None,
                     },
                     Some(&KnownParentManifestPath::Collection(
-                        collection_dir.join("collection.toml"),
+                        collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
                     )),
                 )
                 .expect("resolve folder dir from known collection path"),
@@ -2483,17 +3293,16 @@ environment_id = "{environment_id}"
         );
         assert!(!created_dir.exists());
 
-        let collection_dir = storage
-            .find_collection_dir_by_id(collection_id)
-            .expect("find collection dir");
-        let collection_file: CollectionFile = storage
-            .read_toml_file(&collection_dir.join("collection.toml"))
-            .expect("load collection");
-        assert!(collection_file.items.iter().any(|item| {
-            item.item_id == created.folder.folder_id
-                && item.item_type == ItemType::Folder
-                && item.name == "Security"
-        }));
+        let collection_manifest_path = storage
+            .find_collection_manifest_path_by_collection_id(collection_id)
+            .expect("find collection manifest");
+        let store = shared_store_from_collection_manifest_path(&collection_manifest_path)
+            .expect("load collection store");
+        let folder_node = store
+            .nodes
+            .get(&created.folder.folder_id)
+            .expect("renamed folder node");
+        assert_eq!(folder_node.name, "Security");
     }
 
     #[test]
@@ -2543,17 +3352,337 @@ environment_id = "{environment_id}"
         storage.delete_folder(folder_id).expect("delete folder");
         assert!(!folder_dir.exists());
 
-        let collection_dir = storage
-            .find_collection_dir_by_id(collection_id)
-            .expect("find collection dir");
-        let collection_file: CollectionFile = storage
-            .read_toml_file(&collection_dir.join("collection.toml"))
-            .expect("load collection");
+        let collection_manifest_path = storage
+            .find_collection_manifest_path_by_collection_id(collection_id)
+            .expect("find collection manifest");
+        let store = shared_store_from_collection_manifest_path(&collection_manifest_path)
+            .expect("load collection store");
+        assert!(!store.nodes.contains_key(&folder_id));
         assert!(
-            !collection_file
-                .items
-                .iter()
-                .any(|item| item.item_id == folder_id && item.item_type == ItemType::Folder)
+            !store
+                .nodes
+                .get(&collection_id)
+                .expect("collection node")
+                .children
+                .contains(&folder_id)
+        );
+    }
+
+    #[test]
+    fn move_request_reorders_within_same_parent_without_renaming_file() {
+        let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
+        let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+        let first = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "First".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com/first".to_string(),
+            })
+            .expect("create first request");
+        let second = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Second".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com/second".to_string(),
+            })
+            .expect("create second request");
+        let third = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Third".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com/third".to_string(),
+            })
+            .expect("create third request");
+        let first_path = first.file_path.clone().expect("first path");
+
+        let moved = storage
+            .move_request(MoveRequestInput {
+                request_id: first.meta.request_id,
+                new_parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                insertion_index: 3,
+                known_request_path: first.file_path.clone(),
+                known_target_manifest_path: Some(KnownParentManifestPath::Collection(
+                    manifest_path.clone(),
+                )),
+            })
+            .expect("reorder request");
+
+        assert_eq!(moved.file_path.as_deref(), Some(first_path.as_path()));
+        assert!(first_path.exists());
+
+        let store = shared_store_from_collection_manifest_path(&manifest_path)
+            .expect("load manifest after reorder");
+        assert_eq!(
+            store
+                .nodes
+                .get(&collection_id)
+                .expect("collection node")
+                .children,
+            vec![
+                second.meta.request_id,
+                third.meta.request_id,
+                first.meta.request_id
+            ]
+        );
+    }
+
+    #[test]
+    fn move_request_moves_file_between_parents() {
+        let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
+        let folder = storage
+            .create_folder(CreateFolderInput {
+                parent: FolderParentRef {
+                    collection_id,
+                    parent_folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Auth".to_string(),
+            })
+            .expect("create folder");
+        let request = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id,
+                    folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Login".to_string(),
+                method: HttpMethod::Post,
+                url: "https://example.com/login".to_string(),
+            })
+            .expect("create request");
+        let old_path = request.file_path.clone().expect("request path");
+
+        let moved = storage
+            .move_request(MoveRequestInput {
+                request_id: request.meta.request_id,
+                new_parent: RequestParentRef {
+                    collection_id,
+                    folder_id: Some(folder.folder.folder_id),
+                },
+                insertion_index: 0,
+                known_request_path: request.file_path.clone(),
+                known_target_manifest_path: folder
+                    .manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Folder),
+            })
+            .expect("move request");
+
+        let new_path = moved.file_path.clone().expect("moved request path");
+        assert_ne!(new_path, old_path);
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
+        let folder_dir = storage
+            .find_folder_dir_by_id(folder.folder.folder_id)
+            .expect("find folder dir");
+        assert_eq!(new_path.parent(), Some(folder_dir.as_path()));
+
+        let store = shared_store_from_collection_manifest_path(
+            &collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
+        )
+        .expect("load manifest after move");
+        assert_eq!(
+            store
+                .nodes
+                .get(&folder.folder.folder_id)
+                .expect("folder node")
+                .children,
+            vec![request.meta.request_id]
+        );
+    }
+
+    #[test]
+    fn move_folder_reorders_within_same_parent_without_renaming_directory() {
+        let (_dir, storage, collection_id, collection_dir) = init_storage_with_collection();
+        let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+        let first = storage
+            .create_folder(CreateFolderInput {
+                parent: FolderParentRef {
+                    collection_id,
+                    parent_folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "First".to_string(),
+            })
+            .expect("create first folder");
+        let second = storage
+            .create_folder(CreateFolderInput {
+                parent: FolderParentRef {
+                    collection_id,
+                    parent_folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Second".to_string(),
+            })
+            .expect("create second folder");
+        let first_dir = storage
+            .find_folder_dir_by_id(first.folder.folder_id)
+            .expect("find first folder dir");
+
+        let moved = storage
+            .move_folder(MoveFolderInput {
+                folder_id: first.folder.folder_id,
+                new_parent: FolderParentRef {
+                    collection_id,
+                    parent_folder_id: None,
+                },
+                insertion_index: 2,
+                known_folder_manifest_path: first.manifest_path.clone(),
+                known_target_manifest_path: Some(KnownParentManifestPath::Collection(
+                    manifest_path.clone(),
+                )),
+            })
+            .expect("reorder folder");
+
+        assert_eq!(
+            moved.manifest_path.as_deref(),
+            Some(manifest_path.as_path())
+        );
+        assert!(first_dir.exists());
+        let store = shared_store_from_collection_manifest_path(&manifest_path)
+            .expect("load manifest after folder reorder");
+        assert_eq!(
+            store
+                .nodes
+                .get(&collection_id)
+                .expect("collection node")
+                .children,
+            vec![second.folder.folder_id, first.folder.folder_id]
+        );
+    }
+
+    #[test]
+    fn move_folder_moves_directory_between_collections() {
+        let (_dir, storage, source_collection_id, source_collection_dir) =
+            init_storage_with_collection();
+        let (destination_collection_id, destination_collection_dir) =
+            create_collection_manifest(&storage, "target", "Target");
+        let folder = storage
+            .create_folder(CreateFolderInput {
+                parent: FolderParentRef {
+                    collection_id: source_collection_id,
+                    parent_folder_id: None,
+                },
+                known_parent_manifest_path: None,
+                name: "Moved Folder".to_string(),
+            })
+            .expect("create folder");
+        let request = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    collection_id: source_collection_id,
+                    folder_id: Some(folder.folder.folder_id),
+                },
+                known_parent_manifest_path: folder
+                    .manifest_path
+                    .clone()
+                    .map(KnownParentManifestPath::Folder),
+                name: "Nested Request".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com/nested".to_string(),
+            })
+            .expect("create nested request");
+        let old_folder_dir = storage
+            .find_folder_dir_by_id(folder.folder.folder_id)
+            .expect("find old folder dir");
+
+        let moved = storage
+            .move_folder(MoveFolderInput {
+                folder_id: folder.folder.folder_id,
+                new_parent: FolderParentRef {
+                    collection_id: destination_collection_id,
+                    parent_folder_id: None,
+                },
+                insertion_index: 0,
+                known_folder_manifest_path: folder.manifest_path.clone(),
+                known_target_manifest_path: Some(KnownParentManifestPath::Collection(
+                    destination_collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
+                )),
+            })
+            .expect("move folder across collections");
+
+        let new_folder_dir = storage
+            .find_folder_dir_by_id(folder.folder.folder_id)
+            .expect("find moved folder dir");
+        assert_ne!(new_folder_dir, old_folder_dir);
+        assert!(!old_folder_dir.exists());
+        assert!(new_folder_dir.exists());
+        assert_eq!(
+            moved.manifest_path.as_deref(),
+            Some(
+                destination_collection_dir
+                    .join(COLLECTION_MANIFEST_FILE_NAME)
+                    .as_path()
+            )
+        );
+
+        let moved_request_path = storage
+            .find_request_file_by_id(request.meta.request_id)
+            .expect("find moved nested request");
+        assert_eq!(moved_request_path.parent(), Some(new_folder_dir.as_path()));
+
+        let source_store = shared_store_from_collection_manifest_path(
+            &source_collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
+        )
+        .expect("load source manifest");
+        let destination_store = shared_store_from_collection_manifest_path(
+            &destination_collection_dir.join(COLLECTION_MANIFEST_FILE_NAME),
+        )
+        .expect("load destination manifest");
+        assert!(
+            !source_store.nodes.contains_key(&folder.folder.folder_id),
+            "source manifest should no longer contain moved folder"
+        );
+        assert_eq!(
+            destination_store
+                .nodes
+                .get(&destination_collection_id)
+                .expect("destination collection node")
+                .children,
+            vec![folder.folder.folder_id]
+        );
+    }
+
+    #[test]
+    fn reorder_collection_persists_root_order() {
+        let (_dir, storage, first_collection_id, _) = init_storage_with_collection();
+        let (second_collection_id, _) = create_collection_manifest(&storage, "z-second", "Second");
+        let mut seed_store = SharedStore::default();
+        seed_store.root_ids = vec![first_collection_id, second_collection_id];
+        write_root_order(&storage.paths, &seed_store).expect("seed root order");
+
+        storage
+            .reorder_collection(ReorderCollectionInput {
+                collection_id: first_collection_id,
+                insertion_index: 2,
+            })
+            .expect("reorder collection");
+
+        let root_order: crate::tree_store::RootOrderFile = storage
+            .read_toml_file(&storage.paths.collections_root_order_file)
+            .expect("read root order file");
+        assert_eq!(
+            root_order.root_ids,
+            vec![second_collection_id, first_collection_id]
         );
     }
 }

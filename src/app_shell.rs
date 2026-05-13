@@ -22,7 +22,7 @@ use crate::storage::{
 };
 use crate::tree_store::{
     COLLECTION_MANIFEST_FILE_NAME, CollectionManifestFile, ManifestNode, Node, NodeKind,
-    RootOrderFile, SharedStore, scope_key,
+    RootOrderFile, SharedStore, folder_dir_name, request_file_name, scope_key,
 };
 
 const MIN_SPLIT_RATIO: f32 = 0.1;
@@ -169,7 +169,14 @@ impl CollectionsTreeState {
     where
         I: IntoIterator<Item = Ulid>,
     {
-        self.expanded = ids.into_iter().collect();
+        self.expanded = ids
+            .into_iter()
+            .filter(|id| {
+                self.nodes
+                    .get(id)
+                    .is_some_and(|node| node.kind != TreeNodeKind::Request)
+            })
+            .collect();
     }
 
     pub fn expanded(&self) -> &BTreeSet<Ulid> {
@@ -594,6 +601,114 @@ impl AppShellState {
                 self.modal_stack.close_top();
             }
         }
+    }
+
+    pub fn collection_ancestor_for_node(&self, mut node_id: Ulid) -> Option<Ulid> {
+        loop {
+            let node = self.collections.node(node_id)?;
+            if node.kind == TreeNodeKind::Collection {
+                return Some(node.id);
+            }
+            node_id = node.parent_id?;
+        }
+    }
+
+    pub fn active_collection_id_for_selected_request(&self) -> Option<Ulid> {
+        self.collections
+            .selected_request_id()
+            .and_then(|request_id| self.collection_ancestor_for_node(request_id))
+    }
+
+    pub fn effective_environment_id_for_selected_request(&self) -> Option<Ulid> {
+        let collection_environment_id = self
+            .active_collection_id_for_selected_request()
+            .and_then(|collection_id| {
+                self.environment_selection
+                    .active_collection_environment_ids
+                    .get(&collection_id)
+                    .copied()
+            })
+            .filter(|environment_id| {
+                self.environments
+                    .iter()
+                    .any(|environment| environment.environment_id == *environment_id)
+            });
+        if collection_environment_id.is_some() {
+            return collection_environment_id;
+        }
+
+        self.environment_selection
+            .active_global_environment_id
+            .filter(|environment_id| {
+                self.environments
+                    .iter()
+                    .any(|environment| environment.environment_id == *environment_id)
+            })
+    }
+
+    pub fn insert_request_into_shared_store(
+        &mut self,
+        parent_id: Ulid,
+        after_request_id: Option<Ulid>,
+        request: &RequestFile,
+    ) {
+        self.shared_store
+            .requests
+            .insert(request.meta.request_id, request.clone());
+
+        let request_id = request.meta.request_id;
+        let previous_parent_id = self
+            .shared_store
+            .nodes
+            .get(&request_id)
+            .and_then(|node| node.parent_id);
+        if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
+            node.name = request.meta.name.clone();
+            node.description = request.meta.description.clone();
+            node.created_at = Some(request.meta.created_at);
+            node.updated_at = Some(request.meta.updated_at);
+            node.parent_id = Some(parent_id);
+            node.children.clear();
+        } else {
+            self.shared_store.nodes.insert(
+                request_id,
+                Node {
+                    id: request_id,
+                    name: request.meta.name.clone(),
+                    kind: NodeKind::Request,
+                    description: request.meta.description.clone(),
+                    created_at: Some(request.meta.created_at),
+                    updated_at: Some(request.meta.updated_at),
+                    parent_id: Some(parent_id),
+                    children: Vec::new(),
+                },
+            );
+        }
+
+        if let Some(previous_parent_id) =
+            previous_parent_id.filter(|existing_parent_id| *existing_parent_id != parent_id)
+            && let Some(previous_parent) = self.shared_store.nodes.get_mut(&previous_parent_id)
+        {
+            previous_parent
+                .children
+                .retain(|child_id| *child_id != request_id);
+        }
+
+        if let Some(parent) = self.shared_store.nodes.get_mut(&parent_id) {
+            parent.children.retain(|child_id| *child_id != request_id);
+            if let Some(after_request_id) = after_request_id
+                && let Some(index) = parent
+                    .children
+                    .iter()
+                    .position(|child_id| *child_id == after_request_id)
+            {
+                parent.children.insert(index + 1, request_id);
+            } else {
+                parent.children.push(request_id);
+            }
+        }
+
+        let _ = self.shared_store.rebuild_name_index();
     }
 
     pub fn apply_event(&mut self, event: &AppEvent) {
@@ -1478,6 +1593,9 @@ fn load_collection_from_manifest(
             id: collection_id,
             name: collection_name,
             kind: NodeKind::Collection,
+            description: manifest.description,
+            created_at: manifest.created_at,
+            updated_at: manifest.updated_at,
             parent_id: None,
             children: Vec::new(),
         },
@@ -1551,6 +1669,9 @@ fn load_manifest_node(
                     id: folder_id,
                     name: manifest_node.name.clone(),
                     kind: NodeKind::Folder,
+                    description: manifest_node.description.clone(),
+                    created_at: manifest_node.created_at,
+                    updated_at: manifest_node.updated_at,
                     parent_id,
                     children: Vec::new(),
                 },
@@ -1623,6 +1744,9 @@ fn load_manifest_node(
                     id: manifest_node.id,
                     name: manifest_node.name.clone(),
                     kind: NodeKind::Request,
+                    description: manifest_node.description.clone(),
+                    created_at: manifest_node.created_at,
+                    updated_at: manifest_node.updated_at,
                     parent_id,
                     children: Vec::new(),
                 },
@@ -1751,35 +1875,6 @@ fn parse_request_tree_meta(path: &Path) -> Result<(RequestFile, RequestPaneData)
     Ok((request_file, pane_data))
 }
 
-fn folder_dir_name(name: &str) -> String {
-    disk_slug(name)
-}
-
-fn request_file_name(name: &str) -> String {
-    format!("{}.request.toml", disk_slug(name))
-}
-
-fn disk_slug(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut prev_dash = false;
-    for ch in input.chars() {
-        let lowered = ch.to_ascii_lowercase();
-        if lowered.is_ascii_alphanumeric() {
-            out.push(lowered);
-            prev_dash = false;
-        } else if !prev_dash {
-            out.push('-');
-            prev_dash = true;
-        }
-    }
-    let normalized = out.trim_matches('-').to_string();
-    if normalized.is_empty() {
-        "request".to_string()
-    } else {
-        normalized
-    }
-}
-
 fn parse_toml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T> {
     let content = fs::read_to_string(path).map_err(|source| BeamError::Io {
         path: path.to_path_buf(),
@@ -1815,6 +1910,46 @@ mod tests {
 
         split.set_ratio(0.02);
         assert!((split.ratio() - 0.1).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn tree_expansion_state_ignores_missing_and_request_ids() {
+        let collection_id = Ulid::new();
+        let request_id = Ulid::new();
+        let missing_id = Ulid::new();
+        let mut tree = CollectionsTreeState::default();
+        tree.nodes.insert(
+            collection_id,
+            TreeNode {
+                id: collection_id,
+                name: "Collection".to_string(),
+                kind: TreeNodeKind::Collection,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: vec![request_id],
+            },
+        );
+        tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com".to_string()),
+                manifest_path: None,
+                parent_id: Some(collection_id),
+                children: Vec::new(),
+            },
+        );
+
+        tree.set_expanded([collection_id, request_id, missing_id]);
+
+        assert!(tree.is_expanded(collection_id));
+        assert!(!tree.is_expanded(request_id));
+        assert!(!tree.is_expanded(missing_id));
     }
 
     fn sample_request_file(
@@ -1911,6 +2046,87 @@ mod tests {
             }
         }
         events
+    }
+
+    #[test]
+    fn insert_request_into_shared_store_inserts_node_and_preserves_order() {
+        let collection_id = Ulid::new();
+        let first_request_id = Ulid::new();
+        let second_request_id = Ulid::new();
+        let mut state = AppShellState::default();
+        let now = Utc::now();
+        state.shared_store.nodes.insert(
+            collection_id,
+            Node {
+                id: collection_id,
+                name: "Collection".to_string(),
+                kind: NodeKind::Collection,
+                description: None,
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: None,
+                children: vec![first_request_id],
+            },
+        );
+        state.shared_store.root_ids.push(collection_id);
+        state.shared_store.nodes.insert(
+            first_request_id,
+            Node {
+                id: first_request_id,
+                name: "First Request".to_string(),
+                kind: NodeKind::Request,
+                description: None,
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: Some(collection_id),
+                children: Vec::new(),
+            },
+        );
+        let first_request = sample_request_file(
+            first_request_id,
+            "First Request",
+            HttpMethod::Get,
+            "https://one",
+        );
+        state
+            .shared_store
+            .requests
+            .insert(first_request_id, first_request);
+
+        let second_request = sample_request_file(
+            second_request_id,
+            "Second Request",
+            HttpMethod::Post,
+            "https://two",
+        );
+        state.insert_request_into_shared_store(
+            collection_id,
+            Some(first_request_id),
+            &second_request,
+        );
+
+        assert_eq!(
+            state
+                .shared_store
+                .nodes
+                .get(&collection_id)
+                .expect("collection exists")
+                .children,
+            vec![first_request_id, second_request_id]
+        );
+        assert_eq!(
+            state
+                .shared_store
+                .nodes
+                .get(&second_request_id)
+                .expect("request node exists")
+                .parent_id,
+            Some(collection_id)
+        );
+        assert_eq!(
+            state.shared_store.requests.get(&second_request_id),
+            Some(&second_request)
+        );
     }
 
     #[test]
@@ -2083,6 +2299,103 @@ mod tests {
     }
 
     #[test]
+    fn effective_environment_prefers_collection_selection_with_global_fallback() {
+        let mut state = AppShellState::default();
+        let collection_id = Ulid::new();
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let global_env_id = Ulid::new();
+        let collection_env_id = Ulid::new();
+        let now = Utc::now();
+        state.collections.roots.push(collection_id);
+        state.collections.nodes.insert(
+            collection_id,
+            TreeNode {
+                id: collection_id,
+                name: "Collection".to_string(),
+                kind: TreeNodeKind::Collection,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: vec![folder_id],
+            },
+        );
+        state.collections.nodes.insert(
+            folder_id,
+            TreeNode {
+                id: folder_id,
+                name: "Folder".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: Some(collection_id),
+                children: vec![request_id],
+            },
+        );
+        state.collections.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com".to_string()),
+                manifest_path: None,
+                parent_id: Some(folder_id),
+                children: Vec::new(),
+            },
+        );
+        state.collections.set_selected_request(Some(request_id));
+        state.environments = vec![
+            EnvironmentMeta {
+                environment_id: global_env_id,
+                collection_id: None,
+                scope: EnvironmentScope::Global,
+                name: "Global".to_string(),
+                file_name: "global.env.toml".to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+            EnvironmentMeta {
+                environment_id: collection_env_id,
+                collection_id: Some(collection_id),
+                scope: EnvironmentScope::Collection,
+                name: "Collection".to_string(),
+                file_name: "collection.env.toml".to_string(),
+                description: None,
+                created_at: now,
+                updated_at: now,
+            },
+        ];
+        state.environment_selection.active_global_environment_id = Some(global_env_id);
+
+        assert_eq!(
+            state.effective_environment_id_for_selected_request(),
+            Some(global_env_id)
+        );
+
+        state
+            .environment_selection
+            .active_collection_environment_ids
+            .insert(collection_id, collection_env_id);
+        assert_eq!(
+            state.effective_environment_id_for_selected_request(),
+            Some(collection_env_id)
+        );
+
+        state
+            .environments
+            .retain(|env| env.environment_id != collection_env_id);
+        assert_eq!(
+            state.effective_environment_id_for_selected_request(),
+            Some(global_env_id)
+        );
+    }
+
+    #[test]
     fn environment_commands_propagate_to_shell_via_worker_events() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
@@ -2196,19 +2509,19 @@ mod tests {
         storage.initialize().expect("init storage");
         let collection_id = Ulid::new();
         let collection_dir = paths.collections_dir.join("sample");
-        fs::create_dir_all(&collection_dir).expect("create collection dir");
-        let collection_toml = format!(
-            r#"
-[collection]
-collection_id = "{collection_id}"
-name = "Phase4 Collection"
-description = ""
-created_at = "2026-01-01T00:00:00Z"
-updated_at = "2026-01-01T00:00:00Z"
-"#
+        write_collection_manifest(
+            &collection_dir,
+            &CollectionManifestFile {
+                schema_version: SCHEMA_VERSION_V1,
+                id: collection_id,
+                name: "Phase4 Collection".to_string(),
+                kind: NodeKind::Collection,
+                description: None,
+                created_at: None,
+                updated_at: None,
+                children: Vec::new(),
+            },
         );
-        fs::write(collection_dir.join("collection.toml"), collection_toml)
-            .expect("write collection");
 
         let runtime = start_data_sync_worker(storage);
         let mut state = AppShellState::default();
@@ -2817,6 +3130,13 @@ post_response = "console.log(response.status)"
         assert_eq!(state.theme.theme_name.as_deref(), Some("One Dark"));
         assert_eq!(
             state
+                .environment_selection
+                .active_collection_environment_ids
+                .get(&collection_id),
+            Some(&env_id)
+        );
+        assert_eq!(
+            state
                 .shared_store
                 .requests
                 .get(&request_id)
@@ -3050,6 +3370,54 @@ expanded_item_ids = ["{collection_id}"]
     }
 
     #[test]
+    fn startup_skips_invalid_request_toml_with_warning() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let storage = TomlWorkspaceStorage::new(paths.clone());
+        storage.initialize().expect("init");
+
+        let collection_id = Ulid::new();
+        let request_id = Ulid::new();
+        let collection_dir = paths.collections_dir.join("sample");
+        write_collection_manifest(
+            &collection_dir,
+            &CollectionManifestFile {
+                schema_version: SCHEMA_VERSION_V1,
+                id: collection_id,
+                name: "Sample".to_string(),
+                kind: NodeKind::Collection,
+                description: None,
+                created_at: None,
+                updated_at: None,
+                children: vec![ManifestNode {
+                    id: request_id,
+                    name: "Broken Request".to_string(),
+                    kind: NodeKind::Request,
+                    description: None,
+                    created_at: None,
+                    updated_at: None,
+                    children: Vec::new(),
+                }],
+            },
+        );
+        let request_path = collection_dir.join(request_file_name("Broken Request"));
+        fs::write(&request_path, "not = valid = toml").expect("write invalid request file");
+
+        let load = startup_preload(&storage, &paths);
+        let StartupLoad::Ready { state, messages } = load else {
+            panic!("startup should be ready");
+        };
+
+        assert!(state.shared_store.nodes.contains_key(&collection_id));
+        assert!(!state.shared_store.nodes.contains_key(&request_id));
+        assert!(state.shared_store.requests.is_empty());
+        assert!(messages.iter().any(|message| {
+            message.text.contains("Failed to load request file")
+                && message.text.contains("broken-request.request.toml")
+        }));
+    }
+
+    #[test]
     fn startup_skips_missing_and_mismatched_requests_with_warnings() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
@@ -3214,6 +3582,53 @@ expanded_item_ids = ["{collection_id}"]
         assert!(messages.iter().any(|message| {
             message.text.contains("Duplicate node_id")
                 && message.text.contains(&duplicate_id.to_string())
+        }));
+    }
+
+    #[test]
+    fn startup_skips_invalid_collection_manifest_and_loads_remaining_collections() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let storage = TomlWorkspaceStorage::new(paths.clone());
+        storage.initialize().expect("init");
+
+        let valid_collection_id = Ulid::new();
+        write_collection_manifest(
+            &paths.collections_dir.join("valid"),
+            &CollectionManifestFile {
+                schema_version: SCHEMA_VERSION_V1,
+                id: valid_collection_id,
+                name: "Valid".to_string(),
+                kind: NodeKind::Collection,
+                description: None,
+                created_at: None,
+                updated_at: None,
+                children: Vec::new(),
+            },
+        );
+        let broken_manifest_path = paths
+            .collections_dir
+            .join("broken")
+            .join(COLLECTION_MANIFEST_FILE_NAME);
+        fs::create_dir_all(
+            broken_manifest_path
+                .parent()
+                .expect("broken manifest parent directory"),
+        )
+        .expect("create broken collection dir");
+        fs::write(&broken_manifest_path, "not = valid = toml").expect("write broken manifest");
+
+        let load = startup_preload(&storage, &paths);
+        let StartupLoad::Ready { state, messages } = load else {
+            panic!("startup should be ready");
+        };
+
+        assert_eq!(state.shared_store.root_ids, vec![valid_collection_id]);
+        assert_eq!(state.collections.visible_rows().len(), 1);
+        assert_eq!(state.collections.visible_rows()[0].id, valid_collection_id);
+        assert!(messages.iter().any(|message| {
+            message.text.contains("Failed to load collection manifest")
+                && message.text.contains("broken/.manifest.toml")
         }));
     }
 }

@@ -74,6 +74,30 @@ pub struct DeleteRequestInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveRequestInput {
+    pub request_id: Ulid,
+    pub new_parent: RequestParentRef,
+    pub insertion_index: usize,
+    pub known_request_path: Option<PathBuf>,
+    pub known_target_manifest_path: Option<KnownParentManifestPath>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveFolderInput {
+    pub folder_id: Ulid,
+    pub new_parent: FolderParentRef,
+    pub insertion_index: usize,
+    pub known_folder_manifest_path: Option<PathBuf>,
+    pub known_target_manifest_path: Option<KnownParentManifestPath>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReorderCollectionInput {
+    pub collection_id: Ulid,
+    pub insertion_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateEnvironmentInput {
     pub name: String,
     pub scope: EnvironmentScope,
@@ -114,4 +138,7 @@ pub trait WorkspaceStorage {
     fn delete_collection(&self, collection_id: Ulid) -> Result<()>;
     fn delete_folder(&self, folder_id: Ulid) -> Result<()>;
     fn delete_request(&self, input: DeleteRequestInput) -> Result<()>;
+    fn move_request(&self, input: MoveRequestInput) -> Result<RequestFile>;
+    fn move_folder(&self, input: MoveFolderInput) -> Result<crate::models::FolderFile>;
+    fn reorder_collection(&self, input: ReorderCollectionInput) -> Result<()>;
 }
