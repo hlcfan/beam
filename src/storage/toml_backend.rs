@@ -148,21 +148,21 @@ impl TomlWorkspaceStorage {
     }
 
     fn collections_dir_has_entries(&self) -> Result<bool> {
-        let entries =
+        let mut entries =
             fs::read_dir(&self.paths.collections_dir).map_err(|source| BeamError::Io {
                 path: self.paths.collections_dir.clone(),
                 source,
             })?;
 
-        for entry in entries {
+        if let Some(entry) = entries.next() {
             entry.map_err(|source| BeamError::Io {
                 path: self.paths.collections_dir.clone(),
                 source,
             })?;
-            return Ok(true);
+            Ok(true)
+        } else {
+            Ok(false)
         }
-
-        Ok(false)
     }
 
     fn write_toml_file<T: serde::Serialize>(&self, path: &Path, value: &T) -> Result<()> {
@@ -191,6 +191,34 @@ impl TomlWorkspaceStorage {
     fn read_toml_file<T: for<'de> serde::Deserialize<'de>>(&self, path: &Path) -> Result<T> {
         let content = self.read_toml_string(path)?;
         self.parse_toml_str(path, &content)
+    }
+
+    fn ensure_dir(&self, path: &Path) -> Result<()> {
+        fs::create_dir_all(path).map_err(|source| BeamError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
+    fn move_path(&self, from: &Path, to: &Path) -> Result<()> {
+        fs::rename(from, to).map_err(|source| BeamError::Io {
+            path: from.to_path_buf(),
+            source,
+        })
+    }
+
+    fn delete_file(&self, path: &Path) -> Result<()> {
+        fs::remove_file(path).map_err(|source| BeamError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
+    }
+
+    fn delete_dir_all(&self, path: &Path) -> Result<()> {
+        fs::remove_dir_all(path).map_err(|source| BeamError::Io {
+            path: path.to_path_buf(),
+            source,
+        })
     }
 
     fn hydrate_collection_manifest_path(
@@ -1728,6 +1756,36 @@ impl TomlWorkspaceStorage {
             path: folder_dir,
             source,
         })
+    }
+}
+
+impl crate::storage::io_backend::StorageIoBackend for TomlWorkspaceStorage {
+    fn paths(&self) -> &BeamPaths {
+        &self.paths
+    }
+
+    fn read_toml_file<T: serde::de::DeserializeOwned>(&self, path: &Path) -> Result<T> {
+        TomlWorkspaceStorage::read_toml_file(self, path)
+    }
+
+    fn write_toml_file<T: serde::Serialize>(&self, path: &Path, value: &T) -> Result<()> {
+        TomlWorkspaceStorage::write_toml_file(self, path, value)
+    }
+
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        self.ensure_dir(path)
+    }
+
+    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+        self.move_path(from, to)
+    }
+
+    fn remove_file(&self, path: &Path) -> Result<()> {
+        self.delete_file(path)
+    }
+
+    fn remove_dir_all(&self, path: &Path) -> Result<()> {
+        self.delete_dir_all(path)
     }
 }
 

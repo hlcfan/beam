@@ -3636,6 +3636,18 @@ impl BeamView {
             }
         }
 
+        if let TreeMoveAction::ReorderCollection(input) = action {
+            let command = AppCommand::ReorderCollection {
+                collection_id: input.collection_id,
+                insertion_index: input.insertion_index,
+                command_id: next_command_id(),
+            };
+            if let Err(error) = self.publish_app_command(command) {
+                window.push_notification(error, cx);
+            }
+            return;
+        }
+
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
@@ -3644,9 +3656,7 @@ impl BeamView {
                 .spawn(async move {
                     let storage = TomlWorkspaceStorage::new(paths);
                     match action {
-                        TreeMoveAction::ReorderCollection(input) => storage
-                            .reorder_collection(input)
-                            .map_err(|error| format!("Failed to reorder collection: {error}")),
+                        TreeMoveAction::ReorderCollection(_) => unreachable!(),
                         TreeMoveAction::MoveRequest(input) => storage
                             .move_request(input)
                             .map(|_| ())
@@ -4335,38 +4345,27 @@ impl BeamView {
 
     fn add_folder_from_tree_node(
         &mut self,
-        node_id: Ulid,
+        _node_id: Ulid,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((parent, known_parent_manifest_path)) =
-            self.folder_parent_input_for_tree_node(node_id)
+        let Some((parent, _known_parent_manifest_path)) =
+            self.folder_parent_input_for_tree_node(_node_id)
         else {
             window.push_notification("Unable to determine folder parent.", cx);
             return;
         };
         let folder_name = self.next_new_folder_name(parent);
-        let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
-        match storage.create_folder(CreateFolderInput {
-            parent,
-            known_parent_manifest_path,
-            name: folder_name,
-        }) {
-            Ok(folder_file) => {
-                let preferred_request = self.shell.collections.selected_request_id();
-                self.refresh_shell_from_disk(preferred_request, window, cx);
-                self.shell
-                    .collections
-                    .toggle_expanded(folder_file.folder.folder_id);
-                if let Err(error) = self.persist_tree_expansion_state() {
-                    window.push_notification(error, cx);
-                }
-                cx.notify();
-            }
-            Err(error) => {
-                window.push_notification(format!("Failed to add folder: {error}"), cx);
-            }
+        let command = AppCommand::CreateFolder {
+            input: CreateFolderInput {
+                parent,
+                known_parent_manifest_path: None,
+                name: folder_name,
+            },
+            command_id: next_command_id(),
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
         }
     }
 
@@ -4528,10 +4527,6 @@ impl BeamView {
                 validated
             }
         };
-        let preferred_selection = match node_kind {
-            TreeNodeKind::Request => selected_request.or(Some(node_id)),
-            TreeNodeKind::Collection | TreeNodeKind::Folder => selected_request,
-        };
         let confirmed_name = validated_name.clone();
         let persisted_name = validated_name;
         window.close_dialog(cx);
@@ -4559,62 +4554,27 @@ impl BeamView {
             cx.notify();
             return;
         }
-        let folder_parent_input = if node_kind == TreeNodeKind::Folder {
-            self.folder_parent_input_for_tree_node(node_id)
-        } else {
-            None
+        let _ = self
+            .shell
+            .collections
+            .rename_node(node_id, confirmed_name.clone());
+        let command = match node_kind {
+            TreeNodeKind::Collection => AppCommand::RenameCollection {
+                collection_id: node_id,
+                new_name: persisted_name,
+                command_id: next_command_id(),
+            },
+            TreeNodeKind::Folder => AppCommand::RenameFolder {
+                folder_id: node_id,
+                new_name: persisted_name,
+                command_id: next_command_id(),
+            },
+            TreeNodeKind::Request => unreachable!(),
         };
-        let original_manifest_path = node.manifest_path.clone();
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            eprintln!(
-                "rename: async start node_id={}, kind={:?}, validated_name='{}'",
-                node_id, node_kind, persisted_name
-            );
-            let result: std::result::Result<Option<PathBuf>, String> = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths.clone());
-                    match node_kind {
-                        TreeNodeKind::Collection => storage
-                            .rename_collection_with_manifest_path(
-                                node_id,
-                                &persisted_name,
-                                original_manifest_path.as_deref(),
-                            )
-                            .map(|file| file.manifest_path),
-                        TreeNodeKind::Folder => storage
-                            .rename_folder_with_manifest_path(
-                                node_id,
-                                &persisted_name,
-                                original_manifest_path.as_deref(),
-                                folder_parent_input
-                                    .as_ref()
-                                    .and_then(|(_, path)| path.as_ref()),
-                            )
-                            .map(|file| file.manifest_path),
-                        TreeNodeKind::Request => {
-                            Ok::<Option<PathBuf>, crate::error::BeamError>(None)
-                        }
-                    }
-                    .map_err(|error| format!("Failed to rename: {error}"))
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(_new_manifest_path) => {
-                    eprintln!("rename: async success for node_id={node_id}");
-                    this.refresh_shell_from_disk(preferred_selection, window, cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    eprintln!("rename: async error for node_id={node_id}: {error}");
-                    window.push_notification(error, cx);
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
     }
 
     fn send_request_from_tree_node(
@@ -4776,38 +4736,13 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(node) = self.shell.collections.node(collection_id).cloned() else {
-            window.push_notification("Unable to delete: item not found.", cx);
-            return;
+        let command = AppCommand::DeleteCollection {
+            collection_id,
+            command_id: next_command_id(),
         };
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result: std::result::Result<(), String> = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths.clone());
-                    storage
-                        .delete_collection_with_manifest_path(
-                            collection_id,
-                            node.manifest_path.as_deref(),
-                        )
-                        .map_err(|error| format!("Failed to delete collection: {error}"))?;
-                    Ok(())
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(()) => {
-                    let preferred_request = this.shell.collections.selected_request_id();
-                    this.refresh_shell_from_disk(preferred_request, window, cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    window.push_notification(error, cx);
-                }
-            });
-        })
-        .detach();
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
     }
 
     fn delete_folder_from_tree_node(
@@ -4816,40 +4751,13 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(node) = self.shell.collections.node(folder_id).cloned() else {
-            window.push_notification("Unable to delete: item not found.", cx);
-            return;
+        let command = AppCommand::DeleteFolder {
+            folder_id,
+            command_id: next_command_id(),
         };
-        let parent_input = self.folder_parent_input_for_tree_node(folder_id);
-        let paths = BeamPaths::default_user_config();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result: std::result::Result<(), String> = cx
-                .background_executor()
-                .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths.clone());
-                    storage
-                        .delete_folder_with_manifest_path(
-                            folder_id,
-                            node.manifest_path.as_deref(),
-                            parent_input.as_ref().and_then(|(_, path)| path.as_ref()),
-                        )
-                        .map_err(|error| format!("Failed to delete folder: {error}"))?;
-                    Ok(())
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(()) => {
-                    let preferred_request = this.shell.collections.selected_request_id();
-                    this.refresh_shell_from_disk(preferred_request, window, cx);
-                    cx.notify();
-                }
-                Err(error) => {
-                    window.push_notification(error, cx);
-                }
-            });
-        })
-        .detach();
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
     }
 
     fn render_key_value_lines(lines: Vec<String>, cx: &App) -> AnyElement {

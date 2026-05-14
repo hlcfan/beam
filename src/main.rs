@@ -1,6 +1,7 @@
 use beam::app_shell::{StartupLoad, start_data_sync_worker, startup_preload};
 use beam::paths::BeamPaths;
 use beam::storage::WorkspaceStorage;
+use beam::storage::memory_backed::MemoryBackedStorage;
 use beam::storage::toml_backend::TomlWorkspaceStorage;
 use beam::ui::run_app;
 
@@ -49,7 +50,10 @@ fn main() {
             for message in &messages {
                 eprintln!("[startup warning] {}", message.text);
             }
-            let sync_runtime = start_data_sync_worker(storage.clone());
+            let backend = storage.clone();
+            let memory_storage = MemoryBackedStorage::new(backend)
+                .expect("failed to load workspace into memory");
+            let sync_runtime = start_data_sync_worker(memory_storage);
             run_app(state, messages, sync_runtime);
         }
         StartupLoad::Fatal { message } => {

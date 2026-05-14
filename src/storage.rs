@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+pub mod io_backend;
+pub mod memory_backed;
 pub mod toml_backend;
 
 use crate::error::Result;

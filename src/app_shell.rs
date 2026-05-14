@@ -17,9 +17,11 @@ use crate::paths::BeamPaths;
 #[cfg(test)]
 use crate::storage::RequestParentRef;
 use crate::storage::{
-    CreateEnvironmentInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
-    RenameRequestInput, WorkspaceStorage,
+    CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
+    DuplicateRequestInput, RenameRequestInput, WorkspaceStorage,
 };
+use crate::storage::io_backend::StorageIoBackend;
+use crate::storage::memory_backed::MemoryBackedStorage;
 use crate::tree_store::{
     COLLECTION_MANIFEST_FILE_NAME, CollectionManifestFile, ManifestNode, Node, NodeKind,
     RootOrderFile, SharedStore, folder_dir_name, request_file_name, scope_key,
@@ -806,6 +808,150 @@ impl AppShellState {
                 self.request_pane_data.remove(request_id);
                 let _ = self.collections.remove_request(*request_id);
             }
+            AppEvent::CollectionUpserted { collection, manifest_path, .. } => {
+                let collection_id = collection.collection_id;
+                if let Some(node) = self.shared_store.nodes.get_mut(&collection_id) {
+                    node.name = collection.name.clone();
+                    node.description = collection.description.clone();
+                    node.updated_at = Some(collection.updated_at);
+                } else {
+                    self.shared_store.nodes.insert(
+                        collection_id,
+                        Node {
+                            id: collection_id,
+                            name: collection.name.clone(),
+                            kind: NodeKind::Collection,
+                            description: collection.description.clone(),
+                            created_at: Some(collection.created_at),
+                            updated_at: Some(collection.updated_at),
+                            parent_id: None,
+                            children: Vec::new(),
+                        },
+                    );
+                    self.shared_store.root_ids.push(collection_id);
+                }
+                let _ = self.shared_store.rebuild_name_index();
+                self.collections.nodes.insert(
+                    collection_id,
+                    TreeNode {
+                        id: collection_id,
+                        name: collection.name.clone(),
+                        kind: TreeNodeKind::Collection,
+                        request_method: None,
+                        request_url: None,
+                        manifest_path: manifest_path.clone(),
+                        parent_id: None,
+                        children: self
+                            .collections
+                            .node(collection_id)
+                            .map(|n| n.children.clone())
+                            .unwrap_or_default(),
+                    },
+                );
+                if !self.collections.roots.contains(&collection_id) {
+                    self.collections.roots.push(collection_id);
+                }
+            }
+            AppEvent::CollectionDeleted { collection_id, .. } => {
+                let removed_request_ids = self.collections.remove_subtree(*collection_id);
+                for request_id in removed_request_ids {
+                    self.shared_store.requests.remove(&request_id);
+                    self.request_pane_data.remove(&request_id);
+                }
+                let mut nodes_to_remove = Vec::new();
+                if let Some(node) = self.shared_store.nodes.get(collection_id) {
+                    nodes_to_remove.push(*collection_id);
+                    let mut stack = node.children.clone();
+                    while let Some(node_id) = stack.pop() {
+                        if let Some(n) = self.shared_store.nodes.get(&node_id) {
+                            nodes_to_remove.push(node_id);
+                            stack.extend(n.children.clone());
+                        }
+                    }
+                }
+                for node_id in &nodes_to_remove {
+                    self.shared_store.nodes.remove(node_id);
+                    self.shared_store.name_index.retain(|_, id| id != node_id);
+                }
+                self.shared_store.root_ids.retain(|id| id != collection_id);
+            }
+            AppEvent::FolderUpserted { folder, manifest_path, .. } => {
+                let folder_id = folder.folder_id;
+                let parent_id = folder.parent_folder_id.unwrap_or(folder.collection_id);
+                if let Some(node) = self.shared_store.nodes.get_mut(&folder_id) {
+                    node.name = folder.name.clone();
+                    node.description = folder.description.clone();
+                    node.updated_at = Some(folder.updated_at);
+                } else {
+                    self.shared_store.nodes.insert(
+                        folder_id,
+                        Node {
+                            id: folder_id,
+                            name: folder.name.clone(),
+                            kind: NodeKind::Folder,
+                            description: folder.description.clone(),
+                            created_at: Some(folder.created_at),
+                            updated_at: Some(folder.updated_at),
+                            parent_id: Some(parent_id),
+                            children: Vec::new(),
+                        },
+                    );
+                    if let Some(parent) = self.shared_store.nodes.get_mut(&parent_id) {
+                        if !parent.children.contains(&folder_id) {
+                            parent.children.push(folder_id);
+                        }
+                    }
+                }
+                let _ = self.shared_store.rebuild_name_index();
+                self.collections.nodes.insert(
+                    folder_id,
+                    TreeNode {
+                        id: folder_id,
+                        name: folder.name.clone(),
+                        kind: TreeNodeKind::Folder,
+                        request_method: None,
+                        request_url: None,
+                        manifest_path: manifest_path.clone(),
+                        parent_id: Some(parent_id),
+                        children: self
+                            .collections
+                            .node(folder_id)
+                            .map(|n| n.children.clone())
+                            .unwrap_or_default(),
+                    },
+                );
+                if let Some(parent) = self.collections.nodes.get_mut(&parent_id) {
+                    if !parent.children.contains(&folder_id) {
+                        parent.children.push(folder_id);
+                    }
+                }
+            }
+            AppEvent::FolderDeleted { folder_id, .. } => {
+                let removed_request_ids = self.collections.remove_subtree(*folder_id);
+                for request_id in removed_request_ids {
+                    self.shared_store.requests.remove(&request_id);
+                    self.request_pane_data.remove(&request_id);
+                }
+                let mut nodes_to_remove = Vec::new();
+                if let Some(node) = self.shared_store.nodes.get(folder_id) {
+                    nodes_to_remove.push(*folder_id);
+                    let mut stack = node.children.clone();
+                    while let Some(node_id) = stack.pop() {
+                        if let Some(n) = self.shared_store.nodes.get(&node_id) {
+                            nodes_to_remove.push(node_id);
+                            stack.extend(n.children.clone());
+                        }
+                    }
+                }
+                for node_id in &nodes_to_remove {
+                    self.shared_store.nodes.remove(node_id);
+                    self.shared_store.name_index.retain(|_, id| id != node_id);
+                }
+            }
+            AppEvent::CollectionsReordered { root_ids, .. } => {
+                self.shared_store.root_ids = root_ids.clone();
+                self.collections.roots = root_ids.clone();
+            }
         }
     }
 }
@@ -840,6 +986,12 @@ pub enum AppOperation {
     UpdateRequest,
     SaveRequest,
     DeleteRequest,
+    CreateFolder,
+    RenameCollection,
+    RenameFolder,
+    DeleteCollection,
+    DeleteFolder,
+    ReorderCollection,
 }
 
 impl AppOperation {
@@ -856,6 +1008,12 @@ impl AppOperation {
             AppOperation::UpdateRequest => "update_request",
             AppOperation::SaveRequest => "save_request",
             AppOperation::DeleteRequest => "delete_request",
+            AppOperation::CreateFolder => "create_folder",
+            AppOperation::RenameCollection => "rename_collection",
+            AppOperation::RenameFolder => "rename_folder",
+            AppOperation::DeleteCollection => "delete_collection",
+            AppOperation::DeleteFolder => "delete_folder",
+            AppOperation::ReorderCollection => "reorder_collection",
         }
     }
 }
@@ -911,6 +1069,33 @@ pub enum AppCommand {
         input: DeleteRequestInput,
         command_id: String,
     },
+    CreateFolder {
+        input: CreateFolderInput,
+        command_id: String,
+    },
+    RenameCollection {
+        collection_id: Ulid,
+        new_name: String,
+        command_id: String,
+    },
+    RenameFolder {
+        folder_id: Ulid,
+        new_name: String,
+        command_id: String,
+    },
+    DeleteCollection {
+        collection_id: Ulid,
+        command_id: String,
+    },
+    DeleteFolder {
+        folder_id: Ulid,
+        command_id: String,
+    },
+    ReorderCollection {
+        collection_id: Ulid,
+        insertion_index: usize,
+        command_id: String,
+    },
 }
 
 impl AppCommand {
@@ -926,7 +1111,13 @@ impl AppCommand {
             | AppCommand::RenameRequest { command_id, .. }
             | AppCommand::UpdateRequest { command_id, .. }
             | AppCommand::SaveRequest { command_id, .. }
-            | AppCommand::DeleteRequest { command_id, .. } => command_id,
+            | AppCommand::DeleteRequest { command_id, .. }
+            | AppCommand::CreateFolder { command_id, .. }
+            | AppCommand::RenameCollection { command_id, .. }
+            | AppCommand::RenameFolder { command_id, .. }
+            | AppCommand::DeleteCollection { command_id, .. }
+            | AppCommand::DeleteFolder { command_id, .. }
+            | AppCommand::ReorderCollection { command_id, .. } => command_id,
         }
     }
 
@@ -945,6 +1136,12 @@ impl AppCommand {
             AppCommand::UpdateRequest { .. } => AppOperation::UpdateRequest,
             AppCommand::SaveRequest { .. } => AppOperation::SaveRequest,
             AppCommand::DeleteRequest { .. } => AppOperation::DeleteRequest,
+            AppCommand::CreateFolder { .. } => AppOperation::CreateFolder,
+            AppCommand::RenameCollection { .. } => AppOperation::RenameCollection,
+            AppCommand::RenameFolder { .. } => AppOperation::RenameFolder,
+            AppCommand::DeleteCollection { .. } => AppOperation::DeleteCollection,
+            AppCommand::DeleteFolder { .. } => AppOperation::DeleteFolder,
+            AppCommand::ReorderCollection { .. } => AppOperation::ReorderCollection,
         }
     }
 }
@@ -980,6 +1177,28 @@ pub enum AppEvent {
         command_id: String,
         operation: AppOperation,
     },
+    CollectionUpserted {
+        collection: crate::models::CollectionMeta,
+        manifest_path: Option<PathBuf>,
+        command_id: String,
+    },
+    CollectionDeleted {
+        collection_id: Ulid,
+        command_id: String,
+    },
+    FolderUpserted {
+        folder: crate::models::FolderMeta,
+        manifest_path: Option<PathBuf>,
+        command_id: String,
+    },
+    FolderDeleted {
+        folder_id: Ulid,
+        command_id: String,
+    },
+    CollectionsReordered {
+        root_ids: Vec<Ulid>,
+        command_id: String,
+    },
 }
 
 pub struct DataSyncRuntime {
@@ -991,9 +1210,9 @@ pub fn next_command_id() -> String {
     Ulid::new().to_string()
 }
 
-pub fn start_data_sync_worker<S>(storage: S) -> DataSyncRuntime
+pub fn start_data_sync_worker<B>(storage: MemoryBackedStorage<B>) -> DataSyncRuntime
 where
-    S: WorkspaceStorage + Send + 'static,
+    B: StorageIoBackend,
 {
     let (command_tx, command_rx) = mpsc::sync_channel::<AppCommand>(APP_COMMAND_QUEUE_CAPACITY);
     let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
@@ -1009,12 +1228,12 @@ where
     }
 }
 
-fn data_sync_worker_loop<S>(
-    storage: S,
+fn data_sync_worker_loop<B>(
+    mut storage: MemoryBackedStorage<B>,
     command_rx: Receiver<AppCommand>,
     event_tx: mpsc::Sender<AppEvent>,
 ) where
-    S: WorkspaceStorage,
+    B: StorageIoBackend,
 {
     while let Ok(first_command) = command_rx.recv() {
         let mut command_batch = vec![first_command];
@@ -1043,7 +1262,7 @@ fn data_sync_worker_loop<S>(
                 continue;
             }
 
-            match handle_command(&storage, command) {
+            match handle_command(&mut storage, command) {
                 Ok(domain_events) => {
                     for event in domain_events {
                         let _ = event_tx.send(event);
@@ -1159,7 +1378,26 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
                 return Err("Request name cannot be empty.".to_string());
             }
         }
-        AppCommand::DeleteEnvironment { .. } | AppCommand::DeleteRequest { .. } => {}
+        AppCommand::CreateFolder { input, .. } => {
+            if input.name.trim().is_empty() {
+                return Err("Folder name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::RenameCollection { new_name, .. } => {
+            if new_name.trim().is_empty() {
+                return Err("Collection name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::RenameFolder { new_name, .. } => {
+            if new_name.trim().is_empty() {
+                return Err("Folder name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::DeleteEnvironment { .. }
+        | AppCommand::DeleteRequest { .. }
+        | AppCommand::DeleteCollection { .. }
+        | AppCommand::DeleteFolder { .. }
+        | AppCommand::ReorderCollection { .. } => {}
     }
     Ok(())
 }
@@ -1172,9 +1410,10 @@ fn log_sync_failure(command_id: &str, operation: AppOperation, error: &str) {
     );
 }
 
-fn handle_command<S>(storage: &S, command: AppCommand) -> std::result::Result<Vec<AppEvent>, String>
-where
-    S: WorkspaceStorage,
+fn handle_command<B: StorageIoBackend>(
+    storage: &mut MemoryBackedStorage<B>,
+    command: AppCommand,
+) -> std::result::Result<Vec<AppEvent>, String>
 {
     match command {
         AppCommand::CreateEnvironment {
@@ -1295,6 +1534,81 @@ where
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestDeleted {
                 request_id: input.request_id,
+                command_id,
+            }])
+        }
+        AppCommand::CreateFolder { input, command_id } => {
+            let created = storage
+                .create_folder(input)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::FolderUpserted {
+                folder: created.folder,
+                manifest_path: created.manifest_path,
+                command_id,
+            }])
+        }
+        AppCommand::RenameCollection {
+            collection_id,
+            new_name,
+            command_id,
+        } => {
+            let updated = storage
+                .rename_collection(collection_id, &new_name)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::CollectionUpserted {
+                collection: updated.collection,
+                manifest_path: updated.manifest_path,
+                command_id,
+            }])
+        }
+        AppCommand::RenameFolder {
+            folder_id,
+            new_name,
+            command_id,
+        } => {
+            let updated = storage
+                .rename_folder(folder_id, &new_name)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::FolderUpserted {
+                folder: updated.folder,
+                manifest_path: updated.manifest_path,
+                command_id,
+            }])
+        }
+        AppCommand::DeleteCollection {
+            collection_id,
+            command_id,
+        } => {
+            storage
+                .delete_collection(collection_id)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::CollectionDeleted {
+                collection_id,
+                command_id,
+            }])
+        }
+        AppCommand::DeleteFolder { folder_id, command_id } => {
+            storage
+                .delete_folder(folder_id)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::FolderDeleted {
+                folder_id,
+                command_id,
+            }])
+        }
+        AppCommand::ReorderCollection {
+            collection_id,
+            insertion_index,
+            command_id,
+        } => {
+            storage
+                .reorder_collection(crate::storage::ReorderCollectionInput {
+                    collection_id,
+                    insertion_index,
+                })
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::CollectionsReordered {
+                root_ids: storage.store.root_ids.clone(),
                 command_id,
             }])
         }
@@ -2436,7 +2750,7 @@ mod tests {
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths);
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(storage);
+        let runtime = start_data_sync_worker(MemoryBackedStorage::new(storage).expect("load workspace into memory"));
         let mut state = AppShellState::default();
 
         let create_command_id = next_command_id();
@@ -2558,7 +2872,7 @@ mod tests {
             },
         );
 
-        let runtime = start_data_sync_worker(storage);
+        let runtime = start_data_sync_worker(MemoryBackedStorage::new(storage).expect("load workspace into memory"));
         let mut state = AppShellState::default();
         let parent = RequestParentRef {
             collection_id,
@@ -2763,7 +3077,7 @@ mod tests {
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths);
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(storage);
+        let runtime = start_data_sync_worker(MemoryBackedStorage::new(storage).expect("load workspace into memory"));
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
