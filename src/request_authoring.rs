@@ -129,28 +129,15 @@ fn is_param_row_non_empty(row: &QueryParamField) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenameValidationError {
     EmptyName,
-    DuplicateName,
 }
 
-pub fn validate_rename<'a, I>(
-    current_name: &str,
-    candidate_name: &str,
-    siblings_in_scope: I,
-) -> Result<String, RenameValidationError>
-where
-    I: IntoIterator<Item = &'a str>,
-{
+pub fn validate_rename(current_name: &str, candidate_name: &str) -> Result<String, RenameValidationError> {
     let normalized = candidate_name.trim();
     if normalized.is_empty() {
         return Err(RenameValidationError::EmptyName);
     }
-    if normalized == current_name {
+    if normalized.eq_ignore_ascii_case(current_name) {
         return Ok(normalized.to_string());
-    }
-    if siblings_in_scope.into_iter().any(|name| {
-        !name.eq_ignore_ascii_case(current_name) && name.eq_ignore_ascii_case(normalized)
-    }) {
-        return Err(RenameValidationError::DuplicateName);
     }
     Ok(normalized.to_string())
 }
@@ -254,19 +241,18 @@ mod tests {
     }
 
     #[test]
-    fn rename_validation_enforces_non_empty_and_unique_names() {
-        let siblings = ["Get User", "Create User", "List Users"];
+    fn rename_validation_enforces_non_empty_names() {
         assert_eq!(
-            validate_rename("Get User", "  ", siblings.iter().copied()),
+            validate_rename("Get User", "  "),
             Err(RenameValidationError::EmptyName)
         );
         assert_eq!(
-            validate_rename("Get User", "create user", siblings.iter().copied()),
-            Err(RenameValidationError::DuplicateName)
+            validate_rename("Get User", "  Fetch User  "),
+            Ok("Fetch User".to_string())
         );
         assert_eq!(
-            validate_rename("Get User", "  Fetch User  ", siblings.iter().copied()),
-            Ok("Fetch User".to_string())
+            validate_rename("Get User", "get user"),
+            Ok("get user".to_string())
         );
     }
 

@@ -18,9 +18,9 @@ use crate::storage::{
 use crate::storage::io_backend::StorageIoBackend;
 use crate::tree_store::{
     COLLECTION_MANIFEST_FILE_NAME, CollectionManifestFile, ManifestNode, Node, NodeKind,
-    RootOrderFile, SharedStore, assert_name_unique, collection_dir_path,
-    collection_manifest_from_store, folder_dir_name, folder_dir_path, request_file_name,
-    request_file_path, root_collection_id_of, scope_key,
+    RootOrderFile, SharedStore, collection_dir_path,
+    collection_manifest_from_store, find_unique_name, folder_dir_name, folder_dir_path,
+    request_file_name, request_file_path, root_collection_id_of, scope_key,
 };
 
 pub struct MemoryBackedStorage<B: StorageIoBackend> {
@@ -53,14 +53,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 message: "Request name cannot be empty".to_string(),
             });
         }
-        // TODO: if name exists, can we append an incremental suffix like " (1, 2, 3, etc.)?
-        assert_name_unique(&self.store.name_index, Some(parent_id), name, None).map_err(|_| {
-            BeamError::Validation {
-                message: format!("A request named '{name}' already exists in this scope"),
-            }
-        })?;
-
-        let request_file = default_request_file(name, input.method, input.url);
+        let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
+        let request_file = default_request_file(&unique_name, input.method, input.url);
         let request_id = request_file.meta.request_id;
         let collection_id = root_collection_id_of(&self.store, parent_id).ok_or_else(|| {
             BeamError::NotFound {
@@ -119,13 +113,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 message: "Request name cannot be empty".to_string(),
             });
         }
-        assert_name_unique(&self.store.name_index, Some(parent_id), name, None).map_err(|_| {
-            BeamError::Validation {
-                message: format!("A request named '{name}' already exists in this scope"),
-            }
-        })?;
-
-        let request_file = default_request_file(name, input.method, input.url);
+        let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
+        let request_file = default_request_file(&unique_name, input.method, input.url);
         let request_id = request_file.meta.request_id;
         let collection_id = root_collection_id_of(&self.store, parent_id).ok_or_else(|| {
             BeamError::NotFound {
@@ -200,15 +189,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         let parent_id = node.parent_id.ok_or_else(|| BeamError::Validation {
             message: format!("request node {} is missing parent_id", input.request_id),
         })?;
-        assert_name_unique(
-            &self.store.name_index,
-            Some(parent_id),
-            next_name,
-            Some(input.request_id),
-        )
-        .map_err(|_| BeamError::Validation {
-            message: format!("A request named '{next_name}' already exists in this scope"),
-        })?;
+        let unique_name =
+            find_unique_name(&self.store.name_index, Some(parent_id), next_name, Some(input.request_id));
 
         let collection_id =
             root_collection_id_of(&self.store, input.request_id).ok_or_else(|| BeamError::NotFound {
@@ -223,11 +205,11 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             .name_index
             .remove(&scope_key(Some(parent_id), &node.name));
         if let Some(request_node) = self.store.nodes.get_mut(&input.request_id) {
-            request_node.name = next_name.to_string();
+            request_node.name = unique_name.clone();
             request_node.updated_at = Some(Utc::now());
         }
         self.store.name_index.insert(
-            scope_key(Some(parent_id), next_name),
+            scope_key(Some(parent_id), &unique_name),
             input.request_id,
         );
 
@@ -240,7 +222,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 id: input.request_id.to_string(),
             })?
             .clone();
-        request_file.meta.name = next_name.to_string();
+        request_file.meta.name = unique_name.clone();
         request_file.meta.updated_at = Utc::now();
         self.store
             .requests
@@ -270,11 +252,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             });
         }
         let parent_id = input.parent.folder_id.unwrap_or(input.parent.collection_id);
-        assert_name_unique(&self.store.name_index, Some(parent_id), name, None).map_err(|_| {
-            BeamError::Validation {
-                message: format!("A request named '{name}' already exists in this scope"),
-            }
-        })?;
+        let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
 
         let source = self
             .store
@@ -289,7 +267,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         let now = Utc::now();
         let mut duplicated = source.clone();
         duplicated.meta.request_id = Ulid::new();
-        duplicated.meta.name = name.to_string();
+        duplicated.meta.name = unique_name;
         duplicated.meta.created_at = now;
         duplicated.meta.updated_at = now;
         let duplicated_id = duplicated.meta.request_id;
@@ -532,11 +510,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             });
         }
         let parent_id = input.parent.parent_folder_id.unwrap_or(input.parent.collection_id);
-        assert_name_unique(&self.store.name_index, Some(parent_id), name, None).map_err(|_| {
-            BeamError::Validation {
-                message: format!("A folder named '{name}' already exists in this scope"),
-            }
-        })?;
+        let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
 
         let now = Utc::now();
         let folder_id = Ulid::new();
@@ -553,7 +527,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             folder_id,
             Node {
                 id: folder_id,
-                name: name.to_string(),
+                name: unique_name.clone(),
                 kind: NodeKind::Folder,
                 description: None,
                 created_at: Some(now),
@@ -564,7 +538,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         );
         self.store
             .name_index
-            .insert(scope_key(Some(parent_id), name), folder_id);
+            .insert(scope_key(Some(parent_id), &unique_name), folder_id);
 
         let folder_dir = folder_dir_path(self.backend.paths(), &self.store, folder_id)?;
         self.backend.create_dir_all(&folder_dir)?;
@@ -688,15 +662,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             .ok_or_else(|| BeamError::Validation {
                 message: format!("folder node {folder_id} is missing parent_id"),
             })?;
-        assert_name_unique(
-            &self.store.name_index,
-            Some(parent_id),
-            next_name,
-            Some(folder_id),
-        )
-        .map_err(|_| BeamError::Validation {
-            message: format!("A folder named '{next_name}' already exists in this scope"),
-        })?;
+        let unique_name =
+            find_unique_name(&self.store.name_index, Some(parent_id), next_name, Some(folder_id));
 
         let old_dir = folder_dir_path(self.backend.paths(), &self.store, folder_id)?;
         let old_name = self
@@ -714,12 +681,12 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             .name_index
             .remove(&scope_key(Some(parent_id), &old_name));
         if let Some(folder) = self.store.nodes.get_mut(&folder_id) {
-            folder.name = next_name.to_string();
+            folder.name = unique_name.clone();
             folder.updated_at = Some(Utc::now());
         }
         self.store
             .name_index
-            .insert(scope_key(Some(parent_id), next_name), folder_id);
+            .insert(scope_key(Some(parent_id), &unique_name), folder_id);
 
         let new_dir = folder_dir_path(self.backend.paths(), &self.store, folder_id)?;
         if new_dir != old_dir {

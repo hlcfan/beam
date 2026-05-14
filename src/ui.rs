@@ -4459,68 +4459,48 @@ impl BeamView {
                     .filter_map(|row| self.shell.collections.node(row.id))
                     .map(|n| n.name.as_str())
                     .collect();
-                let validated = match validate_rename(&node.name, next_name, siblings) {
+                let validated = match validate_rename(&node.name, next_name) {
                     Ok(value) => value,
                     Err(RenameValidationError::EmptyName) => {
                         eprintln!("rename: collection empty name after validation");
                         window.push_notification("Collection name cannot be empty.", cx);
                         return;
                     }
-                    Err(RenameValidationError::DuplicateName) => {
-                        eprintln!("rename: collection duplicate name '{}'", next_name);
-                        window.push_notification("A collection with this name already exists.", cx);
-                        return;
-                    }
                 };
+                if siblings.iter().any(|name| name.eq_ignore_ascii_case(&validated)) {
+                    eprintln!("rename: collection duplicate name '{}'", next_name);
+                    window.push_notification("A collection with this name already exists.", cx);
+                    return;
+                }
                 validated
             }
             TreeNodeKind::Folder => {
-                let Some(parent) = self.parent_ref_for_add_folder(node_id) else {
+                let Some(_parent) = self.parent_ref_for_add_folder(node_id) else {
                     eprintln!("rename: unable to determine folder parent for id={node_id}");
                     window.push_notification("Unable to determine folder parent.", cx);
                     return;
                 };
-                let siblings = self.folder_sibling_names_in_parent(parent);
-                let validated = match validate_rename(
-                    &node.name,
-                    next_name,
-                    siblings.iter().map(String::as_str),
-                ) {
+                let validated = match validate_rename(&node.name, next_name) {
                     Ok(value) => value,
                     Err(RenameValidationError::EmptyName) => {
                         eprintln!("rename: folder empty name after validation");
                         window.push_notification("Folder name cannot be empty.", cx);
                         return;
                     }
-                    Err(RenameValidationError::DuplicateName) => {
-                        eprintln!("rename: folder duplicate name '{}'", next_name);
-                        window.push_notification("A folder with this name already exists.", cx);
-                        return;
-                    }
                 };
                 validated
             }
             TreeNodeKind::Request => {
-                let Some(parent) = self.parent_ref_for_add_request(node_id) else {
+                let Some(_parent) = self.parent_ref_for_add_request(node_id) else {
                     eprintln!("rename: unable to determine request parent for id={node_id}");
                     window.push_notification("Unable to determine request parent.", cx);
                     return;
                 };
-                let siblings = self.request_sibling_names_in_parent(parent);
-                let validated = match validate_rename(
-                    &node.name,
-                    next_name,
-                    siblings.iter().map(String::as_str),
-                ) {
+                let validated = match validate_rename(&node.name, next_name) {
                     Ok(value) => value,
                     Err(RenameValidationError::EmptyName) => {
                         eprintln!("rename: request empty name after validation");
                         window.push_notification("Request name cannot be empty.", cx);
-                        return;
-                    }
-                    Err(RenameValidationError::DuplicateName) => {
-                        eprintln!("rename: request duplicate name '{}'", next_name);
-                        window.push_notification("A request with this name already exists.", cx);
                         return;
                     }
                 };
