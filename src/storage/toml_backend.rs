@@ -3152,10 +3152,7 @@ environment_id = "{environment_id}"
         let created_path = storage
             .find_request_file_by_id(created.meta.request_id)
             .expect("find request path");
-        assert_eq!(
-            created_path,
-            collection_dir.join("sample.request.toml")
-        );
+        assert_eq!(created_path, collection_dir.join("sample.request.toml"));
 
         let renamed = storage
             .rename_request(RenameRequestInput {

@@ -309,6 +309,7 @@ struct BeamView {
     request_body_editor: Entity<InputState>,
     response_body_editor: Entity<InputState>,
     response_headers_raw: String,
+    response_content_type: Option<String>,
     post_script_editor: Entity<InputState>,
     active_response_tab: ResponseTab,
     response_status: String,
@@ -2339,6 +2340,7 @@ impl BeamView {
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
+        self.response_content_type = None;
         self.response_body_editor.update(cx, |input, cx| {
             input.set_value(String::new(), window, cx);
         });
@@ -2356,8 +2358,9 @@ impl BeamView {
             self.response_time = snapshot.time;
             self.response_size = snapshot.size;
             self.response_headers_raw = snapshot.headers_raw;
+            let formatted_body = Self::auto_format_response_body(&snapshot.body, None);
             self.response_body_editor.update(cx, |input, cx| {
-                input.set_value(snapshot.body, window, cx);
+                input.set_value(formatted_body, window, cx);
             });
         } else {
             self.clear_response_pane(window, cx);
@@ -3207,7 +3210,10 @@ impl BeamView {
         _: &mut Window,
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
-        eprintln!("[drag] started dragging request '{}' (id={})", dragged.label, dragged.request_id);
+        eprintln!(
+            "[drag] started dragging request '{}' (id={})",
+            dragged.label, dragged.request_id
+        );
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Request, position))
     }
 
@@ -3217,7 +3223,10 @@ impl BeamView {
         _: &mut Window,
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
-        eprintln!("[drag] started dragging folder '{}' (id={})", dragged.label, dragged.folder_id);
+        eprintln!(
+            "[drag] started dragging folder '{}' (id={})",
+            dragged.label, dragged.folder_id
+        );
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Folder, position))
     }
 
@@ -3227,7 +3236,10 @@ impl BeamView {
         _: &mut Window,
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
-        eprintln!("[drag] started dragging collection '{}' (id={})", dragged.label, dragged.collection_id);
+        eprintln!(
+            "[drag] started dragging collection '{}' (id={})",
+            dragged.label, dragged.collection_id
+        );
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Collection, position))
     }
 
@@ -3353,14 +3365,18 @@ impl BeamView {
             TreeDropPlacement::Into => {
                 let target = self.shell.collections.node(target_id)?;
                 if !matches!(target.kind, TreeNodeKind::Collection | TreeNodeKind::Folder) {
-                    eprintln!("[drag] request_move_action rejected: Into target {target_id} is not a collection/folder");
+                    eprintln!(
+                        "[drag] request_move_action rejected: Into target {target_id} is not a collection/folder"
+                    );
                     return None;
                 }
                 (target.id, target.children.len())
             }
             TreeDropPlacement::Before | TreeDropPlacement::After => {
                 if target_id == request_id {
-                    eprintln!("[drag] request_move_action rejected: cannot drop request {request_id} relative to itself");
+                    eprintln!(
+                        "[drag] request_move_action rejected: cannot drop request {request_id} relative to itself"
+                    );
                     return None;
                 }
                 self.sibling_destination_for_target(target_id, placement)?
@@ -3376,7 +3392,9 @@ impl BeamView {
 
         let (new_parent, known_target_manifest_path) =
             self.request_parent_input_for_parent_node(destination_parent_id)?;
-        eprintln!("[drag] request_move_action accepted: request={request_id} target={target_id} placement={placement:?} dest_parent={destination_parent_id} index={insertion_index}");
+        eprintln!(
+            "[drag] request_move_action accepted: request={request_id} target={target_id} placement={placement:?} dest_parent={destination_parent_id} index={insertion_index}"
+        );
         Some(TreeMoveAction::MoveRequest(MoveRequestInput {
             request_id,
             new_parent,
@@ -3504,17 +3522,21 @@ impl BeamView {
         }
     }
 
-    fn can_accept_any_tree_drop(
-        &self,
-        dragged_value: &dyn Any,
-        target_id: Ulid,
-    ) -> bool {
+    fn can_accept_any_tree_drop(&self, dragged_value: &dyn Any, target_id: Ulid) -> bool {
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedCollection>() {
             return self
-                .collection_reorder_action(dragged.collection_id, target_id, TreeDropPlacement::Before)
+                .collection_reorder_action(
+                    dragged.collection_id,
+                    target_id,
+                    TreeDropPlacement::Before,
+                )
                 .is_some()
                 || self
-                    .collection_reorder_action(dragged.collection_id, target_id, TreeDropPlacement::After)
+                    .collection_reorder_action(
+                        dragged.collection_id,
+                        target_id,
+                        TreeDropPlacement::After,
+                    )
                     .is_some();
         }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
@@ -5090,6 +5112,7 @@ impl BeamView {
             request_body_editor,
             response_body_editor,
             response_headers_raw: String::new(),
+            response_content_type: None,
             post_script_editor,
             active_response_tab: ResponseTab::Body,
             response_status: "—".to_string(),
@@ -5290,7 +5313,8 @@ impl BeamView {
                 let response_status = response.status.clone();
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
-                let response_body = response.body.clone();
+                let response_body =
+                    Self::auto_format_response_body(&response.body, response.content_type.as_deref());
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
@@ -5300,6 +5324,7 @@ impl BeamView {
                         input.set_value(response_body.clone(), window, cx);
                     });
                     this.response_headers_raw = response_headers;
+                    this.response_content_type = response.content_type.clone();
                     this.script_result = outcome.script_result.clone();
                 }
                 if let (Some(environment_id), Some(variables)) = (
@@ -5822,6 +5847,115 @@ impl BeamView {
             .map_err(|err| format!("Unable to format response body as JSON: {err}"))
     }
 
+    fn format_xml_or_html(text: &str) -> Option<String> {
+        let mut result = String::with_capacity(text.len() * 2);
+        let mut depth = 0usize;
+        let mut i = 0usize;
+        let bytes = text.as_bytes();
+
+        while i < bytes.len() {
+            if bytes[i] == b'<' {
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j] != b'>' {
+                    j += 1;
+                }
+                if j >= bytes.len() {
+                    let remainder = text[i..].trim();
+                    if !remainder.is_empty() {
+                        if !result.is_empty() && !result.ends_with('\n') {
+                            result.push('\n');
+                            for _ in 0..depth {
+                                result.push_str("  ");
+                            }
+                        }
+                        result.push_str(remainder);
+                    }
+                    break;
+                }
+                let tag = text[i..=j].trim();
+                let is_closing = tag.starts_with("</");
+                let is_self_closing = tag.ends_with("/>");
+                let is_comment = tag.starts_with("<!--")
+                    || tag.starts_with("<?")
+                    || tag.starts_with("<!DOCTYPE")
+                    || tag.starts_with("<![CDATA[");
+
+                if is_closing {
+                    depth = depth.saturating_sub(1);
+                }
+
+                if !result.is_empty() {
+                    result.push('\n');
+                }
+                for _ in 0..depth {
+                    result.push_str("  ");
+                }
+                result.push_str(tag);
+
+                let mut k = j + 1;
+                while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+                    k += 1;
+                }
+                let next_is_tag = k < bytes.len() && bytes[k] == b'<';
+                let next_is_closing = next_is_tag && k + 1 < bytes.len() && bytes[k + 1] == b'/';
+
+                if !is_closing && !is_self_closing && !is_comment {
+                    if !(next_is_tag && next_is_closing) {
+                        depth += 1;
+                    }
+                }
+
+                i = j + 1;
+            } else if !bytes[i].is_ascii_whitespace() {
+                let start = i;
+                while i < bytes.len() && bytes[i] != b'<' {
+                    i += 1;
+                }
+                let text_content = text[start..i].trim();
+                if !text_content.is_empty() {
+                    if !result.is_empty() && !result.ends_with('\n') {
+                        result.push('\n');
+                        for _ in 0..depth {
+                            result.push_str("  ");
+                        }
+                    }
+                    result.push_str(text_content);
+                }
+            } else {
+                i += 1;
+            }
+        }
+
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+
+    fn auto_format_response_body(body: &str, content_type: Option<&str>) -> String {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            return body.to_string();
+        }
+
+        let ct = content_type.unwrap_or("").to_lowercase();
+
+        if ct.contains("json") || trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Ok(pretty) = serde_json::to_string_pretty(&value) {
+                    return pretty;
+                }
+            }
+        } else if ct.contains("xml") || ct.contains("html") {
+            if let Some(formatted) = Self::format_xml_or_html(trimmed) {
+                return formatted;
+            }
+        }
+
+        body.to_string()
+    }
+
     fn format_response_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current_text = self.response_body_editor.read(cx).value().to_string();
         let trimmed = current_text.trim();
@@ -5829,20 +5963,8 @@ impl BeamView {
             return;
         }
 
-        let formatted = match Self::format_response_body_text(&current_text) {
-            Ok(formatted) => formatted,
-            Err(error) => {
-                window.push_notification(
-                    (
-                        gpui_component::notification::NotificationType::Error,
-                        SharedString::from(format!("Failed to format response body: {error}")),
-                    ),
-                    cx,
-                );
-                cx.notify();
-                return;
-            }
-        };
+        let formatted =
+            Self::auto_format_response_body(&current_text, self.response_content_type.as_deref());
 
         if formatted == current_text {
             return;
@@ -5929,18 +6051,45 @@ impl BeamView {
             .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
             .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
             .drag_over::<DraggedCollection>(|style, _, _, cx| style.bg(cx.theme().selection))
-            .on_drag_move(cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
-                let dragged = drag.drag(cx).clone();
-                this.update_tree_drag_hover(drag.bounds, drag.event.position, row_id, row_kind, &dragged, cx);
-            }))
-            .on_drag_move(cx.listener(move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
-                let dragged = drag.drag(cx).clone();
-                this.update_tree_drag_hover(drag.bounds, drag.event.position, row_id, row_kind, &dragged, cx);
-            }))
-            .on_drag_move(cx.listener(move |this, drag: &DragMoveEvent<DraggedCollection>, _, cx| {
-                let dragged = drag.drag(cx).clone();
-                this.update_tree_drag_hover(drag.bounds, drag.event.position, row_id, row_kind, &dragged, cx);
-            }))
+            .on_drag_move(
+                cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
+                    let dragged = drag.drag(cx).clone();
+                    this.update_tree_drag_hover(
+                        drag.bounds,
+                        drag.event.position,
+                        row_id,
+                        row_kind,
+                        &dragged,
+                        cx,
+                    );
+                }),
+            )
+            .on_drag_move(
+                cx.listener(move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
+                    let dragged = drag.drag(cx).clone();
+                    this.update_tree_drag_hover(
+                        drag.bounds,
+                        drag.event.position,
+                        row_id,
+                        row_kind,
+                        &dragged,
+                        cx,
+                    );
+                }),
+            )
+            .on_drag_move(cx.listener(
+                move |this, drag: &DragMoveEvent<DraggedCollection>, _, cx| {
+                    let dragged = drag.drag(cx).clone();
+                    this.update_tree_drag_hover(
+                        drag.bounds,
+                        drag.event.position,
+                        row_id,
+                        row_kind,
+                        &dragged,
+                        cx,
+                    );
+                },
+            ))
             .on_drop(
                 cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
                     let placement = this
@@ -5965,13 +6114,7 @@ impl BeamView {
                         .filter(|(id, _)| *id == row_id)
                         .map(|(_, p)| p)
                         .unwrap_or(body_drop_placement);
-                    this.handle_folder_tree_drop(
-                        dragged.folder_id,
-                        row_id,
-                        placement,
-                        window,
-                        cx,
-                    );
+                    this.handle_folder_tree_drop(dragged.folder_id, row_id, placement, window, cx);
                     this.clear_tree_drag_hover(cx);
                 }),
             )
@@ -6001,15 +6144,18 @@ impl BeamView {
                     .pl(indent)
                     .selected(row.selected)
                     .when(
-                        drag_hover.is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Before),
+                        drag_hover
+                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Before),
                         |this| this.border_t_2().border_color(cx.theme().drag_border),
                     )
                     .when(
-                        drag_hover.is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::After),
+                        drag_hover
+                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::After),
                         |this| this.border_b_2().border_color(cx.theme().drag_border),
                     )
                     .when(
-                        drag_hover.is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into),
+                        drag_hover
+                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into),
                         |this| this.bg(cx.theme().drop_target),
                     )
                     .child(row_content)
@@ -8398,6 +8544,7 @@ struct HttpResponseView {
     size: String,
     body: String,
     headers: String,
+    content_type: Option<String>,
 }
 
 struct SendRequestOutcome {
@@ -8650,6 +8797,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                 size: "—".to_string(),
                 body: error,
                 headers: String::new(),
+                content_type: None,
             };
         }
     };
@@ -8778,6 +8926,11 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                 .canonical_reason()
                 .map(|reason| format!("{} {}", status.as_u16(), reason))
                 .unwrap_or_else(|| status.as_u16().to_string());
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let headers = response
                 .headers()
                 .iter()
@@ -8796,6 +8949,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                         size: format_bytes(bytes.len()),
                         body,
                         headers,
+                        content_type,
                     }
                 }
                 Err(error) => HttpResponseView {
@@ -8804,6 +8958,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                     size: "—".to_string(),
                     body: format!("Failed to read response body: {error}"),
                     headers,
+                    content_type,
                 },
             }
         }
@@ -8813,6 +8968,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
             size: "—".to_string(),
             body: format!("Request failed: {error}"),
             headers: String::new(),
+            content_type: None,
         },
     }
 }
@@ -8852,7 +9008,7 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .bg(cx.theme().background)
-            .child(TitleBar::new().child(self.render_title_bar_content(cx)))
+            .child(TitleBar::new().child(self.render_title_bar_content(cx))) // TODO: remove
             .child(
                 h_flex().flex_1().w_full().child(
                     h_resizable("beam-main-shell")
