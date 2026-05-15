@@ -1,5 +1,8 @@
 use std::path::PathBuf;
 
+pub const COLLECTION_MANIFEST_FILE_NAME: &str = ".manifest.toml";
+pub const COLLECTION_ROOT_ORDER_FILE_NAME: &str = ".root-order.toml";
+
 #[derive(Debug, Clone)]
 pub struct BeamPaths {
     pub root: PathBuf,
@@ -15,7 +18,7 @@ impl BeamPaths {
     pub fn from_root(root: PathBuf) -> Self {
         let collections_dir = root.join("collections");
         let collections_root_order_file =
-            collections_dir.join(crate::tree_store::COLLECTION_ROOT_ORDER_FILE_NAME);
+            collections_dir.join(COLLECTION_ROOT_ORDER_FILE_NAME);
         let environments_dir = root.join("environments");
         let local_dir = root.join(".beam");
         let local_state_file = local_dir.join("local-state.toml");

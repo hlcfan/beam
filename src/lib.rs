@@ -7,5 +7,5 @@ pub mod request_authoring;
 pub mod schema;
 pub mod script;
 pub mod storage;
-pub mod tree_store;
+pub mod workspace_tree;
 pub mod ui;

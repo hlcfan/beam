@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
+pub mod fs_backend;
 pub mod io_backend;
-pub mod memory_backed;
-pub mod toml_backend;
+pub mod workspace_repo;
 
 use crate::error::Result;
 use crate::models::{

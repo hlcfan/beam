@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -10,9 +9,6 @@ use crate::error::{BeamError, Result};
 use crate::models::{EnvironmentFile, RequestFile};
 use crate::paths::BeamPaths;
 use crate::schema::SCHEMA_VERSION_V1;
-
-pub const COLLECTION_MANIFEST_FILE_NAME: &str = ".manifest.toml";
-pub const COLLECTION_ROOT_ORDER_FILE_NAME: &str = ".root-order.toml";
 
 pub type NodeId = Ulid;
 
@@ -163,13 +159,14 @@ pub fn apply_child_move(
     insertion_index: usize,
 ) -> Result<()> {
     let removed_index = {
-        let source_parent = store
-            .nodes
-            .get_mut(&source_parent_id)
-            .ok_or_else(|| BeamError::NotFound {
-                entity: "source_parent",
-                id: source_parent_id.to_string(),
-            })?;
+        let source_parent =
+            store
+                .nodes
+                .get_mut(&source_parent_id)
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "source_parent",
+                    id: source_parent_id.to_string(),
+                })?;
         let index = source_parent
             .children
             .iter()
@@ -189,13 +186,14 @@ pub fn apply_child_move(
             insertion_index
         };
 
-    let destination_parent = store
-        .nodes
-        .get_mut(&destination_parent_id)
-        .ok_or_else(|| BeamError::NotFound {
-            entity: "destination_parent",
-            id: destination_parent_id.to_string(),
-        })?;
+    let destination_parent =
+        store
+            .nodes
+            .get_mut(&destination_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "destination_parent",
+                id: destination_parent_id.to_string(),
+            })?;
     let index = adjusted_index.min(destination_parent.children.len());
     destination_parent.children.insert(index, child_id);
     Ok(())
@@ -380,135 +378,6 @@ pub fn collection_manifest_from_store(
     })
 }
 
-pub fn shared_store_from_collection_manifest_path(manifest_path: &Path) -> Result<SharedStore> {
-    let manifest: CollectionManifestFile = read_toml_file(manifest_path)?;
-    if manifest.kind != NodeKind::Collection {
-        return Err(BeamError::Validation {
-            message: format!(
-                "collection manifest {} declared kind {:?} instead of collection",
-                manifest_path.display(),
-                manifest.kind
-            ),
-        });
-    }
-
-    let mut store = SharedStore::default();
-    let collection_id = manifest.id;
-    insert_manifest_runtime_node(
-        &mut store,
-        Node {
-            id: collection_id,
-            name: manifest.name,
-            kind: NodeKind::Collection,
-            description: manifest.description,
-            created_at: manifest.created_at,
-            updated_at: manifest.updated_at,
-            parent_id: None,
-            children: Vec::new(),
-        },
-    )?;
-    store.root_ids.push(collection_id);
-
-    let child_ids = manifest
-        .children
-        .iter()
-        .map(|child| load_manifest_child(&mut store, child, collection_id))
-        .collect::<Result<Vec<_>>>()?;
-    if let Some(collection) = store.nodes.get_mut(&collection_id) {
-        collection.children = child_ids;
-    }
-
-    Ok(store)
-}
-
-pub fn write_collection_manifest(
-    paths: &BeamPaths,
-    store: &SharedStore,
-    collection_id: NodeId,
-) -> Result<PathBuf> {
-    let collection_dir = collection_dir_path(paths, store, collection_id)?;
-    fs::create_dir_all(&collection_dir).map_err(|source| BeamError::Io {
-        path: collection_dir.clone(),
-        source,
-    })?;
-
-    let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
-    let manifest = collection_manifest_from_store(store, collection_id)?;
-    write_toml_file(&manifest_path, &manifest)?;
-    Ok(manifest_path)
-}
-
-pub fn write_request_payload(
-    paths: &BeamPaths,
-    store: &SharedStore,
-    request_id: NodeId,
-) -> Result<PathBuf> {
-    let request_path = request_file_path(paths, store, request_id)?;
-    let request_dir = request_path
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| BeamError::Validation {
-            message: format!(
-                "request path {} has no parent directory",
-                request_path.display()
-            ),
-        })?;
-    fs::create_dir_all(&request_dir).map_err(|source| BeamError::Io {
-        path: request_dir,
-        source,
-    })?;
-
-    let mut request_file =
-        store
-            .requests
-            .get(&request_id)
-            .cloned()
-            .ok_or_else(|| BeamError::NotFound {
-                entity: "request_file",
-                id: request_id.to_string(),
-            })?;
-    let request_node = node_by_kind(store, request_id, NodeKind::Request)?;
-    if request_file.meta.request_id != request_id {
-        return Err(BeamError::Validation {
-            message: format!(
-                "request payload {} declared request_id {}",
-                request_id, request_file.meta.request_id
-            ),
-        });
-    }
-
-    request_file.meta.name = request_node.name.clone();
-    request_file.file_path = Some(request_path.clone());
-    write_toml_file(&request_path, &request_file)?;
-    Ok(request_path)
-}
-
-pub fn write_root_order(paths: &BeamPaths, store: &SharedStore) -> Result<PathBuf> {
-    fs::create_dir_all(&paths.collections_dir).map_err(|source| BeamError::Io {
-        path: paths.collections_dir.clone(),
-        source,
-    })?;
-    write_toml_file(&paths.collections_root_order_file, &root_order_file(store))?;
-    Ok(paths.collections_root_order_file.clone())
-}
-
-pub fn persist_collection_subtree(
-    paths: &BeamPaths,
-    store: &SharedStore,
-    collection_id: NodeId,
-) -> Result<PathBuf> {
-    let manifest_path = write_collection_manifest(paths, store, collection_id)?;
-    write_request_payloads_in_subtree(paths, store, collection_id)?;
-    Ok(manifest_path)
-}
-
-pub fn persist_shared_tree(paths: &BeamPaths, store: &SharedStore) -> Result<()> {
-    for collection_id in store.root_ids.iter().copied() {
-        persist_collection_subtree(paths, store, collection_id)?;
-    }
-    write_root_order(paths, store)?;
-    Ok(())
-}
 
 fn manifest_node_from_store(store: &SharedStore, node_id: NodeId) -> Result<ManifestNode> {
     let node = node_by_id(store, node_id)?;
@@ -545,91 +414,7 @@ fn manifest_node_from_store(store: &SharedStore, node_id: NodeId) -> Result<Mani
     })
 }
 
-fn write_request_payloads_in_subtree(
-    paths: &BeamPaths,
-    store: &SharedStore,
-    node_id: NodeId,
-) -> Result<()> {
-    let node = node_by_id(store, node_id)?;
-    match node.kind {
-        NodeKind::Collection | NodeKind::Folder => {
-            for child_id in node.children.iter().copied() {
-                write_request_payloads_in_subtree(paths, store, child_id)?;
-            }
-        }
-        NodeKind::Request => {
-            write_request_payload(paths, store, node_id)?;
-        }
-    }
-    Ok(())
-}
-
-fn load_manifest_child(
-    store: &mut SharedStore,
-    manifest_node: &ManifestNode,
-    parent_id: NodeId,
-) -> Result<NodeId> {
-    if manifest_node.kind == NodeKind::Collection {
-        return Err(BeamError::Validation {
-            message: format!(
-                "nested collection node {} cannot appear inside a collection manifest",
-                manifest_node.id
-            ),
-        });
-    }
-    if manifest_node.kind == NodeKind::Request && !manifest_node.children.is_empty() {
-        return Err(BeamError::Validation {
-            message: format!("request node {} cannot have child nodes", manifest_node.id),
-        });
-    }
-
-    let node_id = manifest_node.id;
-    insert_manifest_runtime_node(
-        store,
-        Node {
-            id: node_id,
-            name: manifest_node.name.clone(),
-            kind: manifest_node.kind,
-            description: manifest_node.description.clone(),
-            created_at: manifest_node.created_at,
-            updated_at: manifest_node.updated_at,
-            parent_id: Some(parent_id),
-            children: Vec::new(),
-        },
-    )?;
-
-    let child_ids = manifest_node
-        .children
-        .iter()
-        .map(|child| load_manifest_child(store, child, node_id))
-        .collect::<Result<Vec<_>>>()?;
-    if let Some(node) = store.nodes.get_mut(&node_id) {
-        node.children = child_ids;
-    }
-
-    Ok(node_id)
-}
-
-fn insert_manifest_runtime_node(store: &mut SharedStore, node: Node) -> Result<()> {
-    if store.nodes.contains_key(&node.id) {
-        return Err(BeamError::Validation {
-            message: format!("duplicate node {} found while loading manifest", node.id),
-        });
-    }
-    map_name_validation_error(assert_name_unique(
-        &store.name_index,
-        node.parent_id,
-        &node.name,
-        None,
-    ))?;
-
-    let key = scope_key(node.parent_id, &node.name);
-    store.name_index.insert(key, node.id);
-    store.nodes.insert(node.id, node);
-    Ok(())
-}
-
-fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
+pub fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
     store
         .nodes
         .get(&node_id)
@@ -639,7 +424,7 @@ fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
         })
 }
 
-fn node_by_kind(store: &SharedStore, node_id: NodeId, expected_kind: NodeKind) -> Result<&Node> {
+pub fn node_by_kind(store: &SharedStore, node_id: NodeId, expected_kind: NodeKind) -> Result<&Node> {
     let node = node_by_id(store, node_id)?;
     if node.kind != expected_kind {
         return Err(BeamError::Validation {
@@ -652,75 +437,20 @@ fn node_by_kind(store: &SharedStore, node_id: NodeId, expected_kind: NodeKind) -
     Ok(node)
 }
 
-fn write_toml_file<T: Serialize>(path: &Path, value: &T) -> Result<()> {
-    let encoded = toml::to_string_pretty(value)?;
-    atomic_write(path, encoded.as_bytes())
-}
-
-fn read_toml_file<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let content = fs::read_to_string(path).map_err(|source| BeamError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    toml::from_str(&content).map_err(|source| BeamError::TomlDecode {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-fn map_name_validation_error(result: std::result::Result<(), NameValidationError>) -> Result<()> {
-    match result {
-        Ok(()) => Ok(()),
-        Err(NameValidationError::EmptyName) => Err(BeamError::Validation {
-            message: "name cannot be empty".to_string(),
-        }),
-        Err(NameValidationError::DuplicateName { existing_id }) => Err(BeamError::Validation {
-            message: format!("duplicate name in scope conflicts with node {existing_id}"),
-        }),
-    }
-}
-
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp_path = temp_path(path);
-
-    fs::write(&tmp_path, bytes).map_err(|source| BeamError::Io {
-        path: tmp_path.clone(),
-        source,
-    })?;
-
-    fs::rename(&tmp_path, path).map_err(|source| BeamError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-
-    Ok(())
-}
-
-fn temp_path(path: &Path) -> PathBuf {
-    let mut file_name = path
-        .file_name()
-        .map(|f| f.to_string_lossy().to_string())
-        .unwrap_or_else(|| "tmp".to_string());
-    file_name.push_str(".tmp");
-    path.with_file_name(file_name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        COLLECTION_MANIFEST_FILE_NAME, COLLECTION_ROOT_ORDER_FILE_NAME, CollectionManifestFile,
+        CollectionManifestFile,
         ManifestNode, NameValidationError, Node, NodeKind, RootOrderFile, SharedStore,
         assert_name_unique, collection_dir_path, find_unique_name, folder_dir_name,
-        persist_shared_tree, request_file_name, request_file_path, root_collection_id_of,
-        scope_key, shared_store_from_collection_manifest_path,
+        request_file_name, request_file_path, root_collection_id_of,
+        scope_key,
     };
+    use crate::paths::COLLECTION_ROOT_ORDER_FILE_NAME;
     use std::collections::HashMap;
     use tempfile::tempdir;
 
-    use crate::models::{
-        AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta,
-        ScriptConfig,
-    };
+
     use crate::paths::BeamPaths;
     use chrono::Utc;
 
@@ -1017,85 +747,6 @@ mod tests {
     }
 
     #[test]
-    fn shared_store_from_manifest_flattens_nodes_and_preserves_order() {
-        let dir = tempdir().expect("tempdir");
-        let manifest_path = dir.path().join(COLLECTION_MANIFEST_FILE_NAME);
-        let collection_id = ulid::Ulid::new();
-        let folder_id = ulid::Ulid::new();
-        let request_id = ulid::Ulid::new();
-        let direct_request_id = ulid::Ulid::new();
-        let manifest = CollectionManifestFile {
-            schema_version: crate::schema::SCHEMA_VERSION_V1,
-            id: collection_id,
-            name: "Sample".to_string(),
-            kind: NodeKind::Collection,
-            description: Some("Collection".to_string()),
-            created_at: None,
-            updated_at: None,
-            children: vec![
-                ManifestNode {
-                    id: folder_id,
-                    name: "Nested".to_string(),
-                    kind: NodeKind::Folder,
-                    description: None,
-                    created_at: None,
-                    updated_at: None,
-                    children: vec![ManifestNode {
-                        id: request_id,
-                        name: "Get Data".to_string(),
-                        kind: NodeKind::Request,
-                        description: None,
-                        created_at: None,
-                        updated_at: None,
-                        children: Vec::new(),
-                    }],
-                },
-                ManifestNode {
-                    id: direct_request_id,
-                    name: "Health".to_string(),
-                    kind: NodeKind::Request,
-                    description: None,
-                    created_at: None,
-                    updated_at: None,
-                    children: Vec::new(),
-                },
-            ],
-        };
-        std::fs::write(
-            &manifest_path,
-            toml::to_string_pretty(&manifest).expect("encode manifest"),
-        )
-        .expect("write manifest");
-
-        let store =
-            shared_store_from_collection_manifest_path(&manifest_path).expect("load shared store");
-        assert_eq!(store.root_ids, vec![collection_id]);
-        assert_eq!(store.nodes.len(), 4);
-        assert_eq!(
-            store
-                .nodes
-                .get(&collection_id)
-                .expect("collection")
-                .children,
-            vec![folder_id, direct_request_id]
-        );
-        assert_eq!(
-            store.nodes.get(&folder_id).expect("folder").children,
-            vec![request_id]
-        );
-        assert_eq!(
-            store.nodes.get(&request_id).expect("request").parent_id,
-            Some(folder_id)
-        );
-        assert_eq!(
-            store
-                .name_index
-                .get(&scope_key(Some(folder_id), "Get Data")),
-            Some(&request_id)
-        );
-    }
-
-    #[test]
     fn path_resolution_uses_node_ancestry() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
@@ -1165,126 +816,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn persist_shared_tree_writes_root_order_manifest_and_requests() {
-        let dir = tempdir().expect("tempdir");
-        let paths = BeamPaths::from_root(dir.path().join("beam"));
-        let first_collection_id = ulid::Ulid::new();
-        let second_collection_id = ulid::Ulid::new();
-        let folder_id = ulid::Ulid::new();
-        let request_id = ulid::Ulid::new();
-        let now = Utc::now();
-
-        let request_file = RequestFile {
-            meta: RequestMeta {
-                request_id,
-                name: "Outdated Name".to_string(),
-                description: Some("Request description".to_string()),
-                created_at: now,
-                updated_at: now,
-            },
-            request: RequestDefinition {
-                method: HttpMethod::Get,
-                url: "https://example.com/users".to_string(),
-                headers: Vec::new(),
-                query_params: Vec::new(),
-            },
-            auth: AuthConfig::None,
-            body: BodyConfig::None,
-            scripts: ScriptConfig::default(),
-            file_path: None,
-        };
-        let store = SharedStore {
-            nodes: HashMap::from([
-                (
-                    first_collection_id,
-                    Node {
-                        id: first_collection_id,
-                        name: "First".to_string(),
-                        kind: NodeKind::Collection,
-                        description: Some("First collection".to_string()),
-                        created_at: Some(now),
-                        updated_at: Some(now),
-                        parent_id: None,
-                        children: Vec::new(),
-                    },
-                ),
-                (
-                    second_collection_id,
-                    Node {
-                        id: second_collection_id,
-                        name: "Second".to_string(),
-                        kind: NodeKind::Collection,
-                        description: Some("Second collection".to_string()),
-                        created_at: Some(now),
-                        updated_at: Some(now),
-                        parent_id: None,
-                        children: vec![folder_id],
-                    },
-                ),
-                (
-                    folder_id,
-                    Node {
-                        id: folder_id,
-                        name: "Users".to_string(),
-                        kind: NodeKind::Folder,
-                        description: Some("Folder".to_string()),
-                        created_at: Some(now),
-                        updated_at: Some(now),
-                        parent_id: Some(second_collection_id),
-                        children: vec![request_id],
-                    },
-                ),
-                (
-                    request_id,
-                    Node {
-                        id: request_id,
-                        name: "Get Users".to_string(),
-                        kind: NodeKind::Request,
-                        description: Some("Request node".to_string()),
-                        created_at: Some(now),
-                        updated_at: Some(now),
-                        parent_id: Some(folder_id),
-                        children: Vec::new(),
-                    },
-                ),
-            ]),
-            requests: HashMap::from([(request_id, request_file)]),
-            root_ids: vec![second_collection_id, first_collection_id],
-            name_index: HashMap::new(),
-            environments: HashMap::new(),
-        };
-
-        persist_shared_tree(&paths, &store).expect("persist shared tree");
-
-        let manifest_path = paths
-            .collections_dir
-            .join("second")
-            .join(COLLECTION_MANIFEST_FILE_NAME);
-        let encoded_manifest = std::fs::read_to_string(&manifest_path).expect("read manifest");
-        let manifest: CollectionManifestFile =
-            toml::from_str(&encoded_manifest).expect("decode manifest");
-        assert_eq!(manifest.id, second_collection_id);
-        assert_eq!(manifest.children[0].id, folder_id);
-        assert_eq!(manifest.children[0].children[0].id, request_id);
-
-        let request_path = paths
-            .collections_dir
-            .join("second")
-            .join("users")
-            .join(request_file_name("Get Users"));
-        let encoded_request = std::fs::read_to_string(&request_path).expect("read request");
-        let persisted_request: RequestFile =
-            toml::from_str(&encoded_request).expect("decode request");
-        assert_eq!(persisted_request.meta.name, "Get Users");
-
-        let encoded_root_order =
-            std::fs::read_to_string(&paths.collections_root_order_file).expect("read root order");
-        let root_order: RootOrderFile =
-            toml::from_str(&encoded_root_order).expect("decode root order");
-        assert_eq!(
-            root_order.root_ids,
-            vec![second_collection_id, first_collection_id]
-        );
-    }
 }

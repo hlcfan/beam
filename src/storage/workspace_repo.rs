@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use ulid::Ulid;
@@ -10,27 +10,28 @@ use crate::models::{
     EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, LocalStateFile,
     QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig, WorkspaceFile,
 };
-use crate::schema::{SchemaKind, SCHEMA_VERSION_V1, validate_schema_version};
-use crate::storage::{
-    BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
-    DuplicateRequestInput, MoveFolderInput, MoveRequestInput, RenameRequestInput, ReorderCollectionInput,
-    WorkspaceStorage,
-};
+use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
 use crate::storage::io_backend::StorageIoBackend;
-use crate::tree_store::{
-    COLLECTION_MANIFEST_FILE_NAME, CollectionManifestFile, ManifestNode, Node, NodeKind,
+use crate::storage::{
+    BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput,
+    DeleteRequestInput, DuplicateRequestInput, MoveFolderInput, MoveRequestInput,
+    RenameRequestInput, ReorderCollectionInput, WorkspaceStorage,
+};
+use crate::paths::COLLECTION_MANIFEST_FILE_NAME;
+use crate::workspace_tree::{
+    CollectionManifestFile, ManifestNode, Node, NodeKind,
     RootOrderFile, SharedStore, apply_child_move, assert_name_unique, collection_dir_path,
     collection_manifest_from_store, ensure_parent_kind, find_unique_name, folder_dir_name,
-    folder_dir_path, persist_shared_tree, request_file_name, request_file_path, root_collection_id_of,
-    scope_key,
+    folder_dir_path, node_by_id, node_by_kind, request_file_name, request_file_path,
+    root_collection_id_of, root_order_file, scope_key,
 };
 
-pub struct MemoryBackedStorage<B: StorageIoBackend> {
+pub struct WorkspaceRepository<B: StorageIoBackend> {
     backend: B,
     pub store: SharedStore,
 }
 
-impl<B: StorageIoBackend> MemoryBackedStorage<B> {
+impl<B: StorageIoBackend> WorkspaceRepository<B> {
     pub fn new(backend: B) -> Result<Self> {
         let store = load_full_shared_store(&backend)?;
         Ok(Self { backend, store })
@@ -41,12 +42,18 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         let mut report = BootstrapReport::default();
 
         if !self.backend.paths().workspace_file.exists() {
-            self.backend.write_toml_file(&self.backend.paths().workspace_file, &WorkspaceFile::default())?;
+            self.backend.write_toml_file(
+                &self.backend.paths().workspace_file,
+                &WorkspaceFile::default(),
+            )?;
             report.created_workspace_file = true;
         }
 
         if !self.backend.paths().local_state_file.exists() {
-            self.backend.write_toml_file(&self.backend.paths().local_state_file, &LocalStateFile::default())?;
+            self.backend.write_toml_file(
+                &self.backend.paths().local_state_file,
+                &LocalStateFile::default(),
+            )?;
             report.created_local_state_file = true;
         }
 
@@ -57,8 +64,9 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         if !self.store.root_ids.is_empty() {
             return Ok(());
         }
-        let local_state: LocalStateFile =
-            self.backend.read_toml_file(&self.backend.paths().local_state_file)?;
+        let local_state: LocalStateFile = self
+            .backend
+            .read_toml_file(&self.backend.paths().local_state_file)?;
         validate_schema_version(SchemaKind::LocalState, local_state.schema_version)?;
         if local_state.local_state.last_opened_request_id.is_some() {
             return Ok(());
@@ -121,7 +129,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             },
         );
         self.store.rebuild_name_index();
-        persist_shared_tree(self.backend.paths(), &self.store)?;
+        persist_shared_tree(&self.backend, &self.store)?;
 
         let mut local_state = local_state;
         local_state.local_state.last_opened_request_id = Some(request_id);
@@ -152,12 +160,11 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
         let request_file = default_request_file(&unique_name, input.method, input.url);
         let request_id = request_file.meta.request_id;
-        let collection_id = root_collection_id_of(&self.store, parent_id).ok_or_else(|| {
-            BeamError::NotFound {
+        let collection_id =
+            root_collection_id_of(&self.store, parent_id).ok_or_else(|| BeamError::NotFound {
                 entity: "collection_for_request_parent",
                 id: parent_id.to_string(),
-            }
-        })?;
+            })?;
         let now = request_file.meta.created_at;
 
         if let Some(parent_node) = self.store.nodes.get_mut(&parent_id) {
@@ -212,12 +219,11 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
         let request_file = default_request_file(&unique_name, input.method, input.url);
         let request_id = request_file.meta.request_id;
-        let collection_id = root_collection_id_of(&self.store, parent_id).ok_or_else(|| {
-            BeamError::NotFound {
+        let collection_id =
+            root_collection_id_of(&self.store, parent_id).ok_or_else(|| BeamError::NotFound {
                 entity: "collection_for_request_parent",
                 id: parent_id.to_string(),
-            }
-        })?;
+            })?;
         let now = request_file.meta.created_at;
 
         if let Some(parent_node) = self.store.nodes.get_mut(&parent_id) {
@@ -285,17 +291,22 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         let parent_id = node.parent_id.ok_or_else(|| BeamError::Validation {
             message: format!("request node {} is missing parent_id", input.request_id),
         })?;
-        let unique_name =
-            find_unique_name(&self.store.name_index, Some(parent_id), next_name, Some(input.request_id));
+        let unique_name = find_unique_name(
+            &self.store.name_index,
+            Some(parent_id),
+            next_name,
+            Some(input.request_id),
+        );
 
         let collection_id =
-            root_collection_id_of(&self.store, input.request_id).ok_or_else(|| BeamError::NotFound {
-                entity: "collection_for_request",
-                id: input.request_id.to_string(),
+            root_collection_id_of(&self.store, input.request_id).ok_or_else(|| {
+                BeamError::NotFound {
+                    entity: "collection_for_request",
+                    id: input.request_id.to_string(),
+                }
             })?;
 
-        let existing_path =
-            request_file_path(self.backend.paths(), &self.store, input.request_id)?;
+        let existing_path = request_file_path(self.backend.paths(), &self.store, input.request_id)?;
 
         self.store
             .name_index
@@ -304,10 +315,9 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             request_node.name = unique_name.clone();
             request_node.updated_at = Some(Utc::now());
         }
-        self.store.name_index.insert(
-            scope_key(Some(parent_id), &unique_name),
-            input.request_id,
-        );
+        self.store
+            .name_index
+            .insert(scope_key(Some(parent_id), &unique_name), input.request_id);
 
         let mut request_file = self
             .store
@@ -368,12 +378,11 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         duplicated.meta.updated_at = now;
         let duplicated_id = duplicated.meta.request_id;
 
-        let collection_id = root_collection_id_of(&self.store, parent_id).ok_or_else(|| {
-            BeamError::NotFound {
+        let collection_id =
+            root_collection_id_of(&self.store, parent_id).ok_or_else(|| BeamError::NotFound {
                 entity: "collection_for_request_parent",
                 id: parent_id.to_string(),
-            }
-        })?;
+            })?;
 
         if let Some(parent_node) = self.store.nodes.get_mut(&parent_id) {
             if let Some(index) = parent_node
@@ -403,7 +412,9 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             scope_key(Some(parent_id), &duplicated.meta.name),
             duplicated_id,
         );
-        self.store.requests.insert(duplicated_id, duplicated.clone());
+        self.store
+            .requests
+            .insert(duplicated_id, duplicated.clone());
 
         let request_path = request_file_path(self.backend.paths(), &self.store, duplicated_id)?;
         if let Some(parent) = request_path.parent() {
@@ -440,8 +451,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 id: parent_id.to_string(),
             })?;
 
-        let request_path =
-            request_file_path(self.backend.paths(), &self.store, input.request_id)?;
+        let request_path = request_file_path(self.backend.paths(), &self.store, input.request_id)?;
 
         self.store
             .name_index
@@ -481,9 +491,11 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 message: format!("node {} is not a request", input.request_id),
             });
         }
-        let source_parent_id = request_node.parent_id.ok_or_else(|| BeamError::Validation {
-            message: format!("request node {} is missing parent_id", input.request_id),
-        })?;
+        let source_parent_id = request_node
+            .parent_id
+            .ok_or_else(|| BeamError::Validation {
+                message: format!("request node {} is missing parent_id", input.request_id),
+            })?;
         let destination_parent_id = input
             .new_parent
             .folder_id
@@ -538,19 +550,20 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             self.backend.rename(&old_request_path, &new_request_path)?;
         }
 
-        let source_collection_id =
-            root_collection_id_of(&self.store, source_parent_id).ok_or_else(|| BeamError::NotFound {
+        let source_collection_id = root_collection_id_of(&self.store, source_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
                 entity: "collection_for_request_parent",
                 id: source_parent_id.to_string(),
             })?;
-        let destination_collection_id =
-            root_collection_id_of(&self.store, destination_parent_id).ok_or_else(|| BeamError::NotFound {
-                entity: "collection_for_request_parent",
-                id: destination_parent_id.to_string(),
-            })?;
+        let destination_collection_id = root_collection_id_of(&self.store, destination_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+            entity: "collection_for_request_parent",
+            id: destination_parent_id.to_string(),
+        })?;
 
         for collection_id in [source_collection_id, destination_collection_id] {
-            let collection_dir = collection_dir_path(self.backend.paths(), &self.store, collection_id)?;
+            let collection_dir =
+                collection_dir_path(self.backend.paths(), &self.store, collection_id)?;
             self.backend.create_dir_all(&collection_dir)?;
             let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
             let manifest = collection_manifest_from_store(&self.store, collection_id)?;
@@ -649,41 +662,35 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             self.backend.rename(&old_folder_dir, &new_folder_dir)?;
         }
 
-        let source_collection_id =
-            root_collection_id_of(&self.store, source_parent_id).ok_or_else(|| BeamError::NotFound {
+        let source_collection_id = root_collection_id_of(&self.store, source_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
                 entity: "collection_for_folder_parent",
                 id: source_parent_id.to_string(),
             })?;
-        let destination_collection_id =
-            root_collection_id_of(&self.store, destination_parent_id).ok_or_else(|| BeamError::NotFound {
-                entity: "collection_for_folder_parent",
-                id: destination_parent_id.to_string(),
-            })?;
+        let destination_collection_id = root_collection_id_of(&self.store, destination_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+            entity: "collection_for_folder_parent",
+            id: destination_parent_id.to_string(),
+        })?;
 
         for collection_id in [source_collection_id, destination_collection_id] {
-            let collection_dir = collection_dir_path(self.backend.paths(), &self.store, collection_id)?;
+            let collection_dir =
+                collection_dir_path(self.backend.paths(), &self.store, collection_id)?;
             self.backend.create_dir_all(&collection_dir)?;
             let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
             let manifest = collection_manifest_from_store(&self.store, collection_id)?;
             self.backend.write_toml_file(&manifest_path, &manifest)?;
         }
 
-        let manifest_path = collection_dir_path(
-            self.backend.paths(),
-            &self.store,
-            destination_collection_id,
-        )?
-        .join(COLLECTION_MANIFEST_FILE_NAME);
+        let manifest_path =
+            collection_dir_path(self.backend.paths(), &self.store, destination_collection_id)?
+                .join(COLLECTION_MANIFEST_FILE_NAME);
 
         Ok(FolderFile {
             folder: FolderMeta {
                 folder_id: input.folder_id,
                 collection_id: destination_collection_id,
-                parent_folder_id: if self
-                    .store
-                    .nodes
-                    .get(&destination_parent_id)
-                    .map(|n| n.kind)
+                parent_folder_id: if self.store.nodes.get(&destination_parent_id).map(|n| n.kind)
                     == Some(NodeKind::Folder)
                 {
                     Some(destination_parent_id)
@@ -754,10 +761,12 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             file_path: None,
         }
         .with_file_path(&file_path);
-        self.backend.write_toml_file(&file_path, &environment_file)?;
-        self.store
-            .environments
-            .insert(environment_file.environment.environment_id, environment_file.clone());
+        self.backend
+            .write_toml_file(&file_path, &environment_file)?;
+        self.store.environments.insert(
+            environment_file.environment.environment_id,
+            environment_file.clone(),
+        );
         Ok(environment_file)
     }
 
@@ -783,13 +792,14 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 id: environment_id.to_string(),
             })?;
 
-        let existing_path = environment_file
-            .file_path
-            .clone()
-            .ok_or_else(|| BeamError::NotFound {
-                entity: "environment_file_path",
-                id: environment_id.to_string(),
-            })?;
+        let existing_path =
+            environment_file
+                .file_path
+                .clone()
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "environment_file_path",
+                    id: environment_id.to_string(),
+                })?;
 
         environment_file.environment.name = next_name.to_string();
         environment_file.environment.updated_at = Utc::now();
@@ -821,7 +831,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         }
         environment_file.environment.file_name = next_file_name;
         environment_file = environment_file.with_file_path(&next_path);
-        self.backend.write_toml_file(&next_path, &environment_file)?;
+        self.backend
+            .write_toml_file(&next_path, &environment_file)?;
         self.store
             .environments
             .insert(environment_id, environment_file.clone());
@@ -843,13 +854,14 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 id: environment_id.to_string(),
             })?;
 
-        let existing_path = environment_file
-            .file_path
-            .clone()
-            .ok_or_else(|| BeamError::NotFound {
-                entity: "environment_file_path",
-                id: environment_id.to_string(),
-            })?;
+        let existing_path =
+            environment_file
+                .file_path
+                .clone()
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "environment_file_path",
+                    id: environment_id.to_string(),
+                })?;
 
         environment_file.environment.updated_at = Utc::now();
         environment_file.variables = variables;
@@ -869,14 +881,14 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     }
 
     pub fn delete_environment(&mut self, environment_id: Ulid) -> Result<()> {
-        let environment_file = self
-            .store
-            .environments
-            .remove(&environment_id)
-            .ok_or_else(|| BeamError::NotFound {
-                entity: "environment",
-                id: environment_id.to_string(),
-            })?;
+        let environment_file =
+            self.store
+                .environments
+                .remove(&environment_id)
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "environment",
+                    id: environment_id.to_string(),
+                })?;
 
         if let Some(path) = environment_file.file_path {
             if path.exists() {
@@ -893,7 +905,10 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
                 message: "Folder name cannot be empty".to_string(),
             });
         }
-        let parent_id = input.parent.parent_folder_id.unwrap_or(input.parent.collection_id);
+        let parent_id = input
+            .parent
+            .parent_folder_id
+            .unwrap_or(input.parent.collection_id);
         let unique_name = find_unique_name(&self.store.name_index, Some(parent_id), name, None);
 
         let now = Utc::now();
@@ -948,7 +963,11 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         })
     }
 
-    pub fn rename_collection(&mut self, collection_id: Ulid, new_name: &str) -> Result<CollectionFile> {
+    pub fn rename_collection(
+        &mut self,
+        collection_id: Ulid,
+        new_name: &str,
+    ) -> Result<CollectionFile> {
         let next_name = new_name.trim();
         if next_name.is_empty() {
             return Err(BeamError::Validation {
@@ -984,9 +1003,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             .name
             .clone();
 
-        self.store
-            .name_index
-            .remove(&scope_key(None, &old_name));
+        self.store.name_index.remove(&scope_key(None, &old_name));
         if let Some(collection) = self.store.nodes.get_mut(&collection_id) {
             collection.name = next_name.to_string();
             collection.updated_at = Some(Utc::now());
@@ -1046,8 +1063,12 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             .ok_or_else(|| BeamError::Validation {
                 message: format!("folder node {folder_id} is missing parent_id"),
             })?;
-        let unique_name =
-            find_unique_name(&self.store.name_index, Some(parent_id), next_name, Some(folder_id));
+        let unique_name = find_unique_name(
+            &self.store.name_index,
+            Some(parent_id),
+            next_name,
+            Some(folder_id),
+        );
 
         let old_dir = folder_dir_path(self.backend.paths(), &self.store, folder_id)?;
         let old_name = self
@@ -1091,11 +1112,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             folder: FolderMeta {
                 folder_id,
                 collection_id,
-                parent_folder_id: if self
-                    .store
-                    .nodes
-                    .get(&parent_id)
-                    .map(|n| n.kind)
+                parent_folder_id: if self.store.nodes.get(&parent_id).map(|n| n.kind)
                     == Some(NodeKind::Folder)
                 {
                     Some(parent_id)
@@ -1143,9 +1160,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
 
         for node_id in &nodes_to_remove {
             if let Some(node) = self.store.nodes.remove(node_id) {
-                self.store
-                    .name_index
-                    .retain(|_, id| *id != node.id);
+                self.store.name_index.retain(|_, id| *id != node.id);
             }
             self.store.requests.remove(node_id);
         }
@@ -1183,9 +1198,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
 
         for node_id in &nodes_to_remove {
             if let Some(node) = self.store.nodes.remove(node_id) {
-                self.store
-                    .name_index
-                    .retain(|_, id| *id != node.id);
+                self.store.name_index.retain(|_, id| *id != node.id);
             }
             self.store.requests.remove(node_id);
         }
@@ -1244,7 +1257,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     }
 
     pub fn load_workspace(&self) -> Result<WorkspaceFile> {
-        self.backend.read_toml_file(&self.backend.paths().workspace_file)
+        self.backend
+            .read_toml_file(&self.backend.paths().workspace_file)
     }
 
     pub fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()> {
@@ -1253,7 +1267,8 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     }
 
     pub fn load_local_state(&self) -> Result<LocalStateFile> {
-        self.backend.read_toml_file(&self.backend.paths().local_state_file)
+        self.backend
+            .read_toml_file(&self.backend.paths().local_state_file)
     }
 
     pub fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
@@ -1278,22 +1293,124 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     }
 }
 
-impl<B: StorageIoBackend> WorkspaceStorage for MemoryBackedStorage<B> {
+impl<B: StorageIoBackend> WorkspaceStorage for WorkspaceRepository<B> {
     fn load_workspace(&self) -> Result<WorkspaceFile> {
-        MemoryBackedStorage::load_workspace(self)
+        WorkspaceRepository::load_workspace(self)
     }
 
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()> {
-        MemoryBackedStorage::save_workspace(self, workspace_file)
+        WorkspaceRepository::save_workspace(self, workspace_file)
     }
 
     fn load_local_state(&self) -> Result<LocalStateFile> {
-        MemoryBackedStorage::load_local_state(self)
+        WorkspaceRepository::load_local_state(self)
     }
 
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
-        MemoryBackedStorage::save_local_state(self, local_state_file)
+        WorkspaceRepository::save_local_state(self, local_state_file)
     }
+}
+
+pub fn write_collection_manifest<B: StorageIoBackend>(
+    backend: &B,
+    store: &SharedStore,
+    collection_id: ulid::Ulid,
+) -> Result<PathBuf> {
+    let collection_dir = collection_dir_path(backend.paths(), store, collection_id)?;
+    backend.create_dir_all(&collection_dir)?;
+
+    let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+    let manifest = collection_manifest_from_store(store, collection_id)?;
+    backend.write_toml_file(&manifest_path, &manifest)?;
+    Ok(manifest_path)
+}
+
+pub fn write_request_payload<B: StorageIoBackend>(
+    backend: &B,
+    store: &SharedStore,
+    request_id: ulid::Ulid,
+) -> Result<PathBuf> {
+    let request_path = request_file_path(backend.paths(), store, request_id)?;
+    let request_dir = request_path
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| BeamError::Validation {
+            message: format!(
+                "request path {} has no parent directory",
+                request_path.display()
+            ),
+        })?;
+    backend.create_dir_all(&request_dir)?;
+
+    let mut request_file =
+        store
+            .requests
+            .get(&request_id)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "request_file",
+                id: request_id.to_string(),
+            })?;
+    let request_node = node_by_kind(store, request_id, NodeKind::Request)?;
+    if request_file.meta.request_id != request_id {
+        return Err(BeamError::Validation {
+            message: format!(
+                "request payload {} declared request_id {}",
+                request_id, request_file.meta.request_id
+            ),
+        });
+    }
+
+    request_file.meta.name = request_node.name.clone();
+    request_file.file_path = Some(request_path.clone());
+    backend.write_toml_file(&request_path, &request_file)?;
+    Ok(request_path)
+}
+
+pub fn write_root_order<B: StorageIoBackend>(backend: &B, store: &SharedStore) -> Result<PathBuf> {
+    backend.create_dir_all(&backend.paths().collections_dir)?;
+    backend.write_toml_file(
+        &backend.paths().collections_root_order_file,
+        &root_order_file(store),
+    )?;
+    Ok(backend.paths().collections_root_order_file.clone())
+}
+
+pub fn persist_collection_subtree<B: StorageIoBackend>(
+    backend: &B,
+    store: &SharedStore,
+    collection_id: ulid::Ulid,
+) -> Result<PathBuf> {
+    let manifest_path = write_collection_manifest(backend, store, collection_id)?;
+    write_request_payloads_in_subtree(backend, store, collection_id)?;
+    Ok(manifest_path)
+}
+
+pub fn persist_shared_tree<B: StorageIoBackend>(backend: &B, store: &SharedStore) -> Result<()> {
+    for collection_id in store.root_ids.iter().copied() {
+        persist_collection_subtree(backend, store, collection_id)?;
+    }
+    write_root_order(backend, store)?;
+    Ok(())
+}
+
+fn write_request_payloads_in_subtree<B: StorageIoBackend>(
+    backend: &B,
+    store: &SharedStore,
+    node_id: ulid::Ulid,
+) -> Result<()> {
+    let node = node_by_id(store, node_id)?;
+    match node.kind {
+        NodeKind::Collection | NodeKind::Folder => {
+            for child_id in node.children.iter().copied() {
+                write_request_payloads_in_subtree(backend, store, child_id)?;
+            }
+        }
+        NodeKind::Request => {
+            write_request_payload(backend, store, node_id)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
@@ -1303,8 +1420,16 @@ pub fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
         backend.paths().environments_dir.as_path(),
         backend.paths().local_dir.as_path(),
         backend.paths().local_dir.join("history").as_path(),
-        backend.paths().local_dir.join("history/by-request").as_path(),
-        backend.paths().local_dir.join("history/responses").as_path(),
+        backend
+            .paths()
+            .local_dir
+            .join("history/by-request")
+            .as_path(),
+        backend
+            .paths()
+            .local_dir
+            .join("history/responses")
+            .as_path(),
         backend.paths().local_dir.join("script_results").as_path(),
     ] {
         backend.create_dir_all(dir)?;
@@ -1364,17 +1489,9 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
         return Ok(store);
     }
 
-    let entries = std::fs::read_dir(collections_dir).map_err(|source| BeamError::Io {
-        path: collections_dir.clone(),
-        source,
-    })?;
+    let entries = backend.read_dir(collections_dir)?;
 
-    for entry in entries {
-        let entry = entry.map_err(|source| BeamError::Io {
-            path: collections_dir.clone(),
-            source,
-        })?;
-        let path = entry.path();
+    for path in entries {
         if !path.is_dir() {
             continue;
         }
@@ -1409,8 +1526,13 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
         store.root_ids.push(collection_id);
 
         let collection_dir = &path;
-        let child_ids =
-            load_manifest_children(backend, &mut store, &manifest.children, collection_id, collection_dir)?;
+        let child_ids = load_manifest_children(
+            backend,
+            &mut store,
+            &manifest.children,
+            collection_id,
+            collection_dir,
+        )?;
         if let Some(collection) = store.nodes.get_mut(&collection_id) {
             collection.children = child_ids;
         }
@@ -1438,11 +1560,14 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
     }
 
     // Load environment files into memory for O(1) lookups.
-    for root in [&backend.paths().environments_dir, &backend.paths().collections_dir] {
+    for root in [
+        &backend.paths().environments_dir,
+        &backend.paths().collections_dir,
+    ] {
         if !root.exists() {
             continue;
         }
-        if let Ok(()) = walk_files_recursive(root, |path| {
+        if let Ok(()) = walk_files_recursive(backend, root, |path| {
             if !path
                 .file_name()
                 .and_then(|name| name.to_str())
@@ -1451,10 +1576,9 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
                 return;
             }
             if let Ok(file) = backend.read_toml_file::<EnvironmentFile>(path) {
-                store.environments.insert(
-                    file.environment.environment_id,
-                    file.with_file_path(path),
-                );
+                store
+                    .environments
+                    .insert(file.environment.environment_id, file.with_file_path(path));
             }
         }) {}
     }
@@ -1493,7 +1617,8 @@ fn load_manifest_children<B: StorageIoBackend>(
             }
         } else if child.kind == NodeKind::Folder {
             let folder_dir = parent_dir.join(folder_dir_name(&child.name));
-            node_children = load_manifest_children(backend, store, &child.children, node_id, &folder_dir)?;
+            node_children =
+                load_manifest_children(backend, store, &child.children, node_id, &folder_dir)?;
         }
 
         store.nodes.insert(
@@ -1509,16 +1634,16 @@ fn load_manifest_children<B: StorageIoBackend>(
                 children: node_children,
             },
         );
-        store.name_index.insert(scope_key(Some(parent_id), &child.name), node_id);
+        store
+            .name_index
+            .insert(scope_key(Some(parent_id), &child.name), node_id);
         child_ids.push(node_id);
     }
     Ok(child_ids)
 }
 
-
-
 fn environment_file_path_for_name<B: StorageIoBackend>(
-    _backend: &B,
+    backend: &B,
     dir: &Path,
     environment_name: &str,
     exclude_path: Option<&Path>,
@@ -1526,15 +1651,7 @@ fn environment_file_path_for_name<B: StorageIoBackend>(
     let preferred_stem = slugify(environment_name);
     let excluded = exclude_path.and_then(|path| path.file_name().map(|name| name.to_owned()));
     let mut used_names = HashSet::new();
-    for entry in std::fs::read_dir(dir).map_err(|source| BeamError::Io {
-        path: dir.to_path_buf(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| BeamError::Io {
-            path: dir.to_path_buf(),
-            source,
-        })?;
-        let path = entry.path();
+    for path in backend.read_dir(dir)? {
         if !path.is_file() {
             continue;
         }
@@ -1564,22 +1681,14 @@ fn environment_file_path_for_name<B: StorageIoBackend>(
     }
 }
 
-fn walk_files_recursive<F>(root: &Path, mut visitor: F) -> Result<()>
+fn walk_files_recursive<B: StorageIoBackend, F>(backend: &B, root: &Path, mut visitor: F) -> Result<()>
 where
     F: FnMut(&Path),
 {
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir).map_err(|source| BeamError::Io {
-            path: dir.clone(),
-            source,
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|source| BeamError::Io {
-                path: dir.clone(),
-                source,
-            })?;
-            let path = entry.path();
+        let paths = backend.read_dir(&dir)?;
+        for path in paths {
             if path.is_dir() {
                 stack.push(path);
             } else if path.is_file() {
@@ -1626,19 +1735,21 @@ fn path_has_ancestor(store: &SharedStore, start_id: Ulid, ancestor_id: Ulid) -> 
     false
 }
 
-
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
     use crate::paths::BeamPaths;
-    use crate::storage::toml_backend::TomlWorkspaceStorage;
+    use crate::storage::fs_backend::FileSystemStorage;
     use tempfile::tempdir;
 
     #[test]
     fn bootstrap_creates_default_workspace_and_local_state_files() {
         let dir = tempdir().expect("tempdir");
-        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage = MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
 
         let report = storage.initialize().expect("initialize");
         assert!(report.created_workspace_file);
@@ -1650,11 +1761,13 @@ mod tests {
     #[test]
     fn initialize_does_not_validate_existing_workspace_or_local_state_files() {
         let dir = tempdir().expect("tempdir");
-        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage = MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
 
         let _report = storage.initialize().expect("initialize");
-        std::fs::write(&backend.paths.workspace_file, "not = valid = toml").expect("write workspace");
+        std::fs::write(&backend.paths.workspace_file, "not = valid = toml")
+            .expect("write workspace");
         std::fs::write(&backend.paths.local_state_file, "not = valid = toml")
             .expect("write local state");
 
@@ -1667,10 +1780,10 @@ mod tests {
     #[test]
     fn bootstrap_sample_workspace_if_needed_seeds_existing_empty_workspace() {
         let dir = tempdir().expect("tempdir");
-        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
 
         let mut storage =
-            MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
         storage.initialize().expect("initialize");
         storage
             .bootstrap_sample_workspace_if_needed()
@@ -1680,18 +1793,20 @@ mod tests {
             .read_toml_file(&backend.paths().local_state_file)
             .expect("load local state");
         assert!(local_state.local_state.last_opened_request_id.is_some());
-        assert!(backend
-            .paths
-            .collections_dir
-            .join("sample-collection")
-            .exists());
+        assert!(
+            backend
+                .paths
+                .collections_dir
+                .join("sample-collection")
+                .exists()
+        );
     }
 
     #[test]
     fn workspace_roundtrip_preserves_data() {
         let dir = tempdir().expect("tempdir");
-        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
 
         let workspace = WorkspaceFile::default();
         storage.save_workspace(&workspace).expect("save workspace");
@@ -1703,8 +1818,9 @@ mod tests {
     #[test]
     fn load_local_state_ignores_nested_expanded_and_selection_fields() {
         let dir = tempdir().expect("tempdir");
-        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage = MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
 
         let collection_id = Ulid::new();
         let environment_id = Ulid::new();
@@ -1722,8 +1838,10 @@ collection_id = "{collection_id}"
 environment_id = "{environment_id}"
 "#
         );
-        std::fs::create_dir_all(backend.paths().local_state_file.parent().unwrap()).expect("create beam_local dir");
-        std::fs::write(&backend.paths().local_state_file, local_state_toml).expect("write local state");
+        std::fs::create_dir_all(backend.paths().local_state_file.parent().unwrap())
+            .expect("create beam_local dir");
+        std::fs::write(&backend.paths().local_state_file, local_state_toml)
+            .expect("write local state");
 
         let loaded = storage.load_local_state().expect("load local state");
         assert!(loaded.tree_state.expanded_item_ids.is_empty());
@@ -1733,9 +1851,11 @@ environment_id = "{environment_id}"
     #[test]
     fn persist_theme_state_updates_theme_fields() {
         let dir = tempdir().expect("tempdir");
-        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         storage
             .persist_theme_state("One Dark")
@@ -1743,5 +1863,257 @@ environment_id = "{environment_id}"
         let loaded = storage.load_local_state().expect("load local state");
 
         assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
+    }
+
+    #[test]
+    fn request_toml_uses_explicit_auth_type_and_body_mode() {
+        use chrono::Utc;
+        use ulid::Ulid;
+
+        let request = RequestFile {
+            meta: RequestMeta {
+                request_id: Ulid::new(),
+                name: "Get User".to_string(),
+                description: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            request: RequestDefinition {
+                method: HttpMethod::Get,
+                url: "https://api.example.com/users/1".to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+            },
+            auth: AuthConfig::ApiKey {
+                key: Some("X-API-Key".to_string()),
+                value: Some("secret".to_string()),
+                location: crate::models::ApiKeyLocation::Header,
+            },
+            body: BodyConfig::Json {
+                text: "{\"name\":\"Alice\"}".to_string(),
+            },
+            scripts: ScriptConfig::default(),
+            file_path: None,
+        };
+
+        let encoded = toml::to_string_pretty(&request).expect("encode request");
+        assert!(encoded.contains("[auth]"));
+        assert!(encoded.contains("type = \"api_key\""));
+        assert!(encoded.contains("[body]"));
+        assert!(encoded.contains("mode = \"json\""));
+        assert!(!encoded.contains("last_response"));
+        assert!(!encoded.contains("collection_index"));
+        assert!(!encoded.contains("request_index"));
+    }
+
+    #[test]
+    fn persist_shared_tree_writes_root_order_manifest_and_requests() {
+        use crate::models::{AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta, ScriptConfig};
+        use crate::paths::COLLECTION_MANIFEST_FILE_NAME;
+        use crate::workspace_tree::{Node, NodeKind, request_file_name};
+        use chrono::Utc;
+
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        let first_collection_id = Ulid::new();
+        let second_collection_id = Ulid::new();
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let now = Utc::now();
+
+        let request_file = RequestFile {
+            meta: RequestMeta {
+                request_id,
+                name: "Outdated Name".to_string(),
+                description: Some("Request description".to_string()),
+                created_at: now,
+                updated_at: now,
+            },
+            request: RequestDefinition {
+                method: HttpMethod::Get,
+                url: "https://example.com/users".to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+            },
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            scripts: ScriptConfig::default(),
+            file_path: None,
+        };
+        let store = SharedStore {
+            nodes: HashMap::from([
+                (
+                    first_collection_id,
+                    Node {
+                        id: first_collection_id,
+                        name: "First".to_string(),
+                        kind: NodeKind::Collection,
+                        description: Some("First collection".to_string()),
+                        created_at: Some(now),
+                        updated_at: Some(now),
+                        parent_id: None,
+                        children: Vec::new(),
+                    },
+                ),
+                (
+                    second_collection_id,
+                    Node {
+                        id: second_collection_id,
+                        name: "Second".to_string(),
+                        kind: NodeKind::Collection,
+                        description: Some("Second collection".to_string()),
+                        created_at: Some(now),
+                        updated_at: Some(now),
+                        parent_id: None,
+                        children: vec![folder_id],
+                    },
+                ),
+                (
+                    folder_id,
+                    Node {
+                        id: folder_id,
+                        name: "Users".to_string(),
+                        kind: NodeKind::Folder,
+                        description: Some("Folder".to_string()),
+                        created_at: Some(now),
+                        updated_at: Some(now),
+                        parent_id: Some(second_collection_id),
+                        children: vec![request_id],
+                    },
+                ),
+                (
+                    request_id,
+                    Node {
+                        id: request_id,
+                        name: "Get Users".to_string(),
+                        kind: NodeKind::Request,
+                        description: Some("Request node".to_string()),
+                        created_at: Some(now),
+                        updated_at: Some(now),
+                        parent_id: Some(folder_id),
+                        children: Vec::new(),
+                    },
+                ),
+            ]),
+            requests: HashMap::from([(request_id, request_file)]),
+            root_ids: vec![second_collection_id, first_collection_id],
+            name_index: HashMap::new(),
+            environments: HashMap::new(),
+        };
+
+        persist_shared_tree(&backend, &store).expect("persist shared tree");
+
+        let manifest_path = paths
+            .collections_dir
+            .join("second")
+            .join(COLLECTION_MANIFEST_FILE_NAME);
+        let encoded_manifest = std::fs::read_to_string(&manifest_path).expect("read manifest");
+        let manifest: CollectionManifestFile =
+            toml::from_str(&encoded_manifest).expect("decode manifest");
+        assert_eq!(manifest.id, second_collection_id);
+        assert_eq!(manifest.children[0].id, folder_id);
+        assert_eq!(manifest.children[0].children[0].id, request_id);
+
+        let request_path = paths
+            .collections_dir
+            .join("second")
+            .join("users")
+            .join(request_file_name("Get Users"));
+        let encoded_request = std::fs::read_to_string(&request_path).expect("read request");
+        let persisted_request: RequestFile =
+            toml::from_str(&encoded_request).expect("decode request");
+        assert_eq!(persisted_request.meta.name, "Get Users");
+
+        let encoded_root_order =
+            std::fs::read_to_string(&paths.collections_root_order_file).expect("read root order");
+        let root_order: RootOrderFile =
+            toml::from_str(&encoded_root_order).expect("decode root order");
+        assert_eq!(
+            root_order.root_ids,
+            vec![second_collection_id, first_collection_id]
+        );
+    }
+
+    #[test]
+    fn load_full_shared_store_reads_manifest_and_request_files() {
+        use crate::models::{AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta, ScriptConfig};
+        use crate::workspace_tree::{CollectionManifestFile, ManifestNode, NodeKind};
+        use chrono::Utc;
+
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        backend.create_dir_all(&paths.collections_dir).unwrap();
+
+        let collection_id = Ulid::new();
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let manifest = CollectionManifestFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            id: collection_id,
+            name: "API".to_string(),
+            kind: NodeKind::Collection,
+            description: None,
+            created_at: None,
+            updated_at: None,
+            children: vec![ManifestNode {
+                id: folder_id,
+                name: "Users".to_string(),
+                kind: NodeKind::Folder,
+                description: None,
+                created_at: None,
+                updated_at: None,
+                children: vec![ManifestNode {
+                    id: request_id,
+                    name: "Get User".to_string(),
+                    kind: NodeKind::Request,
+                    description: None,
+                    created_at: None,
+                    updated_at: None,
+                    children: Vec::new(),
+                }],
+            }],
+        };
+
+        let collection_dir = paths.collections_dir.join("api");
+        backend.create_dir_all(&collection_dir).unwrap();
+        backend.write_toml_file(&collection_dir.join(COLLECTION_MANIFEST_FILE_NAME), &manifest).unwrap();
+
+        let request_file = RequestFile {
+            meta: RequestMeta {
+                request_id,
+                name: "Get User".to_string(),
+                description: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+            request: RequestDefinition {
+                method: HttpMethod::Get,
+                url: "https://example.com/users".to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+            },
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            scripts: ScriptConfig::default(),
+            file_path: None,
+        };
+        let request_path = collection_dir.join("users").join("get-user.request.toml");
+        backend.create_dir_all(request_path.parent().unwrap()).unwrap();
+        backend.write_toml_file(&request_path, &request_file).unwrap();
+
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        assert_eq!(storage.store.root_ids, vec![collection_id]);
+        assert_eq!(storage.store.nodes.len(), 3);
+        assert_eq!(storage.store.requests.len(), 1);
+        assert_eq!(
+            storage.store.nodes.get(&collection_id).unwrap().children,
+            vec![folder_id]
+        );
+        assert_eq!(
+            storage.store.nodes.get(&folder_id).unwrap().children,
+            vec![request_id]
+        );
     }
 }

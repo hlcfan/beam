@@ -1,12 +1,12 @@
 use beam::app_shell::{StartupLoad, start_data_sync_worker, startup_preload};
 use beam::paths::BeamPaths;
-use beam::storage::memory_backed::MemoryBackedStorage;
-use beam::storage::toml_backend::TomlWorkspaceStorage;
+use beam::storage::workspace_repo::WorkspaceRepository;
+use beam::storage::fs_backend::FileSystemStorage;
 use beam::ui::run_app;
 
 fn main() {
-    let backend = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
-    let mut memory_storage = MemoryBackedStorage::new(backend.clone())
+    let backend = FileSystemStorage::new(BeamPaths::default_user_config());
+    let mut memory_storage = WorkspaceRepository::new(backend.clone())
         .expect("failed to load workspace into memory");
 
     let report = match memory_storage.initialize() {

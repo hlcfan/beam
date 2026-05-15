@@ -15,4 +15,6 @@ pub trait StorageIoBackend: Send + 'static {
     fn rename(&self, from: &Path, to: &Path) -> Result<()>;
     fn remove_file(&self, path: &Path) -> Result<()>;
     fn remove_dir_all(&self, path: &Path) -> Result<()>;
+
+    fn read_dir(&self, path: &Path) -> Result<Vec<std::path::PathBuf>>;
 }
