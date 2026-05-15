@@ -28,7 +28,7 @@ fn main() {
         println!("Created beam.workspace.toml");
     }
     if report.created_local_state_file {
-        println!("Created .beam/local-state.toml");
+        println!("Created beam_local/local-state.toml");
     }
     if let Err(error) = memory_storage.bootstrap_sample_workspace_if_needed() {
         eprintln!("Failed to create sample workspace content: {error}");

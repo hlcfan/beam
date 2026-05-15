@@ -33,7 +33,13 @@ impl BeamPaths {
     }
 
     pub fn default_user_config() -> Self {
-        Self::from_root(default_root_from_home_dir(dirs::home_dir()))
+        let home_dir = dirs::home_dir();
+        let mut paths = Self::from_root(default_root_from_home_dir(home_dir.clone()));
+        paths.local_dir = home_dir
+            .map(|home| home.join("beam_local"))
+            .unwrap_or_else(|| PathBuf::from("./beam_local"));
+        paths.local_state_file = paths.local_dir.join("local-state.toml");
+        paths
     }
 }
 

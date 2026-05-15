@@ -249,7 +249,7 @@ collection_id = "{collection_id}"
 environment_id = "{environment_id}"
 "#
         );
-        fs::create_dir_all(storage.paths.local_state_file.parent().unwrap()).expect("create .beam dir");
+        fs::create_dir_all(storage.paths.local_state_file.parent().unwrap()).expect("create beam_local dir");
         fs::write(&storage.paths.local_state_file, local_state_toml).expect("write local state");
 
         let loaded = storage.load_local_state().expect("load local state");
