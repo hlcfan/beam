@@ -18,7 +18,7 @@ use crate::paths::BeamPaths;
 use crate::storage::RequestParentRef;
 use crate::storage::{
     CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
-    DuplicateRequestInput, RenameRequestInput, WorkspaceStorage,
+    DuplicateRequestInput, MoveRequestInput, RenameRequestInput, WorkspaceStorage,
 };
 use crate::storage::io_backend::StorageIoBackend;
 use crate::storage::memory_backed::MemoryBackedStorage;
@@ -423,6 +423,38 @@ impl CollectionsTreeState {
         true
     }
 
+    pub fn move_request_node(
+        &mut self,
+        request_id: Ulid,
+        new_parent_id: Ulid,
+        insertion_index: usize,
+    ) -> bool {
+        let Some(node) = self.nodes.get(&request_id) else {
+            return false;
+        };
+        if node.kind != TreeNodeKind::Request {
+            return false;
+        }
+        let old_parent_id = node.parent_id;
+
+        if let Some(old_parent_id) = old_parent_id {
+            if let Some(old_parent) = self.nodes.get_mut(&old_parent_id) {
+                old_parent.children.retain(|id| *id != request_id);
+            }
+        }
+
+        if let Some(new_parent) = self.nodes.get_mut(&new_parent_id) {
+            let index = insertion_index.min(new_parent.children.len());
+            new_parent.children.insert(index, request_id);
+        }
+
+        if let Some(node) = self.nodes.get_mut(&request_id) {
+            node.parent_id = Some(new_parent_id);
+        }
+
+        true
+    }
+
     pub fn remove_request(&mut self, request_id: Ulid) -> bool {
         let Some(node) = self.nodes.get(&request_id) else {
             return false;
@@ -713,6 +745,39 @@ impl AppShellState {
         let _ = self.shared_store.rebuild_name_index();
     }
 
+    pub fn move_request_in_shared_store(
+        &mut self,
+        request_id: Ulid,
+        new_parent_id: Ulid,
+        insertion_index: usize,
+    ) {
+        let previous_parent_id = self
+            .shared_store
+            .nodes
+            .get(&request_id)
+            .and_then(|node| node.parent_id);
+
+        if let Some(previous_parent_id) = previous_parent_id
+            && let Some(previous_parent) = self.shared_store.nodes.get_mut(&previous_parent_id)
+        {
+            previous_parent
+                .children
+                .retain(|child_id| *child_id != request_id);
+        }
+
+        if let Some(new_parent) = self.shared_store.nodes.get_mut(&new_parent_id) {
+            new_parent.children.retain(|child_id| *child_id != request_id);
+            let index = insertion_index.min(new_parent.children.len());
+            new_parent.children.insert(index, request_id);
+        }
+
+        if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
+            node.parent_id = Some(new_parent_id);
+        }
+
+        let _ = self.shared_store.rebuild_name_index();
+    }
+
     pub fn apply_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::SyncStarted { operation, .. } => {
@@ -807,6 +872,41 @@ impl AppShellState {
                 }
                 self.request_pane_data.remove(request_id);
                 let _ = self.collections.remove_request(*request_id);
+            }
+            AppEvent::RequestMoved {
+                request,
+                new_parent_id,
+                insertion_index,
+                ..
+            } => {
+                self.shared_store
+                    .requests
+                    .insert(request.meta.request_id, request.clone());
+                if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
+                    node.name = request.meta.name.clone();
+                }
+                self.move_request_in_shared_store(
+                    request.meta.request_id,
+                    *new_parent_id,
+                    *insertion_index,
+                );
+                self.request_pane_data.insert(
+                    request.meta.request_id,
+                    RequestPaneData {
+                        method: request.request.method,
+                        url: request.request.url.clone(),
+                        headers: request.request.headers.clone(),
+                        query_params: request.request.query_params.clone(),
+                        auth: request.auth.clone(),
+                        body: request.body.clone(),
+                        post_script: request.scripts.post_response.clone(),
+                    },
+                );
+                let _ = self.collections.move_request_node(
+                    request.meta.request_id,
+                    *new_parent_id,
+                    *insertion_index,
+                );
             }
             AppEvent::CollectionUpserted { collection, manifest_path, .. } => {
                 let collection_id = collection.collection_id;
@@ -986,6 +1086,7 @@ pub enum AppOperation {
     UpdateRequest,
     SaveRequest,
     DeleteRequest,
+    MoveRequest,
     CreateFolder,
     RenameCollection,
     RenameFolder,
@@ -1008,6 +1109,7 @@ impl AppOperation {
             AppOperation::UpdateRequest => "update_request",
             AppOperation::SaveRequest => "save_request",
             AppOperation::DeleteRequest => "delete_request",
+            AppOperation::MoveRequest => "move_request",
             AppOperation::CreateFolder => "create_folder",
             AppOperation::RenameCollection => "rename_collection",
             AppOperation::RenameFolder => "rename_folder",
@@ -1069,6 +1171,10 @@ pub enum AppCommand {
         input: DeleteRequestInput,
         command_id: String,
     },
+    MoveRequest {
+        input: MoveRequestInput,
+        command_id: String,
+    },
     CreateFolder {
         input: CreateFolderInput,
         command_id: String,
@@ -1112,6 +1218,7 @@ impl AppCommand {
             | AppCommand::UpdateRequest { command_id, .. }
             | AppCommand::SaveRequest { command_id, .. }
             | AppCommand::DeleteRequest { command_id, .. }
+            | AppCommand::MoveRequest { command_id, .. }
             | AppCommand::CreateFolder { command_id, .. }
             | AppCommand::RenameCollection { command_id, .. }
             | AppCommand::RenameFolder { command_id, .. }
@@ -1136,6 +1243,7 @@ impl AppCommand {
             AppCommand::UpdateRequest { .. } => AppOperation::UpdateRequest,
             AppCommand::SaveRequest { .. } => AppOperation::SaveRequest,
             AppCommand::DeleteRequest { .. } => AppOperation::DeleteRequest,
+            AppCommand::MoveRequest { .. } => AppOperation::MoveRequest,
             AppCommand::CreateFolder { .. } => AppOperation::CreateFolder,
             AppCommand::RenameCollection { .. } => AppOperation::RenameCollection,
             AppCommand::RenameFolder { .. } => AppOperation::RenameFolder,
@@ -1166,6 +1274,12 @@ pub enum AppEvent {
     },
     RequestDeleted {
         request_id: Ulid,
+        command_id: String,
+    },
+    RequestMoved {
+        request: RequestFile,
+        new_parent_id: Ulid,
+        insertion_index: usize,
         command_id: String,
     },
     SyncFailed {
@@ -1395,6 +1509,7 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
         }
         AppCommand::DeleteEnvironment { .. }
         | AppCommand::DeleteRequest { .. }
+        | AppCommand::MoveRequest { .. }
         | AppCommand::DeleteCollection { .. }
         | AppCommand::DeleteFolder { .. }
         | AppCommand::ReorderCollection { .. } => {}
@@ -1534,6 +1649,19 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestDeleted {
                 request_id: input.request_id,
+                command_id,
+            }])
+        }
+        AppCommand::MoveRequest { input, command_id } => {
+            let new_parent_id = input.new_parent.folder_id.unwrap_or(input.new_parent.collection_id);
+            let insertion_index = input.insertion_index;
+            let moved = storage
+                .move_request(input)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::RequestMoved {
+                request: moved,
+                new_parent_id,
+                insertion_index,
                 command_id,
             }])
         }

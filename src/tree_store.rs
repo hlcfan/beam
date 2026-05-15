@@ -139,6 +139,68 @@ pub fn root_collection_id_of(store: &SharedStore, node_id: NodeId) -> Option<Nod
     }
 }
 
+pub fn ensure_parent_kind(store: &SharedStore, parent_id: NodeId) -> Result<NodeKind> {
+    let parent = store
+        .nodes
+        .get(&parent_id)
+        .ok_or_else(|| BeamError::NotFound {
+            entity: "parent_node",
+            id: parent_id.to_string(),
+        })?;
+    match parent.kind {
+        NodeKind::Collection | NodeKind::Folder => Ok(parent.kind),
+        NodeKind::Request => Err(BeamError::Validation {
+            message: format!("request node {parent_id} cannot accept child nodes"),
+        }),
+    }
+}
+
+pub fn apply_child_move(
+    store: &mut SharedStore,
+    child_id: NodeId,
+    source_parent_id: NodeId,
+    destination_parent_id: NodeId,
+    insertion_index: usize,
+) -> Result<()> {
+    let removed_index = {
+        let source_parent = store
+            .nodes
+            .get_mut(&source_parent_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "source_parent",
+                id: source_parent_id.to_string(),
+            })?;
+        let index = source_parent
+            .children
+            .iter()
+            .position(|id| *id == child_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "child_in_source_parent",
+                id: child_id.to_string(),
+            })?;
+        source_parent.children.remove(index);
+        index
+    };
+
+    let adjusted_index =
+        if source_parent_id == destination_parent_id && removed_index < insertion_index {
+            insertion_index.saturating_sub(1)
+        } else {
+            insertion_index
+        };
+
+    let destination_parent = store
+        .nodes
+        .get_mut(&destination_parent_id)
+        .ok_or_else(|| BeamError::NotFound {
+            entity: "destination_parent",
+            id: destination_parent_id.to_string(),
+        })?;
+    let index = adjusted_index.min(destination_parent.children.len());
+    destination_parent.children.insert(index, child_id);
+    Ok(())
+}
+
 fn normalize_name(name: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {

@@ -6,7 +6,7 @@ pub mod toml_backend;
 
 use crate::error::Result;
 use crate::models::{
-    EnvironmentScope, LocalStateFile, RequestFile, WorkspaceFile,
+    EnvironmentScope, LocalStateFile, WorkspaceFile,
 };
 use ulid::Ulid;
 
@@ -111,6 +111,4 @@ pub trait WorkspaceStorage {
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()>;
     fn load_local_state(&self) -> Result<LocalStateFile>;
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()>;
-    fn move_request(&self, input: MoveRequestInput) -> Result<RequestFile>;
-    fn move_folder(&self, input: MoveFolderInput) -> Result<crate::models::FolderFile>;
 }

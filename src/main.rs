@@ -6,9 +6,11 @@ use beam::storage::toml_backend::TomlWorkspaceStorage;
 use beam::ui::run_app;
 
 fn main() {
-    let storage = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
+    let backend = TomlWorkspaceStorage::new(BeamPaths::default_user_config());
+    let mut memory_storage = MemoryBackedStorage::new(backend.clone())
+        .expect("failed to load workspace into memory");
 
-    let report = match storage.initialize() {
+    let report = match backend.initialize() {
         Ok(report) => report,
         Err(error) => {
             eprintln!("Failed to initialize Beam foundation: {error}");
@@ -19,7 +21,7 @@ fn main() {
     // TODO: no need to log this.
     println!(
         "Beam foundation initialized at {}",
-        storage.paths.root.display()
+        backend.paths.root.display()
     );
 
     // TODO: no need to log this.
@@ -29,12 +31,13 @@ fn main() {
     if report.created_local_state_file {
         println!("Created .beam/local-state.toml");
     }
-    if let Err(error) = storage.bootstrap_sample_workspace_if_needed() {
+    if let Err(error) = memory_storage.bootstrap_sample_workspace_if_needed() {
         eprintln!("Failed to create sample workspace content: {error}");
         std::process::exit(1);
     }
+
     // TODO: check if this func can be called on storage itself.
-    match startup_preload(&storage, &storage.paths) {
+    match startup_preload(&backend, &backend.paths) {
         StartupLoad::Ready { state, messages } => {
             // TODO: delete these log.
             println!(
@@ -50,9 +53,6 @@ fn main() {
             for message in &messages {
                 eprintln!("[startup warning] {}", message.text);
             }
-            let backend = storage.clone();
-            let memory_storage = MemoryBackedStorage::new(backend)
-                .expect("failed to load workspace into memory");
             let sync_runtime = start_data_sync_worker(memory_storage);
             run_app(state, messages, sync_runtime);
         }

@@ -45,6 +45,7 @@ use crate::script::{
     ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult,
     ScriptRuntimeResponse, TestResult, execute_post_request_script,
 };
+use crate::storage::memory_backed::MemoryBackedStorage;
 use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
     CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
@@ -3636,16 +3637,29 @@ impl BeamView {
             }
         }
 
-        if let TreeMoveAction::ReorderCollection(input) = action {
-            let command = AppCommand::ReorderCollection {
-                collection_id: input.collection_id,
-                insertion_index: input.insertion_index,
-                command_id: next_command_id(),
-            };
-            if let Err(error) = self.publish_app_command(command) {
-                window.push_notification(error, cx);
+        match action {
+            TreeMoveAction::ReorderCollection(input) => {
+                let command = AppCommand::ReorderCollection {
+                    collection_id: input.collection_id,
+                    insertion_index: input.insertion_index,
+                    command_id: next_command_id(),
+                };
+                if let Err(error) = self.publish_app_command(command) {
+                    window.push_notification(error, cx);
+                }
+                return;
             }
-            return;
+            TreeMoveAction::MoveRequest(input) => {
+                let command = AppCommand::MoveRequest {
+                    input,
+                    command_id: next_command_id(),
+                };
+                if let Err(error) = self.publish_app_command(command) {
+                    window.push_notification(error, cx);
+                }
+                return;
+            }
+            TreeMoveAction::MoveFolder(_) => {}
         }
 
         let paths = BeamPaths::default_user_config();
@@ -3654,13 +3668,13 @@ impl BeamView {
             let result: std::result::Result<(), String> = cx
                 .background_executor()
                 .spawn(async move {
-                    let storage = TomlWorkspaceStorage::new(paths);
+                    let backend = TomlWorkspaceStorage::new(paths);
+                    let mut storage = MemoryBackedStorage::new(backend)
+                        .map_err(|error| format!("Failed to load workspace: {error}"))?;
                     match action {
-                        TreeMoveAction::ReorderCollection(_) => unreachable!(),
-                        TreeMoveAction::MoveRequest(input) => storage
-                            .move_request(input)
-                            .map(|_| ())
-                            .map_err(|error| format!("Failed to move request: {error}")),
+                        TreeMoveAction::ReorderCollection(_) | TreeMoveAction::MoveRequest(_) => {
+                            unreachable!()
+                        }
                         TreeMoveAction::MoveFolder(input) => storage
                             .move_folder(input)
                             .map(|_| ())
@@ -4257,6 +4271,28 @@ impl BeamView {
                     self.request_file_index.remove(request_id);
                     self.shell.apply_event(&event);
                     if deleted_selected {
+                        should_sync_editor = true;
+                    }
+                }
+                AppEvent::RequestMoved {
+                    request,
+                    new_parent_id: _,
+                    insertion_index: _,
+                    ..
+                } => {
+                    if let Some(path) = request.file_path.clone() {
+                        self.request_file_index
+                            .insert(request.meta.request_id, path);
+                    }
+                    if self
+                        .active_request_cache
+                        .as_ref()
+                        .is_some_and(|cached| cached.meta.request_id == request.meta.request_id)
+                    {
+                        self.active_request_cache = Some(request.clone());
+                    }
+                    self.shell.apply_event(&event);
+                    if self.shell.collections.selected_request_id() == Some(request.meta.request_id) {
                         should_sync_editor = true;
                     }
                 }

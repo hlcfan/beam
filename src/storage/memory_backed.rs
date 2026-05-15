@@ -6,21 +6,22 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    CollectionFile, EnvironmentFile, EnvironmentMeta, EnvironmentScope, EnvironmentVariable,
-    FolderFile, FolderMeta, HeaderField, HttpMethod, QueryParamField, RequestDefinition,
-    RequestFile, RequestMeta, ScriptConfig,
+    AuthConfig, BodyConfig, CollectionFile, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
+    EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, LocalStateFile,
+    QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
 };
-use crate::schema::SCHEMA_VERSION_V1;
+use crate::schema::{SchemaKind, SCHEMA_VERSION_V1, validate_schema_version};
 use crate::storage::{
     CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
-    DuplicateRequestInput, RenameRequestInput, ReorderCollectionInput,
+    DuplicateRequestInput, MoveFolderInput, MoveRequestInput, RenameRequestInput, ReorderCollectionInput,
 };
 use crate::storage::io_backend::StorageIoBackend;
 use crate::tree_store::{
     COLLECTION_MANIFEST_FILE_NAME, CollectionManifestFile, ManifestNode, Node, NodeKind,
-    RootOrderFile, SharedStore, collection_dir_path,
-    collection_manifest_from_store, find_unique_name, folder_dir_name, folder_dir_path,
-    request_file_name, request_file_path, root_collection_id_of, scope_key,
+    RootOrderFile, SharedStore, apply_child_move, assert_name_unique, collection_dir_path,
+    collection_manifest_from_store, ensure_parent_kind, find_unique_name, folder_dir_name,
+    folder_dir_path, persist_shared_tree, request_file_name, request_file_path, root_collection_id_of,
+    scope_key,
 };
 
 pub struct MemoryBackedStorage<B: StorageIoBackend> {
@@ -30,8 +31,86 @@ pub struct MemoryBackedStorage<B: StorageIoBackend> {
 
 impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     pub fn new(backend: B) -> Result<Self> {
+        create_required_dirs(&backend)?;
         let store = load_full_shared_store(&backend)?;
         Ok(Self { backend, store })
+    }
+
+    pub fn bootstrap_sample_workspace_if_needed(&mut self) -> Result<()> {
+        if !self.store.root_ids.is_empty() {
+            return Ok(());
+        }
+        let local_state: LocalStateFile =
+            self.backend.read_toml_file(&self.backend.paths().local_state_file)?;
+        validate_schema_version(SchemaKind::LocalState, local_state.schema_version)?;
+        if local_state.local_state.last_opened_request_id.is_some() {
+            return Ok(());
+        }
+
+        let now = Utc::now();
+        let collection_id = Ulid::new();
+        let request_id = Ulid::new();
+        self.store.root_ids.push(collection_id);
+        self.store.nodes.insert(
+            collection_id,
+            Node {
+                id: collection_id,
+                name: "Sample Collection".to_string(),
+                kind: NodeKind::Collection,
+                description: Some("Try Beam with a sample GET request.".to_string()),
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: None,
+                children: vec![request_id],
+            },
+        );
+        self.store.nodes.insert(
+            request_id,
+            Node {
+                id: request_id,
+                name: "Sample Request".to_string(),
+                kind: NodeKind::Request,
+                description: Some(
+                    "Calls httpbin.org/get so you can send a request right away.".to_string(),
+                ),
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: Some(collection_id),
+                children: Vec::new(),
+            },
+        );
+        self.store.requests.insert(
+            request_id,
+            RequestFile {
+                meta: RequestMeta {
+                    request_id,
+                    name: "Sample Request".to_string(),
+                    description: Some(
+                        "Calls httpbin.org/get so you can send a request right away.".to_string(),
+                    ),
+                    created_at: now,
+                    updated_at: now,
+                },
+                request: RequestDefinition {
+                    method: crate::models::HttpMethod::Get,
+                    url: "https://httpbin.org/get".to_string(),
+                    headers: Vec::new(),
+                    query_params: Vec::new(),
+                },
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                scripts: ScriptConfig::default(),
+                file_path: None,
+            },
+        );
+        self.store.rebuild_name_index();
+        persist_shared_tree(self.backend.paths(), &self.store)?;
+
+        let mut local_state = local_state;
+        local_state.local_state.last_opened_request_id = Some(request_id);
+        local_state.local_state.updated_at = now;
+        self.backend
+            .write_toml_file(&self.backend.paths().local_state_file, &local_state)
     }
 
     pub fn load_request(&self, request_id: Ulid) -> Result<RequestFile> {
@@ -368,6 +447,240 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         }
 
         Ok(())
+    }
+
+    pub fn move_request(&mut self, input: MoveRequestInput) -> Result<RequestFile> {
+        let request_node = self
+            .store
+            .nodes
+            .get(&input.request_id)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "request",
+                id: input.request_id.to_string(),
+            })?;
+        if request_node.kind != NodeKind::Request {
+            return Err(BeamError::Validation {
+                message: format!("node {} is not a request", input.request_id),
+            });
+        }
+        let source_parent_id = request_node.parent_id.ok_or_else(|| BeamError::Validation {
+            message: format!("request node {} is missing parent_id", input.request_id),
+        })?;
+        let destination_parent_id = input
+            .new_parent
+            .folder_id
+            .unwrap_or(input.new_parent.collection_id);
+
+        ensure_parent_kind(&self.store, destination_parent_id)?;
+        assert_name_unique(
+            &self.store.name_index,
+            Some(destination_parent_id),
+            &request_node.name,
+            Some(input.request_id),
+        )
+        .map_err(|_| BeamError::Validation {
+            message: format!(
+                "A request named '{}' already exists in this scope",
+                request_node.name
+            ),
+        })?;
+
+        let old_request_path =
+            request_file_path(self.backend.paths(), &self.store, input.request_id)?;
+
+        if source_parent_id != destination_parent_id {
+            self.store
+                .name_index
+                .remove(&scope_key(Some(source_parent_id), &request_node.name));
+        }
+
+        apply_child_move(
+            &mut self.store,
+            input.request_id,
+            source_parent_id,
+            destination_parent_id,
+            input.insertion_index,
+        )?;
+        if let Some(node) = self.store.nodes.get_mut(&input.request_id) {
+            node.parent_id = Some(destination_parent_id);
+        }
+        if source_parent_id != destination_parent_id {
+            self.store.name_index.insert(
+                scope_key(Some(destination_parent_id), &request_node.name),
+                input.request_id,
+            );
+        }
+
+        let new_request_path =
+            request_file_path(self.backend.paths(), &self.store, input.request_id)?;
+        if new_request_path != old_request_path {
+            if let Some(parent_dir) = new_request_path.parent() {
+                self.backend.create_dir_all(parent_dir)?;
+            }
+            self.backend.rename(&old_request_path, &new_request_path)?;
+        }
+
+        let source_collection_id =
+            root_collection_id_of(&self.store, source_parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: source_parent_id.to_string(),
+            })?;
+        let destination_collection_id =
+            root_collection_id_of(&self.store, destination_parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_request_parent",
+                id: destination_parent_id.to_string(),
+            })?;
+
+        for collection_id in [source_collection_id, destination_collection_id] {
+            let collection_dir = collection_dir_path(self.backend.paths(), &self.store, collection_id)?;
+            self.backend.create_dir_all(&collection_dir)?;
+            let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+            let manifest = collection_manifest_from_store(&self.store, collection_id)?;
+            self.backend.write_toml_file(&manifest_path, &manifest)?;
+        }
+
+        let mut request_file = self
+            .store
+            .requests
+            .get(&input.request_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "request_file",
+                id: input.request_id.to_string(),
+            })?
+            .clone();
+        request_file.file_path = Some(new_request_path.clone());
+        self.store
+            .requests
+            .insert(input.request_id, request_file.clone());
+
+        Ok(request_file)
+    }
+
+    pub fn move_folder(&mut self, input: MoveFolderInput) -> Result<FolderFile> {
+        let folder_node = self
+            .store
+            .nodes
+            .get(&input.folder_id)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "folder",
+                id: input.folder_id.to_string(),
+            })?;
+        if folder_node.kind != NodeKind::Folder {
+            return Err(BeamError::Validation {
+                message: format!("node {} is not a folder", input.folder_id),
+            });
+        }
+        let source_parent_id = folder_node.parent_id.ok_or_else(|| BeamError::Validation {
+            message: format!("folder node {} is missing parent_id", input.folder_id),
+        })?;
+        let destination_parent_id = input
+            .new_parent
+            .parent_folder_id
+            .unwrap_or(input.new_parent.collection_id);
+        ensure_parent_kind(&self.store, destination_parent_id)?;
+        if destination_parent_id == input.folder_id
+            || path_has_ancestor(&self.store, destination_parent_id, input.folder_id)
+        {
+            return Err(BeamError::Validation {
+                message: "Cannot move a folder into itself or its own descendant.".to_string(),
+            });
+        }
+        assert_name_unique(
+            &self.store.name_index,
+            Some(destination_parent_id),
+            &folder_node.name,
+            Some(input.folder_id),
+        )
+        .map_err(|_| BeamError::Validation {
+            message: format!(
+                "A folder named '{}' already exists in this scope",
+                folder_node.name
+            ),
+        })?;
+
+        let old_folder_dir = folder_dir_path(self.backend.paths(), &self.store, input.folder_id)?;
+
+        if source_parent_id != destination_parent_id {
+            self.store
+                .name_index
+                .remove(&scope_key(Some(source_parent_id), &folder_node.name));
+        }
+        apply_child_move(
+            &mut self.store,
+            input.folder_id,
+            source_parent_id,
+            destination_parent_id,
+            input.insertion_index,
+        )?;
+        if let Some(node) = self.store.nodes.get_mut(&input.folder_id) {
+            node.parent_id = Some(destination_parent_id);
+        }
+        if source_parent_id != destination_parent_id {
+            self.store.name_index.insert(
+                scope_key(Some(destination_parent_id), &folder_node.name),
+                input.folder_id,
+            );
+        }
+
+        let new_folder_dir = folder_dir_path(self.backend.paths(), &self.store, input.folder_id)?;
+        if new_folder_dir != old_folder_dir {
+            if let Some(parent_dir) = new_folder_dir.parent() {
+                self.backend.create_dir_all(parent_dir)?;
+            }
+            self.backend.rename(&old_folder_dir, &new_folder_dir)?;
+        }
+
+        let source_collection_id =
+            root_collection_id_of(&self.store, source_parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder_parent",
+                id: source_parent_id.to_string(),
+            })?;
+        let destination_collection_id =
+            root_collection_id_of(&self.store, destination_parent_id).ok_or_else(|| BeamError::NotFound {
+                entity: "collection_for_folder_parent",
+                id: destination_parent_id.to_string(),
+            })?;
+
+        for collection_id in [source_collection_id, destination_collection_id] {
+            let collection_dir = collection_dir_path(self.backend.paths(), &self.store, collection_id)?;
+            self.backend.create_dir_all(&collection_dir)?;
+            let manifest_path = collection_dir.join(COLLECTION_MANIFEST_FILE_NAME);
+            let manifest = collection_manifest_from_store(&self.store, collection_id)?;
+            self.backend.write_toml_file(&manifest_path, &manifest)?;
+        }
+
+        let manifest_path = collection_dir_path(
+            self.backend.paths(),
+            &self.store,
+            destination_collection_id,
+        )?
+        .join(COLLECTION_MANIFEST_FILE_NAME);
+
+        Ok(FolderFile {
+            folder: FolderMeta {
+                folder_id: input.folder_id,
+                collection_id: destination_collection_id,
+                parent_folder_id: if self
+                    .store
+                    .nodes
+                    .get(&destination_parent_id)
+                    .map(|n| n.kind)
+                    == Some(NodeKind::Folder)
+                {
+                    Some(destination_parent_id)
+                } else {
+                    None
+                },
+                name: folder_node.name,
+                description: folder_node.description,
+                created_at: folder_node.created_at.unwrap_or_else(Utc::now),
+                updated_at: folder_node.updated_at.unwrap_or_else(Utc::now),
+            },
+            items: Vec::new(),
+            manifest_path: Some(manifest_path),
+        })
     }
 
     pub fn save_request(&mut self, request_file: &RequestFile) -> Result<()> {
@@ -914,6 +1227,22 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     }
 }
 
+fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
+    for dir in [
+        backend.paths().root.as_path(),
+        backend.paths().collections_dir.as_path(),
+        backend.paths().environments_dir.as_path(),
+        backend.paths().local_dir.as_path(),
+        backend.paths().local_dir.join("history").as_path(),
+        backend.paths().local_dir.join("history/by-request").as_path(),
+        backend.paths().local_dir.join("history/responses").as_path(),
+        backend.paths().local_dir.join("script_results").as_path(),
+    ] {
+        backend.create_dir_all(dir)?;
+    }
+    Ok(())
+}
+
 fn default_request_file(name: &str, method: HttpMethod, url: String) -> RequestFile {
     let now = Utc::now();
     RequestFile {
@@ -1210,5 +1539,53 @@ fn slugify(input: &str) -> String {
         "request".to_string()
     } else {
         normalized
+    }
+}
+
+fn path_has_ancestor(store: &SharedStore, start_id: Ulid, ancestor_id: Ulid) -> bool {
+    let mut cursor = Some(start_id);
+    let mut seen = HashSet::new();
+    while let Some(node_id) = cursor {
+        if node_id == ancestor_id {
+            return true;
+        }
+        if !seen.insert(node_id) {
+            return false;
+        }
+        cursor = store.nodes.get(&node_id).and_then(|node| node.parent_id);
+    }
+    false
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::BeamPaths;
+    use crate::storage::toml_backend::TomlWorkspaceStorage;
+    use crate::storage::WorkspaceStorage;
+    use tempfile::tempdir;
+
+    #[test]
+    fn bootstrap_sample_workspace_if_needed_seeds_existing_empty_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+
+        backend.initialize().expect("initialize");
+        let mut storage =
+            MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+        storage
+            .bootstrap_sample_workspace_if_needed()
+            .expect("bootstrap sample workspace");
+
+        let local_state: LocalStateFile = backend
+            .read_toml_file(&backend.paths().local_state_file)
+            .expect("load local state");
+        assert!(local_state.local_state.last_opened_request_id.is_some());
+        assert!(backend
+            .paths
+            .collections_dir
+            .join("sample-collection")
+            .exists());
     }
 }
