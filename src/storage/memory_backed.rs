@@ -14,6 +14,7 @@ use crate::schema::{SchemaKind, SCHEMA_VERSION_V1, validate_schema_version};
 use crate::storage::{
     BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
     DuplicateRequestInput, MoveFolderInput, MoveRequestInput, RenameRequestInput, ReorderCollectionInput,
+    WorkspaceStorage,
 };
 use crate::storage::io_backend::StorageIoBackend;
 use crate::tree_store::{
@@ -1241,6 +1242,58 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
 
         Ok(())
     }
+
+    pub fn load_workspace(&self) -> Result<WorkspaceFile> {
+        self.backend.read_toml_file(&self.backend.paths().workspace_file)
+    }
+
+    pub fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()> {
+        self.backend
+            .write_toml_file(&self.backend.paths().workspace_file, workspace_file)
+    }
+
+    pub fn load_local_state(&self) -> Result<LocalStateFile> {
+        self.backend.read_toml_file(&self.backend.paths().local_state_file)
+    }
+
+    pub fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
+        self.backend
+            .write_toml_file(&self.backend.paths().local_state_file, local_state_file)
+    }
+
+    pub fn persist_theme_state(&self, theme_name: &str) -> Result<()> {
+        let mut local_state = match self.load_local_state() {
+            Ok(state) => state,
+            Err(_) => LocalStateFile::default(),
+        };
+
+        let changed = local_state.local_state.theme_name.as_deref() != Some(theme_name);
+        if !changed {
+            return Ok(());
+        }
+
+        local_state.local_state.theme_name = Some(theme_name.to_string());
+        local_state.local_state.updated_at = Utc::now();
+        self.save_local_state(&local_state)
+    }
+}
+
+impl<B: StorageIoBackend> WorkspaceStorage for MemoryBackedStorage<B> {
+    fn load_workspace(&self) -> Result<WorkspaceFile> {
+        MemoryBackedStorage::load_workspace(self)
+    }
+
+    fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()> {
+        MemoryBackedStorage::save_workspace(self, workspace_file)
+    }
+
+    fn load_local_state(&self) -> Result<LocalStateFile> {
+        MemoryBackedStorage::load_local_state(self)
+    }
+
+    fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
+        MemoryBackedStorage::save_local_state(self, local_state_file)
+    }
 }
 
 pub fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
@@ -1632,5 +1685,63 @@ mod tests {
             .collections_dir
             .join("sample-collection")
             .exists());
+    }
+
+    #[test]
+    fn workspace_roundtrip_preserves_data() {
+        let dir = tempdir().expect("tempdir");
+        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
+
+        let workspace = WorkspaceFile::default();
+        storage.save_workspace(&workspace).expect("save workspace");
+        let loaded = storage.load_workspace().expect("load workspace");
+
+        assert_eq!(workspace, loaded);
+    }
+
+    #[test]
+    fn load_local_state_ignores_nested_expanded_and_selection_fields() {
+        let dir = tempdir().expect("tempdir");
+        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+
+        let collection_id = Ulid::new();
+        let environment_id = Ulid::new();
+        let expanded_id = Ulid::new();
+        let local_state_toml = format!(
+            r#"
+schema_version = 1
+
+[local_state]
+updated_at = "2026-01-01T00:00:00Z"
+expanded_item_ids = ["{expanded_id}"]
+
+[[local_state.collection_environment_selections]]
+collection_id = "{collection_id}"
+environment_id = "{environment_id}"
+"#
+        );
+        std::fs::create_dir_all(backend.paths().local_state_file.parent().unwrap()).expect("create beam_local dir");
+        std::fs::write(&backend.paths().local_state_file, local_state_toml).expect("write local state");
+
+        let loaded = storage.load_local_state().expect("load local state");
+        assert!(loaded.tree_state.expanded_item_ids.is_empty());
+        assert!(loaded.collection_environment_selection.is_empty());
+    }
+
+    #[test]
+    fn persist_theme_state_updates_theme_fields() {
+        let dir = tempdir().expect("tempdir");
+        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+
+        storage
+            .persist_theme_state("One Dark")
+            .expect("persist theme state");
+        let loaded = storage.load_local_state().expect("load local state");
+
+        assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
     }
 }

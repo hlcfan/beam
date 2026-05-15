@@ -35,8 +35,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    // TODO: check if this func can be called on storage itself.
-    match startup_preload(&backend, &backend.paths) {
+    match startup_preload(&memory_storage, &backend.paths) {
         StartupLoad::Ready { state, messages } => {
             // TODO: delete these log.
             println!(

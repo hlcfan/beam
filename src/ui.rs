@@ -50,7 +50,7 @@ use crate::storage::toml_backend::TomlWorkspaceStorage;
 use crate::storage::{
     CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
     FolderParentRef, KnownParentManifestPath, MoveFolderInput, MoveRequestInput,
-    RenameRequestInput, ReorderCollectionInput, RequestParentRef, WorkspaceStorage,
+    RenameRequestInput, ReorderCollectionInput, RequestParentRef,
 };
 
 actions!(
@@ -3955,7 +3955,8 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths.clone());
+        let backend = TomlWorkspaceStorage::new(paths.clone());
+        let storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
         match startup_preload(&storage, &paths) {
             StartupLoad::Ready { state, messages } => {
                 self.shell = state;
@@ -4082,7 +4083,9 @@ impl BeamView {
 
     fn persist_last_opened_request_id(&self, request_id: Ulid) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
+        let backend = TomlWorkspaceStorage::new(paths);
+        let storage = MemoryBackedStorage::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {
             Ok(state) => state,
             Err(_) => LocalStateFile::default(),
@@ -4101,7 +4104,9 @@ impl BeamView {
 
     fn persist_tree_expansion_state(&self) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
+        let backend = TomlWorkspaceStorage::new(paths);
+        let storage = MemoryBackedStorage::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {
             Ok(state) => state,
             Err(_) => LocalStateFile::default(),
@@ -4122,7 +4127,9 @@ impl BeamView {
 
     fn persist_environment_selection_state(&self) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
+        let backend = TomlWorkspaceStorage::new(paths);
+        let storage = MemoryBackedStorage::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {
             Ok(state) => state,
             Err(_) => LocalStateFile::default(),
@@ -4155,7 +4162,9 @@ impl BeamView {
 
     fn persist_theme_state_from_app(cx: &App) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
-        let storage = TomlWorkspaceStorage::new(paths);
+        let backend = TomlWorkspaceStorage::new(paths);
+        let storage = MemoryBackedStorage::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let active_theme_name = cx.theme().theme_name().to_string();
         storage
             .persist_theme_state(active_theme_name.as_str())

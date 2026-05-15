@@ -1,15 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
-
 use crate::error::{BeamError, Result};
-use crate::models::{LocalStateFile, WorkspaceFile};
 use crate::paths::BeamPaths;
-use crate::schema::{SchemaKind, validate_schema_version};
-use crate::storage::WorkspaceStorage;
-
-
 #[derive(Debug, Clone)]
 pub struct TomlWorkspaceStorage {
     pub paths: BeamPaths,
@@ -18,22 +11,6 @@ pub struct TomlWorkspaceStorage {
 impl TomlWorkspaceStorage {
     pub fn new(paths: BeamPaths) -> Self {
         Self { paths }
-    }
-
-    pub fn persist_theme_state(&self, theme_name: &str) -> Result<()> {
-        let mut local_state = match self.load_local_state() {
-            Ok(state) => state,
-            Err(_) => LocalStateFile::default(),
-        };
-
-        let changed = local_state.local_state.theme_name.as_deref() != Some(theme_name);
-        if !changed {
-            return Ok(());
-        }
-
-        local_state.local_state.theme_name = Some(theme_name.to_string());
-        local_state.local_state.updated_at = Utc::now();
-        self.save_local_state(&local_state)
     }
 
     fn write_toml_file<T: serde::Serialize>(&self, path: &Path, value: &T) -> Result<()> {
@@ -91,13 +68,6 @@ impl TomlWorkspaceStorage {
             source,
         })
     }
-
-
-
-
-
-
-
 }
 
 impl crate::storage::io_backend::StorageIoBackend for TomlWorkspaceStorage {
@@ -130,44 +100,6 @@ impl crate::storage::io_backend::StorageIoBackend for TomlWorkspaceStorage {
     }
 }
 
-impl WorkspaceStorage for TomlWorkspaceStorage {
-    fn load_workspace(&self) -> Result<WorkspaceFile> {
-        let content = self.read_toml_string(&self.paths.workspace_file)?;
-        let workspace: WorkspaceFile = self.parse_toml_str(&self.paths.workspace_file, &content)?;
-        validate_schema_version(SchemaKind::Workspace, workspace.schema_version)?;
-        Ok(workspace)
-    }
-
-    fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()> {
-        validate_schema_version(SchemaKind::Workspace, workspace_file.schema_version)?;
-        self.write_toml_file(&self.paths.workspace_file, workspace_file)
-    }
-
-    fn load_local_state(&self) -> Result<LocalStateFile> {
-        let content = self.read_toml_string(&self.paths.local_state_file)?;
-        let local_state: LocalStateFile =
-            self.parse_toml_str(&self.paths.local_state_file, &content)?;
-        validate_schema_version(SchemaKind::LocalState, local_state.schema_version)?;
-        Ok(local_state)
-    }
-
-    fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
-        validate_schema_version(SchemaKind::LocalState, local_state_file.schema_version)?;
-        self.write_toml_file(&self.paths.local_state_file, local_state_file)
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-}
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
@@ -215,61 +147,6 @@ mod tests {
 
     use chrono::Utc;
     use ulid::Ulid;
-
-    #[test]
-    fn workspace_roundtrip_preserves_data() {
-        let dir = tempdir().expect("tempdir");
-        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-
-        let workspace = WorkspaceFile::default();
-        storage.save_workspace(&workspace).expect("save workspace");
-        let loaded = storage.load_workspace().expect("load workspace");
-
-        assert_eq!(workspace, loaded);
-    }
-
-    #[test]
-    fn load_local_state_ignores_nested_expanded_and_selection_fields() {
-        let dir = tempdir().expect("tempdir");
-        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-
-        let collection_id = Ulid::new();
-        let environment_id = Ulid::new();
-        let expanded_id = Ulid::new();
-        let local_state_toml = format!(
-            r#"
-schema_version = 1
-
-[local_state]
-updated_at = "2026-01-01T00:00:00Z"
-expanded_item_ids = ["{expanded_id}"]
-
-[[local_state.collection_environment_selections]]
-collection_id = "{collection_id}"
-environment_id = "{environment_id}"
-"#
-        );
-        fs::create_dir_all(storage.paths.local_state_file.parent().unwrap()).expect("create beam_local dir");
-        fs::write(&storage.paths.local_state_file, local_state_toml).expect("write local state");
-
-        let loaded = storage.load_local_state().expect("load local state");
-        assert!(loaded.tree_state.expanded_item_ids.is_empty());
-        assert!(loaded.collection_environment_selection.is_empty());
-    }
-
-    #[test]
-    fn persist_theme_state_updates_theme_fields() {
-        let dir = tempdir().expect("tempdir");
-        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
-
-        storage
-            .persist_theme_state("One Dark")
-            .expect("persist theme state");
-        let loaded = storage.load_local_state().expect("load local state");
-
-        assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
-    }
 
     #[test]
     fn request_toml_uses_explicit_auth_type_and_body_mode() {
