@@ -7,10 +7,7 @@ use crate::error::{BeamError, Result};
 use crate::models::{LocalStateFile, WorkspaceFile};
 use crate::paths::BeamPaths;
 use crate::schema::{SchemaKind, validate_schema_version};
-use crate::storage::{
-    BootstrapReport,
-    WorkspaceStorage,
-};
+use crate::storage::WorkspaceStorage;
 
 
 #[derive(Debug, Clone)]
@@ -134,22 +131,6 @@ impl crate::storage::io_backend::StorageIoBackend for TomlWorkspaceStorage {
 }
 
 impl WorkspaceStorage for TomlWorkspaceStorage {
-    fn initialize(&self) -> Result<BootstrapReport> {
-        let mut report = BootstrapReport::default();
-
-        if !self.paths.workspace_file.exists() {
-            self.save_workspace(&WorkspaceFile::default())?;
-            report.created_workspace_file = true;
-        }
-
-        if !self.paths.local_state_file.exists() {
-            self.save_local_state(&LocalStateFile::default())?;
-            report.created_local_state_file = true;
-        }
-
-        Ok(report)
-    }
-
     fn load_workspace(&self) -> Result<WorkspaceFile> {
         let content = self.read_toml_string(&self.paths.workspace_file)?;
         let workspace: WorkspaceFile = self.parse_toml_str(&self.paths.workspace_file, &content)?;
@@ -236,23 +217,9 @@ mod tests {
     use ulid::Ulid;
 
     #[test]
-    fn bootstrap_creates_default_workspace_and_local_state_files() {
-        let dir = tempdir().expect("tempdir");
-        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-
-        let report = storage.initialize().expect("initialize");
-        assert!(report.created_workspace_file);
-        assert!(report.created_local_state_file);
-        assert!(storage.paths.workspace_file.exists());
-        assert!(storage.paths.local_state_file.exists());
-    }
-
-
-    #[test]
     fn workspace_roundtrip_preserves_data() {
         let dir = tempdir().expect("tempdir");
         let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        storage.initialize().expect("initialize");
 
         let workspace = WorkspaceFile::default();
         storage.save_workspace(&workspace).expect("save workspace");
@@ -265,7 +232,6 @@ mod tests {
     fn load_local_state_ignores_nested_expanded_and_selection_fields() {
         let dir = tempdir().expect("tempdir");
         let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        storage.initialize().expect("initialize");
 
         let collection_id = Ulid::new();
         let environment_id = Ulid::new();
@@ -283,6 +249,7 @@ collection_id = "{collection_id}"
 environment_id = "{environment_id}"
 "#
         );
+        fs::create_dir_all(storage.paths.local_state_file.parent().unwrap()).expect("create .beam dir");
         fs::write(&storage.paths.local_state_file, local_state_toml).expect("write local state");
 
         let loaded = storage.load_local_state().expect("load local state");
@@ -294,7 +261,7 @@ environment_id = "{environment_id}"
     fn persist_theme_state_updates_theme_fields() {
         let dir = tempdir().expect("tempdir");
         let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        storage.initialize().expect("initialize");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         storage
             .persist_theme_state("One Dark")
@@ -302,22 +269,6 @@ environment_id = "{environment_id}"
         let loaded = storage.load_local_state().expect("load local state");
 
         assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
-    }
-
-    #[test]
-    fn initialize_does_not_validate_existing_workspace_or_local_state_files() {
-        let dir = tempdir().expect("tempdir");
-        let storage = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-
-        let _report = storage.initialize().expect("initialize");
-        fs::write(&storage.paths.workspace_file, "not = valid = toml").expect("write workspace");
-        fs::write(&storage.paths.local_state_file, "not = valid = toml")
-            .expect("write local state");
-
-        let report = storage.initialize().expect("initialize");
-
-        assert!(!report.created_workspace_file);
-        assert!(!report.created_local_state_file);
     }
 
     #[test]

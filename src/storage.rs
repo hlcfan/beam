@@ -106,7 +106,6 @@ pub struct CreateEnvironmentInput {
 }
 
 pub trait WorkspaceStorage {
-    fn initialize(&self) -> Result<BootstrapReport>;
     fn load_workspace(&self) -> Result<WorkspaceFile>;
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()>;
     fn load_local_state(&self) -> Result<LocalStateFile>;

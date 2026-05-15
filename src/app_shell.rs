@@ -2876,9 +2876,10 @@ mod tests {
     fn environment_commands_propagate_to_shell_via_worker_events() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
-        let storage = TomlWorkspaceStorage::new(paths);
+        let backend = TomlWorkspaceStorage::new(paths);
+        let mut storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(MemoryBackedStorage::new(storage).expect("load workspace into memory"));
+        let runtime = start_data_sync_worker(storage);
         let mut state = AppShellState::default();
 
         let create_command_id = next_command_id();
@@ -2982,8 +2983,7 @@ mod tests {
     fn request_commands_emit_expected_worker_events() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
-        let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init storage");
+        let backend = TomlWorkspaceStorage::new(paths.clone());
         let collection_id = Ulid::new();
         let collection_dir = paths.collections_dir.join("sample");
         write_collection_manifest(
@@ -3000,7 +3000,9 @@ mod tests {
             },
         );
 
-        let runtime = start_data_sync_worker(MemoryBackedStorage::new(storage).expect("load workspace into memory"));
+        let mut storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("init storage");
+        let runtime = start_data_sync_worker(storage);
         let mut state = AppShellState::default();
         let parent = RequestParentRef {
             collection_id,
@@ -3203,9 +3205,10 @@ mod tests {
     fn worker_emits_sync_failed_for_invalid_payload_without_completion() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
-        let storage = TomlWorkspaceStorage::new(paths);
+        let backend = TomlWorkspaceStorage::new(paths);
+        let mut storage = MemoryBackedStorage::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(MemoryBackedStorage::new(storage).expect("load workspace into memory"));
+        let runtime = start_data_sync_worker(storage);
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
@@ -3326,7 +3329,8 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let folder_id = Ulid::new();
@@ -3401,7 +3405,8 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         storage
             .save_workspace(&WorkspaceFile::default())
@@ -3439,7 +3444,8 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         fs::write(paths.local_state_file.clone(), "not = valid = toml")
             .expect("corrupt local state");
@@ -3457,7 +3463,8 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let request_id = Ulid::new();
@@ -3627,7 +3634,8 @@ post_response = "console.log(response.status)"
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let folder_id = Ulid::new();
@@ -3702,7 +3710,8 @@ updated_at = "2026-01-01T00:00:00Z"
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let folder_id = Ulid::new();
@@ -3760,7 +3769,8 @@ updated_at = "2026-01-01T00:00:00Z"
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let collection_dir = paths.collections_dir.join("sample");
@@ -3804,7 +3814,8 @@ expanded_item_ids = ["{collection_id}"]
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let first_id = Ulid::new();
         let second_id = Ulid::new();
@@ -3851,7 +3862,8 @@ expanded_item_ids = ["{collection_id}"]
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let request_id = Ulid::new();
@@ -3899,7 +3911,8 @@ expanded_item_ids = ["{collection_id}"]
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let good_request_id = Ulid::new();
@@ -3992,7 +4005,8 @@ expanded_item_ids = ["{collection_id}"]
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let collection_id = Ulid::new();
         let duplicate_id = Ulid::new();
@@ -4067,7 +4081,8 @@ expanded_item_ids = ["{collection_id}"]
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let storage = TomlWorkspaceStorage::new(paths.clone());
-        storage.initialize().expect("init");
+        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
+        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
 
         let valid_collection_id = Ulid::new();
         write_collection_manifest(

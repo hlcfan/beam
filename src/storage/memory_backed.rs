@@ -8,11 +8,11 @@ use crate::error::{BeamError, Result};
 use crate::models::{
     AuthConfig, BodyConfig, CollectionFile, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
     EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, LocalStateFile,
-    QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
+    QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig, WorkspaceFile,
 };
 use crate::schema::{SchemaKind, SCHEMA_VERSION_V1, validate_schema_version};
 use crate::storage::{
-    CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
+    BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
     DuplicateRequestInput, MoveFolderInput, MoveRequestInput, RenameRequestInput, ReorderCollectionInput,
 };
 use crate::storage::io_backend::StorageIoBackend;
@@ -31,9 +31,25 @@ pub struct MemoryBackedStorage<B: StorageIoBackend> {
 
 impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     pub fn new(backend: B) -> Result<Self> {
-        create_required_dirs(&backend)?;
         let store = load_full_shared_store(&backend)?;
         Ok(Self { backend, store })
+    }
+
+    pub fn initialize(&self) -> Result<BootstrapReport> {
+        create_required_dirs(&self.backend)?;
+        let mut report = BootstrapReport::default();
+
+        if !self.backend.paths().workspace_file.exists() {
+            self.backend.write_toml_file(&self.backend.paths().workspace_file, &WorkspaceFile::default())?;
+            report.created_workspace_file = true;
+        }
+
+        if !self.backend.paths().local_state_file.exists() {
+            self.backend.write_toml_file(&self.backend.paths().local_state_file, &LocalStateFile::default())?;
+            report.created_local_state_file = true;
+        }
+
+        Ok(report)
     }
 
     pub fn bootstrap_sample_workspace_if_needed(&mut self) -> Result<()> {
@@ -1227,7 +1243,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
     }
 }
 
-fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
+pub fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
     for dir in [
         backend.paths().root.as_path(),
         backend.paths().collections_dir.as_path(),
@@ -1563,17 +1579,46 @@ mod tests {
     use super::*;
     use crate::paths::BeamPaths;
     use crate::storage::toml_backend::TomlWorkspaceStorage;
-    use crate::storage::WorkspaceStorage;
     use tempfile::tempdir;
+
+    #[test]
+    fn bootstrap_creates_default_workspace_and_local_state_files() {
+        let dir = tempdir().expect("tempdir");
+        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+
+        let report = storage.initialize().expect("initialize");
+        assert!(report.created_workspace_file);
+        assert!(report.created_local_state_file);
+        assert!(backend.paths.workspace_file.exists());
+        assert!(backend.paths.local_state_file.exists());
+    }
+
+    #[test]
+    fn initialize_does_not_validate_existing_workspace_or_local_state_files() {
+        let dir = tempdir().expect("tempdir");
+        let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+
+        let _report = storage.initialize().expect("initialize");
+        std::fs::write(&backend.paths.workspace_file, "not = valid = toml").expect("write workspace");
+        std::fs::write(&backend.paths.local_state_file, "not = valid = toml")
+            .expect("write local state");
+
+        let report = storage.initialize().expect("initialize");
+
+        assert!(!report.created_workspace_file);
+        assert!(!report.created_local_state_file);
+    }
 
     #[test]
     fn bootstrap_sample_workspace_if_needed_seeds_existing_empty_workspace() {
         let dir = tempdir().expect("tempdir");
         let backend = TomlWorkspaceStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
 
-        backend.initialize().expect("initialize");
         let mut storage =
             MemoryBackedStorage::new(backend.clone()).expect("load workspace into memory");
+        storage.initialize().expect("initialize");
         storage
             .bootstrap_sample_workspace_if_needed()
             .expect("bootstrap sample workspace");
