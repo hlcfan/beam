@@ -377,7 +377,7 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         self.backend.write_toml_file(&request_path, request_file)
     }
 
-    pub fn create_environment(&self, input: CreateEnvironmentInput) -> Result<EnvironmentFile> {
+    pub fn create_environment(&mut self, input: CreateEnvironmentInput) -> Result<EnvironmentFile> {
         let name = input.name.trim();
         if name.is_empty() {
             return Err(BeamError::Validation {
@@ -425,11 +425,14 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         }
         .with_file_path(&file_path);
         self.backend.write_toml_file(&file_path, &environment_file)?;
+        self.store
+            .environments
+            .insert(environment_file.environment.environment_id, environment_file.clone());
         Ok(environment_file)
     }
 
     pub fn rename_environment(
-        &self,
+        &mut self,
         environment_id: Ulid,
         new_name: &str,
     ) -> Result<EnvironmentFile> {
@@ -440,8 +443,24 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
             });
         }
 
-        let existing_path = find_environment_file_by_id(&self.backend, environment_id)?;
-        let mut environment_file = read_environment_file(&self.backend, &existing_path)?;
+        let mut environment_file = self
+            .store
+            .environments
+            .get(&environment_id)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "environment",
+                id: environment_id.to_string(),
+            })?;
+
+        let existing_path = environment_file
+            .file_path
+            .clone()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "environment_file_path",
+                id: environment_id.to_string(),
+            })?;
+
         environment_file.environment.name = next_name.to_string();
         environment_file.environment.updated_at = Utc::now();
         if environment_file.environment.file_name.trim().is_empty() {
@@ -473,16 +492,35 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         environment_file.environment.file_name = next_file_name;
         environment_file = environment_file.with_file_path(&next_path);
         self.backend.write_toml_file(&next_path, &environment_file)?;
+        self.store
+            .environments
+            .insert(environment_id, environment_file.clone());
         Ok(environment_file)
     }
 
     pub fn update_environment_variables(
-        &self,
+        &mut self,
         environment_id: Ulid,
         variables: Vec<EnvironmentVariable>,
     ) -> Result<EnvironmentFile> {
-        let existing_path = find_environment_file_by_id(&self.backend, environment_id)?;
-        let mut environment_file = read_environment_file(&self.backend, &existing_path)?;
+        let mut environment_file = self
+            .store
+            .environments
+            .get(&environment_id)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "environment",
+                id: environment_id.to_string(),
+            })?;
+
+        let existing_path = environment_file
+            .file_path
+            .clone()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "environment_file_path",
+                id: environment_id.to_string(),
+            })?;
+
         environment_file.environment.updated_at = Utc::now();
         environment_file.variables = variables;
         if environment_file.environment.file_name.trim().is_empty() {
@@ -494,12 +532,28 @@ impl<B: StorageIoBackend> MemoryBackedStorage<B> {
         }
         self.backend
             .write_toml_file(&existing_path, &environment_file)?;
+        self.store
+            .environments
+            .insert(environment_id, environment_file.clone());
         Ok(environment_file)
     }
 
-    pub fn delete_environment(&self, environment_id: Ulid) -> Result<()> {
-        let environment_path = find_environment_file_by_id(&self.backend, environment_id)?;
-        self.backend.remove_file(&environment_path)
+    pub fn delete_environment(&mut self, environment_id: Ulid) -> Result<()> {
+        let environment_file = self
+            .store
+            .environments
+            .remove(&environment_id)
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "environment",
+                id: environment_id.to_string(),
+            })?;
+
+        if let Some(path) = environment_file.file_path {
+            if path.exists() {
+                self.backend.remove_file(&path)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn create_folder(&mut self, input: CreateFolderInput) -> Result<FolderFile> {
@@ -985,6 +1039,28 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
         }
     }
 
+    // Load environment files into memory for O(1) lookups.
+    for root in [&backend.paths().environments_dir, &backend.paths().collections_dir] {
+        if !root.exists() {
+            continue;
+        }
+        if let Ok(()) = walk_files_recursive(root, |path| {
+            if !path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".env.toml"))
+            {
+                return;
+            }
+            if let Ok(file) = backend.read_toml_file::<EnvironmentFile>(path) {
+                store.environments.insert(
+                    file.environment.environment_id,
+                    file.with_file_path(path),
+                );
+            }
+        }) {}
+    }
+
     store.rebuild_name_index();
     Ok(store)
 }
@@ -1041,44 +1117,7 @@ fn load_manifest_children<B: StorageIoBackend>(
     Ok(child_ids)
 }
 
-fn read_environment_file<B: StorageIoBackend>(backend: &B, path: &Path) -> Result<EnvironmentFile> {
-    let file: EnvironmentFile = backend.read_toml_file(path)?;
-    Ok(file.with_file_path(path))
-}
 
-fn find_environment_file_by_id<B: StorageIoBackend>(
-    backend: &B,
-    environment_id: Ulid,
-) -> Result<std::path::PathBuf> {
-    let mut found: Option<std::path::PathBuf> = None;
-    for root in [&backend.paths().environments_dir, &backend.paths().collections_dir] {
-        if !root.exists() {
-            continue;
-        }
-        walk_files_recursive(root, |path| {
-            if !path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".env.toml"))
-            {
-                return;
-            }
-            if let Ok(file) = backend.read_toml_file::<EnvironmentFile>(path) {
-                if file.environment.environment_id == environment_id {
-                    found = Some(path.to_path_buf());
-                }
-            }
-        })?;
-        if found.is_some() {
-            break;
-        }
-    }
-
-    found.ok_or_else(|| BeamError::NotFound {
-        entity: "environment",
-        id: environment_id.to_string(),
-    })
-}
 
 fn environment_file_path_for_name<B: StorageIoBackend>(
     _backend: &B,

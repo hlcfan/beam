@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
-use crate::models::RequestFile;
+use crate::models::{EnvironmentFile, RequestFile};
 use crate::paths::BeamPaths;
 use crate::schema::SCHEMA_VERSION_V1;
 
@@ -44,6 +44,8 @@ pub struct SharedStore {
     pub root_ids: Vec<NodeId>,
     // Uniqueness is enforced per parent scope with "root/<slug>" or "<parent_id>/<slug>" keys.
     pub name_index: HashMap<String, NodeId>,
+    // Environment files keyed by environment_id for O(1) lookups.
+    pub environments: HashMap<NodeId, EnvironmentFile>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -810,6 +812,7 @@ mod tests {
             requests: HashMap::new(),
             root_ids: vec![collection_id],
             name_index: HashMap::new(),
+            environments: HashMap::new(),
         };
 
         assert_eq!(
@@ -863,6 +866,7 @@ mod tests {
             requests: HashMap::new(),
             root_ids: Vec::new(),
             name_index: HashMap::new(),
+            environments: HashMap::new(),
         };
 
         let warnings = store.rebuild_name_index();
@@ -936,6 +940,7 @@ mod tests {
             requests: HashMap::new(),
             root_ids: vec![collection_id],
             name_index: HashMap::new(),
+            environments: HashMap::new(),
         };
 
         let manifest =
@@ -1080,6 +1085,7 @@ mod tests {
             requests: HashMap::new(),
             root_ids: vec![collection_id],
             name_index: HashMap::new(),
+            environments: HashMap::new(),
         };
 
         assert_eq!(
@@ -1184,6 +1190,7 @@ mod tests {
             requests: HashMap::from([(request_id, request_file)]),
             root_ids: vec![second_collection_id, first_collection_id],
             name_index: HashMap::new(),
+            environments: HashMap::new(),
         };
 
         persist_shared_tree(&paths, &store).expect("persist shared tree");
