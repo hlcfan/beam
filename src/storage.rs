@@ -6,8 +6,7 @@ pub mod toml_backend;
 
 use crate::error::Result;
 use crate::models::{
-    EnvironmentFile, EnvironmentScope, EnvironmentVariable, LocalStateFile, RequestFile,
-    WorkspaceFile,
+    EnvironmentScope, LocalStateFile, RequestFile, WorkspaceFile,
 };
 use ulid::Ulid;
 
@@ -112,35 +111,6 @@ pub trait WorkspaceStorage {
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()>;
     fn load_local_state(&self) -> Result<LocalStateFile>;
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()>;
-    fn load_request(&self, request_id: Ulid) -> Result<RequestFile>;
-    fn create_request(&self, input: CreateRequestInput) -> Result<RequestFile>;
-    fn create_request_after(
-        &self,
-        input: CreateRequestInput,
-        source_request_id: Ulid,
-    ) -> Result<RequestFile>;
-    fn create_folder(&self, input: CreateFolderInput) -> Result<crate::models::FolderFile>;
-    fn create_environment(&self, input: CreateEnvironmentInput) -> Result<EnvironmentFile>;
-    fn rename_environment(&self, environment_id: Ulid, new_name: &str) -> Result<EnvironmentFile>;
-    fn update_environment_variables(
-        &self,
-        environment_id: Ulid,
-        variables: Vec<EnvironmentVariable>,
-    ) -> Result<EnvironmentFile>;
-    fn delete_environment(&self, environment_id: Ulid) -> Result<()>;
-    fn save_request(&self, request_file: &RequestFile) -> Result<()>;
-    fn rename_request(&self, input: RenameRequestInput) -> Result<RequestFile>;
-    fn rename_collection(
-        &self,
-        collection_id: Ulid,
-        new_name: &str,
-    ) -> Result<crate::models::CollectionFile>;
-    fn rename_folder(&self, folder_id: Ulid, new_name: &str) -> Result<crate::models::FolderFile>;
-    fn duplicate_request(&self, input: DuplicateRequestInput) -> Result<RequestFile>;
-    fn delete_collection(&self, collection_id: Ulid) -> Result<()>;
-    fn delete_folder(&self, folder_id: Ulid) -> Result<()>;
-    fn delete_request(&self, input: DeleteRequestInput) -> Result<()>;
     fn move_request(&self, input: MoveRequestInput) -> Result<RequestFile>;
     fn move_folder(&self, input: MoveFolderInput) -> Result<crate::models::FolderFile>;
-    fn reorder_collection(&self, input: ReorderCollectionInput) -> Result<()>;
 }
