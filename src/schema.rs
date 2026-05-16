@@ -8,7 +8,6 @@ pub const SCHEMA_VERSION_V1: u32 = 1;
 #[serde(rename_all = "snake_case")]
 pub enum SchemaKind {
     Workspace,
-    Collection,
     Folder,
     Request,
     Environment,
@@ -19,7 +18,6 @@ impl std::fmt::Display for SchemaKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match self {
             Self::Workspace => "workspace",
-            Self::Collection => "collection",
             Self::Folder => "folder",
             Self::Request => "request",
             Self::Environment => "environment",

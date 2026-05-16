@@ -5,9 +5,7 @@ pub mod io_backend;
 pub mod workspace_repo;
 
 use crate::error::Result;
-use crate::models::{
-    EnvironmentScope, LocalStateFile, WorkspaceFile,
-};
+use crate::models::{LocalStateFile, WorkspaceFile};
 use ulid::Ulid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -16,17 +14,16 @@ pub struct BootstrapReport {
     pub created_local_state_file: bool,
 }
 
+/// Reference to a parent scope when creating or moving a request.
+/// `folder_id: None` means the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestParentRef {
-    pub collection_id: Ulid,
     pub folder_id: Option<Ulid>,
 }
 
+/// The known manifest path for the parent scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KnownParentManifestPath {
-    Collection(PathBuf),
-    Folder(PathBuf),
-}
+pub struct KnownParentManifestPath(pub PathBuf);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateRequestInput {
@@ -37,10 +34,11 @@ pub struct CreateRequestInput {
     pub url: String,
 }
 
+/// Reference to a parent scope when creating or moving a folder.
+/// `folder_id: None` means the workspace root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FolderParentRef {
-    pub collection_id: Ulid,
-    pub parent_folder_id: Option<Ulid>,
+    pub folder_id: Option<Ulid>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,17 +90,9 @@ pub struct MoveFolderInput {
     pub known_target_manifest_path: Option<KnownParentManifestPath>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReorderCollectionInput {
-    pub collection_id: Ulid,
-    pub insertion_index: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateEnvironmentInput {
     pub name: String,
-    pub scope: EnvironmentScope,
-    pub collection_id: Option<Ulid>,
 }
 
 pub trait WorkspaceStorage {

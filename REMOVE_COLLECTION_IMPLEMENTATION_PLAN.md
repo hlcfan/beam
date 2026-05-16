@@ -69,7 +69,7 @@ $HOME/beam_local/
 workspace_id = "01JX8R4M6D5Q4T1N3Y8K7P2A9B"
 name = "My Workspace"
 description = "API development workspace"
-schema_version = 2
+schema_version = 1
 created_at = "2026-04-28T12:00:00Z"
 updated_at = "2026-04-28T12:00:00Z"
 
@@ -103,6 +103,7 @@ order = 20
 | `SchemaKind::Collection` | Delete variant |
 | `RootOrderFile` | Delete. Replaced by `items` inside `beam.workspace.toml` |
 | `CollectionManifestFile` | Delete. Replaced by `items` inside `beam.workspace.toml` |
+| `ManifestNode` | Delete. Sub-type of `CollectionManifestFile`; goes with it |
 
 #### Modified
 
@@ -153,47 +154,57 @@ The current repository layer already follows a **manifest-first, per-operation r
 
 #### 1. `src/models.rs`
 
-- [ ] Remove `CollectionFile`, `CollectionMeta`, `CollectionItemRef`.
-- [ ] Rename `CollectionItemRef` → `ManifestItemRef` everywhere.
+- [ ] Remove `CollectionFile` and `CollectionMeta`.
+- [ ] Rename `CollectionItemRef` → `ManifestItemRef` (keep the type; it is also used by `FolderFile.items` and the new `WorkspaceFile.items`).
 - [ ] Remove `collection_id` from `FolderMeta`.
 - [ ] Remove `collection_id` from `EnvironmentMeta`.
 - [ ] Remove `EnvironmentScope::Collection`.
 - [ ] Remove `collection_environment_selection` from `LocalStateFile`.
-- [ ] Add `items: Vec<ManifestItemRef>` to `WorkspaceFile`.
-- [ ] Bump default `schema_version` to `SCHEMA_VERSION_V2`.
+- [ ] Add `#[serde(default)] pub items: Vec<ManifestItemRef>` to `WorkspaceFile`.
 
 #### 2. `src/schema.rs`
 
-- [ ] Add `SCHEMA_VERSION_V2` constant.
-- [ ] Remove `SchemaKind::Collection`.
-- [ ] Update validation to accept V2.
+- [ ] Remove `SchemaKind::Collection` variant and its `Display` arm.
 
 #### 3. `src/paths.rs`
 
-- [ ] Remove `COLLECTION_MANIFEST_FILE_NAME` and `COLLECTION_ROOT_ORDER_FILE_NAME`.
+- [ ] Remove `COLLECTION_MANIFEST_FILE_NAME` (`.manifest.toml`) and `COLLECTION_ROOT_ORDER_FILE_NAME` (`.root-order.toml`).
+- [ ] Add `FOLDER_MANIFEST_FILE_NAME = "folder.toml"` constant (replaces the hidden `.manifest.toml` for folders).
 - [ ] Remove `collections_dir` and `collections_root_order_file` from `BeamPaths`.
 - [ ] Update `BeamPaths::from_root` to remove `collections/` construction.
-- [ ] Ensure `local_dir` points to `$HOME/beam_local` (already the case for `default_user_config`).
+- [ ] Fix the `local_dir` inconsistency: `from_root()` currently puts local state under the hidden `root/.beam/` subdirectory; only `default_user_config()` overrides this to `~/beam_local`. Make `local_dir` always point outside the data root (e.g., accept a separate `local_root: PathBuf` parameter, or derive it as `root.parent()/../beam_local`). This ensures `from_root()` used in tests does not produce the hidden-dir path.
+- [ ] Update `paths.rs` tests: remove the `.root-order.toml` assertion; add an assertion verifying `local_state_file` resolves under `beam_local`, not `.beam/`.
 
 #### 4. `src/workspace_tree.rs`
 
 - [ ] Remove `NodeKind::Collection`.
-- [ ] Remove `CollectionManifestFile`, `collection_dir_name`, `collection_dir_path`, `collection_manifest_from_store`.
-- [ ] Update `folder_dir_path` to support top-level folders (`parent_id: None` → workspace root).
+- [ ] Remove `CollectionManifestFile` and its sub-type `ManifestNode`.
+- [ ] Remove `collection_dir_name`, `collection_dir_path`, `collection_manifest_from_store`.
+- [ ] Remove `RootOrderFile` (replaced by `items` inside `WorkspaceFile`).
+- [ ] Remove `root_order_file` helper; replace with `workspace_manifest_from_store(store) -> WorkspaceFile`.
+- [ ] Update `folder_dir_path` to support top-level folders (`parent_id: None` → workspace root, no longer requires a collection ancestor as a path prefix).
 - [ ] Update `request_file_path` to handle root-level requests (`parent_id: None`).
-- [ ] Replace `root_order_file` with `workspace_manifest_from_store(store) -> WorkspaceFile` that produces the in-memory shape for serialization.
-- [ ] Update `root_collection_id_of` → simplify to walk to `parent_id: None` (or remove entirely).
+- [ ] Remove `root_collection_id_of` (all callers in `app_shell.rs`, `workspace_repo.rs`, and `ui.rs` are also removed as part of this phase).
 - [ ] Update `ensure_parent_kind` to only accept `Folder` as valid parent.
 - [ ] Update `node_dir_path` to remove `Collection` branch.
+- [ ] `scope_key`: no signature change needed — `scope_key(None, name)` semantics naturally shift from "root-of-collection" to "workspace root". Update the doc-comment to say "workspace root" instead of implying a collection scope.
 - [ ] Update `SharedStore` docs/comments to clarify `root_ids` now holds folders/requests.
-- [ ] Update all tests.
+- [ ] Update all tests, including `root_collection_lookup_walks_to_collection_ancestor`.
 
 #### 5. `src/storage.rs` (input types)
 
-- [ ] Remove `CreateCollectionInput`, `DeleteCollectionInput`, `RenameCollectionInput`, `ReorderCollectionInput`.
-- [ ] Update `CreateFolderInput` to remove `collection_id`; `parent_folder_id: Option<Ulid>` is the only parent reference.
-- [ ] Update `CreateRequestInput.parent` to remove `collection_id` (only `folder_id: Option<Ulid>`).
-- [ ] Update `EnvironmentScope` usage.
+Note: `CreateCollectionInput`, `DeleteCollectionInput`, and `RenameCollectionInput` do not exist in the code — only `ReorderCollectionInput` does.
+
+- [ ] Remove `ReorderCollectionInput`.
+- [ ] Replace `RequestParentRef { collection_id: Ulid, folder_id: Option<Ulid> }` — remove `collection_id`; the struct becomes `RequestParentRef { folder_id: Option<Ulid> }` (or inline `folder_id` directly into each consumer).
+- [ ] Replace `FolderParentRef { collection_id: Ulid, parent_folder_id: Option<Ulid> }` — remove `collection_id`; rename `parent_folder_id` → `folder_id` for consistency.
+- [ ] Update `KnownParentManifestPath`: remove the `Collection(PathBuf)` variant. The enum becomes single-variant (`Folder(PathBuf)`); consider collapsing to a plain `PathBuf` type alias if the wrapper adds no value.
+- [ ] Update `CreateRequestInput`: use revised `RequestParentRef` (no `collection_id`).
+- [ ] Update `DuplicateRequestInput.parent`: use revised `RequestParentRef`.
+- [ ] Update `MoveRequestInput.new_parent`: use revised `RequestParentRef`.
+- [ ] Update `CreateFolderInput`: use revised `FolderParentRef` (no `collection_id`).
+- [ ] Update `MoveFolderInput.new_parent`: use revised `FolderParentRef`.
+- [ ] Remove `CreateEnvironmentInput.collection_id` field (only `Global` scope accepted after this change).
 
 #### 6. `src/storage/workspace_repo.rs`
 
@@ -205,16 +216,21 @@ The current repository layer already follows a **manifest-first, per-operation r
 - [ ] **Bootstrap sample workspace**: Create a root-level request directly, no collection wrapper.
 - [ ] Remove all collection-centric CRUD helpers (`rename_collection`, `delete_collection`, `reorder_collection`).
 - [ ] Replace `write_root_order` with `write_workspace_file` that includes root items.
-- [ ] Replace `write_collection_manifest` with `write_folder_manifest`.
+- [ ] Replace `pub fn write_collection_manifest(...)` with `pub fn write_folder_manifest(...)`.
+- [ ] Remove `pub fn persist_collection_subtree(...)` (recursive helper for collection trees; the flat folder structure doesn't need it).
 - [ ] Update `persist_shared_tree` to iterate `root_ids` and write each folder manifest + requests, then write `beam.workspace.toml`.
 
 #### 7. `src/app_shell.rs`
 
 - [ ] Remove `TreeNodeKind::Collection`.
-- [ ] Remove `CollectionUpserted`, `CollectionDeleted` events.
-- [ ] Remove collection CRUD commands.
-- [ ] Remove `active_collection_environment_ids` field.
-- [ ] Remove `collection_ancestor_for_node` / `active_collection_id_for_selected_request`.
+- [ ] Rename `CollectionsTreeState` → `WorkspaceTreeState` throughout.
+- [ ] Remove `AppEvent::CollectionUpserted`, `CollectionDeleted`, `CollectionsReordered`.
+- [ ] Remove collection CRUD commands: `AppCommand::RenameCollection`, `AppCommand::DeleteCollection`, `AppCommand::ReorderCollection`, and the corresponding `AppOperation` variants.
+- [ ] Remove `active_collection_environment_ids` field from `AppShellState`.
+- [ ] Remove `collection_ancestor_for_node` and `active_collection_id_for_selected_request` methods.
+- [ ] Remove the local `write_collection_manifest` function (line 2461) and update all 13 call sites within `app_shell.rs` to use `write_folder_manifest` from `workspace_repo`.
+- [ ] Remove `RootOrderFile` from the import list (currently imported at line 28).
+- [ ] `scope_key` is imported (line 28) and called at line 2263 — no code change needed, but verify the semantics are correct for workspace-root items after removing the collection layer.
 - [ ] Update environment resolution to only use global environments.
 - [ ] Update `save_local_state` to remove `collection_environment_selection`.
 
@@ -223,9 +239,11 @@ The current repository layer already follows a **manifest-first, per-operation r
 - [ ] Remove collection rendering from `render_tree_row`.
 - [ ] Remove collection context menu entries.
 - [ ] Remove `DraggedCollection`.
-- [ ] Update drag-and-drop: valid parents are `Folder` only (or root).
+- [ ] Update `TreeMoveAction`: remove the `collection_reorder_action` function and the drag-drop handler `handle_collection_tree_drop`; update the `MoveFolder(MoveFolderInput)` variant to use the revised `MoveFolderInput` (no `collection_id` in its parent ref).
+- [ ] Update `can_accept_tree_drop` / `can_accept_any_tree_drop` to remove `Collection` as a valid drop target.
+- [ ] Update the 7 `collection_ancestor_for_node` call sites (lines 3081, 3104, 3135, 3158, 3279, 3309) that populate `collection_id` into `RequestParentRef` / `FolderParentRef` — replace with direct `folder_id` lookup from the node's parent.
+- [ ] Update environment filter (lines 1862–1868, 1940): remove the `EnvironmentScope::Collection` branch and the `active_collection_id` lookup; show only global environments.
 - [ ] Update rename modal to only handle `Folder` and `Request`.
-- [ ] Update environment dropdown to only show global environments.
 
 #### 9. `docs/DATA_MODEL_REQUIREMENTS.md` & `docs/FEATURES.md`
 
@@ -467,10 +485,9 @@ This keeps `SharedStore` lightweight and avoids the complexity of managing multi
 
 ### V2 (Collection Removal)
 
-- [ ] Bump all `schema_version` defaults to `2`.
-- [ ] On startup, ignore V1 files. Show a one-time notice that data must be re-created.
-- [ ] Delete old `collections/` handling entirely.
-- [ ] Update docs to note V2 data model.
+- No `schema_version` bump — the app is pre-release. Make the breaking changes directly; no migration or startup guard needed.
+- [ ] Delete old `collections/` handling entirely. Existing on-disk data from the V1 layout is abandoned.
+- [ ] Update docs to note the new flat workspace structure.
 
 ### V3 (Multi-Workspace)
 
@@ -485,9 +502,11 @@ This keeps `SharedStore` lightweight and avoids the complexity of managing multi
 
 ## Summary of Schema Versions
 
+> **Note:** The app is pre-release. V2 and V3 are implemented as direct breaking changes — no `schema_version` guards, no migration paths.
+
 | Version | Change |
 |---------|--------|
-| V1 | Original model with Collections |
+| V1 | Original model with Collections (current on-disk format) |
 | V2 | Collections removed; `beam.workspace.toml` contains metadata + root items; only global environments; flat workspace root |
 | V3 | Multi-workspace support; data root contains `workspaces.toml` registry and workspace folders; local state per-workspace under `$HOME/beam_local/` |
 

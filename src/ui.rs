@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
@@ -50,7 +50,7 @@ use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::{
     CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
     FolderParentRef, KnownParentManifestPath, MoveFolderInput, MoveRequestInput,
-    RenameRequestInput, ReorderCollectionInput, RequestParentRef,
+    RenameRequestInput, RequestParentRef,
 };
 
 actions!(
@@ -380,12 +380,6 @@ enum TreeDropPlacement {
 }
 
 #[derive(Clone, Debug)]
-struct DraggedCollection {
-    collection_id: Ulid,
-    label: String,
-}
-
-#[derive(Clone, Debug)]
 struct DraggedFolder {
     folder_id: Ulid,
     label: String,
@@ -399,7 +393,6 @@ struct DraggedRequest {
 
 #[derive(Clone, Debug)]
 enum TreeMoveAction {
-    ReorderCollection(ReorderCollectionInput),
     MoveRequest(MoveRequestInput),
     MoveFolder(MoveFolderInput),
 }
@@ -423,7 +416,6 @@ impl TreeDragPreview {
 impl Render for TreeDragPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let icon_path = match self.kind {
-            TreeNodeKind::Collection => "icons/folder.svg",
             TreeNodeKind::Folder => "icons/folder.svg",
             TreeNodeKind::Request => "icons/box.svg",
         };
@@ -799,7 +791,6 @@ impl EnvironmentManagerDialogView {
             schema_version: legacy.environment.schema_version,
             environment: crate::models::EnvironmentMeta {
                 environment_id: legacy.environment.environment_id,
-                collection_id: legacy.environment.collection_id,
                 scope: legacy.environment.scope,
                 name: legacy.environment.name,
                 file_name: String::new(),
@@ -988,8 +979,6 @@ impl EnvironmentManagerDialogView {
         let command_id = next_command_id();
         let command = AppCommand::CreateEnvironment {
             name: environment_name,
-            scope: EnvironmentScope::Global,
-            collection_id: None,
             command_id: command_id.clone(),
         };
         let send_result = self
@@ -1059,11 +1048,8 @@ impl EnvironmentManagerDialogView {
         cx.notify();
     }
 
-    fn environment_option_label(name: &str, scope: EnvironmentScope) -> String {
-        match scope {
-            EnvironmentScope::Global => name.to_string(),
-            EnvironmentScope::Collection => format!("Collection: {name}"),
-        }
+    fn environment_option_label(name: &str, _scope: EnvironmentScope) -> String {
+        name.to_string()
     }
 
     fn clear_variable_inputs(&mut self) {
@@ -1859,21 +1845,10 @@ impl BeamView {
     }
 
     fn active_environment_options(&self) -> Vec<(Ulid, String)> {
-        let active_collection_id = self.shell.active_collection_id_for_selected_request();
         self.shell
             .environments
             .iter()
-            .filter(|environment| match environment.scope {
-                EnvironmentScope::Global => true,
-                EnvironmentScope::Collection => environment.collection_id == active_collection_id,
-            })
-            .map(|environment| {
-                let label = match environment.scope {
-                    EnvironmentScope::Global => environment.name.clone(),
-                    EnvironmentScope::Collection => format!("Collection: {}", environment.name),
-                };
-                (environment.environment_id, label)
-            })
+            .map(|environment| (environment.environment_id, environment.name.clone()))
             .collect()
     }
 
@@ -1904,48 +1879,12 @@ impl BeamView {
     }
 
     fn set_selected_environment_for_view(&mut self, environment_id: Ulid) {
-        let Some(environment) = self
-            .shell
-            .environments
-            .iter()
-            .find(|environment| environment.environment_id == environment_id)
-        else {
-            return;
-        };
-
-        match environment.scope {
-            EnvironmentScope::Global => {
-                self.shell
-                    .environment_selection
-                    .active_global_environment_id = Some(environment_id);
-            }
-            EnvironmentScope::Collection => {
-                let Some(collection_id) = environment.collection_id else {
-                    return;
-                };
-                self.shell
-                    .environment_selection
-                    .active_collection_environment_ids
-                    .insert(collection_id, environment_id);
-            }
-        }
+        self.shell
+            .environment_selection
+            .active_global_environment_id = Some(environment_id);
     }
 
     fn clear_selected_environment_for_view(&mut self) {
-        if matches!(
-            self.selected_environment_for_view()
-                .map(|environment| environment.scope),
-            Some(EnvironmentScope::Collection)
-        ) {
-            if let Some(collection_id) = self.shell.active_collection_id_for_selected_request() {
-                self.shell
-                    .environment_selection
-                    .active_collection_environment_ids
-                    .remove(&collection_id);
-            }
-            return;
-        }
-
         self.shell
             .environment_selection
             .active_global_environment_id = None;
@@ -2040,13 +1979,7 @@ impl BeamView {
         self.shell
             .environments
             .iter()
-            .map(|environment| {
-                let label = match environment.scope {
-                    EnvironmentScope::Global => environment.name.clone(),
-                    EnvironmentScope::Collection => format!("Collection: {}", environment.name),
-                };
-                (environment.environment_id, label)
-            })
+            .map(|environment| (environment.environment_id, environment.name.clone()))
             .collect()
     }
 
@@ -3047,10 +2980,6 @@ impl BeamView {
         cx.notify();
     }
 
-    fn collection_ancestor_for_node(&self, node_id: Ulid) -> Option<Ulid> {
-        self.shell.collection_ancestor_for_node(node_id)
-    }
-
     fn parent_ref_for_add_request(&self, node_id: Ulid) -> Option<RequestParentRef> {
         self.request_parent_input_for_tree_node(node_id)
             .map(|(parent, _)| parent)
@@ -3067,49 +2996,36 @@ impl BeamView {
     ) -> Option<(RequestParentRef, Option<KnownParentManifestPath>)> {
         let node = self.shell.collections.node(node_id)?;
         match node.kind {
-            TreeNodeKind::Collection => Some((
-                RequestParentRef {
-                    collection_id: node.id,
-                    folder_id: None,
-                },
-                node.manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath::Collection),
-            )),
             TreeNodeKind::Folder => Some((
                 RequestParentRef {
-                    collection_id: self.collection_ancestor_for_node(node.id)?,
                     folder_id: Some(node.id),
                 },
                 node.manifest_path
                     .clone()
-                    .map(KnownParentManifestPath::Folder),
+                    .map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => {
-                let parent_id = node.parent_id?;
-                let parent_node = self.shell.collections.node(parent_id)?;
-                match parent_node.kind {
-                    TreeNodeKind::Collection => Some((
-                        RequestParentRef {
-                            collection_id: parent_node.id,
-                            folder_id: None,
-                        },
-                        parent_node
-                            .manifest_path
-                            .clone()
-                            .map(KnownParentManifestPath::Collection),
+                let parent_id = node.parent_id;
+                match parent_id {
+                    None => Some((
+                        RequestParentRef { folder_id: None },
+                        None,
                     )),
-                    TreeNodeKind::Folder => Some((
-                        RequestParentRef {
-                            collection_id: self.collection_ancestor_for_node(parent_node.id)?,
-                            folder_id: Some(parent_node.id),
-                        },
-                        parent_node
-                            .manifest_path
-                            .clone()
-                            .map(KnownParentManifestPath::Folder),
-                    )),
-                    TreeNodeKind::Request => None,
+                    Some(parent_id) => {
+                        let parent_node = self.shell.collections.node(parent_id)?;
+                        match parent_node.kind {
+                            TreeNodeKind::Folder => Some((
+                                RequestParentRef {
+                                    folder_id: Some(parent_node.id),
+                                },
+                                parent_node
+                                    .manifest_path
+                                    .clone()
+                                    .map(KnownParentManifestPath),
+                            )),
+                            TreeNodeKind::Request => None,
+                        }
+                    }
                 }
             }
         }
@@ -3121,80 +3037,87 @@ impl BeamView {
     ) -> Option<(FolderParentRef, Option<KnownParentManifestPath>)> {
         let node = self.shell.collections.node(node_id)?;
         match node.kind {
-            TreeNodeKind::Collection => Some((
-                FolderParentRef {
-                    collection_id: node.id,
-                    parent_folder_id: None,
-                },
-                node.manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath::Collection),
-            )),
             TreeNodeKind::Folder => Some((
                 FolderParentRef {
-                    collection_id: self.collection_ancestor_for_node(node.id)?,
-                    parent_folder_id: Some(node.id),
+                    folder_id: Some(node.id),
                 },
                 node.manifest_path
                     .clone()
-                    .map(KnownParentManifestPath::Folder),
+                    .map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => {
-                let parent_id = node.parent_id?;
-                let parent_node = self.shell.collections.node(parent_id)?;
-                match parent_node.kind {
-                    TreeNodeKind::Collection => Some((
-                        FolderParentRef {
-                            collection_id: parent_node.id,
-                            parent_folder_id: None,
-                        },
-                        parent_node
-                            .manifest_path
-                            .clone()
-                            .map(KnownParentManifestPath::Collection),
+                let parent_id = node.parent_id;
+                match parent_id {
+                    None => Some((
+                        FolderParentRef { folder_id: None },
+                        None,
                     )),
-                    TreeNodeKind::Folder => Some((
-                        FolderParentRef {
-                            collection_id: self.collection_ancestor_for_node(parent_node.id)?,
-                            parent_folder_id: Some(parent_node.id),
-                        },
-                        parent_node
-                            .manifest_path
-                            .clone()
-                            .map(KnownParentManifestPath::Folder),
-                    )),
-                    TreeNodeKind::Request => None,
+                    Some(parent_id) => {
+                        let parent_node = self.shell.collections.node(parent_id)?;
+                        match parent_node.kind {
+                            TreeNodeKind::Folder => Some((
+                                FolderParentRef {
+                                    folder_id: Some(parent_node.id),
+                                },
+                                parent_node
+                                    .manifest_path
+                                    .clone()
+                                    .map(KnownParentManifestPath),
+                            )),
+                            TreeNodeKind::Request => None,
+                        }
+                    }
                 }
             }
         }
     }
 
     fn request_sibling_names_in_parent(&self, parent: RequestParentRef) -> Vec<String> {
-        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
-        let Some(parent_node) = self.shell.collections.node(parent_id) else {
-            return Vec::new();
-        };
-        parent_node
-            .children
-            .iter()
-            .filter_map(|child_id| self.shell.collections.node(*child_id))
-            .filter(|child| child.kind == TreeNodeKind::Request)
-            .map(|child| child.name.clone())
-            .collect()
+        if let Some(folder_id) = parent.folder_id {
+            let Some(parent_node) = self.shell.collections.node(folder_id) else {
+                return Vec::new();
+            };
+            parent_node
+                .children
+                .iter()
+                .filter_map(|child_id| self.shell.collections.node(*child_id))
+                .filter(|child| child.kind == TreeNodeKind::Request)
+                .map(|child| child.name.clone())
+                .collect()
+        } else {
+            self.shell
+                .collections
+                .visible_rows()
+                .into_iter()
+                .filter(|row| row.depth == 0 && row.kind == TreeNodeKind::Request)
+                .filter_map(|row| self.shell.collections.node(row.id))
+                .map(|n| n.name.clone())
+                .collect()
+        }
     }
 
     fn folder_sibling_names_in_parent(&self, parent: FolderParentRef) -> Vec<String> {
-        let parent_id = parent.parent_folder_id.unwrap_or(parent.collection_id);
-        let Some(parent_node) = self.shell.collections.node(parent_id) else {
-            return Vec::new();
-        };
-        parent_node
-            .children
-            .iter()
-            .filter_map(|child_id| self.shell.collections.node(*child_id))
-            .filter(|child| child.kind == TreeNodeKind::Folder)
-            .map(|child| child.name.clone())
-            .collect()
+        if let Some(folder_id) = parent.folder_id {
+            let Some(parent_node) = self.shell.collections.node(folder_id) else {
+                return Vec::new();
+            };
+            parent_node
+                .children
+                .iter()
+                .filter_map(|child_id| self.shell.collections.node(*child_id))
+                .filter(|child| child.kind == TreeNodeKind::Folder)
+                .map(|child| child.name.clone())
+                .collect()
+        } else {
+            self.shell
+                .collections
+                .visible_rows()
+                .into_iter()
+                .filter(|row| row.depth == 0 && row.kind == TreeNodeKind::Folder)
+                .filter_map(|row| self.shell.collections.node(row.id))
+                .map(|n| n.name.clone())
+                .collect()
+        }
     }
 
     fn request_file_path_for_tree_node(&self, node_id: Ulid) -> Option<PathBuf> {
@@ -3221,15 +3144,6 @@ impl BeamView {
         cx: &mut App,
     ) -> Entity<TreeDragPreview> {
         cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Folder, position))
-    }
-
-    fn tree_drag_preview_for_collection(
-        dragged: &DraggedCollection,
-        position: Point<Pixels>,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> Entity<TreeDragPreview> {
-        cx.new(|_| TreeDragPreview::new(dragged.label.clone(), TreeNodeKind::Collection, position))
     }
 
     fn path_has_ancestor_in_tree(&self, start_id: Ulid, ancestor_id: Ulid) -> bool {
@@ -3264,25 +3178,14 @@ impl BeamView {
     ) -> Option<(RequestParentRef, Option<KnownParentManifestPath>)> {
         let parent = self.shell.collections.node(parent_id)?;
         match parent.kind {
-            TreeNodeKind::Collection => Some((
-                RequestParentRef {
-                    collection_id: parent.id,
-                    folder_id: None,
-                },
-                parent
-                    .manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath::Collection),
-            )),
             TreeNodeKind::Folder => Some((
                 RequestParentRef {
-                    collection_id: self.collection_ancestor_for_node(parent.id)?,
                     folder_id: Some(parent.id),
                 },
                 parent
                     .manifest_path
                     .clone()
-                    .map(KnownParentManifestPath::Folder),
+                    .map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => None,
         }
@@ -3294,25 +3197,14 @@ impl BeamView {
     ) -> Option<(FolderParentRef, Option<KnownParentManifestPath>)> {
         let parent = self.shell.collections.node(parent_id)?;
         match parent.kind {
-            TreeNodeKind::Collection => Some((
-                FolderParentRef {
-                    collection_id: parent.id,
-                    parent_folder_id: None,
-                },
-                parent
-                    .manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath::Collection),
-            )),
             TreeNodeKind::Folder => Some((
                 FolderParentRef {
-                    collection_id: self.collection_ancestor_for_node(parent.id)?,
-                    parent_folder_id: Some(parent.id),
+                    folder_id: Some(parent.id),
                 },
                 parent
                     .manifest_path
                     .clone()
-                    .map(KnownParentManifestPath::Folder),
+                    .map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => None,
         }
@@ -3352,7 +3244,7 @@ impl BeamView {
         let (destination_parent_id, insertion_index) = match placement {
             TreeDropPlacement::Into => {
                 let target = self.shell.collections.node(target_id)?;
-                if !matches!(target.kind, TreeNodeKind::Collection | TreeNodeKind::Folder) {
+                if target.kind != TreeNodeKind::Folder {
                     return None;
                 }
                 (target.id, target.children.len())
@@ -3396,7 +3288,7 @@ impl BeamView {
                     return None;
                 }
                 let target = self.shell.collections.node(target_id)?;
-                if !matches!(target.kind, TreeNodeKind::Collection | TreeNodeKind::Folder) {
+                if target.kind != TreeNodeKind::Folder {
                     return None;
                 }
                 (target.id, target.children.len())
@@ -3428,48 +3320,12 @@ impl BeamView {
         }))
     }
 
-    fn collection_reorder_action(
-        &self,
-        collection_id: Ulid,
-        target_id: Ulid,
-        placement: TreeDropPlacement,
-    ) -> Option<TreeMoveAction> {
-        if placement == TreeDropPlacement::Into || collection_id == target_id {
-            return None;
-        }
-        let target = self.shell.collections.node(target_id)?;
-        if target.kind != TreeNodeKind::Collection {
-            return None;
-        }
-        let target_index = self
-            .shell
-            .collections
-            .visible_rows()
-            .into_iter()
-            .filter(|row| row.kind == TreeNodeKind::Collection)
-            .position(|row| row.id == target_id)?;
-        let insertion_index = match placement {
-            TreeDropPlacement::Before => target_index,
-            TreeDropPlacement::After => target_index + 1,
-            TreeDropPlacement::Into => return None,
-        };
-        Some(TreeMoveAction::ReorderCollection(ReorderCollectionInput {
-            collection_id,
-            insertion_index,
-        }))
-    }
-
     fn can_accept_tree_drop(
         &self,
         dragged_value: &dyn Any,
         target_id: Ulid,
         placement: TreeDropPlacement,
     ) -> bool {
-        if let Some(dragged) = dragged_value.downcast_ref::<DraggedCollection>() {
-            return self
-                .collection_reorder_action(dragged.collection_id, target_id, placement)
-                .is_some();
-        }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
             let accepted = self
                 .request_move_action(dragged.request_id, target_id, placement)
@@ -3486,28 +3342,12 @@ impl BeamView {
 
     fn tree_row_body_drop_placement(target_kind: TreeNodeKind) -> TreeDropPlacement {
         match target_kind {
-            TreeNodeKind::Collection | TreeNodeKind::Folder => TreeDropPlacement::Into,
+            TreeNodeKind::Folder => TreeDropPlacement::Into,
             TreeNodeKind::Request => TreeDropPlacement::After,
         }
     }
 
     fn can_accept_any_tree_drop(&self, dragged_value: &dyn Any, target_id: Ulid) -> bool {
-        if let Some(dragged) = dragged_value.downcast_ref::<DraggedCollection>() {
-            return self
-                .collection_reorder_action(
-                    dragged.collection_id,
-                    target_id,
-                    TreeDropPlacement::Before,
-                )
-                .is_some()
-                || self
-                    .collection_reorder_action(
-                        dragged.collection_id,
-                        target_id,
-                        TreeDropPlacement::After,
-                    )
-                    .is_some();
-        }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
             return self
                 .request_move_action(dragged.request_id, target_id, TreeDropPlacement::Before)
@@ -3551,7 +3391,7 @@ impl BeamView {
         let threshold = bounds.size.height * 0.2;
 
         let placement = match target_kind {
-            TreeNodeKind::Collection | TreeNodeKind::Folder => {
+            TreeNodeKind::Folder => {
                 if position.y < midpoint_y - threshold * 0.5 {
                     TreeDropPlacement::Before
                 } else if position.y > midpoint_y + threshold * 0.5 {
@@ -3606,17 +3446,6 @@ impl BeamView {
         }
 
         match action {
-            TreeMoveAction::ReorderCollection(input) => {
-                let command = AppCommand::ReorderCollection {
-                    collection_id: input.collection_id,
-                    insertion_index: input.insertion_index,
-                    command_id: next_command_id(),
-                };
-                if let Err(error) = self.publish_app_command(command) {
-                    window.push_notification(error, cx);
-                }
-                return;
-            }
             TreeMoveAction::MoveRequest(input) => {
                 let command = AppCommand::MoveRequest {
                     input,
@@ -3640,7 +3469,7 @@ impl BeamView {
                     let mut storage = WorkspaceRepository::new(backend)
                         .map_err(|error| format!("Failed to load workspace: {error}"))?;
                     match action {
-                        TreeMoveAction::ReorderCollection(_) | TreeMoveAction::MoveRequest(_) => {
+                        TreeMoveAction::MoveRequest(_) => {
                             unreachable!()
                         }
                         TreeMoveAction::MoveFolder(input) => storage
@@ -3700,27 +3529,6 @@ impl BeamView {
         );
     }
 
-    fn handle_collection_tree_drop(
-        &mut self,
-        collection_id: Ulid,
-        target_id: Ulid,
-        placement: TreeDropPlacement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(action) = self.collection_reorder_action(collection_id, target_id, placement)
-        else {
-            return;
-        };
-        self.perform_tree_move_action(
-            action,
-            self.shell.collections.selected_request_id(),
-            None,
-            window,
-            cx,
-        );
-    }
-
     fn render_tree_drop_slot(
         &self,
         target_id: Ulid,
@@ -3738,20 +3546,6 @@ impl BeamView {
         );
 
         let slot = match target_kind {
-            TreeNodeKind::Collection => base
-                .drag_over::<DraggedCollection>(|style, _, _, cx| style.bg(cx.theme().drag_border))
-                .on_drop(
-                    cx.listener(move |this, dragged: &DraggedCollection, window, cx| {
-                        this.handle_collection_tree_drop(
-                            dragged.collection_id,
-                            target_id,
-                            placement,
-                            window,
-                            cx,
-                        );
-                        this.clear_tree_drag_hover(cx);
-                    }),
-                ),
             TreeNodeKind::Folder | TreeNodeKind::Request => base
                 .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().drag_border))
                 .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().drag_border))
@@ -3950,15 +3744,19 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
-        self.shell.collections.insert_request_child(
-            parent_id,
-            request_file.meta.request_id,
-            request_file.meta.name.clone(),
-            request_file.request.method,
-            request_file.request.url.clone(),
-            request_file.file_path.clone(),
-        );
+        if let Some(parent_id) = parent.folder_id {
+            self.shell.collections.insert_request_child(
+                parent_id,
+                request_file.meta.request_id,
+                request_file.meta.name.clone(),
+                request_file.request.method,
+                request_file.request.url.clone(),
+                request_file.file_path.clone(),
+            );
+        } else {
+            self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
+            return;
+        }
         self.shell.request_pane_data.insert(
             request_file.meta.request_id,
             RequestPaneData {
@@ -3985,16 +3783,20 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
-        self.shell.collections.insert_request_child_after(
-            parent_id,
-            after_request_id,
-            request_file.meta.request_id,
-            request_file.meta.name.clone(),
-            request_file.request.method,
-            request_file.request.url.clone(),
-            request_file.file_path.clone(),
-        );
+        if let Some(parent_id) = parent.folder_id {
+            self.shell.collections.insert_request_child_after(
+                parent_id,
+                after_request_id,
+                request_file.meta.request_id,
+                request_file.meta.name.clone(),
+                request_file.request.method,
+                request_file.request.url.clone(),
+                request_file.file_path.clone(),
+            );
+        } else {
+            self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
+            return;
+        }
         self.shell.request_pane_data.insert(
             request_file.meta.request_id,
             RequestPaneData {
@@ -4021,16 +3823,20 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
-        self.shell.collections.insert_request_child_after(
-            parent_id,
-            source_request_id,
-            request_file.meta.request_id,
-            request_file.meta.name.clone(),
-            request_file.request.method,
-            request_file.request.url.clone(),
-            request_file.file_path.clone(),
-        );
+        if let Some(parent_id) = parent.folder_id {
+            self.shell.collections.insert_request_child_after(
+                parent_id,
+                source_request_id,
+                request_file.meta.request_id,
+                request_file.meta.name.clone(),
+                request_file.request.method,
+                request_file.request.url.clone(),
+                request_file.file_path.clone(),
+            );
+        } else {
+            self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
+            return;
+        }
         self.shell.request_pane_data.insert(
             request_file.meta.request_id,
             RequestPaneData {
@@ -4107,21 +3913,11 @@ impl BeamView {
             .shell
             .environment_selection
             .active_global_environment_id;
-        let collection_environment_selection: BTreeMap<Ulid, Ulid> = self
-            .shell
-            .environment_selection
-            .active_collection_environment_ids
-            .iter()
-            .map(|(collection_id, environment_id)| (*collection_id, *environment_id))
-            .collect();
-        if local_state.local_state.active_global_environment_id == active_global_environment_id
-            && local_state.collection_environment_selection == collection_environment_selection
-        {
+        if local_state.local_state.active_global_environment_id == active_global_environment_id {
             return Ok(());
         }
 
         local_state.local_state.active_global_environment_id = active_global_environment_id;
-        local_state.collection_environment_selection = collection_environment_selection;
         local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
@@ -4201,37 +3997,51 @@ impl BeamView {
                     if let Some(placement) = self.pending_request_placements.remove(command_id) {
                         match placement {
                             PendingRequestPlacement::Append { parent } => {
-                                let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
-                                self.shell
-                                    .insert_request_into_shared_store(parent_id, None, request);
-                                self.shell.collections.insert_request_child(
-                                    parent_id,
-                                    request.meta.request_id,
-                                    request.meta.name.clone(),
-                                    request.request.method,
-                                    request.request.url.clone(),
-                                    request.file_path.clone(),
-                                );
+                                if let Some(parent_id) = parent.folder_id {
+                                    self.shell
+                                        .insert_request_into_shared_store(parent_id, None, request);
+                                    self.shell.collections.insert_request_child(
+                                        parent_id,
+                                        request.meta.request_id,
+                                        request.meta.name.clone(),
+                                        request.request.method,
+                                        request.request.url.clone(),
+                                        request.file_path.clone(),
+                                    );
+                                } else {
+                                    self.refresh_shell_from_disk(
+                                        Some(request.meta.request_id),
+                                        window,
+                                        cx,
+                                    );
+                                }
                             }
                             PendingRequestPlacement::After {
                                 parent,
                                 after_request_id,
                             } => {
-                                let parent_id = parent.folder_id.unwrap_or(parent.collection_id);
-                                self.shell.insert_request_into_shared_store(
-                                    parent_id,
-                                    Some(after_request_id),
-                                    request,
-                                );
-                                self.shell.collections.insert_request_child_after(
-                                    parent_id,
-                                    after_request_id,
-                                    request.meta.request_id,
-                                    request.meta.name.clone(),
-                                    request.request.method,
-                                    request.request.url.clone(),
-                                    request.file_path.clone(),
-                                );
+                                if let Some(parent_id) = parent.folder_id {
+                                    self.shell.insert_request_into_shared_store(
+                                        parent_id,
+                                        Some(after_request_id),
+                                        request,
+                                    );
+                                    self.shell.collections.insert_request_child_after(
+                                        parent_id,
+                                        after_request_id,
+                                        request.meta.request_id,
+                                        request.meta.name.clone(),
+                                        request.request.method,
+                                        request.request.url.clone(),
+                                        request.file_path.clone(),
+                                    );
+                                } else {
+                                    self.refresh_shell_from_disk(
+                                        Some(request.meta.request_id),
+                                        window,
+                                        cx,
+                                    );
+                                }
                             }
                         }
                         self.shell
@@ -4460,33 +4270,7 @@ impl BeamView {
             return;
         }
 
-        let selected_request = self.shell.collections.selected_request_id();
         let validated_name = match node_kind {
-            TreeNodeKind::Collection => {
-                let siblings: Vec<&str> = self
-                    .shell
-                    .collections
-                    .visible_rows()
-                    .into_iter()
-                    .filter(|row| row.kind == TreeNodeKind::Collection && row.id != node_id)
-                    .filter_map(|row| self.shell.collections.node(row.id))
-                    .map(|n| n.name.as_str())
-                    .collect();
-                let validated = match validate_rename(&node.name, next_name) {
-                    Ok(value) => value,
-                    Err(RenameValidationError::EmptyName) => {
-                        eprintln!("rename: collection empty name after validation");
-                        window.push_notification("Collection name cannot be empty.", cx);
-                        return;
-                    }
-                };
-                if siblings.iter().any(|name| name.eq_ignore_ascii_case(&validated)) {
-                    eprintln!("rename: collection duplicate name '{}'", next_name);
-                    window.push_notification("A collection with this name already exists.", cx);
-                    return;
-                }
-                validated
-            }
             TreeNodeKind::Folder => {
                 let Some(_parent) = self.parent_ref_for_add_folder(node_id) else {
                     eprintln!("rename: unable to determine folder parent for id={node_id}");
@@ -4552,11 +4336,6 @@ impl BeamView {
             .collections
             .rename_node(node_id, confirmed_name.clone());
         let command = match node_kind {
-            TreeNodeKind::Collection => AppCommand::RenameCollection {
-                collection_id: node_id,
-                new_name: persisted_name,
-                command_id: next_command_id(),
-            },
             TreeNodeKind::Folder => AppCommand::RenameFolder {
                 folder_id: node_id,
                 new_name: persisted_name,
@@ -4723,21 +4502,6 @@ impl BeamView {
         }
     }
 
-    fn delete_collection_from_tree_node(
-        &mut self,
-        collection_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let command = AppCommand::DeleteCollection {
-            collection_id,
-            command_id: next_command_id(),
-        };
-        if let Err(error) = self.publish_app_command(command) {
-            window.push_notification(error, cx);
-        }
-    }
-
     fn delete_folder_from_tree_node(
         &mut self,
         folder_id: Ulid,
@@ -4838,7 +4602,7 @@ impl BeamView {
 
     fn render_title_bar_content(
         &mut self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         h_flex()
@@ -5920,7 +5684,7 @@ impl BeamView {
             .unwrap_or_else(|| "Unknown".to_string());
 
         let chevron_icon = match row.kind {
-            TreeNodeKind::Collection | TreeNodeKind::Folder => {
+            TreeNodeKind::Folder => {
                 if self.shell.collections.is_expanded(row.id) {
                     Some("icons/chevron-down.svg")
                 } else {
@@ -5970,7 +5734,6 @@ impl BeamView {
             })
             .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
             .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
-            .drag_over::<DraggedCollection>(|style, _, _, cx| style.bg(cx.theme().selection))
             .on_drag_move(
                 cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
                     let dragged = drag.drag(cx).clone();
@@ -5997,19 +5760,6 @@ impl BeamView {
                     );
                 }),
             )
-            .on_drag_move(cx.listener(
-                move |this, drag: &DragMoveEvent<DraggedCollection>, _, cx| {
-                    let dragged = drag.drag(cx).clone();
-                    this.update_tree_drag_hover(
-                        drag.bounds,
-                        drag.event.position,
-                        row_id,
-                        row_kind,
-                        &dragged,
-                        cx,
-                    );
-                },
-            ))
             .on_drop(
                 cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
                     let placement = this
@@ -6038,23 +5788,6 @@ impl BeamView {
                     this.clear_tree_drag_hover(cx);
                 }),
             )
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedCollection, window, cx| {
-                    let placement = this
-                        .tree_drag_hover
-                        .filter(|(id, _)| *id == row_id)
-                        .map(|(_, p)| p)
-                        .unwrap_or(body_drop_placement);
-                    this.handle_collection_tree_drop(
-                        dragged.collection_id,
-                        row_id,
-                        placement,
-                        window,
-                        cx,
-                    );
-                    this.clear_tree_drag_hover(cx);
-                }),
-            )
             .child(
                 ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
@@ -6080,7 +5813,7 @@ impl BeamView {
                     )
                     .child(row_content)
                     .on_click(cx.listener(move |this, _, window, cx| match row_kind {
-                        TreeNodeKind::Collection | TreeNodeKind::Folder => {
+                        TreeNodeKind::Folder => {
                             this.shell.collections.toggle_expanded(row_id);
                             if let Err(error) = this.persist_tree_expansion_state() {
                                 window.push_notification(error, cx);
@@ -6103,13 +5836,6 @@ impl BeamView {
                 }),
             );
         match row_kind {
-            TreeNodeKind::Collection => body.interactivity().on_drag(
-                DraggedCollection {
-                    collection_id: row_id,
-                    label: label.clone(),
-                },
-                Self::tree_drag_preview_for_collection,
-            ),
             TreeNodeKind::Folder => body.interactivity().on_drag(
                 DraggedFolder {
                     folder_id: row_id,
@@ -6147,110 +5873,6 @@ impl BeamView {
         let muted_foreground = cx.theme().muted_foreground;
         let mut menu = menu.min_w(px(180.0));
         match row_kind {
-            TreeNodeKind::Collection => {
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Request")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/folder-add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Folder")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_folder_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.separator();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/edit.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Rename")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.open_rename_dialog_for_tree_node(
-                                row_id,
-                                TreeNodeKind::Collection,
-                                window,
-                                cx,
-                            );
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/trash.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Delete")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.delete_collection_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-            }
             TreeNodeKind::Folder => {
                 menu = menu.item(
                     PopupMenuItem::element(move |_, _| {

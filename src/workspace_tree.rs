@@ -1,21 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{EnvironmentFile, RequestFile};
 use crate::paths::BeamPaths;
-use crate::schema::SCHEMA_VERSION_V1;
 
 pub type NodeId = Ulid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
-    Collection,
     Folder,
     Request,
 }
@@ -117,24 +113,6 @@ pub fn find_unique_name(
     unreachable!("infinite numeric suffix space must eventually produce a unique name")
 }
 
-pub fn root_collection_id_of(store: &SharedStore, node_id: NodeId) -> Option<NodeId> {
-    let mut cursor = node_id;
-    let mut seen = HashSet::new();
-
-    loop {
-        let node = store.nodes.get(&cursor)?;
-        if node.kind == NodeKind::Collection {
-            return Some(node.id);
-        }
-
-        let parent_id = node.parent_id?;
-        if !seen.insert(parent_id) {
-            return None;
-        }
-        cursor = parent_id;
-    }
-}
-
 pub fn ensure_parent_kind(store: &SharedStore, parent_id: NodeId) -> Result<NodeKind> {
     let parent = store
         .nodes
@@ -144,7 +122,7 @@ pub fn ensure_parent_kind(store: &SharedStore, parent_id: NodeId) -> Result<Node
             id: parent_id.to_string(),
         })?;
     match parent.kind {
-        NodeKind::Collection | NodeKind::Folder => Ok(parent.kind),
+        NodeKind::Folder => Ok(parent.kind),
         NodeKind::Request => Err(BeamError::Validation {
             message: format!("request node {parent_id} cannot accept child nodes"),
         }),
@@ -230,57 +208,6 @@ fn slugify_name(input: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RootOrderFile {
-    pub schema_version: u32,
-    #[serde(default)]
-    pub root_ids: Vec<NodeId>,
-}
-
-impl Default for RootOrderFile {
-    fn default() -> Self {
-        Self {
-            schema_version: SCHEMA_VERSION_V1,
-            root_ids: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CollectionManifestFile {
-    pub schema_version: u32,
-    pub id: NodeId,
-    pub name: String,
-    pub kind: NodeKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<ManifestNode>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ManifestNode {
-    pub id: NodeId,
-    pub name: String,
-    pub kind: NodeKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub updated_at: Option<DateTime<Utc>>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub children: Vec<ManifestNode>,
-}
-
-pub fn collection_dir_name(name: &str) -> String {
-    slugify_name(name)
-}
-
 pub fn folder_dir_name(name: &str) -> String {
     slugify_name(name)
 }
@@ -289,32 +216,22 @@ pub fn request_file_name(name: &str) -> String {
     format!("{}.request.toml", slugify_name(name))
 }
 
-pub fn collection_dir_path(
-    paths: &BeamPaths,
-    store: &SharedStore,
-    collection_id: NodeId,
-) -> Result<PathBuf> {
-    let collection = node_by_kind(store, collection_id, NodeKind::Collection)?;
-    Ok(paths
-        .collections_dir
-        .join(collection_dir_name(&collection.name)))
-}
-
+/// Returns the directory path for a folder node.
+/// For top-level folders (parent_id: None), the parent is the workspace root.
 pub fn folder_dir_path(
     paths: &BeamPaths,
     store: &SharedStore,
     folder_id: NodeId,
 ) -> Result<PathBuf> {
     let folder = node_by_kind(store, folder_id, NodeKind::Folder)?;
-    let parent_id = folder.parent_id.ok_or_else(|| BeamError::Validation {
-        message: format!("folder node {} is missing parent_id", folder_id),
-    })?;
-    Ok(node_dir_path(paths, store, parent_id)?.join(folder_dir_name(&folder.name)))
+    match folder.parent_id {
+        None => Ok(paths.root.join(folder_dir_name(&folder.name))),
+        Some(parent_id) => Ok(node_dir_path(paths, store, parent_id)?.join(folder_dir_name(&folder.name))),
+    }
 }
 
 pub fn node_dir_path(paths: &BeamPaths, store: &SharedStore, node_id: NodeId) -> Result<PathBuf> {
     match node_by_id(store, node_id)?.kind {
-        NodeKind::Collection => collection_dir_path(paths, store, node_id),
         NodeKind::Folder => folder_dir_path(paths, store, node_id),
         NodeKind::Request => Err(BeamError::Validation {
             message: format!("request node {} does not have a directory path", node_id),
@@ -322,96 +239,32 @@ pub fn node_dir_path(paths: &BeamPaths, store: &SharedStore, node_id: NodeId) ->
     }
 }
 
+/// Returns the file path for a request node.
+/// For root-level requests (parent_id: None), the file lives directly in the workspace root.
 pub fn request_file_path(
     paths: &BeamPaths,
     store: &SharedStore,
     request_id: NodeId,
 ) -> Result<PathBuf> {
     let request = node_by_kind(store, request_id, NodeKind::Request)?;
-    let parent_id = request.parent_id.ok_or_else(|| BeamError::Validation {
-        message: format!("request node {} is missing parent_id", request_id),
-    })?;
-    let parent = node_by_id(store, parent_id)?;
-    let request_dir = match parent.kind {
-        NodeKind::Collection => collection_dir_path(paths, store, parent_id)?,
-        NodeKind::Folder => node_dir_path(paths, store, parent_id)?,
-        NodeKind::Request => {
-            return Err(BeamError::Validation {
-                message: format!(
-                    "request node {} cannot be parent of request node {}",
-                    parent_id, request_id
-                ),
-            });
+    let request_dir = match request.parent_id {
+        None => paths.root.clone(),
+        Some(parent_id) => {
+            let parent = node_by_id(store, parent_id)?;
+            match parent.kind {
+                NodeKind::Folder => node_dir_path(paths, store, parent_id)?,
+                NodeKind::Request => {
+                    return Err(BeamError::Validation {
+                        message: format!(
+                            "request node {} cannot be parent of request node {}",
+                            parent_id, request_id
+                        ),
+                    });
+                }
+            }
         }
     };
     Ok(request_dir.join(request_file_name(&request.name)))
-}
-
-pub fn root_order_file(store: &SharedStore) -> RootOrderFile {
-    RootOrderFile {
-        schema_version: SCHEMA_VERSION_V1,
-        root_ids: store.root_ids.clone(),
-    }
-}
-
-pub fn collection_manifest_from_store(
-    store: &SharedStore,
-    collection_id: NodeId,
-) -> Result<CollectionManifestFile> {
-    let collection = node_by_kind(store, collection_id, NodeKind::Collection)?;
-    let children = collection
-        .children
-        .iter()
-        .copied()
-        .map(|child_id| manifest_node_from_store(store, child_id))
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(CollectionManifestFile {
-        schema_version: SCHEMA_VERSION_V1,
-        id: collection.id,
-        name: collection.name.clone(),
-        kind: collection.kind,
-        description: collection.description.clone(),
-        created_at: collection.created_at,
-        updated_at: collection.updated_at,
-        children,
-    })
-}
-
-
-fn manifest_node_from_store(store: &SharedStore, node_id: NodeId) -> Result<ManifestNode> {
-    let node = node_by_id(store, node_id)?;
-    if node.kind == NodeKind::Collection {
-        return Err(BeamError::Validation {
-            message: format!(
-                "collection node {} cannot be nested under a collection manifest",
-                node_id
-            ),
-        });
-    }
-
-    let children = node
-        .children
-        .iter()
-        .copied()
-        .map(|child_id| manifest_node_from_store(store, child_id))
-        .collect::<Result<Vec<_>>>()?;
-
-    if node.kind == NodeKind::Request && !children.is_empty() {
-        return Err(BeamError::Validation {
-            message: format!("request node {} cannot have child nodes", node_id),
-        });
-    }
-
-    Ok(ManifestNode {
-        id: node.id,
-        name: node.name.clone(),
-        kind: node.kind,
-        description: node.description.clone(),
-        created_at: node.created_at,
-        updated_at: node.updated_at,
-        children,
-    })
 }
 
 pub fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
@@ -440,71 +293,20 @@ pub fn node_by_kind(store: &SharedStore, node_id: NodeId, expected_kind: NodeKin
 #[cfg(test)]
 mod tests {
     use super::{
-        CollectionManifestFile,
-        ManifestNode, NameValidationError, Node, NodeKind, RootOrderFile, SharedStore,
-        assert_name_unique, collection_dir_path, find_unique_name, folder_dir_name,
-        request_file_name, request_file_path, root_collection_id_of,
+        NameValidationError, Node, NodeKind, SharedStore,
+        assert_name_unique, find_unique_name, folder_dir_name,
+        request_file_name, request_file_path,
         scope_key,
     };
-    use crate::paths::COLLECTION_ROOT_ORDER_FILE_NAME;
     use std::collections::HashMap;
     use tempfile::tempdir;
 
-
     use crate::paths::BeamPaths;
-    use chrono::Utc;
-
-    #[test]
-    fn root_order_file_defaults_to_current_schema_version() {
-        let file = RootOrderFile::default();
-        assert_eq!(file.schema_version, crate::schema::SCHEMA_VERSION_V1);
-        assert!(file.root_ids.is_empty());
-        assert_eq!(COLLECTION_ROOT_ORDER_FILE_NAME, ".root-order.toml");
-    }
-
-    #[test]
-    fn collection_manifest_roundtrips_nested_children_shape() {
-        let manifest = CollectionManifestFile {
-            schema_version: crate::schema::SCHEMA_VERSION_V1,
-            id: ulid::Ulid::new(),
-            name: "Users".to_string(),
-            kind: NodeKind::Collection,
-            description: Some("Shared collection metadata lives in the manifest".to_string()),
-            created_at: None,
-            updated_at: None,
-            children: vec![ManifestNode {
-                id: ulid::Ulid::new(),
-                name: "Admin".to_string(),
-                kind: NodeKind::Folder,
-                description: Some("Folder metadata also lives in the manifest".to_string()),
-                created_at: None,
-                updated_at: None,
-                children: vec![ManifestNode {
-                    id: ulid::Ulid::new(),
-                    name: "Get User".to_string(),
-                    kind: NodeKind::Request,
-                    description: None,
-                    created_at: None,
-                    updated_at: None,
-                    children: Vec::new(),
-                }],
-            }],
-        };
-
-        let encoded = toml::to_string_pretty(&manifest).expect("encode manifest");
-        let decoded: CollectionManifestFile = toml::from_str(&encoded).expect("decode manifest");
-
-        assert_eq!(decoded.kind, NodeKind::Collection);
-        assert_eq!(decoded.children.len(), 1);
-        assert_eq!(decoded.children[0].kind, NodeKind::Folder);
-        assert_eq!(decoded.children[0].children.len(), 1);
-        assert_eq!(decoded.children[0].children[0].kind, NodeKind::Request);
-    }
 
     #[test]
     fn scope_key_uses_root_or_parent_scope_with_slugified_name() {
         let parent_id = ulid::Ulid::new();
-        assert_eq!(scope_key(None, "My Collection"), "root/my-collection");
+        assert_eq!(scope_key(None, "My Folder"), "root/my-folder");
         assert_eq!(
             scope_key(Some(parent_id), "Fetch User"),
             format!("{parent_id}/fetch-user")
@@ -555,73 +357,6 @@ mod tests {
     }
 
     #[test]
-    fn root_collection_lookup_walks_to_collection_ancestor() {
-        let collection_id = ulid::Ulid::new();
-        let folder_id = ulid::Ulid::new();
-        let request_id = ulid::Ulid::new();
-        let store = SharedStore {
-            nodes: HashMap::from([
-                (
-                    collection_id,
-                    Node {
-                        id: collection_id,
-                        name: "API".to_string(),
-                        kind: NodeKind::Collection,
-                        description: None,
-                        created_at: None,
-                        updated_at: None,
-                        parent_id: None,
-                        children: vec![folder_id],
-                    },
-                ),
-                (
-                    folder_id,
-                    Node {
-                        id: folder_id,
-                        name: "Users".to_string(),
-                        kind: NodeKind::Folder,
-                        description: None,
-                        created_at: None,
-                        updated_at: None,
-                        parent_id: Some(collection_id),
-                        children: vec![request_id],
-                    },
-                ),
-                (
-                    request_id,
-                    Node {
-                        id: request_id,
-                        name: "Get User".to_string(),
-                        kind: NodeKind::Request,
-                        description: None,
-                        created_at: None,
-                        updated_at: None,
-                        parent_id: Some(folder_id),
-                        children: Vec::new(),
-                    },
-                ),
-            ]),
-            requests: HashMap::new(),
-            root_ids: vec![collection_id],
-            name_index: HashMap::new(),
-            environments: HashMap::new(),
-        };
-
-        assert_eq!(
-            root_collection_id_of(&store, request_id),
-            Some(collection_id)
-        );
-        assert_eq!(
-            root_collection_id_of(&store, folder_id),
-            Some(collection_id)
-        );
-        assert_eq!(
-            root_collection_id_of(&store, collection_id),
-            Some(collection_id)
-        );
-    }
-
-    #[test]
     fn rebuild_name_index_collects_duplicate_scope_warnings() {
         let parent_id = ulid::Ulid::new();
         let first_id = ulid::Ulid::new();
@@ -667,107 +402,13 @@ mod tests {
     }
 
     #[test]
-    fn collection_manifest_from_store_preserves_metadata_and_child_order() {
-        let collection_id = ulid::Ulid::new();
-        let folder_id = ulid::Ulid::new();
-        let request_id = ulid::Ulid::new();
-        let direct_request_id = ulid::Ulid::new();
-        let created_at = Utc::now();
-        let updated_at = Utc::now();
-        let store = SharedStore {
-            nodes: HashMap::from([
-                (
-                    collection_id,
-                    Node {
-                        id: collection_id,
-                        name: "Sample API".to_string(),
-                        kind: NodeKind::Collection,
-                        description: Some("Collection".to_string()),
-                        created_at: Some(created_at),
-                        updated_at: Some(updated_at),
-                        parent_id: None,
-                        children: vec![folder_id, direct_request_id],
-                    },
-                ),
-                (
-                    folder_id,
-                    Node {
-                        id: folder_id,
-                        name: "Users".to_string(),
-                        kind: NodeKind::Folder,
-                        description: Some("Folder".to_string()),
-                        created_at: Some(created_at),
-                        updated_at: Some(updated_at),
-                        parent_id: Some(collection_id),
-                        children: vec![request_id],
-                    },
-                ),
-                (
-                    request_id,
-                    Node {
-                        id: request_id,
-                        name: "List Users".to_string(),
-                        kind: NodeKind::Request,
-                        description: Some("Nested request".to_string()),
-                        created_at: Some(created_at),
-                        updated_at: Some(updated_at),
-                        parent_id: Some(folder_id),
-                        children: Vec::new(),
-                    },
-                ),
-                (
-                    direct_request_id,
-                    Node {
-                        id: direct_request_id,
-                        name: "Health".to_string(),
-                        kind: NodeKind::Request,
-                        description: None,
-                        created_at: Some(created_at),
-                        updated_at: Some(updated_at),
-                        parent_id: Some(collection_id),
-                        children: Vec::new(),
-                    },
-                ),
-            ]),
-            requests: HashMap::new(),
-            root_ids: vec![collection_id],
-            name_index: HashMap::new(),
-            environments: HashMap::new(),
-        };
-
-        let manifest =
-            super::collection_manifest_from_store(&store, collection_id).expect("build manifest");
-
-        assert_eq!(manifest.description.as_deref(), Some("Collection"));
-        assert_eq!(manifest.children.len(), 2);
-        assert_eq!(manifest.children[0].id, folder_id);
-        assert_eq!(manifest.children[0].description.as_deref(), Some("Folder"));
-        assert_eq!(manifest.children[0].children[0].id, request_id);
-        assert_eq!(manifest.children[1].id, direct_request_id);
-    }
-
-    #[test]
     fn path_resolution_uses_node_ancestry() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
-        let collection_id = ulid::Ulid::new();
         let folder_id = ulid::Ulid::new();
         let request_id = ulid::Ulid::new();
         let store = SharedStore {
             nodes: HashMap::from([
-                (
-                    collection_id,
-                    Node {
-                        id: collection_id,
-                        name: "Sample API".to_string(),
-                        kind: NodeKind::Collection,
-                        description: None,
-                        created_at: None,
-                        updated_at: None,
-                        parent_id: None,
-                        children: vec![folder_id],
-                    },
-                ),
                 (
                     folder_id,
                     Node {
@@ -777,7 +418,7 @@ mod tests {
                         description: None,
                         created_at: None,
                         updated_at: None,
-                        parent_id: Some(collection_id),
+                        parent_id: None,
                         children: vec![request_id],
                     },
                 ),
@@ -796,24 +437,48 @@ mod tests {
                 ),
             ]),
             requests: HashMap::new(),
-            root_ids: vec![collection_id],
+            root_ids: vec![folder_id],
             name_index: HashMap::new(),
             environments: HashMap::new(),
         };
 
-        assert_eq!(
-            collection_dir_path(&paths, &store, collection_id).expect("collection path"),
-            paths.collections_dir.join("sample-api")
-        );
         assert_eq!(folder_dir_name("Users"), "users");
         assert_eq!(
             request_file_path(&paths, &store, request_id).expect("request path"),
-            paths
-                .collections_dir
-                .join("sample-api")
+            paths.root
                 .join("users")
                 .join(request_file_name("Get User"))
         );
     }
 
+    #[test]
+    fn root_level_request_path_is_directly_under_workspace_root() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let request_id = ulid::Ulid::new();
+        let store = SharedStore {
+            nodes: HashMap::from([(
+                request_id,
+                Node {
+                    id: request_id,
+                    name: "Health Check".to_string(),
+                    kind: NodeKind::Request,
+                    description: None,
+                    created_at: None,
+                    updated_at: None,
+                    parent_id: None,
+                    children: Vec::new(),
+                },
+            )]),
+            requests: HashMap::new(),
+            root_ids: vec![request_id],
+            name_index: HashMap::new(),
+            environments: HashMap::new(),
+        };
+
+        assert_eq!(
+            request_file_path(&paths, &store, request_id).expect("request path"),
+            paths.root.join(request_file_name("Health Check"))
+        );
+    }
 }

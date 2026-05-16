@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -30,7 +29,6 @@ pub enum ItemType {
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentScope {
     Global,
-    Collection,
 }
 
 // TODO: clean up the alias
@@ -48,6 +46,8 @@ pub enum ApiKeyLocation {
 pub struct WorkspaceFile {
     pub schema_version: u32,
     pub workspace: WorkspaceMeta,
+    #[serde(default)]
+    pub items: Vec<ManifestItemRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +71,7 @@ impl WorkspaceFile {
                 created_at: now,
                 updated_at: now,
             },
+            items: Vec::new(),
         }
     }
 }
@@ -82,25 +83,7 @@ impl Default for WorkspaceFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CollectionFile {
-    pub collection: CollectionMeta,
-    #[serde(default)]
-    pub items: Vec<CollectionItemRef>,
-    #[serde(skip)]
-    pub manifest_path: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CollectionMeta {
-    pub collection_id: Ulid,
-    pub name: String,
-    pub description: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CollectionItemRef {
+pub struct ManifestItemRef {
     pub item_id: Ulid,
     pub item_type: ItemType,
     pub name: String,
@@ -111,7 +94,7 @@ pub struct CollectionItemRef {
 pub struct FolderFile {
     pub folder: FolderMeta,
     #[serde(default)]
-    pub items: Vec<CollectionItemRef>,
+    pub items: Vec<ManifestItemRef>,
     #[serde(skip)]
     pub manifest_path: Option<PathBuf>,
 }
@@ -119,7 +102,6 @@ pub struct FolderFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FolderMeta {
     pub folder_id: Ulid,
-    pub collection_id: Ulid,
     pub parent_folder_id: Option<Ulid>,
     pub name: String,
     pub description: Option<String>,
@@ -245,7 +227,6 @@ pub struct EnvironmentFile {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnvironmentMeta {
     pub environment_id: Ulid,
-    pub collection_id: Option<Ulid>,
     pub scope: EnvironmentScope,
     pub name: String,
     #[serde(default)]
@@ -270,8 +251,6 @@ pub struct LocalStateFile {
     pub schema_version: u32,
     // TODO: why local state is in a dedicated struct?
     pub local_state: LocalState,
-    #[serde(default)]
-    pub collection_environment_selection: BTreeMap<Ulid, Ulid>,
     #[serde(default)]
     pub tree_state: TreeState,
 }
@@ -301,16 +280,8 @@ impl Default for LocalStateFile {
                 theme_name: None,
                 updated_at: Utc::now(),
             },
-            collection_environment_selection: BTreeMap::new(),
             tree_state: TreeState::default(),
         }
-    }
-}
-
-impl CollectionFile {
-    pub fn with_manifest_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.manifest_path = Some(path.into());
-        self
     }
 }
 
@@ -338,7 +309,7 @@ impl EnvironmentFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthConfig, BodyConfig, CollectionFile, CollectionMeta, EnvironmentFile, EnvironmentMeta,
+        AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
         EnvironmentScope, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
     };
     use crate::schema::SCHEMA_VERSION_V1;
@@ -403,24 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn collection_and_environment_runtime_paths_are_not_serialized() {
+    fn folder_and_environment_runtime_paths_are_not_serialized() {
         let now = Utc::now();
-        let collection = CollectionFile {
-            collection: CollectionMeta {
-                collection_id: Ulid::new(),
-                name: "Sample".to_string(),
-                description: None,
-                created_at: now,
-                updated_at: now,
-            },
-            items: Vec::new(),
-            manifest_path: Some(PathBuf::from("/tmp/collection.toml")),
-        };
         let environment = EnvironmentFile {
             schema_version: SCHEMA_VERSION_V1,
             environment: EnvironmentMeta {
                 environment_id: Ulid::new(),
-                collection_id: None,
                 scope: EnvironmentScope::Global,
                 name: "Global".to_string(),
                 file_name: "global.toml".to_string(),
@@ -434,7 +393,6 @@ mod tests {
         let folder = super::FolderFile {
             folder: super::FolderMeta {
                 folder_id: Ulid::new(),
-                collection_id: Ulid::new(),
                 parent_folder_id: None,
                 name: "Auth".to_string(),
                 description: None,
@@ -445,11 +403,9 @@ mod tests {
             manifest_path: Some(PathBuf::from("/tmp/folder.toml")),
         };
 
-        let collection_encoded = toml::to_string_pretty(&collection).expect("encode collection");
         let environment_encoded = toml::to_string_pretty(&environment).expect("encode environment");
         let folder_encoded = toml::to_string_pretty(&folder).expect("encode folder");
 
-        assert!(!collection_encoded.contains("manifest_path"));
         assert!(!environment_encoded.contains("file_path"));
         assert!(!folder_encoded.contains("manifest_path"));
     }
