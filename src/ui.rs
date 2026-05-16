@@ -3165,31 +3165,42 @@ impl BeamView {
         false
     }
 
-    fn has_name_conflict_in_scope(&self, parent_id: Ulid, moving_id: Ulid, name: &str) -> bool {
-        self.shell
-            .collections
-            .node(parent_id)
+    fn has_name_conflict_in_scope(
+        &self,
+        parent_id: Option<Ulid>,
+        moving_id: Ulid,
+        name: &str,
+    ) -> bool {
+        let sibling_ids: Vec<Ulid> = if let Some(pid) = parent_id {
+            self.shell
+                .collections
+                .node(pid)
+                .map(|p| p.children.clone())
+                .unwrap_or_default()
+        } else {
+            self.shell.collections.roots().to_vec()
+        };
+        sibling_ids
             .into_iter()
-            .flat_map(|parent| parent.children.iter().copied())
-            .filter(|child_id| *child_id != moving_id)
-            .filter_map(|child_id| self.shell.collections.node(child_id))
+            .filter(|id| *id != moving_id)
+            .filter_map(|id| self.shell.collections.node(id))
             .any(|child| child.name.eq_ignore_ascii_case(name))
     }
 
     fn request_parent_input_for_parent_node(
         &self,
-        parent_id: Ulid,
+        parent_id: Option<Ulid>,
     ) -> Option<(RequestParentRef, Option<KnownParentManifestPath>)> {
-        let parent = self.shell.collections.node(parent_id)?;
+        let Some(pid) = parent_id else {
+            return Some((RequestParentRef { folder_id: None }, None));
+        };
+        let parent = self.shell.collections.node(pid)?;
         match parent.kind {
             TreeNodeKind::Folder => Some((
                 RequestParentRef {
                     folder_id: Some(parent.id),
                 },
-                parent
-                    .manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath),
+                parent.manifest_path.clone().map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => None,
         }
@@ -3197,18 +3208,18 @@ impl BeamView {
 
     fn folder_parent_input_for_parent_node(
         &self,
-        parent_id: Ulid,
+        parent_id: Option<Ulid>,
     ) -> Option<(FolderParentRef, Option<KnownParentManifestPath>)> {
-        let parent = self.shell.collections.node(parent_id)?;
+        let Some(pid) = parent_id else {
+            return Some((FolderParentRef { folder_id: None }, None));
+        };
+        let parent = self.shell.collections.node(pid)?;
         match parent.kind {
             TreeNodeKind::Folder => Some((
                 FolderParentRef {
                     folder_id: Some(parent.id),
                 },
-                parent
-                    .manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath),
+                parent.manifest_path.clone().map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => None,
         }
@@ -3218,14 +3229,15 @@ impl BeamView {
         &self,
         target_id: Ulid,
         placement: TreeDropPlacement,
-    ) -> Option<(Ulid, usize)> {
+    ) -> Option<(Option<Ulid>, usize)> {
         let target = self.shell.collections.node(target_id)?;
-        let parent_id = target.parent_id?;
-        let parent = self.shell.collections.node(parent_id)?;
-        let target_index = parent
-            .children
-            .iter()
-            .position(|child_id| *child_id == target_id)?;
+        let parent_id = target.parent_id;
+        let siblings: Vec<Ulid> = if let Some(pid) = parent_id {
+            self.shell.collections.node(pid)?.children.clone()
+        } else {
+            self.shell.collections.roots().to_vec()
+        };
+        let target_index = siblings.iter().position(|id| *id == target_id)?;
         let insertion_index = match placement {
             TreeDropPlacement::Before => target_index,
             TreeDropPlacement::After => target_index + 1,
@@ -3245,13 +3257,13 @@ impl BeamView {
             return None;
         }
 
-        let (destination_parent_id, insertion_index) = match placement {
+        let (destination_parent_id, insertion_index): (Option<Ulid>, usize) = match placement {
             TreeDropPlacement::Into => {
                 let target = self.shell.collections.node(target_id)?;
                 if target.kind != TreeNodeKind::Folder {
                     return None;
                 }
-                (target.id, target.children.len())
+                (Some(target.id), target.children.len())
             }
             TreeDropPlacement::Before | TreeDropPlacement::After => {
                 if target_id == request_id {
@@ -3286,7 +3298,7 @@ impl BeamView {
             return None;
         }
 
-        let (destination_parent_id, insertion_index) = match placement {
+        let (destination_parent_id, insertion_index): (Option<Ulid>, usize) = match placement {
             TreeDropPlacement::Into => {
                 if target_id == folder_id {
                     return None;
@@ -3295,7 +3307,7 @@ impl BeamView {
                 if target.kind != TreeNodeKind::Folder {
                     return None;
                 }
-                (target.id, target.children.len())
+                (Some(target.id), target.children.len())
             }
             TreeDropPlacement::Before | TreeDropPlacement::After => {
                 if target_id == folder_id {
@@ -3304,8 +3316,9 @@ impl BeamView {
                 self.sibling_destination_for_target(target_id, placement)?
             }
         };
-        if destination_parent_id == folder_id
-            || self.path_has_ancestor_in_tree(destination_parent_id, folder_id)
+        if destination_parent_id == Some(folder_id)
+            || destination_parent_id
+                .is_some_and(|id| self.path_has_ancestor_in_tree(id, folder_id))
         {
             return None;
         }

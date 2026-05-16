@@ -221,6 +221,31 @@ impl CollectionsTreeState {
         self.nodes.get(&id)
     }
 
+    pub fn roots(&self) -> &[Ulid] {
+        &self.roots
+    }
+
+    pub fn move_node_to_root(&mut self, node_id: Ulid, insertion_index: usize) -> bool {
+        let Some(node) = self.nodes.get(&node_id) else {
+            return false;
+        };
+        let old_parent_id = node.parent_id;
+        if let Some(old_parent_id) = old_parent_id {
+            if let Some(old_parent) = self.nodes.get_mut(&old_parent_id) {
+                old_parent.children.retain(|id| *id != node_id);
+            }
+        } else {
+            self.roots.retain(|id| *id != node_id);
+        }
+        self.roots.retain(|id| *id != node_id);
+        let index = insertion_index.min(self.roots.len());
+        self.roots.insert(index, node_id);
+        if let Some(node) = self.nodes.get_mut(&node_id) {
+            node.parent_id = None;
+        }
+        true
+    }
+
     pub fn rename_node(&mut self, id: Ulid, new_name: String) -> bool {
         let Some(node) = self.nodes.get_mut(&id) else {
             return false;
@@ -859,12 +884,48 @@ impl AppShellState {
                 if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
                     node.name = request.meta.name.clone();
                 }
-                if let Some(parent_id) = new_parent_id {
-                    self.move_request_in_shared_store(
-                        request.meta.request_id,
-                        *parent_id,
-                        *insertion_index,
-                    );
+                match new_parent_id {
+                    Some(parent_id) => {
+                        self.move_request_in_shared_store(
+                            request.meta.request_id,
+                            *parent_id,
+                            *insertion_index,
+                        );
+                    }
+                    None => {
+                        let previous_parent_id = self
+                            .shared_store
+                            .nodes
+                            .get(&request.meta.request_id)
+                            .and_then(|node| node.parent_id);
+                        if let Some(prev_id) = previous_parent_id {
+                            if let Some(prev_parent) =
+                                self.shared_store.nodes.get_mut(&prev_id)
+                            {
+                                prev_parent
+                                    .children
+                                    .retain(|id| *id != request.meta.request_id);
+                            }
+                        } else {
+                            self.shared_store
+                                .root_ids
+                                .retain(|id| *id != request.meta.request_id);
+                        }
+                        self.shared_store
+                            .root_ids
+                            .retain(|id| *id != request.meta.request_id);
+                        let index =
+                            (*insertion_index).min(self.shared_store.root_ids.len());
+                        self.shared_store
+                            .root_ids
+                            .insert(index, request.meta.request_id);
+                        if let Some(node) =
+                            self.shared_store.nodes.get_mut(&request.meta.request_id)
+                        {
+                            node.parent_id = None;
+                        }
+                        let _ = self.shared_store.rebuild_name_index();
+                    }
                 }
                 self.request_pane_data.insert(
                     request.meta.request_id,
@@ -878,12 +939,19 @@ impl AppShellState {
                         post_script: request.scripts.post_response.clone(),
                     },
                 );
-                if let Some(parent_id) = new_parent_id {
-                    let _ = self.collections.move_request_node(
-                        request.meta.request_id,
-                        *parent_id,
-                        *insertion_index,
-                    );
+                match new_parent_id {
+                    Some(parent_id) => {
+                        let _ = self.collections.move_request_node(
+                            request.meta.request_id,
+                            *parent_id,
+                            *insertion_index,
+                        );
+                    }
+                    None => {
+                        let _ = self
+                            .collections
+                            .move_node_to_root(request.meta.request_id, *insertion_index);
+                    }
                 }
             }
             AppEvent::FolderUpserted { folder, manifest_path, .. } => {
