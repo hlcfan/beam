@@ -357,6 +357,10 @@ struct BeamView {
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
     tree_drag_hover: Option<(Ulid, TreeDropPlacement)>,
+    env_var_hover: Option<EnvVarHoverInfo>,
+    /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
+    /// Refreshed when the active environment ID changes.
+    env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -405,6 +409,13 @@ struct TreeDragPreview {
     label: String,
     kind: TreeNodeKind,
     position: Point<Pixels>,
+}
+
+#[derive(Clone, Debug)]
+struct EnvVarHoverInfo {
+    var_name: String,
+    resolved_value: Option<String>,
+    token_bounds: Bounds<Pixels>,
 }
 
 impl TreeDragPreview {
@@ -5070,6 +5081,8 @@ impl BeamView {
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
             tree_drag_hover: None,
+            env_var_hover: None,
+            env_var_resolved_cache: None,
         };
         view.refresh_active_request_cache();
         view.rebuild_request_param_inputs(window, cx);
@@ -6872,6 +6885,152 @@ impl BeamView {
                         menu
                     }),
             )
+    }
+
+    fn render_env_var_hover_overlay(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let env_id = self.shell.environment_selection.active_global_environment_id;
+
+        // Refresh the cached resolved env only when the active environment changes.
+        let cache_stale = self
+            .env_var_resolved_cache
+            .as_ref()
+            .map(|(cached_id, _)| *cached_id != env_id)
+            .unwrap_or(true);
+        if cache_stale {
+            let env_vars = self.load_environment_for_script(env_id);
+            let resolved = build_enabled_environment_lookup(&env_vars);
+            self.env_var_resolved_cache = Some((env_id, resolved));
+        }
+        let resolved_env = self
+            .env_var_resolved_cache
+            .as_ref()
+            .map(|(_, m)| m.clone())
+            .unwrap_or_default();
+
+        // Collect all inputs that can contain {{var}} tokens.
+        let mut inputs: Vec<Entity<InputState>> = vec![self.url_input.clone()];
+        inputs.extend(self.request_header_name_inputs.iter().cloned());
+        inputs.extend(self.request_header_value_inputs.iter().cloned());
+        inputs.extend(self.request_param_name_inputs.iter().cloned());
+        inputs.extend(self.request_param_value_inputs.iter().cloned());
+        inputs.push(self.request_auth_bearer_token_input.clone());
+        inputs.push(self.request_auth_basic_username_input.clone());
+        inputs.push(self.request_auth_basic_password_input.clone());
+        inputs.push(self.request_auth_api_key_name_input.clone());
+        inputs.push(self.request_auth_api_key_value_input.clone());
+
+        let mut elements: Vec<AnyElement> = Vec::new();
+        let mut token_idx = 0usize;
+
+        for input_entity in &inputs {
+            let text = input_entity.read(cx).value().to_string();
+            for (byte_range, var_name) in find_env_var_ranges(&text) {
+                let resolved = resolved_env.get(&var_name).cloned();
+                let Some(bounds) = input_entity.read(cx).range_to_bounds(&byte_range) else {
+                    token_idx += 1;
+                    continue;
+                };
+                if bounds.size.width < px(2.) {
+                    token_idx += 1;
+                    continue;
+                }
+
+                let var_name_enter = var_name.clone();
+                let resolved_enter = resolved.clone();
+                let bounds_enter = bounds;
+                let bounds_exit = bounds;
+
+                elements.push(
+                    deferred(
+                        anchored()
+                            .anchor(gpui::Anchor::TopLeft)
+                            .position(bounds.origin)
+                            .child(
+                                div()
+                                    .id(("env-var-hover", token_idx as u64))
+                                    .w(bounds.size.width)
+                                    .h(bounds.size.height)
+                                    .on_hover(cx.listener(
+                                        move |this, hovered, _, cx| {
+                                            if *hovered {
+                                                this.env_var_hover = Some(EnvVarHoverInfo {
+                                                    var_name: var_name_enter.clone(),
+                                                    resolved_value: resolved_enter.clone(),
+                                                    token_bounds: bounds_enter,
+                                                });
+                                            } else if this
+                                                .env_var_hover
+                                                .as_ref()
+                                                .map(|h| h.token_bounds.origin == bounds_exit.origin)
+                                                .unwrap_or(false)
+                                            {
+                                                this.env_var_hover = None;
+                                            }
+                                            cx.notify();
+                                        },
+                                    )),
+                            ),
+                    )
+                    .with_priority(1)
+                    .into_any_element(),
+                );
+
+                token_idx += 1;
+            }
+        }
+
+        if let Some(hover_info) = &self.env_var_hover {
+            let popup_x = hover_info.token_bounds.origin.x;
+            let popup_y = hover_info.token_bounds.bottom();
+            let var_name = hover_info.var_name.clone();
+            let resolved_value = hover_info.resolved_value.clone();
+
+            let content = h_flex()
+                .gap_1p5()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!("{}:", var_name)),
+                )
+                .child(match &resolved_value {
+                    Some(val) => div()
+                        .text_sm()
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .child(val.clone())
+                        .into_any_element(),
+                    None => div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .italic()
+                        .child("not set")
+                        .into_any_element(),
+                });
+
+            elements.push(
+                deferred(
+                    anchored()
+                        .snap_to_window_with_margin(px(8.))
+                        .anchor(gpui::Anchor::TopLeft)
+                        .position(point(popup_x, popup_y))
+                        .child(
+                            div()
+                                .occlude()
+                                .popover_style(cx)
+                                .px_2()
+                                .py_1p5()
+                                .child(content),
+                        ),
+                )
+                .with_priority(2)
+                .into_any_element(),
+            );
+        }
+
+        elements
     }
 
     fn render_environment_manager_panel(
@@ -8773,6 +8932,28 @@ fn build_enabled_environment_lookup(
         .collect()
 }
 
+/// Find all `{{var_name}}` tokens in `text`, returning their byte ranges and variable names.
+fn find_env_var_ranges(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
+    let mut result = Vec::new();
+    let mut index = 0usize;
+
+    while let Some(start_offset) = text[index..].find("{{") {
+        let start = index + start_offset;
+        let token_start = start + 2;
+        let Some(end_offset) = text[token_start..].find("}}") else {
+            break;
+        };
+        let end = token_start + end_offset;
+        let var_name = text[token_start..end].trim().to_string();
+        if !var_name.is_empty() {
+            result.push((start..end + 2, var_name));
+        }
+        index = end + 2;
+    }
+
+    result
+}
+
 fn resolve_template_variables(input: &str, resolved_env: &HashMap<String, String>) -> String {
     let mut output = String::new();
     let mut index = 0usize;
@@ -9065,6 +9246,7 @@ impl Render for BeamView {
             .children(Root::render_sheet_layer(window, cx))
             .children(Root::render_dialog_layer(window, cx))
             .children(Root::render_notification_layer(window, cx))
+            .children(self.render_env_var_hover_overlay(cx))
     }
 }
 
