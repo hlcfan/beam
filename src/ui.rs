@@ -4826,14 +4826,22 @@ impl BeamView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        let workspace_button = div()
+            .flex_shrink_0()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                cx.stop_propagation();
+            })
+            .child(self.render_workspace_picker(true, cx));
+
         h_flex()
             .items_center()
-            .justify_end()
+            .justify_between()
             .w_full()
             .h_full()
             .px_2()
             .text_sm()
             .text_color(cx.theme().foreground)
+            .child(workspace_button)
             .child(
                 Button::new("title-bar-environment-sheet")
                     .small()
@@ -6386,7 +6394,7 @@ impl BeamView {
             )
     }
 
-    fn render_workspace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_workspace_picker(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = &self.shell.workspace;
         let workspace_name = if workspace.workspace_name.is_empty() {
             "Workspace".to_string()
@@ -6403,18 +6411,20 @@ impl BeamView {
         let view_for_delete = view.clone();
         let view_for_rename = view.clone();
 
+        let border_color = cx.theme().border;
+        let bg_color = cx.theme().background;
+
         Button::new("workspace-picker")
             .ghost()
             .small()
             .h(px(28.0))
-            .w_full()
             .px_1()
             .rounded(px(6.0))
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
             .cursor_pointer()
             .justify_start()
+            .when(!compact, |b| {
+                b.w_full().border_1().border_color(border_color).bg(bg_color)
+            })
             .child(
                 div()
                     .w_full()
@@ -6584,9 +6594,6 @@ impl BeamView {
             .p_2()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground);
-
-        // Workspace picker header
-        panel = panel.child(self.render_workspace_picker(cx));
 
         if !self.startup_messages.is_empty() {
             for msg in &self.startup_messages {
