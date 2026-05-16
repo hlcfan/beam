@@ -77,7 +77,7 @@ fn main() {
                 state.layout.request_response.ratio() * 100.0,
                 (1.0 - state.layout.request_response.ratio()) * 100.0,
             );
-            if let Some(request_id) = state.collections.selected_request_id() {
+            if let Some(request_id) = state.workspace_tree.selected_request_id() {
                 println!("Restored last opened request: {request_id}");
             }
             for message in &messages {

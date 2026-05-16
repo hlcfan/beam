@@ -152,14 +152,14 @@ pub struct TreeRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CollectionsTreeState {
+pub struct WorkspaceTreeState {
     nodes: HashMap<Ulid, TreeNode>,
     roots: Vec<Ulid>,
     expanded: BTreeSet<Ulid>,
     selected_request_id: Option<Ulid>,
 }
 
-impl CollectionsTreeState {
+impl WorkspaceTreeState {
     pub fn selected_request_id(&self) -> Option<Ulid> {
         self.selected_request_id
     }
@@ -633,7 +633,7 @@ pub struct StartupMessage {
 pub struct AppShellState {
     pub layout: AppShellLayout,
     pub modal_stack: ModalStack,
-    pub collections: CollectionsTreeState,
+    pub workspace_tree: WorkspaceTreeState,
     pub shared_store: SharedStore,
     pub request_pane_data: HashMap<Ulid, RequestPaneData>,
     pub environments: Vec<EnvironmentMeta>,
@@ -648,7 +648,7 @@ impl Default for AppShellState {
         Self {
             layout: AppShellLayout::default(),
             modal_stack: ModalStack::default(),
-            collections: CollectionsTreeState::default(),
+            workspace_tree: WorkspaceTreeState::default(),
             shared_store: SharedStore::default(),
             request_pane_data: HashMap::new(),
             environments: Vec::new(),
@@ -846,7 +846,7 @@ impl AppShellState {
                         post_script: request.scripts.post_response.clone(),
                     },
                 );
-                let _ = self.collections.upsert_request_node(
+                let _ = self.workspace_tree.upsert_request_node(
                     request.meta.request_id,
                     None,
                     request.meta.name.clone(),
@@ -872,7 +872,7 @@ impl AppShellState {
                         .retain(|_, indexed_id| indexed_id != request_id);
                 }
                 self.request_pane_data.remove(request_id);
-                let _ = self.collections.remove_request(*request_id);
+                let _ = self.workspace_tree.remove_request(*request_id);
             }
             AppEvent::RequestMoved {
                 request,
@@ -943,7 +943,7 @@ impl AppShellState {
                 );
                 match new_parent_id {
                     Some(parent_id) => {
-                        let _ = self.collections.move_request_node(
+                        let _ = self.workspace_tree.move_request_node(
                             request.meta.request_id,
                             *parent_id,
                             *insertion_index,
@@ -951,7 +951,7 @@ impl AppShellState {
                     }
                     None => {
                         let _ = self
-                            .collections
+                            .workspace_tree
                             .move_node_to_root(request.meta.request_id, *insertion_index);
                     }
                 }
@@ -990,7 +990,7 @@ impl AppShellState {
                     }
                 }
                 let _ = self.shared_store.rebuild_name_index();
-                self.collections.nodes.insert(
+                self.workspace_tree.nodes.insert(
                     folder_id,
                     TreeNode {
                         id: folder_id,
@@ -1001,26 +1001,26 @@ impl AppShellState {
                         manifest_path: manifest_path.clone(),
                         parent_id,
                         children: self
-                            .collections
+                            .workspace_tree
                             .node(folder_id)
                             .map(|n| n.children.clone())
                             .unwrap_or_default(),
                     },
                 );
                 if let Some(pid) = parent_id {
-                    if let Some(parent) = self.collections.nodes.get_mut(&pid) {
+                    if let Some(parent) = self.workspace_tree.nodes.get_mut(&pid) {
                         if !parent.children.contains(&folder_id) {
                             parent.children.push(folder_id);
                         }
                     }
                 } else {
-                    if !self.collections.roots.contains(&folder_id) {
-                        self.collections.roots.push(folder_id);
+                    if !self.workspace_tree.roots.contains(&folder_id) {
+                        self.workspace_tree.roots.push(folder_id);
                     }
                 }
             }
             AppEvent::FolderDeleted { folder_id, .. } => {
-                let removed_request_ids = self.collections.remove_subtree(*folder_id);
+                let removed_request_ids = self.workspace_tree.remove_subtree(*folder_id);
                 for request_id in removed_request_ids {
                     self.shared_store.requests.remove(&request_id);
                     self.request_pane_data.remove(&request_id);
@@ -1045,7 +1045,7 @@ impl AppShellState {
                 workspace_id,
                 workspace_name,
                 all_workspaces,
-                collections,
+                workspace_tree,
                 shared_store,
                 request_pane_data,
                 environments,
@@ -1055,7 +1055,7 @@ impl AppShellState {
                 self.workspace.workspace_id = Some(*workspace_id);
                 self.workspace.workspace_name = workspace_name.clone();
                 self.workspace.all_workspaces = all_workspaces.clone();
-                self.collections = collections.clone();
+                self.workspace_tree = workspace_tree.clone();
                 self.shared_store = shared_store.clone();
                 self.request_pane_data = request_pane_data.clone();
                 self.environments = environments.clone();
@@ -1353,7 +1353,7 @@ pub enum AppEvent {
         workspace_id: Ulid,
         workspace_name: String,
         all_workspaces: Vec<WorkspaceEntry>,
-        collections: CollectionsTreeState,
+        workspace_tree: WorkspaceTreeState,
         shared_store: SharedStore,
         request_pane_data: HashMap<Ulid, RequestPaneData>,
         environments: Vec<EnvironmentMeta>,
@@ -1847,7 +1847,7 @@ fn handle_workspace_command(
                 .load_local_state()
                 .unwrap_or_default();
 
-            let (collections, shared_store, request_pane_data, _warnings) =
+            let (workspace_tree, shared_store, request_pane_data, _warnings) =
                 load_workspace_tree(&new_paths, &local_state);
             let mut env_warnings = Vec::new();
             let env_metas = load_environments(&new_paths, &mut env_warnings);
@@ -1859,7 +1859,7 @@ fn handle_workspace_command(
                 workspace_id,
                 workspace_name: entry.name,
                 all_workspaces,
-                collections,
+                workspace_tree,
                 shared_store,
                 request_pane_data,
                 environments: env_metas,
@@ -1973,7 +1973,7 @@ where
         }
     };
 
-    let (collections, shared_store, request_pane_data, mut warnings) =
+    let (workspace_tree, shared_store, request_pane_data, mut warnings) =
         load_workspace_tree(paths, &local_state);
     // TOCHECK: environments can be load with collection tree in parallel
     let environments = load_environments(paths, &mut warnings);
@@ -1986,7 +1986,7 @@ where
         .collect();
 
     // TOCHECK: if no last open request id found, shall default to first request?
-    if collections.selected_request_id().is_none()
+    if workspace_tree.selected_request_id().is_none()
         && local_state.local_state.last_opened_request_id.is_some()
     {
         messages.push(StartupMessage {
@@ -1997,7 +1997,7 @@ where
 
     StartupLoad::Ready {
         state: AppShellState {
-            collections,
+            workspace_tree,
             shared_store,
             request_pane_data,
             environments,
@@ -2025,7 +2025,7 @@ fn load_workspace_tree(
     paths: &BeamPaths,
     local_state: &LocalStateFile,
 ) -> (
-    CollectionsTreeState,
+    WorkspaceTreeState,
     SharedStore,
     HashMap<Ulid, RequestPaneData>,
     Vec<String>,
@@ -2368,7 +2368,7 @@ fn insert_loaded_node(
 fn build_tree_from_shared_store(
     shared_store: &SharedStore,
     manifest_paths: &HashMap<Ulid, PathBuf>,
-) -> CollectionsTreeState {
+) -> WorkspaceTreeState {
     let nodes = shared_store
         .nodes
         .iter()
@@ -2406,7 +2406,7 @@ fn build_tree_from_shared_store(
         })
         .collect();
 
-    CollectionsTreeState {
+    WorkspaceTreeState {
         nodes,
         roots: shared_store.root_ids.clone(),
         expanded: BTreeSet::new(),
@@ -2494,7 +2494,7 @@ mod tests {
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
         let missing_id = Ulid::new();
-        let mut tree = CollectionsTreeState::default();
+        let mut tree = WorkspaceTreeState::default();
         tree.nodes.insert(
             folder_id,
             TreeNode {
@@ -2889,7 +2889,7 @@ mod tests {
         let request_id = Ulid::new();
         let global_env_id = Ulid::new();
         let now = Utc::now();
-        state.collections.nodes.insert(
+        state.workspace_tree.nodes.insert(
             request_id,
             TreeNode {
                 id: request_id,
@@ -2902,7 +2902,7 @@ mod tests {
                 children: Vec::new(),
             },
         );
-        state.collections.set_selected_request(Some(request_id));
+        state.workspace_tree.set_selected_request(Some(request_id));
         state.environments = vec![EnvironmentMeta {
             environment_id: global_env_id,
             scope: EnvironmentScope::Global,
@@ -3184,8 +3184,8 @@ mod tests {
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
 
-        state.collections.roots.push(folder_id);
-        state.collections.nodes.insert(
+        state.workspace_tree.roots.push(folder_id);
+        state.workspace_tree.nodes.insert(
             folder_id,
             TreeNode {
                 id: folder_id,
@@ -3198,7 +3198,7 @@ mod tests {
                 children: vec![request_id],
             },
         );
-        state.collections.nodes.insert(
+        state.workspace_tree.nodes.insert(
             request_id,
             TreeNode {
                 id: request_id,
@@ -3211,7 +3211,7 @@ mod tests {
                 children: Vec::new(),
             },
         );
-        state.collections.set_selected_request(Some(request_id));
+        state.workspace_tree.set_selected_request(Some(request_id));
 
         let updated = sample_request_file(
             request_id,
@@ -3224,7 +3224,7 @@ mod tests {
             command_id: Ulid::new().to_string(),
         });
 
-        let node = state.collections.node(request_id).expect("request node");
+        let node = state.workspace_tree.node(request_id).expect("request node");
         assert_eq!(node.name, "New Name");
         assert_eq!(node.request_method, Some(HttpMethod::Post));
         assert_eq!(node.request_url.as_deref(), Some("https://example.com/new"));
@@ -3239,9 +3239,9 @@ mod tests {
             request_id,
             command_id: Ulid::new().to_string(),
         });
-        assert!(state.collections.node(request_id).is_none());
+        assert!(state.workspace_tree.node(request_id).is_none());
         assert!(state.request_pane_data.get(&request_id).is_none());
-        assert_eq!(state.collections.selected_request_id(), None);
+        assert_eq!(state.workspace_tree.selected_request_id(), None);
     }
 
     #[test]
@@ -3299,8 +3299,8 @@ mod tests {
         let mut state = AppShellState::default();
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
-        state.collections.roots.push(folder_id);
-        state.collections.nodes.insert(
+        state.workspace_tree.roots.push(folder_id);
+        state.workspace_tree.nodes.insert(
             folder_id,
             TreeNode {
                 id: folder_id,
@@ -3313,7 +3313,7 @@ mod tests {
                 children: vec![request_id],
             },
         );
-        state.collections.nodes.insert(
+        state.workspace_tree.nodes.insert(
             request_id,
             TreeNode {
                 id: request_id,
@@ -3344,7 +3344,7 @@ mod tests {
         });
 
         let node = state
-            .collections
+            .workspace_tree
             .node(request_id)
             .expect("request should remain");
         assert_eq!(node.name, "Optimistic Name");
@@ -3430,9 +3430,9 @@ mod tests {
             panic!("startup should be ready");
         };
 
-        assert_eq!(state.collections.selected_request_id(), Some(request_id));
-        assert!(state.collections.expanded().contains(&nested_folder_id));
-        assert!(state.collections.expanded().contains(&folder_id));
+        assert_eq!(state.workspace_tree.selected_request_id(), Some(request_id));
+        assert!(state.workspace_tree.expanded().contains(&nested_folder_id));
+        assert!(state.workspace_tree.expanded().contains(&folder_id));
     }
 
     #[test]
@@ -3466,7 +3466,7 @@ mod tests {
         let StartupLoad::Ready { state, messages } = load else {
             panic!("startup should be ready");
         };
-        assert_eq!(state.collections.selected_request_id(), None);
+        assert_eq!(state.workspace_tree.selected_request_id(), None);
         assert!(
             messages
                 .iter()
@@ -3602,13 +3602,13 @@ post_response = "console.log(response.status)"
             panic!("startup should be ready");
         };
 
-        assert_eq!(state.collections.selected_request_id(), Some(request_id));
+        assert_eq!(state.workspace_tree.selected_request_id(), Some(request_id));
         let request_node = state
-            .collections
+            .workspace_tree
             .node(request_id)
             .expect("request node should exist");
         let folder_node = state
-            .collections
+            .workspace_tree
             .node(folder_id)
             .expect("folder node should exist");
         assert_eq!(
@@ -3685,7 +3685,7 @@ post_response = "console.log(response.status)"
         };
 
         let folder_node = state
-            .collections
+            .workspace_tree
             .node(nested_folder_id)
             .expect("folder node should exist");
         assert_eq!(
@@ -3771,8 +3771,8 @@ updated_at = "2026-01-01T00:00:00Z"
             panic!("startup should be ready");
         };
 
-        assert!(state.collections.expanded().contains(&top_folder_id));
-        assert!(state.collections.expanded().contains(&nested_folder_id));
+        assert!(state.workspace_tree.expanded().contains(&top_folder_id));
+        assert!(state.workspace_tree.expanded().contains(&nested_folder_id));
     }
 
     #[test]
@@ -3812,7 +3812,7 @@ expanded_item_ids = ["{folder_id}"]
             panic!("startup should be ready");
         };
 
-        assert!(state.collections.expanded().contains(&folder_id));
+        assert!(state.workspace_tree.expanded().contains(&folder_id));
     }
 
     #[test]
@@ -3840,8 +3840,8 @@ expanded_item_ids = ["{folder_id}"]
         };
 
         assert_eq!(state.shared_store.root_ids, vec![second_id, first_id]);
-        assert_eq!(state.collections.visible_rows()[0].id, second_id);
-        assert_eq!(state.collections.visible_rows()[1].id, first_id);
+        assert_eq!(state.workspace_tree.visible_rows()[0].id, second_id);
+        assert_eq!(state.workspace_tree.visible_rows()[1].id, first_id);
     }
 
     #[test]
@@ -4035,8 +4035,8 @@ expanded_item_ids = ["{folder_id}"]
         };
 
         assert_eq!(state.shared_store.root_ids, vec![valid_folder_id]);
-        assert_eq!(state.collections.visible_rows().len(), 1);
-        assert_eq!(state.collections.visible_rows()[0].id, valid_folder_id);
+        assert_eq!(state.workspace_tree.visible_rows().len(), 1);
+        assert_eq!(state.workspace_tree.visible_rows()[0].id, valid_folder_id);
         assert!(messages.iter().any(|message| {
             message.text.contains("Failed to parse folder manifest")
                 && message.text.contains("folder.toml")
@@ -4047,7 +4047,7 @@ expanded_item_ids = ["{folder_id}"]
     fn move_request_node_removes_from_roots_when_moving_into_folder() {
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
-        let mut tree = CollectionsTreeState::default();
+        let mut tree = WorkspaceTreeState::default();
         tree.nodes.insert(
             folder_id,
             TreeNode {
