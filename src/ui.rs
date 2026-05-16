@@ -4213,6 +4213,44 @@ impl BeamView {
         }
     }
 
+    fn add_request_at_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let parent = RequestParentRef { folder_id: None };
+        let command_id = next_command_id();
+        self.pending_request_placements.insert(
+            command_id.clone(),
+            PendingRequestPlacement::Append { parent },
+        );
+        let command = AppCommand::CreateRequest {
+            input: CreateRequestInput {
+                parent,
+                known_parent_manifest_path: None,
+                name: self.next_new_request_name(parent),
+                method: HttpMethod::Get,
+                url: String::new(),
+            },
+            command_id,
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
+    }
+
+    fn add_folder_at_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let parent = FolderParentRef { folder_id: None };
+        let folder_name = self.next_new_folder_name(parent);
+        let command = AppCommand::CreateFolder {
+            input: CreateFolderInput {
+                parent,
+                known_parent_manifest_path: None,
+                name: folder_name,
+            },
+            command_id: next_command_id(),
+        };
+        if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
+    }
+
     fn open_rename_dialog_for_tree_node(
         &mut self,
         node_id: Ulid,
@@ -6132,6 +6170,60 @@ impl BeamView {
         menu
     }
 
+    fn build_empty_space_context_menu(
+        &self,
+        menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PopupMenu {
+        let view = cx.entity();
+        let view2 = view.clone();
+        let muted_foreground = cx.theme().muted_foreground;
+        menu.min_w(px(180.0))
+            .item(
+                PopupMenuItem::element(move |_, _| {
+                    h_flex()
+                        .w_full()
+                        .cursor_pointer()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .child(
+                            Icon::default()
+                                .path("icons/add.svg")
+                                .size(px(14.0))
+                                .text_color(muted_foreground),
+                        )
+                        .child("HTTP")
+                })
+                .on_click(window.listener_for(&view, move |this, _, window, cx| {
+                    this.add_request_at_root(window, cx);
+                })),
+            )
+            .item(
+                PopupMenuItem::element(move |_, _| {
+                    h_flex()
+                        .w_full()
+                        .cursor_pointer()
+                        .items_center()
+                        .gap_2()
+                        .px_2()
+                        .py_1()
+                        .child(
+                            Icon::default()
+                                .path("icons/add.svg")
+                                .size(px(14.0))
+                                .text_color(muted_foreground),
+                        )
+                        .child("Folder")
+                })
+                .on_click(window.listener_for(&view2, move |this, _, window, cx| {
+                    this.add_folder_at_root(window, cx);
+                })),
+            )
+    }
+
     fn render_workspace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace = &self.shell.workspace;
         let workspace_name = if workspace.workspace_name.is_empty() {
@@ -6304,20 +6396,29 @@ impl BeamView {
 
         let rows = self.shell.collections.visible_rows();
         if rows.is_empty() {
+            let view = cx.entity();
             panel.child(
-                div().flex_1().min_h_0().child(
-                    div()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("No collections yet"),
-                        ),
-                ),
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .context_menu(move |menu, window, cx| {
+                        view.update(cx, |this, cx| {
+                            this.build_empty_space_context_menu(menu, window, cx)
+                        })
+                    })
+                    .child(
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("No collections yet"),
+                            ),
+                    ),
             )
         } else {
             let view = cx.entity();
@@ -6353,10 +6454,10 @@ impl BeamView {
                         let view = menu_view;
                         move |menu, window, cx| {
                             view.update(cx, |this, cx| {
-                                if let Some(row) = this.collection_context_menu_row {
+                                if let Some(row) = this.collection_context_menu_row.take() {
                                     this.build_tree_row_context_menu(row, menu, window, cx)
                                 } else {
-                                    menu
+                                    this.build_empty_space_context_menu(menu, window, cx)
                                 }
                             })
                         }
