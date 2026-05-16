@@ -6,7 +6,9 @@ Keep all LLM replies concise and accurate. Prefer the short response that fully 
 
 ## Project Overview
 
-Beam is a fast, lightweight HTTP client built with Rust and the gpui GUI framework. It provides features similar to Postman or Insomnia, including request collections, environment variables, authentication methods, and post-request scripting.
+Beam is a fast, lightweight HTTP client built with Rust and the gpui GUI framework. It provides features similar to Postman or Insomnia, including multi-workspace support, environment variables, authentication methods, and post-request scripting.
+
+The hierarchy is: **Workspace → Folders → Requests**. Collections have been removed. Only global environments exist (no collection-scoped environments).
 
 ## Supported Features
 
@@ -31,17 +33,18 @@ src/
 ├── app_shell.rs             # App-level state management, data-sync worker, layout state, startup preload
 ├── ui.rs                    # GPUI views and rendering — the main GUI layer (panels, editors, menus, etc.)
 ├── workspace_tree.rs        # Pure domain model — in-memory tree (SharedStore, Node, NodeKind, manifests)
-├── models.rs                # Serializable DTOs — RequestFile, EnvironmentFile, WorkspaceFile, LocalStateFile, etc.
+├── models.rs                # Serializable DTOs — RequestFile, EnvironmentFile, WorkspaceFile, WorkspacesRegistryFile, LocalStateFile, etc.
 ├── request_authoring.rs     # Request authoring state — tabs, send-button logic, validation helpers
 ├── script.rs                # Post-request script execution — QuickJS runtime, console capture, test results
-├── schema.rs                # Schema versioning — SCHEMA_VERSION_V1, SchemaKind, version validation
-├── paths.rs                 # File-system path definitions — BeamPaths, collection/environment directory layout
+├── schema.rs                # Schema versioning — SCHEMA_VERSION_V1/V3, SchemaKind, version validation
+├── paths.rs                 # File-system path definitions — DataRootPaths, BeamPaths, slugify
 ├── error.rs                 # Error types — BeamError enum and Result<T> alias
 ├── assets.rs                # Asset helpers — embedded theme contents, icon paths
 └── storage/
     ├── mod.rs               # Storage DTOs + WorkspaceStorage trait — CRUD input structs, BootstrapReport
     ├── io_backend.rs        # StorageIoBackend trait — abstract I/O (read/write TOML, dirs, rename, remove)
     ├── workspace_repo.rs    # WorkspaceRepository — primary repository, all CRUD operations on SharedStore
+    ├── registry_repo.rs     # RegistryRepository — loads/saves workspaces.toml, bootstraps default workspace
     └── fs_backend.rs        # FileSystemStorage — concrete std::fs adapter implementing StorageIoBackend
 ```
 
@@ -49,18 +52,19 @@ src/
 
 | Module / File | Role |
 |---|---|
-| `workspace_tree.rs` | **Pure domain model**. Holds `SharedStore` (in-memory tree), `Node`/`NodeKind`, manifest structs, and tree-manipulation helpers (name scoping, uniqueness checks, move/reorder logic). No I/O. |
-| `models.rs` | **Serializable data structures**. Every TOML-backed entity (requests, environments, workspace, local state) is defined here. Used by both the domain layer and the storage layer. |
-| `storage/mod.rs` | **Storage contracts & DTOs**. Defines the `WorkspaceStorage` trait and all input structs consumed by repository methods (`CreateRequestInput`, `MoveFolderInput`, etc.). Also holds `BootstrapReport`. |
+| `workspace_tree.rs` | **Pure domain model**. Holds `SharedStore` (in-memory tree), `Node`/`NodeKind` (`Folder` \| `Request`), manifest structs, and tree-manipulation helpers (name scoping, uniqueness checks, move/reorder logic). No I/O. |
+| `models.rs` | **Serializable data structures**. Every TOML-backed entity (requests, environments, workspace, workspaces registry, local state) is defined here. Used by both the domain layer and the storage layer. |
+| `storage/mod.rs` | **Storage contracts & DTOs**. Defines the `WorkspaceStorage` trait and all input structs consumed by repository methods (`CreateRequestInput`, `MoveFolderInput`, etc.). Also holds `BootstrapReport`. Parent refs (`RequestParentRef`, `FolderParentRef`) use `folder_id: Option<Ulid>` — `None` means workspace root. |
 | `storage/io_backend.rs` | **I/O abstraction**. The `StorageIoBackend` trait decouples repository logic from the file system so tests can swap in a fake backend. |
 | `storage/fs_backend.rs` | **Concrete file-system adapter**. `FileSystemStorage` implements `StorageIoBackend` using `std::fs`. Handles TOML serialization, atomic writes, and path-based operations. |
 | `storage/workspace_repo.rs` | **Primary repository**. `WorkspaceRepository<B: StorageIoBackend>` loads the full workspace into `SharedStore`, then performs all CRUD (create, rename, move, delete, duplicate, reorder) while keeping disk and in-memory state in sync. |
-| `app_shell.rs` | **Application shell & orchestration**. Owns `AppShellState`, `DataSyncRuntime`, pane-split layout, startup preload logic, and the background command queue that feeds the repository. |
-| `ui.rs` | **GPUI front-end**. All view rendering, event handling, context menus, modal dialogs, and user-interaction logic lives here. |
+| `storage/registry_repo.rs` | **Workspace registry**. `RegistryRepository` loads/saves `workspaces.toml`, bootstraps a default workspace on first run, and manages multi-workspace CRUD (create, delete, rename, switch). |
+| `app_shell.rs` | **Application shell & orchestration**. Owns `AppShellState`, `DataSyncRuntime`, pane-split layout, startup preload logic, and the background command queue that feeds the repository. Manages workspace switching. |
+| `ui.rs` | **GPUI front-end**. All view rendering, event handling, context menus, modal dialogs, workspace picker, and user-interaction logic lives here. |
 | `request_authoring.rs` | **Request editor state**. Tab enums, send-button states, and validation helpers for the request authoring panel. |
 | `script.rs` | **Script engine**. Executes post-request JavaScript via `rquickjs`, captures console output, and returns `ScriptExecutionResult`. |
-| `schema.rs` | **Schema compatibility**. Central place for version constants and per-entity schema validation. |
-| `paths.rs` | **Path conventions**. `BeamPaths` defines where collections, environments, local state, and workspace files live on disk. |
+| `schema.rs` | **Schema compatibility**. Version constants (`SCHEMA_VERSION_V1` for workspace/request/environment/local-state, `SCHEMA_VERSION_V3` for workspaces registry) and per-entity schema validation. |
+| `paths.rs` | **Path conventions**. `DataRootPaths` points to `$HOME/beam/` and knows `workspaces.toml`. `BeamPaths` is per-workspace and derives all internal paths. `slugify` converts names to directory-safe slugs. |
 | `error.rs` | **Error taxonomy**. `BeamError` covers I/O, TOML encode/decode, schema mismatch, not-found, and validation errors. |
 
 ## Development Guidelines
@@ -84,11 +88,11 @@ The app uses a debounce pattern for auto-saving requests.
 // TODO
 
 #### Graceful Loading Degradation
-When loading collections from disk, the storage layer skips individual corrupted items and returns warnings rather than failing the entire load:
+When loading a workspace from disk, the storage layer skips individual corrupted items and returns warnings rather than failing the entire load:
 
 - **Corrupted request files** (invalid TOML, schema mismatch, duplicate `request_id`) are skipped with a warning.
-- **Corrupted folder manifests** (missing `folder.toml`, invalid TOML, schema mismatch, wrong `collection_id`, wrong `parent_folder_id`, or duplicate `folder_id`) are skipped with a warning. The folder and its contents are omitted from the loaded collection, but the rest of the collection continues to load normally.
-- **Warnings** are collected in a `Vec<String>` and displayed as red text in the UI collection panel.
+- **Corrupted folder manifests** (missing `folder.toml`, invalid TOML, schema mismatch, wrong `parent_folder_id`, or duplicate `folder_id`) are skipped with a warning. The folder and its contents are omitted, but the rest of the workspace continues to load normally.
+- **Warnings** are collected in a `Vec<String>` and displayed as red text in the UI sidebar.
 
 This pattern ensures that a single corrupted file on disk never renders the entire workspace unreadable.
 
@@ -138,29 +142,56 @@ Beam uses a tiered testing strategy:
 
 ## Key Data Structures
 
-// TODO
+### On-Disk Layout
 
-### RequestConfig
-The core request configuration structure containing:
-- HTTP method, URL, headers, params
-- Authentication settings
-- Request body and format
-- Post-request script
-- Last response data
-- Collection/request indices
+```
+$HOME/beam/
+├── workspaces.toml                  # Registry: workspace list + active_workspace_id (schema_version = 3)
+├── my-workspace/                    # Per-workspace directory (slugified name)
+│   ├── beam.workspace.toml          # Workspace metadata + root item ordering (schema_version = 1)
+│   ├── {request-slug}.request.toml  # Root-level request
+│   ├── {folder-slug}/               # Root-level folder
+│   │   ├── folder.toml              # Folder manifest + child ordering
+│   │   ├── {request-slug}.request.toml
+│   │   └── {subfolder-slug}/
+│   │       ├── folder.toml
+│   │       └── ...
+│   └── environments/
+│       └── {env-slug}.env.toml
+└── ...
+
+$HOME/beam_local/
+└── my-workspace/                    # Per-workspace local state (non-synced)
+    ├── local-state.toml
+    ├── history/
+    │   ├── by-request/
+    │   └── responses/
+    └── script_results/
+```
+
+### Core Rust Types
+
+| Type | Location | Purpose |
+|------|----------|---------|
+| `WorkspacesRegistryFile` | `models.rs` | Top-level `workspaces.toml`; contains `WorkspacesRegistry` + `schema_version = 3` |
+| `WorkspaceEntry` | `models.rs` | One workspace in the registry: `workspace_id`, `name`, `path` (slug), `created_at` |
+| `WorkspaceFile` | `models.rs` | `beam.workspace.toml`; workspace metadata + `items: Vec<ManifestItemRef>` for root ordering |
+| `ManifestItemRef` | `models.rs` | Ordering entry in workspace or folder manifest: `item_id`, `item_type` (`folder`\|`request`), `name`, `order` |
+| `FolderFile` | `models.rs` | `folder.toml`; folder metadata + `items: Vec<ManifestItemRef>` for child ordering |
+| `RequestFile` | `models.rs` | `{slug}.request.toml`; full request payload including `meta`, `request`, `auth`, `body`, `scripts` |
+| `EnvironmentFile` | `models.rs` | `{slug}.env.toml`; global environment with `variables: Vec<EnvironmentVariable>` |
+| `LocalStateFile` | `models.rs` | `local-state.toml`; active env, last opened request, theme, expanded tree nodes |
+| `SharedStore` | `workspace_tree.rs` | In-memory workspace tree: `nodes`, `requests`, `root_ids`, `name_index`, `environments` |
+| `Node` / `NodeKind` | `workspace_tree.rs` | Tree node; `NodeKind` is `Folder` or `Request` (no Collection) |
+| `DataRootPaths` | `paths.rs` | Paths for `$HOME/beam/` + `workspaces.toml` + `$HOME/beam_local/` |
+| `BeamPaths` | `paths.rs` | Per-workspace paths: `root`, `workspace_file`, `environments_dir`, `local_dir`, `local_state_file` |
+| `RegistryRepository` | `storage/registry_repo.rs` | Loads/saves `workspaces.toml`; bootstraps default workspace on first run |
+| `WorkspaceRepository` | `storage/workspace_repo.rs` | All CRUD on a single workspace's `SharedStore` |
 
 ### Environment
-Environment variables for request configuration:
-- Name and description
-- Key-value variable pairs
-- Active environment tracking
-
-### RequestCollection
-Hierarchical organization of requests:
-- Collection name and metadata
-- List of requests
-- Expanded/collapsed state
-- Folder name for storage
+Environments are **global only** (no collection-scoped environments).
+- Stored under `environments/{slug}.env.toml` inside the workspace directory.
+- `EnvironmentScope` has a single variant: `Global`.
 
 ## Debugging Tips
 
