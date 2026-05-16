@@ -36,7 +36,7 @@ use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable, HttpMethod,
     LocalStateFile, RequestFile,
 };
-use crate::paths::BeamPaths;
+use crate::paths::{BeamPaths, DataRootPaths};
 use crate::request_authoring::{
     RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
     validate_rename,
@@ -162,6 +162,7 @@ pub fn run_app(
     state: AppShellState,
     startup_messages: Vec<StartupMessage>,
     sync_runtime: DataSyncRuntime,
+    workspace_paths: BeamPaths,
 ) {
     let app = gpui_platform::application().with_assets(Assets);
     app.run(move |cx| {
@@ -292,9 +293,11 @@ pub fn run_app(
 
         let state = state.clone();
         let startup_messages = startup_messages.clone();
+        let workspace_paths = workspace_paths.clone();
         cx.open_window(window_options, |window, cx| {
-            let view =
-                cx.new(|cx| BeamView::new(state, startup_messages, sync_runtime, window, cx));
+            let view = cx.new(|cx| {
+                BeamView::new(state, startup_messages, sync_runtime, workspace_paths, window, cx)
+            });
             cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
         })
         .expect("Failed to open Beam window");
@@ -304,6 +307,7 @@ pub fn run_app(
 
 struct BeamView {
     shell: AppShellState,
+    current_workspace_paths: BeamPaths,
     request: RequestAuthoringState,
     startup_messages: Vec<StartupMessage>,
     url_input: Entity<InputState>,
@@ -3719,7 +3723,7 @@ impl BeamView {
         let paths = BeamPaths::default_user_config();
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        match startup_preload(&storage, &paths) {
+        match startup_preload(&storage, &paths, None, vec![]) {
             StartupLoad::Ready { state, messages } => {
                 self.shell = state;
                 self.request_file_index = Self::build_request_file_index(&self.shell);
@@ -3856,8 +3860,7 @@ impl BeamView {
     }
 
     fn persist_last_opened_request_id(&self, request_id: Ulid) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let backend = FileSystemStorage::new(paths);
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
         let storage = WorkspaceRepository::new(backend)
             .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {
@@ -3877,8 +3880,7 @@ impl BeamView {
     }
 
     fn persist_tree_expansion_state(&self) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let backend = FileSystemStorage::new(paths);
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
         let storage = WorkspaceRepository::new(backend)
             .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {
@@ -3900,8 +3902,7 @@ impl BeamView {
     }
 
     fn persist_environment_selection_state(&self) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let backend = FileSystemStorage::new(paths);
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
         let storage = WorkspaceRepository::new(backend)
             .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {
@@ -4115,6 +4116,26 @@ impl BeamView {
                         window.push_notification(error, cx);
                     }
                     self.refresh_environment_manager_dialog_if_open(None, window, cx);
+                }
+                AppEvent::WorkspaceSwitched { workspace_id, .. } => {
+                    self.shell.apply_event(&event);
+                    // Derive new workspace paths from the switched workspace.
+                    let data_root = DataRootPaths::default_user_config();
+                    if let Some(entry) = self
+                        .shell
+                        .workspace
+                        .all_workspaces
+                        .iter()
+                        .find(|e| e.workspace_id == *workspace_id)
+                    {
+                        self.current_workspace_paths =
+                            data_root.workspace_paths(&entry.path);
+                    }
+                    // Reset UI state for the new workspace.
+                    self.active_request_cache = None;
+                    self.request_file_index = Self::build_request_file_index(&self.shell);
+                    self.prune_request_execution_states();
+                    self.sync_request_editor_from_selection(window, cx);
                 }
                 _ => self.shell.apply_event(&event),
             }
@@ -4657,6 +4678,7 @@ impl BeamView {
         shell: AppShellState,
         startup_messages: Vec<StartupMessage>,
         sync_runtime: DataSyncRuntime,
+        workspace_paths: BeamPaths,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -4831,6 +4853,7 @@ impl BeamView {
             settings_dialog_view: None,
             request_execution_states: HashMap::new(),
             next_request_run_id: 1,
+            current_workspace_paths: workspace_paths,
             app_command_tx: sync_runtime.command_tx,
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
@@ -6109,6 +6132,149 @@ impl BeamView {
         menu
     }
 
+    fn render_workspace_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace = &self.shell.workspace;
+        let workspace_name = if workspace.workspace_name.is_empty() {
+            "Workspace".to_string()
+        } else {
+            workspace.workspace_name.clone()
+        };
+
+        let all_workspaces = workspace.all_workspaces.clone();
+        let current_workspace_id = workspace.workspace_id;
+        let can_delete = all_workspaces.len() > 1;
+
+        let view = cx.entity();
+        let view_for_new = view.clone();
+        let view_for_delete = view.clone();
+        let view_for_rename = view.clone();
+
+        Button::new("workspace-picker")
+            .ghost()
+            .small()
+            .h(px(28.0))
+            .w_full()
+            .px_1()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .cursor_pointer()
+            .justify_start()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_semibold()
+                            .text_color(cx.theme().foreground)
+                            .truncate()
+                            .child(workspace_name.clone()),
+                    ),
+            )
+            .dropdown_menu(move |menu, window, _| {
+                let mut menu = menu.min_w(px(200.));
+
+                // List existing workspaces.
+                for entry in &all_workspaces {
+                    let checked = Some(entry.workspace_id) == current_workspace_id;
+                    let workspace_id = entry.workspace_id;
+                    let entry_name = entry.name.clone();
+                    let item_view = view.clone();
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            div()
+                                .w_full()
+                                .cursor_pointer()
+                                .child(entry_name.clone())
+                        })
+                        .checked(checked)
+                        .on_click(window.listener_for(&item_view, move |this, _, _, cx| {
+                            if Some(workspace_id) != this.shell.workspace.workspace_id {
+                                this.app_command_tx
+                                    .send(AppCommand::SwitchWorkspace {
+                                        workspace_id,
+                                        command_id: next_command_id(),
+                                    })
+                                    .ok();
+                            }
+                        })),
+                    );
+                }
+
+                menu = menu.separator();
+
+                // New workspace.
+                let view_new = view_for_new.clone();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        div().w_full().cursor_pointer().child("New Workspace...")
+                    })
+                    .on_click(window.listener_for(&view_new, |this, _, _, cx| {
+                        this.show_create_workspace_dialog(cx);
+                    })),
+                );
+
+                // Delete workspace (only shown if more than one exists).
+                if can_delete {
+                    let view_del = view_for_delete.clone();
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _| {
+                            div()
+                                .w_full()
+                                .cursor_pointer()
+                                .child("Delete Current Workspace")
+                        })
+                        .on_click(window.listener_for(&view_del, |this, _, _, cx| {
+                            if let Some(workspace_id) = this.shell.workspace.workspace_id {
+                                this.app_command_tx
+                                    .send(AppCommand::DeleteWorkspace {
+                                        workspace_id,
+                                        delete_data: false,
+                                        command_id: next_command_id(),
+                                    })
+                                    .ok();
+                            }
+                        })),
+                    );
+                }
+
+                // Rename workspace.
+                let view_ren = view_for_rename.clone();
+                menu = menu.item(
+                    PopupMenuItem::element(move |_, _| {
+                        div().w_full().cursor_pointer().child("Rename Workspace...")
+                    })
+                    .on_click(window.listener_for(&view_ren, |this, _, _, cx| {
+                        this.show_rename_workspace_dialog(cx);
+                    })),
+                );
+
+                menu
+            })
+    }
+
+    fn show_create_workspace_dialog(&mut self, _cx: &mut Context<Self>) {
+        // TODO: open a modal for entering workspace name.
+        // For now, create a workspace with a generated name.
+        let name = format!("Workspace {}", self.shell.workspace.all_workspaces.len() + 1);
+        self.app_command_tx
+            .send(AppCommand::CreateWorkspace {
+                name,
+                command_id: next_command_id(),
+            })
+            .ok();
+    }
+
+    fn show_rename_workspace_dialog(&mut self, _cx: &mut Context<Self>) {
+        // TODO: open a modal for entering the new name.
+        // For now, we just no-op until modal support is wired up.
+    }
+
     fn render_collections_panel(
         &self,
         _window: &mut Window,
@@ -6121,6 +6287,9 @@ impl BeamView {
             .p_2()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground);
+
+        // Workspace picker header
+        panel = panel.child(self.render_workspace_picker(cx));
 
         if !self.startup_messages.is_empty() {
             for msg in &self.startup_messages {

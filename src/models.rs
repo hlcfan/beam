@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::schema::SCHEMA_VERSION_V1;
+use crate::schema::{SCHEMA_VERSION_V1, SCHEMA_VERSION_V3};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -268,6 +268,48 @@ pub struct LocalState {
 pub struct TreeState {
     #[serde(default)]
     pub expanded_item_ids: Vec<Ulid>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspacesRegistryFile {
+    pub schema_version: u32,
+    pub registry: WorkspacesRegistry,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspacesRegistry {
+    pub active_workspace_id: Option<Ulid>,
+    #[serde(default)]
+    pub workspaces: Vec<WorkspaceEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceEntry {
+    pub workspace_id: Ulid,
+    pub name: String,
+    /// Directory name relative to the data root (slugified from name).
+    pub path: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl WorkspacesRegistryFile {
+    pub fn new_with_default_workspace(workspace_name: impl Into<String>, workspace_path: impl Into<String>) -> Self {
+        let workspace_id = Ulid::new();
+        let name = workspace_name.into();
+        let path = workspace_path.into();
+        Self {
+            schema_version: SCHEMA_VERSION_V3,
+            registry: WorkspacesRegistry {
+                active_workspace_id: Some(workspace_id),
+                workspaces: vec![WorkspaceEntry {
+                    workspace_id,
+                    name,
+                    path,
+                    created_at: Utc::now(),
+                }],
+            },
+        }
+    }
 }
 
 impl Default for LocalStateFile {

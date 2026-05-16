@@ -12,7 +12,7 @@ use crate::error::{BeamError, Result};
 use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
     EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    QueryParamField, RequestFile, WorkspaceFile,
+    QueryParamField, RequestFile, WorkspaceEntry, WorkspacesRegistryFile, WorkspaceFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
 #[cfg(test)]
@@ -21,7 +21,9 @@ use crate::storage::{
     CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
     DuplicateRequestInput, MoveRequestInput, RenameRequestInput, WorkspaceStorage,
 };
+use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::io_backend::StorageIoBackend;
+use crate::storage::registry_repo::RegistryRepository;
 use crate::storage::workspace_repo::WorkspaceRepository;
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, folder_dir_name, request_file_name, scope_key,
@@ -549,10 +551,25 @@ impl CollectionsTreeState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct WorkspacePlaceholderState {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceState {
+    pub workspace_id: Option<Ulid>,
+    pub workspace_name: String,
+    pub all_workspaces: Vec<WorkspaceEntry>,
     pub request_panel_title: String,
     pub response_panel_title: String,
+}
+
+impl Default for WorkspaceState {
+    fn default() -> Self {
+        Self {
+            workspace_id: None,
+            workspace_name: String::new(),
+            all_workspaces: Vec::new(),
+            request_panel_title: "Request".to_string(),
+            response_panel_title: "Response".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -595,7 +612,7 @@ pub struct AppShellState {
     pub environments: Vec<EnvironmentMeta>,
     pub environment_selection: LocalEnvironmentSelectionState,
     pub theme: LocalThemeState,
-    pub workspace: WorkspacePlaceholderState,
+    pub workspace: WorkspaceState,
     pub sync_lifecycle: SyncLifecycleState,
 }
 
@@ -610,10 +627,7 @@ impl Default for AppShellState {
             environments: Vec::new(),
             environment_selection: LocalEnvironmentSelectionState::default(),
             theme: LocalThemeState::default(),
-            workspace: WorkspacePlaceholderState {
-                request_panel_title: "Request".to_string(),
-                response_panel_title: "Response".to_string(),
-            },
+            workspace: WorkspaceState::default(),
             sync_lifecycle: SyncLifecycleState::default(),
         }
     }
@@ -957,6 +971,66 @@ impl AppShellState {
                     self.shared_store.name_index.retain(|_, id| id != node_id);
                 }
             }
+            AppEvent::WorkspaceSwitched {
+                workspace_id,
+                workspace_name,
+                all_workspaces,
+                collections,
+                shared_store,
+                request_pane_data,
+                environments,
+                environment_selection,
+                ..
+            } => {
+                self.workspace.workspace_id = Some(*workspace_id);
+                self.workspace.workspace_name = workspace_name.clone();
+                self.workspace.all_workspaces = all_workspaces.clone();
+                self.collections = collections.clone();
+                self.shared_store = shared_store.clone();
+                self.request_pane_data = request_pane_data.clone();
+                self.environments = environments.clone();
+                self.environment_selection = environment_selection.clone();
+                // Keep the current theme; reset sync lifecycle.
+                self.sync_lifecycle = SyncLifecycleState::default();
+            }
+            AppEvent::WorkspaceCreated {
+                workspace,
+                all_workspaces,
+                ..
+            } => {
+                self.workspace.all_workspaces = all_workspaces.clone();
+                // If this is the first workspace entry, set it as current.
+                if self.workspace.workspace_id.is_none() {
+                    self.workspace.workspace_id = Some(workspace.workspace_id);
+                    self.workspace.workspace_name = workspace.name.clone();
+                }
+            }
+            AppEvent::WorkspaceDeleted {
+                workspace_id,
+                all_workspaces,
+                new_active_workspace_id,
+                ..
+            } => {
+                self.workspace.all_workspaces = all_workspaces.clone();
+                if self.workspace.workspace_id == Some(*workspace_id) {
+                    self.workspace.workspace_id = *new_active_workspace_id;
+                    self.workspace.workspace_name = all_workspaces
+                        .iter()
+                        .find(|e| Some(e.workspace_id) == *new_active_workspace_id)
+                        .map(|e| e.name.clone())
+                        .unwrap_or_default();
+                }
+            }
+            AppEvent::WorkspaceRenamed {
+                workspace,
+                all_workspaces,
+                ..
+            } => {
+                self.workspace.all_workspaces = all_workspaces.clone();
+                if self.workspace.workspace_id == Some(workspace.workspace_id) {
+                    self.workspace.workspace_name = workspace.name.clone();
+                }
+            }
         }
     }
 }
@@ -989,6 +1063,10 @@ pub enum AppOperation {
     CreateFolder,
     RenameFolder,
     DeleteFolder,
+    SwitchWorkspace,
+    CreateWorkspace,
+    DeleteWorkspace,
+    RenameWorkspace,
 }
 
 impl AppOperation {
@@ -1009,6 +1087,10 @@ impl AppOperation {
             AppOperation::CreateFolder => "create_folder",
             AppOperation::RenameFolder => "rename_folder",
             AppOperation::DeleteFolder => "delete_folder",
+            AppOperation::SwitchWorkspace => "switch_workspace",
+            AppOperation::CreateWorkspace => "create_workspace",
+            AppOperation::DeleteWorkspace => "delete_workspace",
+            AppOperation::RenameWorkspace => "rename_workspace",
         }
     }
 }
@@ -1079,6 +1161,24 @@ pub enum AppCommand {
         folder_id: Ulid,
         command_id: String,
     },
+    SwitchWorkspace {
+        workspace_id: Ulid,
+        command_id: String,
+    },
+    CreateWorkspace {
+        name: String,
+        command_id: String,
+    },
+    DeleteWorkspace {
+        workspace_id: Ulid,
+        delete_data: bool,
+        command_id: String,
+    },
+    RenameWorkspace {
+        workspace_id: Ulid,
+        new_name: String,
+        command_id: String,
+    },
 }
 
 impl AppCommand {
@@ -1098,7 +1198,11 @@ impl AppCommand {
             | AppCommand::MoveRequest { command_id, .. }
             | AppCommand::CreateFolder { command_id, .. }
             | AppCommand::RenameFolder { command_id, .. }
-            | AppCommand::DeleteFolder { command_id, .. } => command_id,
+            | AppCommand::DeleteFolder { command_id, .. }
+            | AppCommand::SwitchWorkspace { command_id, .. }
+            | AppCommand::CreateWorkspace { command_id, .. }
+            | AppCommand::DeleteWorkspace { command_id, .. }
+            | AppCommand::RenameWorkspace { command_id, .. } => command_id,
         }
     }
 
@@ -1121,6 +1225,10 @@ impl AppCommand {
             AppCommand::CreateFolder { .. } => AppOperation::CreateFolder,
             AppCommand::RenameFolder { .. } => AppOperation::RenameFolder,
             AppCommand::DeleteFolder { .. } => AppOperation::DeleteFolder,
+            AppCommand::SwitchWorkspace { .. } => AppOperation::SwitchWorkspace,
+            AppCommand::CreateWorkspace { .. } => AppOperation::CreateWorkspace,
+            AppCommand::DeleteWorkspace { .. } => AppOperation::DeleteWorkspace,
+            AppCommand::RenameWorkspace { .. } => AppOperation::RenameWorkspace,
         }
     }
 }
@@ -1171,6 +1279,33 @@ pub enum AppEvent {
         folder_id: Ulid,
         command_id: String,
     },
+    WorkspaceSwitched {
+        workspace_id: Ulid,
+        workspace_name: String,
+        all_workspaces: Vec<WorkspaceEntry>,
+        collections: CollectionsTreeState,
+        shared_store: SharedStore,
+        request_pane_data: HashMap<Ulid, RequestPaneData>,
+        environments: Vec<EnvironmentMeta>,
+        environment_selection: LocalEnvironmentSelectionState,
+        command_id: String,
+    },
+    WorkspaceCreated {
+        workspace: WorkspaceEntry,
+        all_workspaces: Vec<WorkspaceEntry>,
+        command_id: String,
+    },
+    WorkspaceDeleted {
+        workspace_id: Ulid,
+        all_workspaces: Vec<WorkspaceEntry>,
+        new_active_workspace_id: Option<Ulid>,
+        command_id: String,
+    },
+    WorkspaceRenamed {
+        workspace: WorkspaceEntry,
+        all_workspaces: Vec<WorkspaceEntry>,
+        command_id: String,
+    },
 }
 
 pub struct DataSyncRuntime {
@@ -1182,16 +1317,17 @@ pub fn next_command_id() -> String {
     Ulid::new().to_string()
 }
 
-pub fn start_data_sync_worker<B>(storage: WorkspaceRepository<B>) -> DataSyncRuntime
-where
-    B: StorageIoBackend,
-{
+pub fn start_data_sync_worker(
+    storage: WorkspaceRepository<FileSystemStorage>,
+    registry: WorkspacesRegistryFile,
+    registry_repo: RegistryRepository,
+) -> DataSyncRuntime {
     let (command_tx, command_rx) = mpsc::sync_channel::<AppCommand>(APP_COMMAND_QUEUE_CAPACITY);
     let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
 
     thread::Builder::new()
         .name("beam-data-sync-worker".to_string())
-        .spawn(move || data_sync_worker_loop(storage, command_rx, event_tx))
+        .spawn(move || data_sync_worker_loop(storage, registry, registry_repo, command_rx, event_tx))
         .expect("failed to start data sync worker thread");
 
     DataSyncRuntime {
@@ -1200,13 +1336,13 @@ where
     }
 }
 
-fn data_sync_worker_loop<B>(
-    mut storage: WorkspaceRepository<B>,
+fn data_sync_worker_loop(
+    mut storage: WorkspaceRepository<FileSystemStorage>,
+    mut registry: WorkspacesRegistryFile,
+    registry_repo: RegistryRepository,
     command_rx: Receiver<AppCommand>,
     event_tx: mpsc::Sender<AppEvent>,
-) where
-    B: StorageIoBackend,
-{
+) {
     while let Ok(first_command) = command_rx.recv() {
         let mut command_batch = vec![first_command];
         while command_batch.len() < WORKER_BATCH_DRAIN_LIMIT {
@@ -1219,10 +1355,47 @@ fn data_sync_worker_loop<B>(
         for command in coalesce_commands(command_batch) {
             let command_id = command.command_id().to_string();
             let operation = command.operation();
+
+            let is_workspace_command = matches!(
+                command,
+                AppCommand::SwitchWorkspace { .. }
+                    | AppCommand::CreateWorkspace { .. }
+                    | AppCommand::DeleteWorkspace { .. }
+                    | AppCommand::RenameWorkspace { .. }
+            );
+
             let _ = event_tx.send(AppEvent::SyncStarted {
                 command_id: command_id.clone(),
                 operation,
             });
+
+            if is_workspace_command {
+                match handle_workspace_command(
+                    &mut storage,
+                    &mut registry,
+                    &registry_repo,
+                    command,
+                ) {
+                    Ok(domain_events) => {
+                        for event in domain_events {
+                            let _ = event_tx.send(event);
+                        }
+                        let _ = event_tx.send(AppEvent::SyncCompleted {
+                            command_id,
+                            operation,
+                        });
+                    }
+                    Err(error) => {
+                        log_sync_failure(&command_id, operation, &error);
+                        let _ = event_tx.send(AppEvent::SyncFailed {
+                            command_id,
+                            operation,
+                            error,
+                        });
+                    }
+                }
+                continue;
+            }
 
             if let Err(error) = validate_command_payload(&command) {
                 log_sync_failure(&command_id, operation, &error);
@@ -1360,10 +1533,22 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
                 return Err("Folder name cannot be empty.".to_string());
             }
         }
+        AppCommand::CreateWorkspace { name, .. } => {
+            if name.trim().is_empty() {
+                return Err("Workspace name cannot be empty.".to_string());
+            }
+        }
+        AppCommand::RenameWorkspace { new_name, .. } => {
+            if new_name.trim().is_empty() {
+                return Err("Workspace name cannot be empty.".to_string());
+            }
+        }
         AppCommand::DeleteEnvironment { .. }
         | AppCommand::DeleteRequest { .. }
         | AppCommand::MoveRequest { .. }
-        | AppCommand::DeleteFolder { .. } => {}
+        | AppCommand::DeleteFolder { .. }
+        | AppCommand::SwitchWorkspace { .. }
+        | AppCommand::DeleteWorkspace { .. } => {}
     }
     Ok(())
 }
@@ -1545,6 +1730,128 @@ fn handle_command<B: StorageIoBackend>(
                 command_id,
             }])
         }
+        // Workspace commands are handled by handle_workspace_command, never reach here.
+        AppCommand::SwitchWorkspace { command_id, .. }
+        | AppCommand::CreateWorkspace { command_id, .. }
+        | AppCommand::DeleteWorkspace { command_id, .. }
+        | AppCommand::RenameWorkspace { command_id, .. } => Err(format!(
+            "workspace command {command_id} reached handle_command unexpectedly"
+        )),
+    }
+}
+
+fn handle_workspace_command(
+    storage: &mut WorkspaceRepository<FileSystemStorage>,
+    registry: &mut WorkspacesRegistryFile,
+    registry_repo: &RegistryRepository,
+    command: AppCommand,
+) -> std::result::Result<Vec<AppEvent>, String> {
+    match command {
+        AppCommand::SwitchWorkspace {
+            workspace_id,
+            command_id,
+        } => {
+            // Update registry to mark new workspace as active.
+            registry_repo
+                .set_active_workspace(registry, workspace_id)
+                .map_err(|e| e.to_string())?;
+
+            // Load the new workspace.
+            let entry = registry
+                .registry
+                .workspaces
+                .iter()
+                .find(|e| e.workspace_id == workspace_id)
+                .cloned()
+                .ok_or_else(|| format!("workspace {workspace_id} not found in registry"))?;
+
+            let new_paths = registry_repo.workspace_paths(&entry);
+            let new_backend = FileSystemStorage::new(new_paths.clone());
+            let new_repo = WorkspaceRepository::new(new_backend)
+                .map_err(|e| e.to_string())?;
+
+            // Initialize workspace files if this is a brand-new workspace.
+            new_repo.initialize().map_err(|e| e.to_string())?;
+
+            let local_state = new_repo
+                .load_local_state()
+                .unwrap_or_default();
+
+            let (collections, shared_store, request_pane_data, _warnings) =
+                load_workspace_tree(&new_paths, &local_state);
+            let mut env_warnings = Vec::new();
+            let env_metas = load_environments(&new_paths, &mut env_warnings);
+
+            *storage = new_repo;
+
+            let all_workspaces = registry.registry.workspaces.clone();
+            Ok(vec![AppEvent::WorkspaceSwitched {
+                workspace_id,
+                workspace_name: entry.name,
+                all_workspaces,
+                collections,
+                shared_store,
+                request_pane_data,
+                environments: env_metas,
+                environment_selection: LocalEnvironmentSelectionState {
+                    active_global_environment_id: local_state
+                        .local_state
+                        .active_global_environment_id,
+                },
+                command_id,
+            }])
+        }
+        AppCommand::CreateWorkspace { name, command_id } => {
+            let entry = registry_repo
+                .create_workspace(registry, &name)
+                .map_err(|e| e.to_string())?;
+
+            // Bootstrap the new workspace files.
+            let ws_paths = registry_repo.workspace_paths(&entry);
+            let ws_backend = FileSystemStorage::new(ws_paths);
+            let ws_repo = WorkspaceRepository::new(ws_backend).map_err(|e| e.to_string())?;
+            ws_repo.initialize().map_err(|e| e.to_string())?;
+
+            let all_workspaces = registry.registry.workspaces.clone();
+            Ok(vec![AppEvent::WorkspaceCreated {
+                workspace: entry,
+                all_workspaces,
+                command_id,
+            }])
+        }
+        AppCommand::DeleteWorkspace {
+            workspace_id,
+            delete_data,
+            command_id,
+        } => {
+            registry_repo
+                .delete_workspace(registry, workspace_id, delete_data)
+                .map_err(|e| e.to_string())?;
+            let new_active_workspace_id = registry.registry.active_workspace_id;
+            let all_workspaces = registry.registry.workspaces.clone();
+            Ok(vec![AppEvent::WorkspaceDeleted {
+                workspace_id,
+                all_workspaces,
+                new_active_workspace_id,
+                command_id,
+            }])
+        }
+        AppCommand::RenameWorkspace {
+            workspace_id,
+            new_name,
+            command_id,
+        } => {
+            let entry = registry_repo
+                .rename_workspace(registry, workspace_id, &new_name)
+                .map_err(|e| e.to_string())?;
+            let all_workspaces = registry.registry.workspaces.clone();
+            Ok(vec![AppEvent::WorkspaceRenamed {
+                workspace: entry,
+                all_workspaces,
+                command_id,
+            }])
+        }
+        _ => unreachable!("non-workspace command routed to handle_workspace_command"),
     }
 }
 
@@ -1566,7 +1873,12 @@ struct LoadedSharedTree {
     request_pane_data: HashMap<Ulid, RequestPaneData>,
 }
 
-pub fn startup_preload<S>(storage: &S, paths: &BeamPaths) -> StartupLoad
+pub fn startup_preload<S>(
+    storage: &S,
+    paths: &BeamPaths,
+    workspace_entry: Option<&WorkspaceEntry>,
+    all_workspaces: Vec<WorkspaceEntry>,
+) -> StartupLoad
 where
     S: WorkspaceStorage,
 {
@@ -1624,6 +1936,14 @@ where
             },
             theme: LocalThemeState {
                 theme_name: local_state.local_state.theme_name.clone(),
+            },
+            workspace: WorkspaceState {
+                workspace_id: workspace_entry.map(|e| e.workspace_id),
+                workspace_name: workspace_entry
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default(),
+                all_workspaces,
+                ..WorkspaceState::default()
             },
             ..AppShellState::default()
         },
@@ -2053,6 +2373,7 @@ fn parse_toml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::Path;
     use std::sync::mpsc::Receiver;
     use std::time::Duration;
 
@@ -2062,11 +2383,31 @@ mod tests {
     use crate::models::{
         EnvironmentMeta, EnvironmentScope, FolderMeta, LocalState, ManifestItemRef,
         RequestDefinition, RequestMeta, ScriptConfig, TreeState, WorkspaceMeta,
+        WorkspacesRegistryFile,
     };
+    use crate::paths::DataRootPaths;
     use crate::schema::SCHEMA_VERSION_V1;
+    use crate::storage::registry_repo::RegistryRepository;
     use crate::storage::workspace_repo::WorkspaceRepository;
     use crate::storage::fs_backend::FileSystemStorage;
     use chrono::Utc;
+
+    /// Create a minimal registry + repo for tests that need start_data_sync_worker.
+    fn test_registry_for_dir(dir: &Path) -> (WorkspacesRegistryFile, RegistryRepository) {
+        let data_root = DataRootPaths::new(
+            dir.join("beam"),
+            dir.join("beam_local"),
+        );
+        let repo = RegistryRepository::new(data_root);
+        let registry = WorkspacesRegistryFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V3,
+            registry: crate::models::WorkspacesRegistry {
+                active_workspace_id: None,
+                workspaces: vec![],
+            },
+        };
+        (registry, repo)
+    }
 
     #[test]
     fn split_ratios_are_clamped() {
@@ -2527,7 +2868,8 @@ mod tests {
         let backend = FileSystemStorage::new(paths);
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(storage);
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let create_command_id = next_command_id();
@@ -2633,7 +2975,8 @@ mod tests {
 
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(storage);
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
         let parent = RequestParentRef {
             folder_id: None,
@@ -2838,7 +3181,8 @@ mod tests {
         let backend = FileSystemStorage::new(paths);
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
-        let runtime = start_data_sync_worker(storage);
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
@@ -3011,7 +3355,7 @@ mod tests {
             .save_local_state(&local_state)
             .expect("save local state");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
             panic!("startup should be ready");
         };
@@ -3048,7 +3392,7 @@ mod tests {
             .save_local_state(&local_state)
             .expect("save local state");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, messages } = load else {
             panic!("startup should be ready");
         };
@@ -3072,7 +3416,7 @@ mod tests {
         fs::write(paths.local_state_file.clone(), "not = valid = toml")
             .expect("corrupt local state");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Fatal { message } = load else {
             panic!("startup should fail");
         };
@@ -3183,7 +3527,7 @@ post_response = "console.log(response.status)"
         let request_path = folder_dir.join(request_file_name("Manifest Name"));
         fs::write(&request_path, request_toml).expect("write request");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
             panic!("startup should be ready");
         };
@@ -3265,7 +3609,7 @@ post_response = "console.log(response.status)"
         }]);
         let nested_manifest_path = write_folder_manifest(&nested_folder_dir, nested_folder_id, "Nested", vec![]);
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
             panic!("startup should be ready");
         };
@@ -3352,7 +3696,7 @@ updated_at = "2026-01-01T00:00:00Z"
             .save_local_state(&local_state)
             .expect("save local state");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
             panic!("startup should be ready");
         };
@@ -3393,7 +3737,7 @@ expanded_item_ids = ["{folder_id}"]
         );
         fs::write(&paths.local_state_file, local_state_toml).expect("write local state");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
             panic!("startup should be ready");
         };
@@ -3420,7 +3764,7 @@ expanded_item_ids = ["{folder_id}"]
         write_folder_manifest(&paths.root.join(folder_dir_name("Second")), second_id, "Second", vec![]);
         write_folder_manifest(&paths.root.join(folder_dir_name("First")), first_id, "First", vec![]);
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
             panic!("startup should be ready");
         };
@@ -3457,7 +3801,7 @@ expanded_item_ids = ["{folder_id}"]
         let request_path = folder_dir.join(request_file_name("Broken Request"));
         fs::write(&request_path, "not = valid = toml").expect("write invalid request file");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, messages } = load else {
             panic!("startup should be ready");
         };
@@ -3511,7 +3855,7 @@ expanded_item_ids = ["{folder_id}"]
             "https://example.com/wrong",
         );
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, messages } = load else {
             panic!("startup should be ready");
         };
@@ -3573,7 +3917,7 @@ expanded_item_ids = ["{folder_id}"]
             "https://example.com/second",
         );
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, messages } = load else {
             panic!("startup should be ready");
         };
@@ -3615,7 +3959,7 @@ expanded_item_ids = ["{folder_id}"]
         fs::write(broken_dir.join(FOLDER_MANIFEST_FILE_NAME), "not = valid = toml")
             .expect("write broken manifest");
 
-        let load = startup_preload(&storage, &paths);
+        let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, messages } = load else {
             panic!("startup should be ready");
         };

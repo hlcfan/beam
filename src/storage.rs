@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub mod fs_backend;
 pub mod io_backend;
+pub mod registry_repo;
 pub mod workspace_repo;
 
 use crate::error::Result;
@@ -100,4 +101,27 @@ pub trait WorkspaceStorage {
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()>;
     fn load_local_state(&self) -> Result<LocalStateFile>;
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateWorkspaceInput {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteWorkspaceInput {
+    pub workspace_id: ulid::Ulid,
+    /// Whether to also delete the workspace directory from disk.
+    pub delete_data: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenameWorkspaceInput {
+    pub workspace_id: ulid::Ulid,
+    pub new_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchWorkspaceInput {
+    pub workspace_id: ulid::Ulid,
 }
