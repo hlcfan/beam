@@ -6412,24 +6412,26 @@ impl BeamView {
         let view_for_rename = view.clone();
 
         let border_color = cx.theme().border;
+        let compact_border_color = cx.theme().foreground.opacity(0.2);
         let bg_color = cx.theme().background;
 
         Button::new("workspace-picker")
             .ghost()
             .small()
-            .h(px(28.0))
-            .px_1()
+            .h(px(32.0))
+            .px_2()
             .rounded(px(6.0))
             .cursor_pointer()
             .justify_start()
-            .when(!compact, |b| {
-                b.w_full().border_1().border_color(border_color).bg(bg_color)
-            })
+            .border_1()
+            .border_color(if compact { compact_border_color } else { border_color })
+            .when(compact, |b| b.min_w(px(130.0)))
+            .when(!compact, |b| b.w_full().bg(bg_color))
             .child(
-                div()
+                h_flex()
                     .w_full()
-                    .flex()
                     .items_center()
+                    .justify_between()
                     .gap_1()
                     .child(
                         div()
@@ -6438,6 +6440,12 @@ impl BeamView {
                             .text_color(cx.theme().foreground)
                             .truncate()
                             .child(workspace_name.clone()),
+                    )
+                    .child(
+                        Icon::default()
+                            .path("icons/chevron-down.svg")
+                            .size(px(12.0))
+                            .text_color(cx.theme().muted_foreground),
                     ),
             )
             .dropdown_menu(move |menu, window, _| {
