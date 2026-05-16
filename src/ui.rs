@@ -3761,7 +3761,7 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let view = cx.entity();
-        let base = div().h(px(4.0)).w_full().rounded(px(2.0)).can_drop(
+        let base = div().h(px(2.0)).w_full().rounded(px(2.0)).can_drop(
             move |dragged_value, _window, app| {
                 view.update(app, |this, _| {
                     this.can_accept_tree_drop(dragged_value, target_id, placement)
@@ -6095,7 +6095,7 @@ impl BeamView {
                     .w_full()
                     .rounded(px(8.0))
                     .py_0p5()
-                    .px_1()
+                    .px(px(2.0))
                     .pl(indent)
                     .selected(row.selected)
                     .when(
