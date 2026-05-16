@@ -5867,8 +5867,8 @@ impl BeamView {
                     .w_full()
                     .rounded(px(8.0))
                     .py_0p5()
-                    .px(px(2.0))
-                    .pl(indent)
+                    .pr(px(6.0))
+                    .pl(indent + px(6.0))
                     .selected(row.selected)
                     .when(
                         drag_hover
