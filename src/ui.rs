@@ -1711,6 +1711,155 @@ impl Render for TreeRenameDialogView {
     }
 }
 
+enum WorkspaceDialogMode {
+    Create,
+    Rename,
+}
+
+struct WorkspaceNameDialogView {
+    target_view: Entity<BeamView>,
+    mode: WorkspaceDialogMode,
+    name_input: Entity<InputState>,
+}
+
+impl WorkspaceNameDialogView {
+    fn new(
+        target_view: Entity<BeamView>,
+        mode: WorkspaceDialogMode,
+        initial_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let name_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Workspace name")
+                .default_value(initial_name)
+        });
+        Self {
+            target_view,
+            mode,
+            name_input,
+        }
+    }
+
+    fn focus_name_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.name_input.update(cx, |state, cx| {
+            state.focus(window, cx);
+            let cursor_end = state.value().encode_utf16().count() as u32;
+            state.set_cursor_position(Position::new(0, cursor_end), window, cx);
+        });
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.name_input.read(cx).value().trim().to_string();
+        if name.is_empty() {
+            window.push_notification("Workspace name cannot be empty.", cx);
+            return;
+        }
+        let is_create = matches!(self.mode, WorkspaceDialogMode::Create);
+        let _ = self.target_view.update(cx, |this, cx| {
+            if is_create {
+                this.app_command_tx
+                    .send(AppCommand::CreateWorkspace {
+                        name,
+                        command_id: next_command_id(),
+                    })
+                    .ok();
+            } else if let Some(workspace_id) = this.shell.workspace.workspace_id {
+                this.app_command_tx
+                    .send(AppCommand::RenameWorkspace {
+                        workspace_id,
+                        new_name: name,
+                        command_id: next_command_id(),
+                    })
+                    .ok();
+            }
+            window.close_dialog(cx);
+        });
+    }
+}
+
+impl Render for WorkspaceNameDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let target_view = self.target_view.clone();
+        let name_input = self.name_input.clone();
+        let is_create = matches!(self.mode, WorkspaceDialogMode::Create);
+
+        v_flex()
+            .w(px(420.0))
+            .p_3()
+            .gap_3()
+            .child(
+                div()
+                    .w_full()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Input::new(&self.name_input)
+                            .small()
+                            .w_full()
+                            .appearance(false),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("workspace-dialog-cancel")
+                            .small()
+                            .ghost()
+                            .label("Cancel")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("workspace-dialog-submit")
+                            .small()
+                            .cursor_pointer()
+                            .label(if is_create { "Create" } else { "Rename" })
+                            .on_click(move |_, window, cx| {
+                                let name = name_input.read(cx).value().trim().to_string();
+                                if name.is_empty() {
+                                    window.push_notification(
+                                        "Workspace name cannot be empty.",
+                                        cx,
+                                    );
+                                    return;
+                                }
+                                let _ = target_view.update(cx, |this, cx| {
+                                    if is_create {
+                                        this.app_command_tx
+                                            .send(AppCommand::CreateWorkspace {
+                                                name,
+                                                command_id: next_command_id(),
+                                            })
+                                            .ok();
+                                    } else if let Some(workspace_id) =
+                                        this.shell.workspace.workspace_id
+                                    {
+                                        this.app_command_tx
+                                            .send(AppCommand::RenameWorkspace {
+                                                workspace_id,
+                                                new_name: name,
+                                                command_id: next_command_id(),
+                                            })
+                                            .ok();
+                                    }
+                                    window.close_dialog(cx);
+                                });
+                            }),
+                    ),
+            )
+    }
+}
+
 impl BeamView {
     fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
         let run_id = self.next_request_run_id;
@@ -6363,21 +6512,64 @@ impl BeamView {
             })
     }
 
-    fn show_create_workspace_dialog(&mut self, _cx: &mut Context<Self>) {
-        // TODO: open a modal for entering workspace name.
-        // For now, create a workspace with a generated name.
-        let name = format!("Workspace {}", self.shell.workspace.all_workspaces.len() + 1);
-        self.app_command_tx
-            .send(AppCommand::CreateWorkspace {
-                name,
-                command_id: next_command_id(),
-            })
-            .ok();
+    fn show_create_workspace_dialog(&mut self, cx: &mut Context<Self>) {
+        self.open_workspace_name_dialog(WorkspaceDialogMode::Create, String::new(), cx);
     }
 
-    fn show_rename_workspace_dialog(&mut self, _cx: &mut Context<Self>) {
-        // TODO: open a modal for entering the new name.
-        // For now, we just no-op until modal support is wired up.
+    fn show_rename_workspace_dialog(&mut self, cx: &mut Context<Self>) {
+        let current_name = self.shell.workspace.workspace_name.clone();
+        self.open_workspace_name_dialog(WorkspaceDialogMode::Rename, current_name, cx);
+    }
+
+    fn open_workspace_name_dialog(
+        &mut self,
+        mode: WorkspaceDialogMode,
+        initial_name: String,
+        cx: &mut Context<Self>,
+    ) {
+        let title = match mode {
+            WorkspaceDialogMode::Create => "New Workspace",
+            WorkspaceDialogMode::Rename => "Rename Workspace",
+        };
+        let view = cx.entity();
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    let dialog_view = cx.new(|cx| {
+                        WorkspaceNameDialogView::new(
+                            view.clone(),
+                            mode,
+                            initial_name,
+                            window,
+                            cx,
+                        )
+                    });
+                    let focus_dv = dialog_view.clone();
+                    window.defer(cx, move |window, cx| {
+                        let submit_dv = dialog_view.clone();
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            let ok_dv = submit_dv.clone();
+                            dialog
+                                .title(title)
+                                .w(px(460.0))
+                                .child(dialog_view.clone())
+                                .on_ok(move |_, window, cx| {
+                                    let _ = ok_dv.update(cx, |this, cx| {
+                                        this.submit(window, cx);
+                                    });
+                                    false
+                                })
+                        });
+                        window.defer(cx, move |window, cx| {
+                            let _ = focus_dv.update(cx, |this, cx| {
+                                this.focus_name_input(window, cx);
+                            });
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
     }
 
     fn render_collections_panel(
