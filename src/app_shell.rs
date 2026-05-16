@@ -467,6 +467,8 @@ impl CollectionsTreeState {
             if let Some(old_parent) = self.nodes.get_mut(&old_parent_id) {
                 old_parent.children.retain(|id| *id != request_id);
             }
+        } else {
+            self.roots.retain(|id| *id != request_id);
         }
 
         if let Some(new_parent) = self.nodes.get_mut(&new_parent_id) {
@@ -4039,5 +4041,49 @@ expanded_item_ids = ["{folder_id}"]
             message.text.contains("Failed to parse folder manifest")
                 && message.text.contains("folder.toml")
         }));
+    }
+
+    #[test]
+    fn move_request_node_removes_from_roots_when_moving_into_folder() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let mut tree = CollectionsTreeState::default();
+        tree.nodes.insert(
+            folder_id,
+            TreeNode {
+                id: folder_id,
+                name: "Folder".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Root Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com".to_string()),
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.roots = vec![folder_id, request_id];
+        tree.set_expanded([folder_id]);
+
+        tree.move_request_node(request_id, folder_id, 0);
+
+        assert!(!tree.roots.contains(&request_id), "request should be removed from roots");
+        let folder_node = tree.nodes.get(&folder_id).unwrap();
+        assert!(folder_node.children.contains(&request_id), "request should be in folder children");
+        let rows = tree.visible_rows();
+        let ids: Vec<Ulid> = rows.iter().map(|r| r.id).collect();
+        assert_eq!(ids.iter().filter(|&&id| id == request_id).count(), 1, "request should appear exactly once");
     }
 }
