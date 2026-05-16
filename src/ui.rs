@@ -4868,7 +4868,14 @@ impl BeamView {
             .child(format!("{method:?}").to_uppercase())
     }
 
-    fn render_title_bar_content(&self, cx: &App) -> Div {
+    fn render_title_bar_content(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let selected_environment_label = self.selected_environment_label();
+        let title_bar_environment_label = format!("Environment: {selected_environment_label}");
+
         h_flex()
             .items_center()
             .justify_end()
@@ -4878,13 +4885,28 @@ impl BeamView {
             .text_sm()
             .text_color(cx.theme().foreground)
             .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Workspace: default")
-                    .child("Profile: local"),
+                Button::new("title-bar-environment-sheet")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .h(px(22.0))
+                    .px_1()
+                    .rounded(px(6.0))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_environment_variables_sheet(window, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::default()
+                                    .path("icons/variable.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child(title_bar_environment_label),
+                    ),
             )
     }
 
@@ -8406,9 +8428,6 @@ impl BeamView {
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
-        let selected_environment_label = self.selected_environment_label();
-        let status_bar_environment_label = format!("Environment: {selected_environment_label}");
-
         h_flex()
             .items_center()
             .justify_between()
@@ -8445,28 +8464,13 @@ impl BeamView {
                     ),
             )
             .child(
-                Button::new("status-bar-environment-sheet")
-                    .small()
-                    .ghost()
-                    .cursor_pointer()
-                    .h(px(22.0))
-                    .px_1()
-                    .rounded(px(6.0))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_environment_variables_sheet(window, cx);
-                    }))
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Icon::default()
-                                    .path("icons/variable.svg")
-                                    .size(px(14.0))
-                                    .text_color(cx.theme().muted_foreground),
-                            )
-                            .child(status_bar_environment_label),
-                    ),
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Workspace: default")
+                    .child("Profile: local"),
             )
     }
 }
@@ -8941,7 +8945,7 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .bg(cx.theme().background)
-            .child(TitleBar::new().child(self.render_title_bar_content(cx))) // TODO: remove
+            .child(TitleBar::new().child(self.render_title_bar_content(window, cx)))
             .child(
                 h_flex().flex_1().w_full().child(
                     h_resizable("beam-main-shell")
