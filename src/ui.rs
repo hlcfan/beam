@@ -4873,9 +4873,6 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let selected_environment_label = self.selected_environment_label();
-        let title_bar_environment_label = format!("Environment: {selected_environment_label}");
-
         h_flex()
             .items_center()
             .justify_end()
@@ -4905,7 +4902,7 @@ impl BeamView {
                                     .size(px(14.0))
                                     .text_color(cx.theme().muted_foreground),
                             )
-                            .child(title_bar_environment_label),
+                            .child("Environment variables"),
                     ),
             )
     }
