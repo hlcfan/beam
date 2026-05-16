@@ -8615,24 +8615,73 @@ impl BeamView {
             .into_any_element()
     }
 
+    fn render_shimmer_loading_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let color = cx.theme().progress_bar;
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(2.0))
+            .overflow_hidden()
+            .rounded_t(px(8.0))
+            .bg(color.opacity(0.18))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .w(relative(0.28))
+                    .bg(color.opacity(0.85))
+                    .rounded_full()
+                    .with_animation(
+                        "shimmer-loading",
+                        Animation::new(Duration::from_millis(1400)).repeat(),
+                        move |this, delta| this.left(relative(delta)),
+                    ),
+            )
+    }
+
     fn render_response_panel(&self, _: &mut Window, cx: &mut Context<Self>) -> Div {
+        let is_sending = self
+            .shell
+            .collections
+            .selected_request_id()
+            .map(|id| self.is_request_sending(id))
+            .unwrap_or(false);
+
         let response_container = match self.active_response_tab {
             ResponseTab::Body => div()
                 .flex_1()
                 .w_full()
+                .relative()
                 .rounded(px(8.0))
                 .border_1()
                 .border_color(cx.theme().border)
                 .p_0()
-                .child(self.render_response_editor_surface(cx)),
+                .child(
+                    div()
+                        .w_full()
+                        .h_full()
+                        .when(is_sending, |d| d.opacity(0.45))
+                        .child(self.render_response_editor_surface(cx)),
+                )
+                .when(is_sending, |d| {
+                    d.child(self.render_shimmer_loading_bar(cx))
+                }),
             ResponseTab::Headers => div()
                 .flex_1()
                 .w_full()
+                .relative()
                 .rounded(px(8.0))
                 .border_1()
                 .border_color(cx.theme().border)
                 .p_3()
-                .child(self.render_response_editor_surface(cx)),
+                .when(is_sending, |d| d.opacity(0.45))
+                .child(self.render_response_editor_surface(cx))
+                .when(is_sending, |d| {
+                    d.child(self.render_shimmer_loading_bar(cx))
+                }),
         };
 
         v_flex()
