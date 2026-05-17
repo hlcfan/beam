@@ -784,6 +784,123 @@ impl AppShellState {
         let _ = self.shared_store.rebuild_name_index();
     }
 
+    pub fn insert_request_at_root(
+        &mut self,
+        after_request_id: Option<Ulid>,
+        request: &RequestFile,
+    ) {
+        let request_id = request.meta.request_id;
+        self.shared_store.requests.insert(request_id, request.clone());
+        self.shared_store.nodes.insert(
+            request_id,
+            Node {
+                id: request_id,
+                name: request.meta.name.clone(),
+                kind: NodeKind::Request,
+                description: request.meta.description.clone(),
+                created_at: Some(request.meta.created_at),
+                updated_at: Some(request.meta.updated_at),
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        self.shared_store.root_ids.retain(|id| *id != request_id);
+        if let Some(after_id) = after_request_id
+            && let Some(index) = self.shared_store.root_ids.iter().position(|&id| id == after_id)
+        {
+            self.shared_store.root_ids.insert(index + 1, request_id);
+        } else {
+            self.shared_store.root_ids.push(request_id);
+        }
+        let _ = self.shared_store.rebuild_name_index();
+
+        self.workspace_tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: request.meta.name.clone(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(request.request.method),
+                request_url: Some(request.request.url.clone()),
+                manifest_path: request.file_path.clone(),
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        self.workspace_tree.roots.retain(|id| *id != request_id);
+        if let Some(after_id) = after_request_id
+            && let Some(index) = self.workspace_tree.roots.iter().position(|&id| id == after_id)
+        {
+            self.workspace_tree.roots.insert(index + 1, request_id);
+        } else {
+            self.workspace_tree.roots.push(request_id);
+        }
+    }
+
+    pub fn apply_folder_move(
+        &mut self,
+        folder_id: Ulid,
+        old_parent_id: Option<Ulid>,
+        new_parent_id: Option<Ulid>,
+        insertion_index: usize,
+        folder_name: String,
+    ) {
+        // shared_store: remove from old parent
+        match old_parent_id {
+            Some(old_pid) => {
+                if let Some(old_parent) = self.shared_store.nodes.get_mut(&old_pid) {
+                    old_parent.children.retain(|id| *id != folder_id);
+                }
+            }
+            None => self.shared_store.root_ids.retain(|id| *id != folder_id),
+        }
+        // shared_store: insert into new parent
+        match new_parent_id {
+            Some(new_pid) => {
+                if let Some(new_parent) = self.shared_store.nodes.get_mut(&new_pid) {
+                    let index = insertion_index.min(new_parent.children.len());
+                    new_parent.children.insert(index, folder_id);
+                }
+            }
+            None => {
+                let index = insertion_index.min(self.shared_store.root_ids.len());
+                self.shared_store.root_ids.insert(index, folder_id);
+            }
+        }
+        if let Some(node) = self.shared_store.nodes.get_mut(&folder_id) {
+            node.parent_id = new_parent_id;
+        }
+        // Only the moved folder's scope key changes; descendants retain folder_id as their scope.
+        self.shared_store.name_index.remove(&scope_key(old_parent_id, &folder_name));
+        self.shared_store.name_index.insert(scope_key(new_parent_id, &folder_name), folder_id);
+
+        // workspace_tree: remove from old parent
+        match old_parent_id {
+            Some(old_pid) => {
+                if let Some(old_parent) = self.workspace_tree.nodes.get_mut(&old_pid) {
+                    old_parent.children.retain(|id| *id != folder_id);
+                }
+            }
+            None => self.workspace_tree.roots.retain(|id| *id != folder_id),
+        }
+        // workspace_tree: insert into new parent
+        match new_parent_id {
+            Some(new_pid) => {
+                if let Some(new_parent) = self.workspace_tree.nodes.get_mut(&new_pid) {
+                    let index = insertion_index.min(new_parent.children.len());
+                    new_parent.children.insert(index, folder_id);
+                }
+            }
+            None => {
+                let index = insertion_index.min(self.workspace_tree.roots.len());
+                self.workspace_tree.roots.insert(index, folder_id);
+            }
+        }
+        if let Some(node) = self.workspace_tree.nodes.get_mut(&folder_id) {
+            node.parent_id = new_parent_id;
+        }
+    }
+
     pub fn apply_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::SyncStarted { operation, .. } => {
@@ -1037,8 +1154,9 @@ impl AppShellState {
                     }
                 }
                 for node_id in &nodes_to_remove {
-                    self.shared_store.nodes.remove(node_id);
-                    self.shared_store.name_index.retain(|_, id| id != node_id);
+                    if let Some(node) = self.shared_store.nodes.remove(node_id) {
+                        self.shared_store.name_index.remove(&scope_key(node.parent_id, &node.name));
+                    }
                 }
             }
             AppEvent::WorkspaceSwitched {

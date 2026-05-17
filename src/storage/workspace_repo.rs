@@ -1054,7 +1054,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
 
         for node_id in &nodes_to_remove {
             if let Some(node) = self.store.nodes.remove(node_id) {
-                self.store.name_index.retain(|_, id| *id != node.id);
+                self.store.name_index.remove(&scope_key(node.parent_id, &node.name));
             }
             self.store.requests.remove(node_id);
         }

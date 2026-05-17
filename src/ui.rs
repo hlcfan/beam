@@ -3636,6 +3636,24 @@ impl BeamView {
             TreeMoveAction::MoveFolder(_) => {}
         }
 
+        // Capture the info needed for the in-memory update before the action is moved.
+        let (folder_id, new_parent_id, insertion_index, old_parent_id, folder_name) = match &action {
+            TreeMoveAction::MoveFolder(input) => {
+                let folder_id = input.folder_id;
+                let new_parent_id = input.new_parent.folder_id;
+                let insertion_index = input.insertion_index;
+                let old_parent_id = self.shell.shared_store.nodes
+                    .get(&folder_id)
+                    .and_then(|n| n.parent_id);
+                let folder_name = self.shell.shared_store.nodes
+                    .get(&folder_id)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_default();
+                (folder_id, new_parent_id, insertion_index, old_parent_id, folder_name)
+            }
+            TreeMoveAction::MoveRequest(_) => unreachable!(),
+        };
+
         let paths = BeamPaths::default_user_config();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
@@ -3658,7 +3676,16 @@ impl BeamView {
                 .await;
             let _ = view.update_in(cx, move |this, window, cx| match result {
                 Ok(()) => {
-                    this.refresh_shell_from_disk(preferred_selected_request_id, window, cx);
+                    this.shell.apply_folder_move(
+                        folder_id,
+                        old_parent_id,
+                        new_parent_id,
+                        insertion_index,
+                        folder_name,
+                    );
+                    if let Some(request_id) = preferred_selected_request_id {
+                        this.shell.workspace_tree.select_request(request_id);
+                    }
                     cx.notify();
                 }
                 Err(error) => {
@@ -4183,11 +4210,7 @@ impl BeamView {
                                         request.file_path.clone(),
                                     );
                                 } else {
-                                    self.refresh_shell_from_disk(
-                                        Some(request.meta.request_id),
-                                        window,
-                                        cx,
-                                    );
+                                    self.shell.insert_request_at_root(None, request);
                                 }
                             }
                             PendingRequestPlacement::After {
@@ -4210,11 +4233,7 @@ impl BeamView {
                                         request.file_path.clone(),
                                     );
                                 } else {
-                                    self.refresh_shell_from_disk(
-                                        Some(request.meta.request_id),
-                                        window,
-                                        cx,
-                                    );
+                                    self.shell.insert_request_at_root(Some(after_request_id), request);
                                 }
                             }
                         }
