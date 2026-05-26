@@ -5936,6 +5936,8 @@ impl BeamView {
     fn render_tree_row(
         &self,
         row: &crate::app_shell::TreeRow,
+        show_before_slot: bool,
+        show_after_slot: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -6115,11 +6117,14 @@ impl BeamView {
             ),
         }
 
-        v_flex()
-            .w_full()
-            .child(self.render_tree_drop_slot(row_id, row_kind, TreeDropPlacement::Before, cx))
+        let tree_row = v_flex().w_full().when(show_before_slot, |this| {
+            this.child(self.render_tree_drop_slot(row_id, row_kind, TreeDropPlacement::Before, cx))
+        });
+        tree_row
             .child(body)
-            .child(self.render_tree_drop_slot(row_id, row_kind, TreeDropPlacement::After, cx))
+            .when(show_after_slot, |this| {
+                this.child(self.render_tree_drop_slot(row_id, row_kind, TreeDropPlacement::After, cx))
+            })
             .into_any_element()
     }
 
@@ -6702,8 +6707,16 @@ impl BeamView {
                                 let mut elements = Vec::with_capacity(visible_range.len());
                                 for ix in visible_range {
                                     let row = rows[ix].clone();
+                                    let show_before_slot = ix == 0;
+                                    let show_after_slot = true;
                                     let el = list_view.update(app, |this, cx| {
-                                        this.render_tree_row(&row, window, cx)
+                                        this.render_tree_row(
+                                            &row,
+                                            show_before_slot,
+                                            show_after_slot,
+                                            window,
+                                            cx,
+                                        )
                                     });
                                     elements.push(el);
                                 }
