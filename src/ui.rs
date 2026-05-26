@@ -45,8 +45,8 @@ use crate::script::{
     ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult,
     ScriptRuntimeResponse, TestResult, execute_post_request_script,
 };
-use crate::storage::workspace_repo::WorkspaceRepository;
 use crate::storage::fs_backend::FileSystemStorage;
+use crate::storage::workspace_repo::WorkspaceRepository;
 use crate::storage::{
     CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
     FolderParentRef, KnownParentManifestPath, MoveFolderInput, MoveRequestInput,
@@ -296,7 +296,14 @@ pub fn run_app(
         let workspace_paths = workspace_paths.clone();
         cx.open_window(window_options, |window, cx| {
             let view = cx.new(|cx| {
-                BeamView::new(state, startup_messages, sync_runtime, workspace_paths, window, cx)
+                BeamView::new(
+                    state,
+                    startup_messages,
+                    sync_runtime,
+                    workspace_paths,
+                    window,
+                    cx,
+                )
             });
             cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
         })
@@ -1838,10 +1845,7 @@ impl Render for WorkspaceNameDialogView {
                             .on_click(move |_, window, cx| {
                                 let name = name_input.read(cx).value().trim().to_string();
                                 if name.is_empty() {
-                                    window.push_notification(
-                                        "Workspace name cannot be empty.",
-                                        cx,
-                                    );
+                                    window.push_notification("Workspace name cannot be empty.", cx);
                                     return;
                                 }
                                 let _ = target_view.update(cx, |this, cx| {
@@ -3164,17 +3168,12 @@ impl BeamView {
                 RequestParentRef {
                     folder_id: Some(node.id),
                 },
-                node.manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath),
+                node.manifest_path.clone().map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => {
                 let parent_id = node.parent_id;
                 match parent_id {
-                    None => Some((
-                        RequestParentRef { folder_id: None },
-                        None,
-                    )),
+                    None => Some((RequestParentRef { folder_id: None }, None)),
                     Some(parent_id) => {
                         let parent_node = self.shell.workspace_tree.node(parent_id)?;
                         match parent_node.kind {
@@ -3205,17 +3204,12 @@ impl BeamView {
                 FolderParentRef {
                     folder_id: Some(node.id),
                 },
-                node.manifest_path
-                    .clone()
-                    .map(KnownParentManifestPath),
+                node.manifest_path.clone().map(KnownParentManifestPath),
             )),
             TreeNodeKind::Request => {
                 let parent_id = node.parent_id;
                 match parent_id {
-                    None => Some((
-                        FolderParentRef { folder_id: None },
-                        None,
-                    )),
+                    None => Some((FolderParentRef { folder_id: None }, None)),
                     Some(parent_id) => {
                         let parent_node = self.shell.workspace_tree.node(parent_id)?;
                         match parent_node.kind {
@@ -3477,8 +3471,7 @@ impl BeamView {
             }
         };
         if destination_parent_id == Some(folder_id)
-            || destination_parent_id
-                .is_some_and(|id| self.path_has_ancestor_in_tree(id, folder_id))
+            || destination_parent_id.is_some_and(|id| self.path_has_ancestor_in_tree(id, folder_id))
         {
             return None;
         }
@@ -3517,37 +3510,21 @@ impl BeamView {
         false
     }
 
-    fn tree_row_body_drop_placement(target_kind: TreeNodeKind) -> TreeDropPlacement {
+    fn tree_row_body_drop_placement(target_kind: TreeNodeKind) -> Option<TreeDropPlacement> {
         match target_kind {
-            TreeNodeKind::Folder => TreeDropPlacement::Into,
-            TreeNodeKind::Request => TreeDropPlacement::After,
+            TreeNodeKind::Folder => Some(TreeDropPlacement::Into),
+            TreeNodeKind::Request => None,
         }
     }
 
-    fn can_accept_any_tree_drop(&self, dragged_value: &dyn Any, target_id: Ulid) -> bool {
-        if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
-            return self
-                .request_move_action(dragged.request_id, target_id, TreeDropPlacement::Before)
-                .is_some()
-                || self
-                    .request_move_action(dragged.request_id, target_id, TreeDropPlacement::After)
-                    .is_some()
-                || self
-                    .request_move_action(dragged.request_id, target_id, TreeDropPlacement::Into)
-                    .is_some();
-        }
-        if let Some(dragged) = dragged_value.downcast_ref::<DraggedFolder>() {
-            return self
-                .folder_move_action(dragged.folder_id, target_id, TreeDropPlacement::Before)
-                .is_some()
-                || self
-                    .folder_move_action(dragged.folder_id, target_id, TreeDropPlacement::After)
-                    .is_some()
-                || self
-                    .folder_move_action(dragged.folder_id, target_id, TreeDropPlacement::Into)
-                    .is_some();
-        }
-        false
+    fn can_accept_tree_row_body_drop(
+        &self,
+        dragged_value: &dyn Any,
+        target_id: Ulid,
+        target_kind: TreeNodeKind,
+    ) -> bool {
+        Self::tree_row_body_drop_placement(target_kind)
+            .is_some_and(|placement| self.can_accept_tree_drop(dragged_value, target_id, placement))
     }
 
     fn update_tree_drag_hover(
@@ -3564,26 +3541,9 @@ impl BeamView {
             return;
         }
 
-        let midpoint_y = bounds.origin.y + bounds.size.height / 2.0;
-        let threshold = bounds.size.height * 0.2;
-
-        let placement = match target_kind {
-            TreeNodeKind::Folder => {
-                if position.y < midpoint_y - threshold * 0.5 {
-                    TreeDropPlacement::Before
-                } else if position.y > midpoint_y + threshold * 0.5 {
-                    TreeDropPlacement::After
-                } else {
-                    TreeDropPlacement::Into
-                }
-            }
-            TreeNodeKind::Request => {
-                if position.y < midpoint_y {
-                    TreeDropPlacement::Before
-                } else {
-                    TreeDropPlacement::After
-                }
-            }
+        let Some(placement) = Self::tree_row_body_drop_placement(target_kind) else {
+            self.clear_tree_drag_hover(cx);
+            return;
         };
 
         if !self.can_accept_tree_drop(dragged, target_id, placement) {
@@ -3637,19 +3597,32 @@ impl BeamView {
         }
 
         // Capture the info needed for the in-memory update before the action is moved.
-        let (folder_id, new_parent_id, insertion_index, old_parent_id, folder_name) = match &action {
+        let (folder_id, new_parent_id, insertion_index, old_parent_id, folder_name) = match &action
+        {
             TreeMoveAction::MoveFolder(input) => {
                 let folder_id = input.folder_id;
                 let new_parent_id = input.new_parent.folder_id;
                 let insertion_index = input.insertion_index;
-                let old_parent_id = self.shell.shared_store.nodes
+                let old_parent_id = self
+                    .shell
+                    .shared_store
+                    .nodes
                     .get(&folder_id)
                     .and_then(|n| n.parent_id);
-                let folder_name = self.shell.shared_store.nodes
+                let folder_name = self
+                    .shell
+                    .shared_store
+                    .nodes
                     .get(&folder_id)
                     .map(|n| n.name.clone())
                     .unwrap_or_default();
-                (folder_id, new_parent_id, insertion_index, old_parent_id, folder_name)
+                (
+                    folder_id,
+                    new_parent_id,
+                    insertion_index,
+                    old_parent_id,
+                    folder_name,
+                )
             }
             TreeMoveAction::MoveRequest(_) => unreachable!(),
         };
@@ -3753,6 +3726,16 @@ impl BeamView {
             TreeNodeKind::Folder | TreeNodeKind::Request => base
                 .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().drag_border))
                 .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().drag_border))
+                .on_drag_move(
+                    cx.listener(move |this, _: &DragMoveEvent<DraggedRequest>, _, cx| {
+                        this.clear_tree_drag_hover(cx);
+                    }),
+                )
+                .on_drag_move(
+                    cx.listener(move |this, _: &DragMoveEvent<DraggedFolder>, _, cx| {
+                        this.clear_tree_drag_hover(cx);
+                    }),
+                )
                 .on_drop(
                     cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
                         this.handle_request_tree_drop(
@@ -4088,8 +4071,13 @@ impl BeamView {
             Err(_) => LocalStateFile::default(),
         };
 
-        let expanded_item_ids: Vec<Ulid> =
-            self.shell.workspace_tree.expanded().iter().copied().collect();
+        let expanded_item_ids: Vec<Ulid> = self
+            .shell
+            .workspace_tree
+            .expanded()
+            .iter()
+            .copied()
+            .collect();
         if local_state.tree_state.expanded_item_ids == expanded_item_ids {
             return Ok(());
         }
@@ -4233,7 +4221,8 @@ impl BeamView {
                                         request.file_path.clone(),
                                     );
                                 } else {
-                                    self.shell.insert_request_at_root(Some(after_request_id), request);
+                                    self.shell
+                                        .insert_request_at_root(Some(after_request_id), request);
                                 }
                             }
                         }
@@ -4272,7 +4261,9 @@ impl BeamView {
                         self.active_request_cache = Some(request.clone());
                     }
                     self.shell.apply_event(&event);
-                    if self.shell.workspace_tree.selected_request_id() == Some(request.meta.request_id) {
+                    if self.shell.workspace_tree.selected_request_id()
+                        == Some(request.meta.request_id)
+                    {
                         should_sync_editor = true;
                     }
                 }
@@ -4320,8 +4311,7 @@ impl BeamView {
                         .iter()
                         .find(|e| e.workspace_id == *workspace_id)
                     {
-                        self.current_workspace_paths =
-                            data_root.workspace_paths(&entry.path);
+                        self.current_workspace_paths = data_root.workspace_paths(&entry.path);
                     }
                     // Reset UI state for the new workspace.
                     self.active_request_cache = None;
@@ -4851,11 +4841,7 @@ impl BeamView {
             .child(format!("{method:?}").to_uppercase())
     }
 
-    fn render_title_bar_content(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn render_title_bar_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
         let workspace_button = div()
             .flex_shrink_0()
             .on_mouse_down(MouseButton::Left, |_, _, cx| {
@@ -5992,67 +5978,6 @@ impl BeamView {
         let mut body = div()
             .id(format!("tree-row-body-{}", row_id))
             .cursor_pointer()
-            .can_drop(move |dragged_value, _window, app| {
-                body_view.update(app, |this, _| {
-                    this.can_accept_any_tree_drop(dragged_value, row_id)
-                })
-            })
-            .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
-            .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
-            .on_drag_move(
-                cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
-                    let dragged = drag.drag(cx).clone();
-                    this.update_tree_drag_hover(
-                        drag.bounds,
-                        drag.event.position,
-                        row_id,
-                        row_kind,
-                        &dragged,
-                        cx,
-                    );
-                }),
-            )
-            .on_drag_move(
-                cx.listener(move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
-                    let dragged = drag.drag(cx).clone();
-                    this.update_tree_drag_hover(
-                        drag.bounds,
-                        drag.event.position,
-                        row_id,
-                        row_kind,
-                        &dragged,
-                        cx,
-                    );
-                }),
-            )
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
-                    let placement = this
-                        .tree_drag_hover
-                        .filter(|(id, _)| *id == row_id)
-                        .map(|(_, p)| p)
-                        .unwrap_or(body_drop_placement);
-                    this.handle_request_tree_drop(
-                        dragged.request_id,
-                        row_id,
-                        placement,
-                        window,
-                        cx,
-                    );
-                    this.clear_tree_drag_hover(cx);
-                }),
-            )
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
-                    let placement = this
-                        .tree_drag_hover
-                        .filter(|(id, _)| *id == row_id)
-                        .map(|(_, p)| p)
-                        .unwrap_or(body_drop_placement);
-                    this.handle_folder_tree_drop(dragged.folder_id, row_id, placement, window, cx);
-                    this.clear_tree_drag_hover(cx);
-                }),
-            )
             .child(
                 ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
@@ -6061,16 +5986,6 @@ impl BeamView {
                     .pr(px(6.0))
                     .pl(indent + px(6.0))
                     .selected(row.selected)
-                    .when(
-                        drag_hover
-                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Before),
-                        |this| this.border_t_2().border_color(cx.theme().drag_border),
-                    )
-                    .when(
-                        drag_hover
-                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::After),
-                        |this| this.border_b_2().border_color(cx.theme().drag_border),
-                    )
                     .when(
                         drag_hover
                             .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into),
@@ -6100,6 +6015,78 @@ impl BeamView {
                     cx.notify();
                 }),
             );
+        if let Some(placement) = body_drop_placement {
+            body = body
+                .can_drop(move |dragged_value, _window, app| {
+                    body_view.update(app, |this, _| {
+                        this.can_accept_tree_row_body_drop(dragged_value, row_id, row_kind)
+                    })
+                })
+                .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
+                .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
+                .on_drag_move(cx.listener(
+                    move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
+                        let dragged = drag.drag(cx).clone();
+                        this.update_tree_drag_hover(
+                            drag.bounds,
+                            drag.event.position,
+                            row_id,
+                            row_kind,
+                            &dragged,
+                            cx,
+                        );
+                    },
+                ))
+                .on_drag_move(cx.listener(
+                    move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
+                        let dragged = drag.drag(cx).clone();
+                        this.update_tree_drag_hover(
+                            drag.bounds,
+                            drag.event.position,
+                            row_id,
+                            row_kind,
+                            &dragged,
+                            cx,
+                        );
+                    },
+                ))
+                .on_drop(
+                    cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
+                        this.handle_request_tree_drop(
+                            dragged.request_id,
+                            row_id,
+                            placement,
+                            window,
+                            cx,
+                        );
+                        this.clear_tree_drag_hover(cx);
+                    }),
+                )
+                .on_drop(
+                    cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
+                        this.handle_folder_tree_drop(
+                            dragged.folder_id,
+                            row_id,
+                            placement,
+                            window,
+                            cx,
+                        );
+                        this.clear_tree_drag_hover(cx);
+                    }),
+                );
+        } else {
+            body = body
+                .on_drag_move(
+                    cx.listener(move |this, _: &DragMoveEvent<DraggedRequest>, _, cx| {
+                        this.clear_tree_drag_hover(cx);
+                    }),
+                )
+                .on_drag_move(
+                    cx.listener(move |this, _: &DragMoveEvent<DraggedFolder>, _, cx| {
+                        this.clear_tree_drag_hover(cx);
+                    }),
+                );
+        }
         match row_kind {
             TreeNodeKind::Folder => body.interactivity().on_drag(
                 DraggedFolder {
@@ -6123,7 +6110,12 @@ impl BeamView {
         tree_row
             .child(body)
             .when(show_after_slot, |this| {
-                this.child(self.render_tree_drop_slot(row_id, row_kind, TreeDropPlacement::After, cx))
+                this.child(self.render_tree_drop_slot(
+                    row_id,
+                    row_kind,
+                    TreeDropPlacement::After,
+                    cx,
+                ))
             })
             .into_any_element()
     }
@@ -6404,9 +6396,12 @@ impl BeamView {
                         )
                         .child("HTTP")
                 })
-                .on_click(window.listener_for(&view, move |this, _, window, cx| {
-                    this.add_request_at_root(window, cx);
-                })),
+                .on_click(window.listener_for(
+                    &view,
+                    move |this, _, window, cx| {
+                        this.add_request_at_root(window, cx);
+                    },
+                )),
             )
             .item(
                 PopupMenuItem::element(move |_, _| {
@@ -6425,9 +6420,12 @@ impl BeamView {
                         )
                         .child("Folder")
                 })
-                .on_click(window.listener_for(&view2, move |this, _, window, cx| {
-                    this.add_folder_at_root(window, cx);
-                })),
+                .on_click(window.listener_for(
+                    &view2,
+                    move |this, _, window, cx| {
+                        this.add_folder_at_root(window, cx);
+                    },
+                )),
             )
     }
 
@@ -6510,22 +6508,22 @@ impl BeamView {
                     let item_view = view.clone();
                     menu = menu.item(
                         PopupMenuItem::element(move |_, _| {
-                            div()
-                                .w_full()
-                                .cursor_pointer()
-                                .child(entry_name.clone())
+                            div().w_full().cursor_pointer().child(entry_name.clone())
                         })
                         .checked(checked)
-                        .on_click(window.listener_for(&item_view, move |this, _, _, cx| {
-                            if Some(workspace_id) != this.shell.workspace.workspace_id {
-                                this.app_command_tx
-                                    .send(AppCommand::SwitchWorkspace {
-                                        workspace_id,
-                                        command_id: next_command_id(),
-                                    })
-                                    .ok();
-                            }
-                        })),
+                        .on_click(window.listener_for(
+                            &item_view,
+                            move |this, _, _, cx| {
+                                if Some(workspace_id) != this.shell.workspace.workspace_id {
+                                    this.app_command_tx
+                                        .send(AppCommand::SwitchWorkspace {
+                                            workspace_id,
+                                            command_id: next_command_id(),
+                                        })
+                                        .ok();
+                                }
+                            },
+                        )),
                     );
                 }
 
@@ -6537,9 +6535,12 @@ impl BeamView {
                     PopupMenuItem::element(move |_, _| {
                         div().w_full().cursor_pointer().child("New Workspace...")
                     })
-                    .on_click(window.listener_for(&view_new, |this, _, _, cx| {
-                        this.show_create_workspace_dialog(cx);
-                    })),
+                    .on_click(window.listener_for(
+                        &view_new,
+                        |this, _, _, cx| {
+                            this.show_create_workspace_dialog(cx);
+                        },
+                    )),
                 );
 
                 // Delete workspace (only shown if more than one exists).
@@ -6552,17 +6553,20 @@ impl BeamView {
                                 .cursor_pointer()
                                 .child("Delete Current Workspace")
                         })
-                        .on_click(window.listener_for(&view_del, |this, _, _, cx| {
-                            if let Some(workspace_id) = this.shell.workspace.workspace_id {
-                                this.app_command_tx
-                                    .send(AppCommand::DeleteWorkspace {
-                                        workspace_id,
-                                        delete_data: false,
-                                        command_id: next_command_id(),
-                                    })
-                                    .ok();
-                            }
-                        })),
+                        .on_click(window.listener_for(
+                            &view_del,
+                            |this, _, _, cx| {
+                                if let Some(workspace_id) = this.shell.workspace.workspace_id {
+                                    this.app_command_tx
+                                        .send(AppCommand::DeleteWorkspace {
+                                            workspace_id,
+                                            delete_data: false,
+                                            command_id: next_command_id(),
+                                        })
+                                        .ok();
+                                }
+                            },
+                        )),
                     );
                 }
 
@@ -6572,9 +6576,12 @@ impl BeamView {
                     PopupMenuItem::element(move |_, _| {
                         div().w_full().cursor_pointer().child("Rename Workspace...")
                     })
-                    .on_click(window.listener_for(&view_ren, |this, _, _, cx| {
-                        this.show_rename_workspace_dialog(cx);
-                    })),
+                    .on_click(window.listener_for(
+                        &view_ren,
+                        |this, _, _, cx| {
+                            this.show_rename_workspace_dialog(cx);
+                        },
+                    )),
                 );
 
                 menu
@@ -6605,13 +6612,7 @@ impl BeamView {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
                 let _ = root_window.update(cx, |_, window, cx| {
                     let dialog_view = cx.new(|cx| {
-                        WorkspaceNameDialogView::new(
-                            view.clone(),
-                            mode,
-                            initial_name,
-                            window,
-                            cx,
-                        )
+                        WorkspaceNameDialogView::new(view.clone(), mode, initial_name, window, cx)
                     });
                     let focus_dv = dialog_view.clone();
                     window.defer(cx, move |window, cx| {
@@ -6933,11 +6934,11 @@ impl BeamView {
             )
     }
 
-    fn render_env_var_hover_overlay(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let env_id = self.shell.environment_selection.active_global_environment_id;
+    fn render_env_var_hover_overlay(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let env_id = self
+            .shell
+            .environment_selection
+            .active_global_environment_id;
 
         // Refresh the cached resolved env only when the active environment changes.
         let cache_stale = self
@@ -6999,25 +7000,23 @@ impl BeamView {
                                     .id(("env-var-hover", token_idx as u64))
                                     .w(bounds.size.width)
                                     .h(bounds.size.height)
-                                    .on_hover(cx.listener(
-                                        move |this, hovered, _, cx| {
-                                            if *hovered {
-                                                this.env_var_hover = Some(EnvVarHoverInfo {
-                                                    var_name: var_name_enter.clone(),
-                                                    resolved_value: resolved_enter.clone(),
-                                                    token_bounds: bounds_enter,
-                                                });
-                                            } else if this
-                                                .env_var_hover
-                                                .as_ref()
-                                                .map(|h| h.token_bounds.origin == bounds_exit.origin)
-                                                .unwrap_or(false)
-                                            {
-                                                this.env_var_hover = None;
-                                            }
-                                            cx.notify();
-                                        },
-                                    )),
+                                    .on_hover(cx.listener(move |this, hovered, _, cx| {
+                                        if *hovered {
+                                            this.env_var_hover = Some(EnvVarHoverInfo {
+                                                var_name: var_name_enter.clone(),
+                                                resolved_value: resolved_enter.clone(),
+                                                token_bounds: bounds_enter,
+                                            });
+                                        } else if this
+                                            .env_var_hover
+                                            .as_ref()
+                                            .map(|h| h.token_bounds.origin == bounds_exit.origin)
+                                            .unwrap_or(false)
+                                        {
+                                            this.env_var_hover = None;
+                                        }
+                                        cx.notify();
+                                    })),
                             ),
                     )
                     .with_priority(1)
@@ -8712,9 +8711,7 @@ impl BeamView {
                         .when(is_sending, |d| d.opacity(0.45))
                         .child(self.render_response_editor_surface(cx)),
                 )
-                .when(is_sending, |d| {
-                    d.child(self.render_shimmer_loading_bar(cx))
-                }),
+                .when(is_sending, |d| d.child(self.render_shimmer_loading_bar(cx))),
             ResponseTab::Headers => div()
                 .flex_1()
                 .w_full()
@@ -8725,9 +8722,7 @@ impl BeamView {
                 .p_3()
                 .when(is_sending, |d| d.opacity(0.45))
                 .child(self.render_response_editor_surface(cx))
-                .when(is_sending, |d| {
-                    d.child(self.render_shimmer_loading_bar(cx))
-                }),
+                .when(is_sending, |d| d.child(self.render_shimmer_loading_bar(cx))),
         };
 
         v_flex()
