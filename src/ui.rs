@@ -28,8 +28,8 @@ use ulid::Ulid;
 
 use crate::app_shell::next_command_id;
 use crate::app_shell::{
-    AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupLoad,
-    StartupMessage, TreeNodeKind, startup_preload,
+    AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupMessage,
+    TreeNodeKind,
 };
 use crate::assets::{Assets, embedded_theme_contents};
 use crate::models::{
@@ -328,8 +328,6 @@ struct BeamView {
     response_time: String,
     response_size: String,
     script_result: Option<PersistedScriptResult>,
-    environment_manager_selected_id: Option<Ulid>,
-    environment_manager_variables: Vec<EnvironmentVariable>,
     request_param_name_inputs: Vec<Entity<InputState>>,
     request_param_value_inputs: Vec<Entity<InputState>>,
     request_param_input_subscriptions: Vec<Subscription>,
@@ -343,9 +341,6 @@ struct BeamView {
     request_auth_api_key_value_input: Entity<InputState>,
     request_auth_input_subscriptions: Vec<Subscription>,
     suppress_request_auth_change_events: bool,
-    environment_manager_name_input: Entity<InputState>,
-    environment_manager_value_input: Entity<InputState>,
-    environment_manager_error: Option<String>,
     pending_request_save_due_at: Option<Instant>,
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
@@ -700,7 +695,8 @@ struct EnvironmentTomlFile {
 struct EnvironmentTomlMeta {
     schema_version: u32,
     environment_id: Ulid,
-    collection_id: Option<Ulid>,
+    #[serde(rename = "collection_id")]
+    _collection_id: Option<Ulid>,
     scope: EnvironmentScope,
     name: String,
     description: Option<String>,
@@ -2232,124 +2228,6 @@ impl BeamView {
         }
         let paths = BeamPaths::default_user_config();
         Some(paths.environments_dir.join(file_name))
-    }
-
-    fn load_environment_manager_variables(&mut self, environment_id: Ulid) {
-        let Some(path) = self.environment_file_path_from_shell(environment_id) else {
-            self.environment_manager_variables.clear();
-            self.environment_manager_error = Some("Environment file not found.".to_string());
-            return;
-        };
-        let content = match fs::read_to_string(&path) {
-            Ok(content) => content,
-            Err(error) => {
-                self.environment_manager_variables.clear();
-                self.environment_manager_error =
-                    Some(format!("Failed to read environment file: {error}"));
-                return;
-            }
-        };
-        let parsed = match toml::from_str::<EnvironmentFile>(&content) {
-            Ok(parsed) => parsed,
-            Err(error) => {
-                self.environment_manager_variables.clear();
-                self.environment_manager_error =
-                    Some(format!("Failed to parse environment file: {error}"));
-                return;
-            }
-        };
-        self.environment_manager_variables = parsed.variables;
-        self.environment_manager_error = None;
-    }
-
-    fn save_environment_manager_variables(&mut self, environment_id: Ulid) -> Result<(), String> {
-        let Some(_) = self
-            .shell
-            .environments
-            .iter()
-            .find(|environment| environment.environment_id == environment_id)
-        else {
-            return Err("Environment not found.".to_string());
-        };
-        let command = AppCommand::UpdateEnvironmentVariables {
-            environment_id,
-            variables: self.environment_manager_variables.clone(),
-            command_id: next_command_id(),
-        };
-        self.publish_app_command(command)
-    }
-
-    fn add_environment_variable_from_inputs(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let name = self
-            .environment_manager_name_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-        let value = self
-            .environment_manager_value_input
-            .read(cx)
-            .value()
-            .to_string();
-        if name.is_empty() {
-            self.environment_manager_error = Some("Variable name cannot be empty.".to_string());
-            cx.notify();
-            return;
-        }
-        if self
-            .environment_manager_variables
-            .iter()
-            .any(|item| item.name == name)
-        {
-            self.environment_manager_error =
-                Some("Variable name already exists in this environment.".to_string());
-            cx.notify();
-            return;
-        }
-        self.environment_manager_variables
-            .push(EnvironmentVariable {
-                name,
-                value,
-                enabled: true,
-                secret: false,
-                description: None,
-            });
-        if let Some(environment_id) = self.environment_manager_selected_id {
-            if let Err(error) = self.save_environment_manager_variables(environment_id) {
-                self.environment_manager_error = Some(error);
-                cx.notify();
-                return;
-            }
-        }
-        self.environment_manager_name_input.update(cx, |input, cx| {
-            input.set_value(String::new(), window, cx);
-        });
-        self.environment_manager_value_input
-            .update(cx, |input, cx| {
-                input.set_value(String::new(), window, cx);
-            });
-        self.environment_manager_error = None;
-        cx.notify();
-    }
-
-    fn remove_environment_variable(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.environment_manager_variables.len() {
-            return;
-        }
-        self.environment_manager_variables.remove(index);
-        if let Some(environment_id) = self.environment_manager_selected_id {
-            if let Err(error) = self.save_environment_manager_variables(environment_id) {
-                self.environment_manager_error = Some(error);
-                cx.notify();
-                return;
-            }
-        }
-        self.environment_manager_error = None;
-        cx.notify();
     }
 
     fn hydrate_request_from_selection(request: &mut RequestAuthoringState, shell: &AppShellState) {
@@ -3897,151 +3775,6 @@ impl BeamView {
         Some(parts.join(" "))
     }
 
-    fn refresh_shell_from_disk(
-        &mut self,
-        preferred_selected_request_id: Option<Ulid>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let paths = BeamPaths::default_user_config();
-        let backend = FileSystemStorage::new(paths.clone());
-        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        match startup_preload(&storage, &paths, None, vec![]) {
-            StartupLoad::Ready { state, messages } => {
-                self.shell = state;
-                self.request_file_index = Self::build_request_file_index(&self.shell);
-                self.active_request_cache = None;
-                self.prune_request_execution_states();
-                self.startup_messages = messages;
-                if let Some(request_id) = preferred_selected_request_id {
-                    self.shell.workspace_tree.select_request(request_id);
-                }
-                self.sync_request_editor_from_selection(window, cx);
-            }
-            StartupLoad::Fatal { message } => {
-                self.startup_messages = vec![message];
-            }
-        }
-    }
-
-    fn add_request_to_shell(
-        &mut self,
-        request_file: &crate::models::RequestFile,
-        parent: crate::storage::RequestParentRef,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(parent_id) = parent.folder_id {
-            self.shell.workspace_tree.insert_request_child(
-                parent_id,
-                request_file.meta.request_id,
-                request_file.meta.name.clone(),
-                request_file.request.method,
-                request_file.request.url.clone(),
-                request_file.file_path.clone(),
-            );
-        } else {
-            self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
-            return;
-        }
-        self.shell.request_pane_data.insert(
-            request_file.meta.request_id,
-            RequestPaneData {
-                method: request_file.request.method,
-                url: request_file.request.url.clone(),
-                headers: request_file.request.headers.clone(),
-                query_params: request_file.request.query_params.clone(),
-                auth: request_file.auth.clone(),
-                body: request_file.body.clone(),
-                post_script: request_file.scripts.post_response.clone(),
-            },
-        );
-        self.shell
-            .workspace_tree
-            .select_request(request_file.meta.request_id);
-        self.sync_request_editor_from_selection(window, cx);
-    }
-
-    fn add_request_after_to_shell(
-        &mut self,
-        request_file: &crate::models::RequestFile,
-        parent: crate::storage::RequestParentRef,
-        after_request_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(parent_id) = parent.folder_id {
-            self.shell.workspace_tree.insert_request_child_after(
-                parent_id,
-                after_request_id,
-                request_file.meta.request_id,
-                request_file.meta.name.clone(),
-                request_file.request.method,
-                request_file.request.url.clone(),
-                request_file.file_path.clone(),
-            );
-        } else {
-            self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
-            return;
-        }
-        self.shell.request_pane_data.insert(
-            request_file.meta.request_id,
-            RequestPaneData {
-                method: request_file.request.method,
-                url: request_file.request.url.clone(),
-                headers: request_file.request.headers.clone(),
-                query_params: request_file.request.query_params.clone(),
-                auth: request_file.auth.clone(),
-                body: request_file.body.clone(),
-                post_script: request_file.scripts.post_response.clone(),
-            },
-        );
-        self.shell
-            .workspace_tree
-            .select_request(request_file.meta.request_id);
-        self.sync_request_editor_from_selection(window, cx);
-    }
-
-    fn duplicate_request_to_shell(
-        &mut self,
-        request_file: &crate::models::RequestFile,
-        parent: crate::storage::RequestParentRef,
-        source_request_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(parent_id) = parent.folder_id {
-            self.shell.workspace_tree.insert_request_child_after(
-                parent_id,
-                source_request_id,
-                request_file.meta.request_id,
-                request_file.meta.name.clone(),
-                request_file.request.method,
-                request_file.request.url.clone(),
-                request_file.file_path.clone(),
-            );
-        } else {
-            self.refresh_shell_from_disk(Some(request_file.meta.request_id), window, cx);
-            return;
-        }
-        self.shell.request_pane_data.insert(
-            request_file.meta.request_id,
-            RequestPaneData {
-                method: request_file.request.method,
-                url: request_file.request.url.clone(),
-                headers: request_file.request.headers.clone(),
-                query_params: request_file.request.query_params.clone(),
-                auth: request_file.auth.clone(),
-                body: request_file.body.clone(),
-                post_script: request_file.scripts.post_response.clone(),
-            },
-        );
-        self.shell
-            .workspace_tree
-            .select_request(request_file.meta.request_id);
-        self.sync_request_editor_from_selection(window, cx);
-    }
-
     fn persist_last_opened_request_id(&self, request_id: Ulid) -> Result<(), String> {
         let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
         let storage = WorkspaceRepository::new(backend)
@@ -4758,32 +4491,6 @@ impl BeamView {
         }
     }
 
-    fn render_key_value_lines(lines: Vec<String>, cx: &App) -> AnyElement {
-        if lines.is_empty() {
-            return div()
-                .h_full()
-                .w_full()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child("No configured entries.")
-                .into_any_element();
-        }
-
-        v_flex()
-            .h_full()
-            .w_full()
-            .gap_1()
-            .items_start()
-            .children(lines.into_iter().map(|line| {
-                div()
-                    .text_sm()
-                    .font_family(".SystemUIFont")
-                    .text_color(cx.theme().foreground)
-                    .child(line)
-            }))
-            .into_any_element()
-    }
-
     fn method_label(method: HttpMethod) -> &'static str {
         match method {
             HttpMethod::Get => "GET",
@@ -4933,10 +4640,6 @@ impl BeamView {
         let request_body_text = Self::body_editor_text(&request.body);
         let request_body_language = Self::body_editor_language(&request.body);
         let post_script_text = request.post_script.clone().unwrap_or_default();
-        let environment_manager_name_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Variable name"));
-        let environment_manager_value_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Variable value"));
 
         let request_body_editor = cx.new(|cx| {
             InputState::new(window, cx)
@@ -5049,8 +4752,6 @@ impl BeamView {
             response_time: "—".to_string(),
             response_size: "—".to_string(),
             script_result: None,
-            environment_manager_selected_id: None,
-            environment_manager_variables: Vec::new(),
             request_param_name_inputs: Vec::new(),
             request_param_value_inputs: Vec::new(),
             request_param_input_subscriptions: Vec::new(),
@@ -5064,9 +4765,6 @@ impl BeamView {
             request_auth_api_key_value_input,
             request_auth_input_subscriptions: Vec::new(),
             suppress_request_auth_change_events: false,
-            environment_manager_name_input,
-            environment_manager_value_input,
-            environment_manager_error: None,
             pending_request_save_due_at: None,
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
@@ -5771,13 +5469,6 @@ impl BeamView {
             });
         })
         .detach();
-    }
-
-    fn format_response_body_text(text: &str) -> Result<String, String> {
-        let value = serde_json::from_str::<serde_json::Value>(text)
-            .map_err(|err| format!("Unable to format response body as JSON: {err}"))?;
-        serde_json::to_string_pretty(&value)
-            .map_err(|err| format!("Unable to format response body as JSON: {err}"))
     }
 
     fn format_xml_or_html(text: &str) -> Option<String> {
@@ -6513,7 +6204,7 @@ impl BeamView {
                         .checked(checked)
                         .on_click(window.listener_for(
                             &item_view,
-                            move |this, _, _, cx| {
+                            move |this, _, _, _cx| {
                                 if Some(workspace_id) != this.shell.workspace.workspace_id {
                                     this.app_command_tx
                                         .send(AppCommand::SwitchWorkspace {
@@ -6555,7 +6246,7 @@ impl BeamView {
                         })
                         .on_click(window.listener_for(
                             &view_del,
-                            |this, _, _, cx| {
+                            |this, _, _, _cx| {
                                 if let Some(workspace_id) = this.shell.workspace.workspace_id {
                                     this.app_command_tx
                                         .send(AppCommand::DeleteWorkspace {
@@ -7076,256 +6767,6 @@ impl BeamView {
         }
 
         elements
-    }
-
-    fn render_environment_manager_panel(
-        &self,
-        environment_view: Entity<Self>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let environment_manager_name_has_selection = !self
-            .environment_manager_name_input
-            .read(cx)
-            .selected_range()
-            .is_empty();
-        let environment_manager_value_has_selection = !self
-            .environment_manager_value_input
-            .read(cx)
-            .selected_range()
-            .is_empty();
-        let environment_options = self.environment_manager_options();
-        let selected_id = self.environment_manager_selected_id;
-        let selected_label = selected_id.and_then(|id| {
-            environment_options
-                .iter()
-                .find(|(environment_id, _)| *environment_id == id)
-                .map(|(_, label)| label.clone())
-        });
-
-        let mut variables_panel = v_flex().h_full().w_full().gap_3();
-        variables_panel =
-            variables_panel.child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .child(div().text_sm().font_semibold().child(
-                        selected_label.unwrap_or_else(|| "No environment selected".to_string()),
-                    ))
-                    .child(
-                        Button::new("close-environment-manager")
-                            .small()
-                            .ghost()
-                            .label("Close")
-                            .on_click(move |_, window, cx| {
-                                window.close_dialog(cx);
-                            }),
-                    ),
-            );
-        variables_panel = variables_panel.child(
-            div()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(format!(
-                    "Variables: {}",
-                    self.environment_manager_variables.len()
-                )),
-        );
-        if let Some(error) = &self.environment_manager_error {
-            variables_panel = variables_panel.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().danger_foreground)
-                    .child(error.clone()),
-            );
-        }
-        variables_panel = variables_panel.child(
-            h_flex()
-                .w_full()
-                .items_center()
-                .gap_2()
-                .child(
-                    Input::new(&self.environment_manager_name_input)
-                        .small()
-                        .flex_1()
-                        .appearance(false)
-                        .context_menu({
-                            move |menu, _, cx| {
-                                Self::build_text_edit_context_menu(
-                                    menu,
-                                    environment_manager_name_has_selection,
-                                    cx.theme().muted_foreground,
-                                )
-                            }
-                        }),
-                )
-                .child(
-                    Input::new(&self.environment_manager_value_input)
-                        .small()
-                        .flex_1()
-                        .appearance(false)
-                        .context_menu({
-                            move |menu, _, cx| {
-                                Self::build_text_edit_context_menu(
-                                    menu,
-                                    environment_manager_value_has_selection,
-                                    cx.theme().muted_foreground,
-                                )
-                            }
-                        }),
-                )
-                .child(
-                    Button::new("add-environment-variable")
-                        .small()
-                        .label("Add variable")
-                        .on_click(window.listener_for(
-                            &environment_view,
-                            move |this, _, window, cx| {
-                                this.add_environment_variable_from_inputs(window, cx);
-                            },
-                        )),
-                ),
-        );
-
-        if self.environment_manager_variables.is_empty() {
-            variables_panel = variables_panel.child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("No variables yet."),
-            );
-        } else {
-            for (index, variable) in self.environment_manager_variables.iter().enumerate() {
-                variables_panel = variables_panel.child(
-                    h_flex()
-                        .w_full()
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .p_1()
-                        .rounded(px(6.0))
-                        .bg(cx.theme().secondary)
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(if variable.enabled {
-                                            "Enabled"
-                                        } else {
-                                            "Disabled"
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .child(format!("{} = {}", variable.name, variable.value)),
-                                ),
-                        )
-                        .child(
-                            Button::new(format!("delete-environment-variable-{index}"))
-                                .small()
-                                .ghost()
-                                .label("Delete")
-                                .on_click(window.listener_for(
-                                    &environment_view,
-                                    move |this, _, _, cx| {
-                                        this.remove_environment_variable(index, cx);
-                                    },
-                                )),
-                        ),
-                );
-            }
-        }
-
-        v_flex()
-            .w_full()
-            .h(px(420.0))
-            .p_3()
-            .gap_3()
-            .bg(cx.theme().secondary)
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .child(
-                h_flex()
-                    .w_full()
-                    .h_full()
-                    .gap_3()
-                    .child(
-                        v_flex()
-                            .w(px(260.0))
-                            .h_full()
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().background)
-                            .p_2()
-                            .gap_2()
-                            .child(
-                                v_flex()
-                                    .w_full()
-                                    .gap_1()
-                                    .child(div().text_xs().font_semibold().child("Environments"))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(format!("{} total", environment_options.len())),
-                                    ),
-                            )
-                            .child(
-                                v_flex().w_full().gap_1().children(
-                                    environment_options.into_iter().map(
-                                        |(environment_id, label)| {
-                                            ListItem::new(format!(
-                                                "environment-manager-select-{environment_id}"
-                                            ))
-                                            .w_full()
-                                            .cursor_pointer()
-                                            .rounded(px(8.0))
-                                            .px_2()
-                                            .py_2()
-                                            .selected(Some(environment_id) == selected_id)
-                                            .on_click(window.listener_for(
-                                                &environment_view,
-                                                move |this, _, _, cx| {
-                                                    this.environment_manager_selected_id =
-                                                        Some(environment_id);
-                                                    this.load_environment_manager_variables(
-                                                        environment_id,
-                                                    );
-                                                    cx.notify();
-                                                },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .w_full()
-                                                    .line_height(relative(1.0))
-                                                    .child(label),
-                                            )
-                                        },
-                                    ),
-                                ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().background)
-                            .p_2()
-                            .child(variables_panel),
-                    ),
-            )
     }
 
     fn render_request_tabs(&self, cx: &mut Context<Self>) -> Div {
