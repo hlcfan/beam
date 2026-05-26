@@ -6443,22 +6443,28 @@ impl BeamView {
         let view_for_delete = view.clone();
         let view_for_rename = view.clone();
 
-        let border_color = cx.theme().border;
-        let compact_border_color = cx.theme().foreground.opacity(0.2);
-        let bg_color = cx.theme().background;
+        let filled_bg_color = cx.theme().secondary;
+        let default_bg_color = cx.theme().background;
+        let filled_fg_color = cx.theme().secondary_foreground;
+        let default_fg_color = cx.theme().foreground;
+        let filled_icon_color = cx.theme().secondary_foreground.opacity(0.8);
+        let default_icon_color = cx.theme().muted_foreground;
 
         Button::new("workspace-picker")
             .ghost()
             .small()
-            .h(px(32.0))
+            .h(px(28.0))
             .px_2()
             .rounded(px(6.0))
             .cursor_pointer()
             .justify_start()
-            .border_1()
-            .border_color(if compact { compact_border_color } else { border_color })
+            .bg(if compact {
+                filled_bg_color
+            } else {
+                default_bg_color
+            })
             .when(compact, |b| b.min_w(px(130.0)))
-            .when(!compact, |b| b.w_full().bg(bg_color))
+            .when(!compact, |b| b.w_full())
             .child(
                 h_flex()
                     .w_full()
@@ -6469,7 +6475,11 @@ impl BeamView {
                         div()
                             .text_sm()
                             .font_semibold()
-                            .text_color(cx.theme().foreground)
+                            .text_color(if compact {
+                                filled_fg_color
+                            } else {
+                                default_fg_color
+                            })
                             .truncate()
                             .child(workspace_name.clone()),
                     )
@@ -6477,7 +6487,11 @@ impl BeamView {
                         Icon::default()
                             .path("icons/chevron-down.svg")
                             .size(px(12.0))
-                            .text_color(cx.theme().muted_foreground),
+                            .text_color(if compact {
+                                filled_icon_color
+                            } else {
+                                default_icon_color
+                            }),
                     ),
             )
             .dropdown_menu(move |menu, window, _| {
