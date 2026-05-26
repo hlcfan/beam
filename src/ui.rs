@@ -695,8 +695,6 @@ struct EnvironmentTomlFile {
 struct EnvironmentTomlMeta {
     schema_version: u32,
     environment_id: Ulid,
-    #[serde(rename = "collection_id")]
-    _collection_id: Option<Ulid>,
     scope: EnvironmentScope,
     name: String,
     description: Option<String>,
