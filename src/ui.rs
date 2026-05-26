@@ -5227,8 +5227,15 @@ impl BeamView {
             RequestBodyFormat::Xml => "XML",
             RequestBodyFormat::Graphql => "GraphQL",
             RequestBodyFormat::Text => "Text",
-            RequestBodyFormat::FormUrlEncoded => "Form URL Encoded",
+            RequestBodyFormat::FormUrlEncoded => "Form URL",
             RequestBodyFormat::Multipart => "Multipart",
+        }
+    }
+
+    fn body_tab_label(format: RequestBodyFormat) -> &'static str {
+        match format {
+            RequestBodyFormat::None => "Body",
+            _ => Self::body_format_label(format),
         }
     }
 
@@ -6771,13 +6778,14 @@ impl BeamView {
         let mut tabs = h_flex().items_center().gap_1().w_full();
         let body_tab_view = cx.entity();
         let current_body_format = Self::body_format_from_config(&self.request.body);
+        let body_tab_label = Self::body_tab_label(current_body_format);
         let body_tab_button = Button::new("tab-Body")
             .small()
             .ghost()
             .cursor_pointer()
             .selected(self.request.active_tab == RequestTab::Body)
             .child(
-                h_flex().items_center().gap_1().child("Body").child(
+                h_flex().items_center().gap_1().child(body_tab_label).child(
                     Icon::default()
                         .path("icons/chevron-down.svg")
                         .size(px(12.0))
