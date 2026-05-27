@@ -86,18 +86,15 @@ impl BeamPaths {
         }
     }
 
-    // TODO: to check if this is neede
     /// Derives paths from a single root, placing local state under `root/.beam/`.
-    /// Used in tests and legacy single-workspace mode.
+    /// Used by tests that want a self-contained workspace fixture.
     pub fn from_root(root: PathBuf) -> Self {
         let local_dir = root.join(".beam");
         let log_file = root.join(".beam_logs").join("beam.log");
         Self::from_workspace_root(root, local_dir, log_file)
     }
 
-    /// Default single-workspace config, using `$HOME/beam` as data root and
-    /// `$HOME/beam_local` as local state root. Kept for backwards-compat with
-    /// the old startup path and tests that don't need registry support.
+    /// Default user config for the default workspace slug.
     pub fn default_user_config() -> Self {
         let data_root = DataRootPaths::default_user_config();
         data_root.workspace_paths("default")

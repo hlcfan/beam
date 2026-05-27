@@ -13,14 +13,8 @@ fn main() {
     let (registry, _created_new) = match registry_repo.initialize() {
         Ok(result) => result,
         Err(error) => {
-            // If a V2 single-workspace layout exists, migrate it transparently.
-            match registry_repo.migrate_single_workspace_if_needed() {
-                Ok(Some(migrated)) => (migrated, false),
-                _ => {
-                    eprintln!("Failed to initialize workspace registry: {error}");
-                    std::process::exit(1);
-                }
-            }
+            eprintln!("Failed to initialize workspace registry: {error}");
+            std::process::exit(1);
         }
     };
 

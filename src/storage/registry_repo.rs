@@ -5,9 +5,9 @@ use chrono::Utc;
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
-use crate::models::{WorkspaceEntry, WorkspacesRegistry, WorkspacesRegistryFile};
+use crate::models::{WorkspaceEntry, WorkspacesRegistryFile};
 use crate::paths::{BeamPaths, DataRootPaths, slugify};
-use crate::schema::{SCHEMA_VERSION_V3, validate_workspaces_registry_version};
+use crate::schema::validate_workspaces_registry_version;
 
 pub struct RegistryRepository {
     data_root: DataRootPaths,
@@ -70,40 +70,6 @@ impl RegistryRepository {
         Ok((registry, true))
     }
 
-    /// Migrate an existing single-workspace layout (no registry) into multi-workspace.
-    ///
-    /// If `workspaces.toml` is absent but `beam.workspace.toml` exists at the data root,
-    /// this wraps the existing data in a "default" workspace entry without moving any files.
-    /// Returns the registry and whether migration was performed.
-    pub fn migrate_single_workspace_if_needed(&self) -> Result<Option<WorkspacesRegistryFile>> {
-        if self.data_root.registry_file.exists() {
-            return Ok(None);
-        }
-        // Check for the old single-workspace beam.workspace.toml at the data root.
-        let old_workspace_file = self.data_root.root.join("beam.workspace.toml");
-        if !old_workspace_file.exists() {
-            return Ok(None);
-        }
-
-        // The existing data lives directly at data_root. We represent this as the "default"
-        // workspace whose `path = "."` — a sentinel meaning "use data root directly".
-        let workspace_id = Ulid::new();
-        let registry = WorkspacesRegistryFile {
-            schema_version: SCHEMA_VERSION_V3,
-            registry: WorkspacesRegistry {
-                active_workspace_id: Some(workspace_id),
-                workspaces: vec![WorkspaceEntry {
-                    workspace_id,
-                    name: "default".to_string(),
-                    path: ".".to_string(),
-                    created_at: Utc::now(),
-                }],
-            },
-        };
-        self.save(&registry)?;
-        Ok(Some(registry))
-    }
-
     /// Create a new workspace: generates a unique slug, creates directories, and adds to registry.
     pub fn create_workspace(
         &self,
@@ -152,7 +118,7 @@ impl RegistryRepository {
                 id: workspace_id.to_string(),
             })?;
 
-        if delete_data && entry.path != "." {
+        if delete_data {
             let ws_paths = self.workspace_paths(&entry);
             if ws_paths.root.exists() {
                 fs::remove_dir_all(&ws_paths.root).map_err(|source| BeamError::Io {
@@ -229,17 +195,7 @@ impl RegistryRepository {
 
     /// Returns the `BeamPaths` for a given workspace entry.
     pub fn workspace_paths(&self, entry: &WorkspaceEntry) -> BeamPaths {
-        if entry.path == "." {
-            // Legacy single-workspace layout: data lives at the data root.
-            let local_dir = self.data_root.local_root.join("default");
-            BeamPaths::from_workspace_root(
-                self.data_root.root.clone(),
-                local_dir,
-                self.data_root.log_file.clone(),
-            )
-        } else {
-            self.data_root.workspace_paths(&entry.path)
-        }
+        self.data_root.workspace_paths(&entry.path)
     }
 
     /// Find the active workspace entry, falling back to the first entry if active_workspace_id
