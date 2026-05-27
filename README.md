@@ -25,7 +25,7 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 tar -xzf beam-macos-aarch64.tar.gz
 mv Beam.app /Applications/
 
-# Since the app is unsigned ad-hoc, macOS Gatekeeper will show a "damaged" error or.
+# Since the app is unsigned ad-hoc, macOS Gatekeeper will show a "damaged" error or a warning.
 # Run this command to remove the quarantine attribute and allow it to open:
 xattr -cr /Applications/Beam.app
 ```
