@@ -361,7 +361,7 @@ struct BeamView {
     tree_drag_hover: Option<(Ulid, TreeDropPlacement)>,
     env_var_hover: Option<EnvVarHoverInfo>,
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
-    /// Refreshed when the active environment ID changes.
+    /// Invalidated when the effective environment changes or environment data updates.
     env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
 }
 
@@ -2233,6 +2233,10 @@ impl BeamView {
         });
     }
 
+    fn invalidate_env_var_resolved_cache(&mut self) {
+        self.env_var_resolved_cache = None;
+    }
+
     fn environment_file_path_from_shell(&self, environment_id: Ulid) -> Option<PathBuf> {
         let environment = self
             .shell
@@ -4037,6 +4041,7 @@ impl BeamView {
                     command_id,
                 } => {
                     self.shell.apply_event(&event);
+                    self.invalidate_env_var_resolved_cache();
                     self.refresh_environment_manager_dialog_if_open(
                         Some((environment.environment_id, command_id.clone())),
                         window,
@@ -4045,6 +4050,7 @@ impl BeamView {
                 }
                 AppEvent::EnvironmentDeleted { .. } => {
                     self.shell.apply_event(&event);
+                    self.invalidate_env_var_resolved_cache();
                     if let Err(error) = self.persist_environment_selection_state() {
                         window.push_notification(error, cx);
                     }
@@ -4052,6 +4058,7 @@ impl BeamView {
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
                     self.shell.apply_event(&event);
+                    self.invalidate_env_var_resolved_cache();
                     // Derive new workspace paths from the switched workspace.
                     let data_root = DataRootPaths::default_user_config();
                     if let Some(entry) = self
@@ -6637,12 +6644,9 @@ impl BeamView {
     }
 
     fn render_env_var_hover_overlay(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let env_id = self
-            .shell
-            .environment_selection
-            .active_global_environment_id;
+        let env_id = self.selected_environment_id_for_view();
 
-        // Refresh the cached resolved env only when the active environment changes.
+        // Refresh the cached resolved env when the effective environment changes.
         let cache_stale = self
             .env_var_resolved_cache
             .as_ref()
