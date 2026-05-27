@@ -348,32 +348,57 @@ mod tests {
     use ulid::Ulid;
 
     #[test]
-    fn auth_config_accepts_title_case_type_values() {
-        let none_auth: AuthConfig = toml::from_str("type = \"None\"").expect("parse none auth");
+    fn auth_config_accepts_snake_case_type_values() {
+        let none_auth: AuthConfig = toml::from_str("type = \"none\"").expect("parse none auth");
         assert!(matches!(none_auth, AuthConfig::None));
 
         let bearer_auth: AuthConfig =
-            toml::from_str("type = \"Bearer\"\ntoken = \"abc\"").expect("parse bearer auth");
+            toml::from_str("type = \"bearer\"\ntoken = \"abc\"").expect("parse bearer auth");
         assert!(matches!(bearer_auth, AuthConfig::Bearer { .. }));
     }
 
     #[test]
-    fn auth_config_accepts_title_case_api_key_location() {
+    fn auth_config_accepts_snake_case_api_key_location() {
         let api_key_auth: AuthConfig = toml::from_str(
-            "type = \"ApiKey\"\nkey = \"X-Key\"\nvalue = \"v\"\nlocation = \"Header\"",
+            "type = \"api_key\"\nkey = \"X-Key\"\nvalue = \"v\"\nlocation = \"header\"",
         )
         .expect("parse api key auth");
         assert!(matches!(api_key_auth, AuthConfig::ApiKey { .. }));
     }
 
     #[test]
-    fn body_config_accepts_title_case_mode_values() {
-        let none_body: BodyConfig = toml::from_str("mode = \"None\"").expect("parse none body");
+    fn body_config_accepts_snake_case_mode_values() {
+        let none_body: BodyConfig = toml::from_str("mode = \"none\"").expect("parse none body");
         assert!(matches!(none_body, BodyConfig::None));
 
         let json_body: BodyConfig =
-            toml::from_str("mode = \"Json\"\ntext = \"{}\"").expect("parse json body");
+            toml::from_str("mode = \"json\"\ntext = \"{}\"").expect("parse json body");
         assert!(matches!(json_body, BodyConfig::Json { .. }));
+    }
+
+    #[test]
+    fn auth_config_rejects_title_case_values() {
+        let err = toml::from_str::<AuthConfig>(
+            "type = \"ApiKey\"\nkey = \"X-Key\"\nvalue = \"v\"\nlocation = \"Header\"",
+        )
+        .expect_err("title-case auth config should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("unknown variant"),
+            "unexpected error message: {message}"
+        );
+    }
+
+    #[test]
+    fn body_config_rejects_title_case_mode_values() {
+        let err =
+            toml::from_str::<BodyConfig>("mode = \"Json\"\ntext = \"{}\"")
+                .expect_err("title-case body config should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("unknown variant"),
+            "unexpected error message: {message}"
+        );
     }
 
     #[test]
