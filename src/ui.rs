@@ -1959,21 +1959,7 @@ impl BeamView {
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
             return;
         };
-        let request_id_text = self
-            .shell
-            .workspace_tree
-            .selected_request_id()
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "none".to_string());
-        let run_id_text = self
-            .request_execution_states
-            .get(&request_id)
-            .map(|state| state.run_id)
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "none".to_string());
-        log::info!(
-            "request_send_finish request_id={request_id_text} run_id={run_id_text} outcome=canceled_by_user"
-        );
+
         self.cancel_request_run_for(request_id);
         self.response_status = "Canceled".to_string();
         self.response_time = "—".to_string();
@@ -4852,7 +4838,7 @@ impl BeamView {
         let Some(request_id) = request_id else {
             return;
         };
-        let request_id_text = request_id.to_string();
+
         let selected_environment_id = self.selected_environment_id_for_view();
         let no_environment_selected = selected_environment_id.is_none();
         let environment_variables = self.load_environment_for_script(selected_environment_id);
@@ -4872,7 +4858,6 @@ impl BeamView {
             return;
         }
         let run_id = self.begin_request_run_for(request_id);
-        log::info!("request_send_start request_id={request_id_text} run_id={run_id}");
         self.response_status = "Sending...".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
@@ -4885,9 +4870,7 @@ impl BeamView {
                         state.status = RequestExecutionStatus::Failed;
                     }
                 }
-                log::error!(
-                    "request_send_finish request_id={request_id_text} run_id={run_id} outcome=runtime_error"
-                );
+
                 self.response_status = "Error".to_string();
                 self.response_body_editor.update(cx, |input, cx| {
                     input.set_value(error, window, cx);
@@ -4935,20 +4918,12 @@ impl BeamView {
                 let maybe_outcome = completion.outcome;
                 // Phase 2 assumption: only the latest run for this request is allowed to mutate
                 // request-local execution state, so stale completions are dropped by run-id check.
-                let active_run_id_text = this
-                    .request_execution_states
-                    .get(&request_id)
-                    .map(|state| state.run_id)
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "none".to_string());
+
                 if !request_run_completion_is_current(
                     &this.request_execution_states,
                     request_id,
                     run_id,
                 ) {
-                    log::debug!(
-                        "request_send_finish request_id={request_id_text} run_id={run_id} outcome=stale_ignored active_run_id={active_run_id_text}"
-                    );
                     return;
                 }
                 apply_request_run_completion_status(
@@ -4962,9 +4937,6 @@ impl BeamView {
                     request_id,
                 );
                 let Some(outcome) = maybe_outcome else {
-                    log::info!(
-                        "request_send_finish request_id={request_id_text} run_id={run_id} outcome=canceled"
-                    );
                     if should_update_visible_response {
                         this.response_status = "Canceled".to_string();
                         this.response_time = "—".to_string();
@@ -5021,9 +4993,7 @@ impl BeamView {
                         }
                     }
                 }
-                log::info!(
-                    "request_send_finish request_id={request_id_text} run_id={run_id} outcome=completed"
-                );
+
                 cx.notify();
             });
         })

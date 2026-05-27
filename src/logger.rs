@@ -185,8 +185,13 @@ pub fn init_logging(log_file_path: PathBuf) -> Result<(), String> {
         })?;
 
     if LOGGER_INSTALLED.get().is_none() {
+        let max_level = if cfg!(debug_assertions) {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Info
+        };
         log::set_logger(logger).map_err(|error| format!("Failed to install logger: {error}"))?;
-        log::set_max_level(LevelFilter::Debug);
+        log::set_max_level(max_level);
         let _ = LOGGER_INSTALLED.set(());
     }
 
