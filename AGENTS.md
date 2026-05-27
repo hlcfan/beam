@@ -123,6 +123,9 @@ Current icon paths in shared helper menus:
 - Paste: `icons/clipboard-paste.svg`
 - Select All: `icons/square-dashed-text.svg`
 
+#### Button Cursor Behavior
+When adding clickable buttons in Beam, set `.cursor_pointer()` consistently for all interactive button states, not only prominent actions. This includes secondary actions like `Cancel`, ghost buttons, title bar buttons, toolbar buttons, and dialog or modal actions such as `Create`, `Rename`, or `Delete`.
+
 
 ### Testing
 
