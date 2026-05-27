@@ -34,9 +34,7 @@ pub enum EnvironmentScope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiKeyLocation {
-    #[serde(alias = "Header")]
     Header,
-    #[serde(alias = "Query")]
     Query,
 }
 
@@ -159,16 +157,12 @@ pub struct QueryParamField {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
-    #[serde(alias = "None")]
     None,
-    #[serde(alias = "Bearer")]
     Bearer { token: Option<String> },
-    #[serde(alias = "Basic")]
     Basic {
         username: Option<String>,
         password: Option<String>,
     },
-    #[serde(alias = "ApiKey")]
     ApiKey {
         key: Option<String>,
         value: Option<String>,
@@ -179,28 +173,21 @@ pub enum AuthConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum BodyConfig {
-    #[serde(alias = "None")]
     None,
-    #[serde(alias = "Raw")]
     Raw {
         media_type: Option<String>,
         text: String,
     },
-    #[serde(alias = "Json")]
     Json { text: String },
-    #[serde(alias = "Xml")]
     Xml { text: String },
-    #[serde(alias = "FormUrlEncoded")]
     FormUrlEncoded {
         #[serde(default)]
         fields: Vec<QueryParamField>,
     },
-    #[serde(alias = "Multipart")]
     Multipart {
         #[serde(default)]
         fields: Vec<QueryParamField>,
     },
-    #[serde(alias = "Graphql")]
     Graphql {
         query: String,
         variables_json: Option<String>,
