@@ -347,8 +347,6 @@ struct BeamView {
     show_invalid_url_border: bool,
     active_request_cache: Option<RequestFile>,
     request_file_index: HashMap<Ulid, PathBuf>,
-    environment_sheet_view: Option<Entity<EnvironmentManagerDialogView>>,
-    pending_environment_sheet_selection_command_id: Option<String>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
     request_execution_states: HashMap<Ulid, RequestExecutionState>,
@@ -879,19 +877,26 @@ impl EnvironmentManagerDialogView {
 
     fn new_for_sheet(
         beam_view: Entity<BeamView>,
-        options: Vec<(Ulid, String)>,
-        environment_file_names: HashMap<Ulid, String>,
-        selected_id: Option<Ulid>,
-        active_environment_id: Option<Ulid>,
+        selected_option: Option<(Ulid, String, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (options, environment_file_names, selected_id) =
+            if let Some((environment_id, label, file_name)) = selected_option {
+                (
+                    vec![(environment_id, label)],
+                    HashMap::from([(environment_id, file_name)]),
+                    Some(environment_id),
+                )
+            } else {
+                (Vec::new(), HashMap::new(), None)
+            };
         let mut view = Self::new(
             beam_view,
             options,
             environment_file_names,
             selected_id,
-            active_environment_id,
+            selected_id,
             window,
             cx,
         );
@@ -985,39 +990,27 @@ impl EnvironmentManagerDialogView {
         }
     }
 
-    fn add_environment(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Option<String> {
+    fn add_environment(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let environment_name = self.next_default_environment_name();
         let command_id = next_command_id();
         let command = AppCommand::CreateEnvironment {
             name: environment_name,
             command_id: command_id.clone(),
         };
-        let select_created_environment_on_close = !self.show_environment_selector;
-        let pending_command_id = command_id.clone();
-        let dialog_command_id = command_id.clone();
-        let returned_command_id = command_id.clone();
-        let send_result = self.beam_view.update(cx, move |this, _| {
-            let send_result = this.publish_app_command(command);
-            if send_result.is_ok() && select_created_environment_on_close {
-                this.pending_environment_sheet_selection_command_id =
-                    Some(pending_command_id.clone());
-            }
-            send_result
-        });
+        let send_result = self
+            .beam_view
+            .update(cx, move |this, _| this.publish_app_command(command));
         match send_result {
             Ok(()) => {
-                self.pending_new_environment_command_id = Some(dialog_command_id);
+                self.pending_new_environment_command_id = Some(command_id);
                 self.error = None;
-                cx.notify();
-                Some(returned_command_id)
             }
             Err(error) => {
                 self.pending_new_environment_command_id = None;
                 self.error = Some(format!("Failed to queue environment creation: {error}"));
-                cx.notify();
-                None
             }
         }
+        cx.notify();
     }
 
     fn focus_environment_name_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1317,8 +1310,6 @@ impl Render for EnvironmentManagerDialogView {
                 .find(|(environment_id, _)| *environment_id == id)
                 .map(|(_, label)| label.clone())
         });
-        let has_any_environment = !self.options.is_empty();
-
         let mut variables_panel = v_flex().h_full().w_full().gap_3();
         variables_panel =
             variables_panel.child(
@@ -1488,7 +1479,6 @@ impl Render for EnvironmentManagerDialogView {
 
         if !self.show_environment_selector {
             if !has_selected_environment {
-                let select_environment_view = self.beam_view.clone();
                 return v_flex()
                     .w_full()
                     .h_full()
@@ -1515,36 +1505,6 @@ impl Render for EnvironmentManagerDialogView {
                                     .text_color(cx.theme().muted_foreground)
                                     .child(
                                         "Create an environment or select one to manage variables.",
-                                    ),
-                            )
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .pt_2()
-                                    .child(
-                                        Button::new("environment-sheet-create-environment")
-                                            .small()
-                                            .label("Create environment")
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.add_environment(window, cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("environment-sheet-select-environment")
-                                            .small()
-                                            .ghost()
-                                            .label("Select environment")
-                                            .disabled(!has_any_environment)
-                                            .on_click(cx.listener(move |_, _, window, cx| {
-                                                let _ = select_environment_view.update(
-                                                    cx,
-                                                    |beam_view, cx| {
-                                                        beam_view
-                                                            .open_environment_manager(window, cx);
-                                                    },
-                                                );
-                                            })),
                                     ),
                             ),
                     )
@@ -2117,22 +2077,29 @@ impl BeamView {
 
     fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let beam_view = cx.entity();
-        let options = self.environment_manager_options();
-        let environment_file_names = self.environment_manager_file_names();
-        let selected_id = self.selected_environment_id_for_view();
-        let active_environment_id = self.selected_environment_id_for_view();
+        let selected_option = self
+            .selected_environment_id_for_view()
+            .and_then(|selected_id| {
+                self.shell
+                    .environments
+                    .iter()
+                    .find(|environment| environment.environment_id == selected_id)
+                    .map(|environment| {
+                        (
+                            environment.environment_id,
+                            environment.name.clone(),
+                            environment.file_name.clone(),
+                        )
+                    })
+            });
         let sheet_view = cx.new(|cx| {
             EnvironmentManagerDialogView::new_for_sheet(
                 beam_view.clone(),
-                options.clone(),
-                environment_file_names.clone(),
-                selected_id,
-                active_environment_id,
+                selected_option.clone(),
                 window,
                 cx,
             )
         });
-        self.environment_sheet_view = Some(sheet_view.clone());
 
         window.open_sheet_at(Placement::Right, cx, move |sheet, _, _| {
             sheet
@@ -2268,30 +2235,6 @@ impl BeamView {
         let active_environment_id = self.selected_environment_id_for_view();
         dialog_view.update(cx, |dialog, cx| {
             dialog.refresh_from_snapshot(
-                options,
-                environment_file_names,
-                active_environment_id,
-                latest_upsert,
-                window,
-                cx,
-            );
-        });
-    }
-
-    fn refresh_environment_sheet_if_open(
-        &mut self,
-        latest_upsert: Option<(Ulid, String)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(sheet_view) = self.environment_sheet_view.clone() else {
-            return;
-        };
-        let options = self.environment_manager_options();
-        let environment_file_names = self.environment_manager_file_names();
-        let active_environment_id = self.selected_environment_id_for_view();
-        sheet_view.update(cx, |sheet, cx| {
-            sheet.refresh_from_snapshot(
                 options,
                 environment_file_names,
                 active_environment_id,
@@ -4092,14 +4035,6 @@ impl BeamView {
                     error,
                 } => {
                     self.pending_request_placements.remove(command_id);
-                    if *operation == crate::app_shell::AppOperation::CreateEnvironment
-                        && self
-                            .pending_environment_sheet_selection_command_id
-                            .as_deref()
-                            == Some(command_id.as_str())
-                    {
-                        self.pending_environment_sheet_selection_command_id = None;
-                    }
                     self.shell.apply_event(&event);
                     eprintln!(
                         "sync_failure command_id={} operation={} error={}",
@@ -4114,22 +4049,6 @@ impl BeamView {
                     command_id,
                 } => {
                     self.shell.apply_event(&event);
-                    if self
-                        .pending_environment_sheet_selection_command_id
-                        .as_deref()
-                        == Some(command_id.as_str())
-                    {
-                        self.pending_environment_sheet_selection_command_id = None;
-                        self.set_selected_environment_for_view(environment.environment_id);
-                        if let Err(error) = self.persist_environment_selection_state() {
-                            window.push_notification(error, cx);
-                        }
-                    }
-                    self.refresh_environment_sheet_if_open(
-                        Some((environment.environment_id, command_id.clone())),
-                        window,
-                        cx,
-                    );
                     self.refresh_environment_manager_dialog_if_open(
                         Some((environment.environment_id, command_id.clone())),
                         window,
@@ -4141,7 +4060,6 @@ impl BeamView {
                     if let Err(error) = self.persist_environment_selection_state() {
                         window.push_notification(error, cx);
                     }
-                    self.refresh_environment_sheet_if_open(None, window, cx);
                     self.refresh_environment_manager_dialog_if_open(None, window, cx);
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
@@ -4882,8 +4800,6 @@ impl BeamView {
             show_invalid_url_border: false,
             active_request_cache: None,
             request_file_index,
-            environment_sheet_view: None,
-            pending_environment_sheet_selection_command_id: None,
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
             request_execution_states: HashMap::new(),
