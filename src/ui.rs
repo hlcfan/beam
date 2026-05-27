@@ -434,7 +434,7 @@ impl Render for TreeDragPreview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let icon_path = match self.kind {
             TreeNodeKind::Folder => "icons/folder.svg",
-            TreeNodeKind::Request => "icons/box.svg",
+            TreeNodeKind::Request => "icons/file.svg",
         };
 
         div()
