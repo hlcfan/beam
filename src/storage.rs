@@ -13,6 +13,7 @@ use ulid::Ulid;
 pub struct BootstrapReport {
     pub created_workspace_file: bool,
     pub created_local_state_file: bool,
+    pub created_default_environment: bool,
 }
 
 /// Reference to a parent scope when creating or moving a request.

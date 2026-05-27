@@ -7,9 +7,9 @@ use ulid::Ulid;
 use crate::error::{BeamError, Result};
 use crate::models::{
     AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
-    EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, ItemType,
-    LocalStateFile, ManifestItemRef, QueryParamField, RequestDefinition, RequestFile, RequestMeta,
-    ScriptConfig, WorkspaceFile,
+    EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, ItemType, LocalStateFile,
+    ManifestItemRef, QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
+    WorkspaceFile,
 };
 use crate::paths::FOLDER_MANIFEST_FILE_NAME;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
@@ -20,9 +20,9 @@ use crate::storage::{
     RenameRequestInput, WorkspaceStorage,
 };
 use crate::workspace_tree::{
-    Node, NodeKind, SharedStore, assert_name_unique, ensure_parent_kind,
-    find_unique_name, folder_dir_name, folder_dir_path, node_by_kind,
-    request_file_name, request_file_path, scope_key,
+    Node, NodeKind, SharedStore, assert_name_unique, ensure_parent_kind, find_unique_name,
+    folder_dir_name, folder_dir_path, node_by_kind, request_file_name, request_file_path,
+    scope_key,
 };
 
 pub struct WorkspaceRepository<B: StorageIoBackend> {
@@ -36,9 +36,10 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         Ok(Self { backend, store })
     }
 
-    pub fn initialize(&self) -> Result<BootstrapReport> {
+    pub fn initialize(&mut self) -> Result<BootstrapReport> {
         create_required_dirs(&self.backend)?;
         let mut report = BootstrapReport::default();
+        let mut created_local_state = None;
 
         if !self.backend.paths().workspace_file.exists() {
             self.backend.write_toml_file(
@@ -49,11 +50,27 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         if !self.backend.paths().local_state_file.exists() {
-            self.backend.write_toml_file(
-                &self.backend.paths().local_state_file,
-                &LocalStateFile::default(),
-            )?;
+            let local_state = LocalStateFile::default();
+            self.backend
+                .write_toml_file(&self.backend.paths().local_state_file, &local_state)?;
+            created_local_state = Some(local_state);
             report.created_local_state_file = true;
+        }
+
+        if report.created_workspace_file
+            && report.created_local_state_file
+            && self.store.environments.is_empty()
+        {
+            let default_environment = self.create_environment(CreateEnvironmentInput {
+                name: "Default".to_string(),
+            })?;
+            let mut local_state = created_local_state.unwrap_or_default();
+            local_state.local_state.active_global_environment_id =
+                Some(default_environment.environment.environment_id);
+            local_state.local_state.updated_at = Utc::now();
+            self.backend
+                .write_toml_file(&self.backend.paths().local_state_file, &local_state)?;
+            report.created_default_environment = true;
         }
 
         Ok(report)
@@ -170,10 +187,9 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 children: Vec::new(),
             },
         );
-        self.store.name_index.insert(
-            scope_key(parent_id, &request_file.meta.name),
-            request_id,
-        );
+        self.store
+            .name_index
+            .insert(scope_key(parent_id, &request_file.meta.name), request_id);
         self.store.requests.insert(request_id, request_file.clone());
 
         let request_path = request_file_path(self.backend.paths(), &self.store, request_id)?;
@@ -244,10 +260,9 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 children: Vec::new(),
             },
         );
-        self.store.name_index.insert(
-            scope_key(parent_id, &request_file.meta.name),
-            request_id,
-        );
+        self.store
+            .name_index
+            .insert(scope_key(parent_id, &request_file.meta.name), request_id);
         self.store.requests.insert(request_id, request_file.clone());
 
         let request_path = request_file_path(self.backend.paths(), &self.store, request_id)?;
@@ -394,10 +409,9 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 children: Vec::new(),
             },
         );
-        self.store.name_index.insert(
-            scope_key(parent_id, &duplicated.meta.name),
-            duplicated_id,
-        );
+        self.store
+            .name_index
+            .insert(scope_key(parent_id, &duplicated.meta.name), duplicated_id);
         self.store
             .requests
             .insert(duplicated_id, duplicated.clone());
@@ -1054,7 +1068,9 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
 
         for node_id in &nodes_to_remove {
             if let Some(node) = self.store.nodes.remove(node_id) {
-                self.store.name_index.remove(&scope_key(node.parent_id, &node.name));
+                self.store
+                    .name_index
+                    .remove(&scope_key(node.parent_id, &node.name));
             }
             self.store.requests.remove(node_id);
         }
@@ -1399,8 +1415,7 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
         return Ok(store);
     }
 
-    let workspace_file: WorkspaceFile =
-        backend.read_toml_file(&backend.paths().workspace_file)?;
+    let workspace_file: WorkspaceFile = backend.read_toml_file(&backend.paths().workspace_file)?;
 
     for item_ref in &workspace_file.items {
         match item_ref.item_type {
@@ -1418,10 +1433,7 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
                 }
             }
             ItemType::Request => {
-                let request_path = backend
-                    .paths()
-                    .root
-                    .join(request_file_name(&item_ref.name));
+                let request_path = backend.paths().root.join(request_file_name(&item_ref.name));
                 if request_path.exists() {
                     if let Ok(request_file) = backend.read_toml_file::<RequestFile>(&request_path) {
                         if request_file.meta.request_id == item_ref.item_id {
@@ -1589,7 +1601,11 @@ fn environment_file_path_for_name<B: StorageIoBackend>(
     }
 }
 
-fn walk_files_recursive<B: StorageIoBackend, F>(backend: &B, root: &Path, mut visitor: F) -> Result<()>
+fn walk_files_recursive<B: StorageIoBackend, F>(
+    backend: &B,
+    root: &Path,
+    mut visitor: F,
+) -> Result<()>
 where
     F: FnMut(&Path),
 {
@@ -1650,28 +1666,42 @@ mod tests {
     use super::*;
     use crate::paths::BeamPaths;
     use crate::storage::fs_backend::FileSystemStorage;
-    use crate::storage::{CreateEnvironmentInput, RequestParentRef};
     use tempfile::tempdir;
 
     #[test]
     fn bootstrap_creates_default_workspace_and_local_state_files() {
         let dir = tempdir().expect("tempdir");
         let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage =
+        let mut storage =
             WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
 
         let report = storage.initialize().expect("initialize");
         assert!(report.created_workspace_file);
         assert!(report.created_local_state_file);
+        assert!(report.created_default_environment);
         assert!(backend.paths.workspace_file.exists());
         assert!(backend.paths.local_state_file.exists());
+        assert!(
+            backend
+                .paths
+                .environments_dir
+                .join("default.env.toml")
+                .exists()
+        );
+        let local_state = storage.load_local_state().expect("load local state");
+        assert!(
+            local_state
+                .local_state
+                .active_global_environment_id
+                .is_some()
+        );
     }
 
     #[test]
     fn initialize_does_not_validate_existing_workspace_or_local_state_files() {
         let dir = tempdir().expect("tempdir");
         let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
-        let storage =
+        let mut storage =
             WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
 
         let _report = storage.initialize().expect("initialize");
@@ -1684,6 +1714,7 @@ mod tests {
 
         assert!(!report.created_workspace_file);
         assert!(!report.created_local_state_file);
+        assert!(!report.created_default_environment);
     }
 
     #[test]
@@ -1704,11 +1735,11 @@ mod tests {
         assert!(local_state.local_state.last_opened_request_id.is_some());
         // Sample request should exist at workspace root (no collection wrapper)
         let request_id = local_state.local_state.last_opened_request_id.unwrap();
-        let request_path = backend
-            .paths
-            .root
-            .join(request_file_name("Sample Request"));
-        assert!(request_path.exists(), "sample request file should exist at workspace root");
+        let request_path = backend.paths.root.join(request_file_name("Sample Request"));
+        assert!(
+            request_path.exists(),
+            "sample request file should exist at workspace root"
+        );
         // workspace.toml should list the sample request
         let workspace: WorkspaceFile = backend
             .read_toml_file(&backend.paths().workspace_file)
@@ -1790,7 +1821,10 @@ mod tests {
 
     #[test]
     fn persist_shared_tree_writes_workspace_items_and_requests() {
-        use crate::models::{AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta, ScriptConfig};
+        use crate::models::{
+            AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta,
+            ScriptConfig,
+        };
         use crate::workspace_tree::{Node, NodeKind, request_file_name};
         use chrono::Utc;
 
@@ -1857,7 +1891,9 @@ mod tests {
 
         // Need workspace file to exist for write_workspace_items to read from
         backend.create_dir_all(&paths.root).unwrap();
-        backend.write_toml_file(&paths.workspace_file, &WorkspaceFile::default()).unwrap();
+        backend
+            .write_toml_file(&paths.workspace_file, &WorkspaceFile::default())
+            .unwrap();
 
         persist_shared_tree(&backend, &store).expect("persist shared tree");
 
@@ -1865,7 +1901,9 @@ mod tests {
         let folder_dir = paths.root.join("users");
         let folder_manifest = folder_dir.join(FOLDER_MANIFEST_FILE_NAME);
         assert!(folder_manifest.exists(), "folder.toml should exist");
-        let folder_file: FolderFile = backend.read_toml_file(&folder_manifest).expect("read folder.toml");
+        let folder_file: FolderFile = backend
+            .read_toml_file(&folder_manifest)
+            .expect("read folder.toml");
         assert_eq!(folder_file.items.len(), 1);
         assert_eq!(folder_file.items[0].item_id, request_id);
 
@@ -1874,7 +1912,9 @@ mod tests {
         assert!(request_path.exists(), "request file should exist");
 
         // Verify workspace.toml has the folder item
-        let workspace: WorkspaceFile = backend.read_toml_file(&paths.workspace_file).expect("read workspace");
+        let workspace: WorkspaceFile = backend
+            .read_toml_file(&paths.workspace_file)
+            .expect("read workspace");
         assert_eq!(workspace.items.len(), 1);
         assert_eq!(workspace.items[0].item_id, folder_id);
         assert!(matches!(workspace.items[0].item_type, ItemType::Folder));
@@ -1882,8 +1922,10 @@ mod tests {
 
     #[test]
     fn load_full_shared_store_reads_workspace_file_and_folder_manifests() {
-        use crate::models::{AuthConfig, BodyConfig, HttpMethod, ItemType, ManifestItemRef, RequestDefinition, RequestFile, RequestMeta, ScriptConfig};
-        use crate::workspace_tree::NodeKind;
+        use crate::models::{
+            AuthConfig, BodyConfig, HttpMethod, ItemType, ManifestItemRef, RequestDefinition,
+            RequestFile, RequestMeta, ScriptConfig,
+        };
         use chrono::Utc;
 
         let dir = tempdir().expect("tempdir");
@@ -1914,7 +1956,9 @@ mod tests {
                 order: 10,
             }],
         };
-        backend.write_toml_file(&paths.workspace_file, &workspace_file).unwrap();
+        backend
+            .write_toml_file(&paths.workspace_file, &workspace_file)
+            .unwrap();
 
         // Create folder directory and folder.toml
         let folder_dir = paths.root.join("users");
@@ -1937,7 +1981,9 @@ mod tests {
             }],
             manifest_path: None,
         };
-        backend.write_toml_file(&folder_dir.join(FOLDER_MANIFEST_FILE_NAME), &folder_file).unwrap();
+        backend
+            .write_toml_file(&folder_dir.join(FOLDER_MANIFEST_FILE_NAME), &folder_file)
+            .unwrap();
 
         // Create request file
         let request_file = RequestFile {
@@ -1959,7 +2005,12 @@ mod tests {
             scripts: ScriptConfig::default(),
             file_path: None,
         };
-        backend.write_toml_file(&folder_dir.join(request_file_name("Get User")), &request_file).unwrap();
+        backend
+            .write_toml_file(
+                &folder_dir.join(request_file_name("Get User")),
+                &request_file,
+            )
+            .unwrap();
 
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         assert_eq!(storage.store.root_ids, vec![folder_id]);
