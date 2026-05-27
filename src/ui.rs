@@ -684,24 +684,6 @@ impl Render for SettingsDialogView {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-struct EnvironmentTomlFile {
-    environment: EnvironmentTomlMeta,
-    #[serde(default)]
-    variables: Vec<EnvironmentVariable>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct EnvironmentTomlMeta {
-    schema_version: u32,
-    environment_id: Ulid,
-    scope: EnvironmentScope,
-    name: String,
-    description: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-    updated_at: chrono::DateTime<chrono::Utc>,
-}
-
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 struct RequestHistoryFile {
     #[serde(default)]
@@ -798,25 +780,8 @@ impl EnvironmentManagerDialogView {
     }
 
     fn parse_environment_file(content: &str) -> Result<EnvironmentFile, String> {
-        if let Ok(current) = toml::from_str::<EnvironmentFile>(content) {
-            return Ok(current);
-        }
-        let legacy = toml::from_str::<EnvironmentTomlFile>(content)
-            .map_err(|error| format!("Failed to parse environment file: {error}"))?;
-        Ok(EnvironmentFile {
-            schema_version: legacy.environment.schema_version,
-            environment: crate::models::EnvironmentMeta {
-                environment_id: legacy.environment.environment_id,
-                scope: legacy.environment.scope,
-                name: legacy.environment.name,
-                file_name: String::new(),
-                description: legacy.environment.description,
-                created_at: legacy.environment.created_at,
-                updated_at: legacy.environment.updated_at,
-            },
-            variables: legacy.variables,
-            file_path: None,
-        })
+        toml::from_str::<EnvironmentFile>(content)
+            .map_err(|error| format!("Failed to parse environment file: {error}"))
     }
 
     fn new(
@@ -4923,8 +4888,10 @@ impl BeamView {
                 let response_status = response.status.clone();
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
-                let response_body =
-                    Self::auto_format_response_body(&response.body, response.content_type.as_deref());
+                let response_body = Self::auto_format_response_body(
+                    &response.body,
+                    response.content_type.as_deref(),
+                );
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
@@ -8761,9 +8728,10 @@ mod tests {
     use ulid::Ulid;
 
     use super::{
-        RequestExecutionState, RequestExecutionStatus, apply_request_run_completion_status,
-        completion_updates_selected_request_ui, request_run_completion_is_current,
-        response_summary_for_selected_request, send_button_state_for_selected_request,
+        EnvironmentManagerDialogView, RequestExecutionState, RequestExecutionStatus,
+        apply_request_run_completion_status, completion_updates_selected_request_ui,
+        request_run_completion_is_current, response_summary_for_selected_request,
+        send_button_state_for_selected_request,
     };
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
 
@@ -8995,5 +8963,48 @@ mod tests {
                 "1.2 KB".to_string()
             )
         );
+    }
+
+    #[::core::prelude::v1::test]
+    fn parse_environment_file_accepts_current_format() {
+        let content = r#"
+schema_version = 1
+variables = []
+
+[environment]
+environment_id = "01KSM9Y8VJ1ZMWX9X0W7G5EM70"
+scope = "global"
+name = "Default"
+file_name = "default.env.toml"
+created_at = "2026-05-27T08:30:00.000000Z"
+updated_at = "2026-05-27T08:30:00.000000Z"
+"#;
+
+        let parsed = EnvironmentManagerDialogView::parse_environment_file(content)
+            .expect("current environment format should parse");
+
+        assert_eq!(parsed.schema_version, 1);
+        assert_eq!(parsed.environment.file_name, "default.env.toml");
+        assert!(parsed.variables.is_empty());
+    }
+
+    #[::core::prelude::v1::test]
+    fn parse_environment_file_rejects_nested_schema_version_format() {
+        let content = r#"
+variables = []
+
+[environment]
+schema_version = 1
+environment_id = "01KSM9Y8VJ1ZMWX9X0W7G5EM70"
+scope = "global"
+name = "Default"
+created_at = "2026-05-27T08:30:00.000000Z"
+updated_at = "2026-05-27T08:30:00.000000Z"
+"#;
+
+        let error = EnvironmentManagerDialogView::parse_environment_file(content)
+            .expect_err("environment files with nested schema_version should be rejected");
+
+        assert!(error.contains("Failed to parse environment file"));
     }
 }
