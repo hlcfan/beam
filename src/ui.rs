@@ -7758,7 +7758,7 @@ impl BeamView {
                     content = content.child(
                         div()
                             .text_xs()
-                            .text_color(cx.theme().danger_foreground)
+                            .text_color(cx.theme().danger)
                             .child(format!("Error: {error_message}")),
                     );
                 }
