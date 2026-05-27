@@ -1376,22 +1376,13 @@ fn default_request_file(name: &str, method: HttpMethod, url: String) -> RequestF
         request: RequestDefinition {
             method,
             url,
-            headers: vec![
-                HeaderField {
-                    name: "Content-Type".to_string(),
-                    value: "application/json".to_string(),
-                    enabled: true,
-                    description: None,
-                    secret: false,
-                },
-                HeaderField {
-                    name: "User-Agent".to_string(),
-                    value: "BeamApp/1.0".to_string(),
-                    enabled: true,
-                    description: None,
-                    secret: false,
-                },
-            ],
+            headers: vec![HeaderField {
+                name: "User-Agent".to_string(),
+                value: "BeamApp/1.0".to_string(),
+                enabled: true,
+                description: None,
+                secret: false,
+            }],
             query_params: vec![QueryParamField {
                 name: String::new(),
                 value: String::new(),
