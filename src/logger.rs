@@ -45,6 +45,22 @@ impl BeamLogger {
         Ok(())
     }
 
+    fn ensure_file_open(state: &mut LoggerState) -> io::Result<()> {
+        if state.file.is_some() {
+            return Ok(());
+        }
+
+        let Some(path) = state.file_path.clone() else {
+            state.current_size = 0;
+            return Ok(());
+        };
+
+        let file = Self::open_log_file(&path)?;
+        state.current_size = file.metadata()?.len();
+        state.file = Some(file);
+        Ok(())
+    }
+
     fn rotate_logs(path: &Path) -> io::Result<()> {
         let oldest = rotated_log_path(path, MAX_ROTATED_LOG_FILES);
         if oldest.exists() {
@@ -77,6 +93,8 @@ impl BeamLogger {
         let Some(path) = state.file_path.clone() else {
             return Ok(());
         };
+
+        Self::ensure_file_open(state)?;
 
         if state.current_size + incoming_bytes as u64 <= MAX_LOG_FILE_BYTES {
             return Ok(());
@@ -215,5 +233,24 @@ mod tests {
             fs::read_to_string(rotated_log_path(&log_file, 3)).expect("read rotated 3"),
             "second"
         );
+    }
+
+    #[test]
+    fn ensure_file_open_recovers_closed_file_handle() {
+        let dir = tempdir().expect("tempdir");
+        let log_file = dir.path().join("beam.log");
+        fs::write(&log_file, "current").expect("write current");
+
+        let logger = BeamLogger::new();
+        logger.set_log_file(log_file.clone()).expect("set log file");
+
+        let mut state = logger.state.lock().expect("logger state lock poisoned");
+        state.file = None;
+        state.current_size = 0;
+
+        BeamLogger::ensure_file_open(&mut state).expect("reopen log file");
+
+        assert!(state.file.is_some());
+        assert_eq!(state.current_size, "current".len() as u64);
     }
 }

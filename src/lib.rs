@@ -1,6 +1,7 @@
 pub mod app_shell;
 pub mod assets;
 pub mod error;
+pub mod logger;
 pub mod models;
 pub mod paths;
 pub mod request_authoring;
