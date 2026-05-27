@@ -2629,7 +2629,7 @@ mod tests {
         );
         let repo = RegistryRepository::new(data_root);
         let registry = WorkspacesRegistryFile {
-            schema_version: crate::schema::SCHEMA_VERSION_V3,
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
             registry: crate::models::WorkspacesRegistry {
                 active_workspace_id: None,
                 workspaces: vec![],

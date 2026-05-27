@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
-use crate::schema::{SCHEMA_VERSION_V1, SCHEMA_VERSION_V3};
+use crate::schema::SCHEMA_VERSION_V1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -293,12 +293,15 @@ pub struct WorkspaceEntry {
 }
 
 impl WorkspacesRegistryFile {
-    pub fn new_with_default_workspace(workspace_name: impl Into<String>, workspace_path: impl Into<String>) -> Self {
+    pub fn new_with_default_workspace(
+        workspace_name: impl Into<String>,
+        workspace_path: impl Into<String>,
+    ) -> Self {
         let workspace_id = Ulid::new();
         let name = workspace_name.into();
         let path = workspace_path.into();
         Self {
-            schema_version: SCHEMA_VERSION_V3,
+            schema_version: SCHEMA_VERSION_V1,
             registry: WorkspacesRegistry {
                 active_workspace_id: Some(workspace_id),
                 workspaces: vec![WorkspaceEntry {
@@ -351,8 +354,8 @@ impl EnvironmentFile {
 #[cfg(test)]
 mod tests {
     use super::{
-        AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
-        EnvironmentScope, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
+        AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
+        RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
     };
     use crate::schema::SCHEMA_VERSION_V1;
     use chrono::Utc;
