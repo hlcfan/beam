@@ -66,6 +66,11 @@ impl Default for RequestAuthoringState {
 }
 
 impl RequestAuthoringState {
+    pub fn ensure_trailing_empty_row(&mut self) {
+        ensure_auto_append_header_row(&mut self.headers);
+        ensure_auto_append_param_row(&mut self.query_params);
+    }
+
     pub fn send_button_state(&self) -> SendButtonState {
         let trimmed = self.url.trim();
         if trimmed.is_empty() {
@@ -235,6 +240,35 @@ mod tests {
 
         assert_eq!(state.query_params.len(), 1);
         state.set_param_value(0, "page".to_string(), "1".to_string());
+        assert_eq!(state.query_params.len(), 2);
+        assert!(state.query_params[1].name.is_empty());
+        assert!(state.query_params[1].value.is_empty());
+    }
+
+    #[test]
+    fn ensure_trailing_empty_row_appends_for_loaded_request_data() {
+        let mut state = RequestAuthoringState {
+            headers: vec![HeaderField {
+                name: "Accept".to_string(),
+                value: "application/json".to_string(),
+                enabled: true,
+                description: None,
+                secret: false,
+            }],
+            query_params: vec![QueryParamField {
+                name: "page".to_string(),
+                value: "1".to_string(),
+                enabled: true,
+                description: None,
+            }],
+            ..RequestAuthoringState::default()
+        };
+
+        state.ensure_trailing_empty_row();
+
+        assert_eq!(state.headers.len(), 2);
+        assert!(state.headers[1].name.is_empty());
+        assert!(state.headers[1].value.is_empty());
         assert_eq!(state.query_params.len(), 2);
         assert!(state.query_params[1].name.is_empty());
         assert!(state.query_params[1].value.is_empty());

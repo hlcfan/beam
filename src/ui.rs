@@ -2273,31 +2273,14 @@ impl BeamView {
         request.auth = pane_data.auth.clone();
         request.body = pane_data.body.clone();
         request.post_script = pane_data.post_script.clone();
+        request.ensure_trailing_empty_row();
     }
 
     fn sync_request_editor_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_active_request_cache();
         self.show_invalid_url_border = false;
         Self::hydrate_request_from_selection(&mut self.request, &self.shell);
-        if self.request.query_params.is_empty() {
-            self.request
-                .query_params
-                .push(crate::models::QueryParamField {
-                    name: String::new(),
-                    value: String::new(),
-                    enabled: true,
-                    description: None,
-                });
-        }
-        if self.request.headers.is_empty() {
-            self.request.headers.push(crate::models::HeaderField {
-                name: String::new(),
-                value: String::new(),
-                enabled: true,
-                description: None,
-                secret: false,
-            });
-        }
+        self.request.ensure_trailing_empty_row();
         self.rebuild_request_param_inputs(window, cx);
         self.rebuild_request_header_inputs(window, cx);
         let next_url = self.request.url.clone();
@@ -4641,23 +4624,7 @@ impl BeamView {
     ) -> Self {
         let mut request = RequestAuthoringState::default();
         Self::hydrate_request_from_selection(&mut request, &shell);
-        if request.query_params.is_empty() {
-            request.query_params.push(crate::models::QueryParamField {
-                name: String::new(),
-                value: String::new(),
-                enabled: true,
-                description: None,
-            });
-        }
-        if request.headers.is_empty() {
-            request.headers.push(crate::models::HeaderField {
-                name: String::new(),
-                value: String::new(),
-                enabled: true,
-                description: None,
-                secret: false,
-            });
-        }
+        request.ensure_trailing_empty_row();
         let url_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("https://api.example.com/resource")
