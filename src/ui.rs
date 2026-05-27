@@ -8209,7 +8209,6 @@ impl BeamView {
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
         h_flex()
             .items_center()
-            .justify_between()
             .w_full()
             .h(px(28.0))
             .px_3()
@@ -8241,15 +8240,6 @@ impl BeamView {
                             )
                             .child("Settings"),
                     ),
-            )
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Workspace: default")
-                    .child("Profile: local"),
             )
     }
 }
