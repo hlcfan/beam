@@ -138,7 +138,7 @@ jobs:
         if: matrix.package_kind == 'app'
         shell: bash
         run: |
-          cargo bundle --release --locked --target "${{ matrix.target }}"
+          cargo bundle --release --target "${{ matrix.target }}"
           codesign --force --deep --sign - "target/${{ matrix.target }}/release/bundle/osx/${APP_NAME}.app"
 
           mkdir -p dist/${{ matrix.package_dir }}
