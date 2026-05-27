@@ -1713,7 +1713,7 @@ impl Render for TreeRenameDialogView {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().background)
-                    .px_2()
+                    .px_1()
                     .py_1()
                     .child(
                         Input::new(&self.name_input)
@@ -1731,6 +1731,7 @@ impl Render for TreeRenameDialogView {
                         Button::new("rename-dialog-cancel")
                             .small()
                             .ghost()
+                            .cursor_pointer()
                             .label("Cancel")
                             .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
@@ -1839,7 +1840,7 @@ impl Render for WorkspaceNameDialogView {
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().background)
-                    .px_2()
+                    .px_1()
                     .py_1()
                     .child(
                         Input::new(&self.name_input)
@@ -1857,6 +1858,7 @@ impl Render for WorkspaceNameDialogView {
                         Button::new("workspace-dialog-cancel")
                             .small()
                             .ghost()
+                            .cursor_pointer()
                             .label("Cancel")
                             .on_click(move |_, window, cx| {
                                 window.close_dialog(cx);
@@ -6183,6 +6185,7 @@ impl BeamView {
         Button::new("workspace-picker")
             .ghost()
             .small()
+            // Maybe match the height of the environment picker: 22px?
             .h(px(28.0))
             .px_2()
             .rounded(px(6.0))
