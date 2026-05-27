@@ -22,10 +22,10 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 
 ```bash
 # Extract and move to Applications
-tar -xzf beam-aarch64-apple-darwin.tar.xz
+tar -xzf beam-macos-aarch64.tar.gz
 mv Beam.app /Applications/
 
-# Since the app is unsigned ad-hoc, macOS Gatekeeper will show a "damaged" error.
+# Since the app is unsigned ad-hoc, macOS Gatekeeper will show a "damaged" error or.
 # Run this command to remove the quarantine attribute and allow it to open:
 xattr -cr /Applications/Beam.app
 ```
@@ -61,4 +61,4 @@ cargo run
 
 ## License
 
-MIT
+GPL-3.0.
