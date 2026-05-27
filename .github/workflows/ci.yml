@@ -23,7 +23,7 @@ jobs:
 
     steps:
       - name: Check out Beam
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux build dependencies
         run: |

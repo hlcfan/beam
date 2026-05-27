@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Check out Beam
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux build dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
             libxi-dev \
             libxinerama-dev \
             libxkbcommon-dev \
-            libxkbcommon-x11-0 \
+            libxkbcommon-x11-dev \
             libxrandr-dev \
             pkg-config
 
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Check out Beam
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
@@ -115,7 +115,7 @@ jobs:
             libxi-dev \
             libxinerama-dev \
             libxkbcommon-dev \
-            libxkbcommon-x11-0 \
+            libxkbcommon-x11-dev \
             libxrandr-dev \
             pkg-config
 
@@ -166,7 +166,7 @@ jobs:
           Set-Content -Path "dist/${{ matrix.archive_name }}.sha256" -Value "$hash  ${{ matrix.archive_name }}"
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
@@ -182,14 +182,14 @@ jobs:
 
     steps:
       - name: Download packaged artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: release-*
           merge-multiple: true
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
