@@ -13,6 +13,7 @@ const MAX_ROTATED_LOG_FILES: usize = 5;
 struct LoggerState {
     file: Option<File>,
     file_path: Option<PathBuf>,
+    current_size: u64,
 }
 
 struct BeamLogger {
@@ -36,9 +37,11 @@ impl BeamLogger {
 
     fn set_log_file(&self, path: PathBuf) -> io::Result<()> {
         let file = Self::open_log_file(&path)?;
+        let current_size = file.metadata()?.len();
         let mut state = self.state.lock().expect("logger state lock poisoned");
         state.file = Some(file);
         state.file_path = Some(path);
+        state.current_size = current_size;
         Ok(())
     }
 
@@ -75,12 +78,7 @@ impl BeamLogger {
             return Ok(());
         };
 
-        let current_size = match state.file.as_ref() {
-            Some(file) => file.metadata()?.len(),
-            None => fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0),
-        };
-
-        if current_size + incoming_bytes as u64 <= MAX_LOG_FILE_BYTES {
+        if state.current_size + incoming_bytes as u64 <= MAX_LOG_FILE_BYTES {
             return Ok(());
         }
 
@@ -91,6 +89,7 @@ impl BeamLogger {
 
         Self::rotate_logs(&path)?;
         state.file = Some(Self::open_log_file(&path)?);
+        state.current_size = 0;
         Ok(())
     }
 }
@@ -138,6 +137,8 @@ impl Log for BeamLogger {
                     .unwrap_or_else(|| "<unknown>".to_string());
                 let _ = writeln!(io::stderr(), "failed to write Beam log file at {path}");
                 state.file = None;
+            } else {
+                state.current_size += (line.len() + 1) as u64;
             }
         }
     }
