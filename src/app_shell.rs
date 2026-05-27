@@ -10,21 +10,21 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
-    EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    QueryParamField, RequestFile, WorkspaceEntry, WorkspacesRegistryFile, WorkspaceFile,
+    AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable, FolderFile,
+    HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
+    WorkspaceEntry, WorkspaceFile, WorkspacesRegistryFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
 #[cfg(test)]
 use crate::storage::RequestParentRef;
-use crate::storage::{
-    CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
-    DuplicateRequestInput, MoveRequestInput, RenameRequestInput, WorkspaceStorage,
-};
 use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::io_backend::StorageIoBackend;
 use crate::storage::registry_repo::RegistryRepository;
 use crate::storage::workspace_repo::WorkspaceRepository;
+use crate::storage::{
+    CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
+    DuplicateRequestInput, MoveRequestInput, RenameRequestInput, WorkspaceStorage,
+};
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, folder_dir_name, request_file_name, scope_key,
 };
@@ -772,7 +772,9 @@ impl AppShellState {
         }
 
         if let Some(new_parent) = self.shared_store.nodes.get_mut(&new_parent_id) {
-            new_parent.children.retain(|child_id| *child_id != request_id);
+            new_parent
+                .children
+                .retain(|child_id| *child_id != request_id);
             let index = insertion_index.min(new_parent.children.len());
             new_parent.children.insert(index, request_id);
         }
@@ -790,7 +792,9 @@ impl AppShellState {
         request: &RequestFile,
     ) {
         let request_id = request.meta.request_id;
-        self.shared_store.requests.insert(request_id, request.clone());
+        self.shared_store
+            .requests
+            .insert(request_id, request.clone());
         self.shared_store.nodes.insert(
             request_id,
             Node {
@@ -806,7 +810,11 @@ impl AppShellState {
         );
         self.shared_store.root_ids.retain(|id| *id != request_id);
         if let Some(after_id) = after_request_id
-            && let Some(index) = self.shared_store.root_ids.iter().position(|&id| id == after_id)
+            && let Some(index) = self
+                .shared_store
+                .root_ids
+                .iter()
+                .position(|&id| id == after_id)
         {
             self.shared_store.root_ids.insert(index + 1, request_id);
         } else {
@@ -829,7 +837,11 @@ impl AppShellState {
         );
         self.workspace_tree.roots.retain(|id| *id != request_id);
         if let Some(after_id) = after_request_id
-            && let Some(index) = self.workspace_tree.roots.iter().position(|&id| id == after_id)
+            && let Some(index) = self
+                .workspace_tree
+                .roots
+                .iter()
+                .position(|&id| id == after_id)
         {
             self.workspace_tree.roots.insert(index + 1, request_id);
         } else {
@@ -871,8 +883,12 @@ impl AppShellState {
             node.parent_id = new_parent_id;
         }
         // Only the moved folder's scope key changes; descendants retain folder_id as their scope.
-        self.shared_store.name_index.remove(&scope_key(old_parent_id, &folder_name));
-        self.shared_store.name_index.insert(scope_key(new_parent_id, &folder_name), folder_id);
+        self.shared_store
+            .name_index
+            .remove(&scope_key(old_parent_id, &folder_name));
+        self.shared_store
+            .name_index
+            .insert(scope_key(new_parent_id, &folder_name), folder_id);
 
         // workspace_tree: remove from old parent
         match old_parent_id {
@@ -1018,9 +1034,7 @@ impl AppShellState {
                             .get(&request.meta.request_id)
                             .and_then(|node| node.parent_id);
                         if let Some(prev_id) = previous_parent_id {
-                            if let Some(prev_parent) =
-                                self.shared_store.nodes.get_mut(&prev_id)
-                            {
+                            if let Some(prev_parent) = self.shared_store.nodes.get_mut(&prev_id) {
                                 prev_parent
                                     .children
                                     .retain(|id| *id != request.meta.request_id);
@@ -1033,8 +1047,7 @@ impl AppShellState {
                         self.shared_store
                             .root_ids
                             .retain(|id| *id != request.meta.request_id);
-                        let index =
-                            (*insertion_index).min(self.shared_store.root_ids.len());
+                        let index = (*insertion_index).min(self.shared_store.root_ids.len());
                         self.shared_store
                             .root_ids
                             .insert(index, request.meta.request_id);
@@ -1073,7 +1086,11 @@ impl AppShellState {
                     }
                 }
             }
-            AppEvent::FolderUpserted { folder, manifest_path, .. } => {
+            AppEvent::FolderUpserted {
+                folder,
+                manifest_path,
+                ..
+            } => {
                 let folder_id = folder.folder_id;
                 let parent_id = folder.parent_folder_id;
                 if let Some(node) = self.shared_store.nodes.get_mut(&folder_id) {
@@ -1155,7 +1172,9 @@ impl AppShellState {
                 }
                 for node_id in &nodes_to_remove {
                     if let Some(node) = self.shared_store.nodes.remove(node_id) {
-                        self.shared_store.name_index.remove(&scope_key(node.parent_id, &node.name));
+                        self.shared_store
+                            .name_index
+                            .remove(&scope_key(node.parent_id, &node.name));
                     }
                 }
             }
@@ -1225,7 +1244,9 @@ impl AppShellState {
 
 fn sort_environments(environments: &mut [EnvironmentMeta]) {
     environments.sort_by(|a, b| {
-        a.name.to_lowercase().cmp(&b.name.to_lowercase())
+        a.name
+            .to_lowercase()
+            .cmp(&b.name.to_lowercase())
             .then_with(|| {
                 a.environment_id
                     .to_string()
@@ -1515,7 +1536,9 @@ pub fn start_data_sync_worker(
 
     thread::Builder::new()
         .name("beam-data-sync-worker".to_string())
-        .spawn(move || data_sync_worker_loop(storage, registry, registry_repo, command_rx, event_tx))
+        .spawn(move || {
+            data_sync_worker_loop(storage, registry, registry_repo, command_rx, event_tx)
+        })
         .expect("failed to start data sync worker thread");
 
     DataSyncRuntime {
@@ -1558,12 +1581,8 @@ fn data_sync_worker_loop(
             });
 
             if is_workspace_command {
-                match handle_workspace_command(
-                    &mut storage,
-                    &mut registry,
-                    &registry_repo,
-                    command,
-                ) {
+                match handle_workspace_command(&mut storage, &mut registry, &registry_repo, command)
+                {
                     Ok(domain_events) => {
                         for event in domain_events {
                             let _ = event_tx.send(event);
@@ -1742,7 +1761,7 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
 }
 
 fn log_sync_failure(command_id: &str, operation: AppOperation, error: &str) {
-    eprintln!(
+    log::error!(
         "sync_failure command_id={command_id} operation={} error={}",
         operation.as_str(),
         error
@@ -1752,17 +1771,11 @@ fn log_sync_failure(command_id: &str, operation: AppOperation, error: &str) {
 fn handle_command<B: StorageIoBackend>(
     storage: &mut WorkspaceRepository<B>,
     command: AppCommand,
-) -> std::result::Result<Vec<AppEvent>, String>
-{
+) -> std::result::Result<Vec<AppEvent>, String> {
     match command {
-        AppCommand::CreateEnvironment {
-            name,
-            command_id,
-        } => {
+        AppCommand::CreateEnvironment { name, command_id } => {
             let created = storage
-                .create_environment(CreateEnvironmentInput {
-                    name,
-                })
+                .create_environment(CreateEnvironmentInput { name })
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::EnvironmentUpserted {
                 environment: created.environment,
@@ -1909,7 +1922,10 @@ fn handle_command<B: StorageIoBackend>(
                 command_id,
             }])
         }
-        AppCommand::DeleteFolder { folder_id, command_id } => {
+        AppCommand::DeleteFolder {
+            folder_id,
+            command_id,
+        } => {
             storage
                 .delete_folder(folder_id)
                 .map_err(|error| error.to_string())?;
@@ -1955,15 +1971,12 @@ fn handle_workspace_command(
 
             let new_paths = registry_repo.workspace_paths(&entry);
             let new_backend = FileSystemStorage::new(new_paths.clone());
-            let new_repo = WorkspaceRepository::new(new_backend)
-                .map_err(|e| e.to_string())?;
+            let mut new_repo = WorkspaceRepository::new(new_backend).map_err(|e| e.to_string())?;
 
             // Initialize workspace files if this is a brand-new workspace.
             new_repo.initialize().map_err(|e| e.to_string())?;
 
-            let local_state = new_repo
-                .load_local_state()
-                .unwrap_or_default();
+            let local_state = new_repo.load_local_state().unwrap_or_default();
 
             let (workspace_tree, shared_store, request_pane_data, _warnings) =
                 load_workspace_tree(&new_paths, &local_state);
@@ -1997,7 +2010,7 @@ fn handle_workspace_command(
             // Bootstrap the new workspace files.
             let ws_paths = registry_repo.workspace_paths(&entry);
             let ws_backend = FileSystemStorage::new(ws_paths);
-            let ws_repo = WorkspaceRepository::new(ws_backend).map_err(|e| e.to_string())?;
+            let mut ws_repo = WorkspaceRepository::new(ws_backend).map_err(|e| e.to_string())?;
             ws_repo.initialize().map_err(|e| e.to_string())?;
 
             let all_workspaces = registry.registry.workspaces.clone();
@@ -2127,9 +2140,7 @@ where
             },
             workspace: WorkspaceState {
                 workspace_id: workspace_entry.map(|e| e.workspace_id),
-                workspace_name: workspace_entry
-                    .map(|e| e.name.clone())
-                    .unwrap_or_default(),
+                workspace_name: workspace_entry.map(|e| e.name.clone()).unwrap_or_default(),
                 all_workspaces,
                 ..WorkspaceState::default()
             },
@@ -2236,7 +2247,13 @@ fn load_shared_tree(paths: &BeamPaths, warnings: &mut Vec<String>) -> LoadedShar
             ItemType::Folder => {
                 let folder_dir = paths.root.join(folder_dir_name(&item_ref.name));
                 if folder_dir.exists() {
-                    load_folder_from_manifest(&mut loaded, &folder_dir, item_ref.item_id, None, warnings);
+                    load_folder_from_manifest(
+                        &mut loaded,
+                        &folder_dir,
+                        item_ref.item_id,
+                        None,
+                        warnings,
+                    );
                     if loaded.shared_store.nodes.contains_key(&item_ref.item_id) {
                         if !loaded.shared_store.root_ids.contains(&item_ref.item_id) {
                             loaded.shared_store.root_ids.push(item_ref.item_id);
@@ -2246,7 +2263,13 @@ fn load_shared_tree(paths: &BeamPaths, warnings: &mut Vec<String>) -> LoadedShar
             }
             ItemType::Request => {
                 let request_path = paths.root.join(request_file_name(&item_ref.name));
-                load_root_request(&mut loaded, &request_path, item_ref.item_id, &item_ref.name, warnings);
+                load_root_request(
+                    &mut loaded,
+                    &request_path,
+                    item_ref.item_id,
+                    &item_ref.name,
+                    warnings,
+                );
             }
         }
     }
@@ -2301,7 +2324,13 @@ fn load_folder_from_manifest(
             ItemType::Folder => {
                 let subfolder_dir = folder_dir.join(folder_dir_name(&item_ref.name));
                 if subfolder_dir.exists() {
-                    load_folder_from_manifest(loaded, &subfolder_dir, item_ref.item_id, Some(folder_id), warnings);
+                    load_folder_from_manifest(
+                        loaded,
+                        &subfolder_dir,
+                        item_ref.item_id,
+                        Some(folder_id),
+                        warnings,
+                    );
                     if loaded.shared_store.nodes.contains_key(&item_ref.item_id) {
                         child_ids.push(item_ref.item_id);
                     }
@@ -2309,7 +2338,14 @@ fn load_folder_from_manifest(
             }
             ItemType::Request => {
                 let request_path = folder_dir.join(request_file_name(&item_ref.name));
-                if load_folder_request(loaded, &request_path, item_ref.item_id, &item_ref.name, folder_id, warnings) {
+                if load_folder_request(
+                    loaded,
+                    &request_path,
+                    item_ref.item_id,
+                    &item_ref.name,
+                    folder_id,
+                    warnings,
+                ) {
                     child_ids.push(item_ref.item_id);
                 }
             }
@@ -2377,7 +2413,10 @@ fn load_root_request(
     ) {
         return;
     }
-    loaded.shared_store.requests.insert(expected_id, request_file);
+    loaded
+        .shared_store
+        .requests
+        .insert(expected_id, request_file);
     loaded.request_pane_data.insert(expected_id, pane_data);
     loaded.shared_store.root_ids.push(expected_id);
 }
@@ -2443,7 +2482,10 @@ fn load_folder_request(
     ) {
         return false;
     }
-    loaded.shared_store.requests.insert(expected_id, request_file);
+    loaded
+        .shared_store
+        .requests
+        .insert(expected_id, request_file);
     loaded.request_pane_data.insert(expected_id, pane_data);
     true
 }
@@ -2492,9 +2534,7 @@ fn build_tree_from_shared_store(
         .iter()
         .map(|(node_id, node)| {
             let (request_method, request_url, manifest_path) = match node.kind {
-                NodeKind::Folder => {
-                    (None, None, manifest_paths.get(node_id).cloned())
-                }
+                NodeKind::Folder => (None, None, manifest_paths.get(node_id).cloned()),
                 NodeKind::Request => {
                     let request_file = shared_store.requests.get(node_id);
                     (
@@ -2575,9 +2615,9 @@ mod tests {
     };
     use crate::paths::DataRootPaths;
     use crate::schema::SCHEMA_VERSION_V1;
+    use crate::storage::fs_backend::FileSystemStorage;
     use crate::storage::registry_repo::RegistryRepository;
     use crate::storage::workspace_repo::WorkspaceRepository;
-    use crate::storage::fs_backend::FileSystemStorage;
     use chrono::Utc;
 
     /// Create a minimal registry + repo for tests that need start_data_sync_worker.
@@ -2585,6 +2625,7 @@ mod tests {
         let data_root = DataRootPaths::new(
             dir.join("beam"),
             dir.join("beam_local"),
+            dir.join("beam_logs"),
         );
         let repo = RegistryRepository::new(data_root);
         let registry = WorkspacesRegistryFile {
@@ -2818,11 +2859,7 @@ mod tests {
             HttpMethod::Post,
             "https://two",
         );
-        state.insert_request_into_shared_store(
-            folder_id,
-            Some(first_request_id),
-            &second_request,
-        );
+        state.insert_request_into_shared_store(folder_id, Some(first_request_id), &second_request);
 
         assert_eq!(
             state
@@ -3031,10 +3068,7 @@ mod tests {
             updated_at: now,
         }];
 
-        assert_eq!(
-            state.effective_environment_id_for_selected_request(),
-            None
-        );
+        assert_eq!(state.effective_environment_id_for_selected_request(), None);
 
         state.environment_selection.active_global_environment_id = Some(global_env_id);
         assert_eq!(
@@ -3043,10 +3077,7 @@ mod tests {
         );
 
         state.environments.clear();
-        assert_eq!(
-            state.effective_environment_id_for_selected_request(),
-            None
-        );
+        assert_eq!(state.effective_environment_id_for_selected_request(), None);
     }
 
     #[test]
@@ -3166,9 +3197,7 @@ mod tests {
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
         let runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
-        let parent = RequestParentRef {
-            folder_id: None,
-        };
+        let parent = RequestParentRef { folder_id: None };
 
         let create_command_id = next_command_id();
         runtime
@@ -3492,35 +3521,52 @@ mod tests {
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
         let folder_dir = paths.root.join(folder_dir_name("Sample"));
         let nested_dir = folder_dir.join(folder_dir_name("Nested"));
         // Write workspace file referencing the top-level folder
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
         // Write nested folder manifest for the top-level folder
         let nested_folder_id = Ulid::new();
-        write_folder_manifest(&folder_dir, folder_id, "Sample", vec![ManifestItemRef {
-            item_id: nested_folder_id,
-            item_type: ItemType::Folder,
-            name: "Nested".to_string(),
-            order: 0,
-        }]);
+        write_folder_manifest(
+            &folder_dir,
+            folder_id,
+            "Sample",
+            vec![ManifestItemRef {
+                item_id: nested_folder_id,
+                item_type: ItemType::Folder,
+                name: "Nested".to_string(),
+                order: 0,
+            }],
+        );
         // Write nested subfolder manifest
-        write_folder_manifest(&nested_dir, nested_folder_id, "Nested", vec![ManifestItemRef {
-            item_id: request_id,
-            item_type: ItemType::Request,
-            name: "Get Data".to_string(),
-            order: 0,
-        }]);
+        write_folder_manifest(
+            &nested_dir,
+            nested_folder_id,
+            "Nested",
+            vec![ManifestItemRef {
+                item_id: request_id,
+                item_type: ItemType::Request,
+                name: "Get Data".to_string(),
+                order: 0,
+            }],
+        );
         write_request_payload(
             &nested_dir,
             request_id,
@@ -3559,8 +3605,12 @@ mod tests {
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         storage
             .save_workspace(&WorkspaceFile::default())
@@ -3598,8 +3648,12 @@ mod tests {
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         fs::write(paths.local_state_file.clone(), "not = valid = toml")
             .expect("corrupt local state");
@@ -3618,8 +3672,12 @@ mod tests {
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
@@ -3775,27 +3833,40 @@ post_response = "console.log(response.status)"
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let top_folder_id = Ulid::new();
         let nested_folder_id = Ulid::new();
         let top_folder_dir = paths.root.join(folder_dir_name("Sample"));
         let nested_folder_dir = top_folder_dir.join(folder_dir_name("Nested"));
 
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: top_folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
-        write_folder_manifest(&top_folder_dir, top_folder_id, "Sample", vec![ManifestItemRef {
-            item_id: nested_folder_id,
-            item_type: ItemType::Folder,
-            name: "Nested".to_string(),
-            order: 0,
-        }]);
-        let nested_manifest_path = write_folder_manifest(&nested_folder_dir, nested_folder_id, "Nested", vec![]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: top_folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
+        write_folder_manifest(
+            &top_folder_dir,
+            top_folder_id,
+            "Sample",
+            vec![ManifestItemRef {
+                item_id: nested_folder_id,
+                item_type: ItemType::Folder,
+                name: "Nested".to_string(),
+                order: 0,
+            }],
+        );
+        let nested_manifest_path =
+            write_folder_manifest(&nested_folder_dir, nested_folder_id, "Nested", vec![]);
 
         let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
@@ -3846,26 +3917,38 @@ updated_at = "2026-01-01T00:00:00Z"
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let top_folder_id = Ulid::new();
         let nested_folder_id = Ulid::new();
         let top_dir = paths.root.join(folder_dir_name("Sample"));
         let nested_dir = top_dir.join(folder_dir_name("Nested"));
 
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: top_folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
-        write_folder_manifest(&top_dir, top_folder_id, "Sample", vec![ManifestItemRef {
-            item_id: nested_folder_id,
-            item_type: ItemType::Folder,
-            name: "Nested".to_string(),
-            order: 0,
-        }]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: top_folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
+        write_folder_manifest(
+            &top_dir,
+            top_folder_id,
+            "Sample",
+            vec![ManifestItemRef {
+                item_id: nested_folder_id,
+                item_type: ItemType::Folder,
+                name: "Nested".to_string(),
+                order: 0,
+            }],
+        );
         write_folder_manifest(&nested_dir, nested_folder_id, "Nested", vec![]);
 
         let local_state = LocalStateFile {
@@ -3899,17 +3982,24 @@ updated_at = "2026-01-01T00:00:00Z"
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let folder_id = Ulid::new();
         let folder_dir = paths.root.join(folder_dir_name("Sample"));
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
         write_folder_manifest(&folder_dir, folder_id, "Sample", vec![]);
 
         let local_state_toml = format!(
@@ -3939,18 +4029,45 @@ expanded_item_ids = ["{folder_id}"]
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let first_id = Ulid::new();
         let second_id = Ulid::new();
         // Workspace lists second before first (explicit order)
-        write_workspace_file(&paths, vec![
-            ManifestItemRef { item_id: second_id, item_type: ItemType::Folder, name: "Second".to_string(), order: 0 },
-            ManifestItemRef { item_id: first_id, item_type: ItemType::Folder, name: "First".to_string(), order: 1 },
-        ]);
-        write_folder_manifest(&paths.root.join(folder_dir_name("Second")), second_id, "Second", vec![]);
-        write_folder_manifest(&paths.root.join(folder_dir_name("First")), first_id, "First", vec![]);
+        write_workspace_file(
+            &paths,
+            vec![
+                ManifestItemRef {
+                    item_id: second_id,
+                    item_type: ItemType::Folder,
+                    name: "Second".to_string(),
+                    order: 0,
+                },
+                ManifestItemRef {
+                    item_id: first_id,
+                    item_type: ItemType::Folder,
+                    name: "First".to_string(),
+                    order: 1,
+                },
+            ],
+        );
+        write_folder_manifest(
+            &paths.root.join(folder_dir_name("Second")),
+            second_id,
+            "Second",
+            vec![],
+        );
+        write_folder_manifest(
+            &paths.root.join(folder_dir_name("First")),
+            first_id,
+            "First",
+            vec![],
+        );
 
         let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, .. } = load else {
@@ -3968,24 +4085,36 @@ expanded_item_ids = ["{folder_id}"]
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
         let folder_dir = paths.root.join(folder_dir_name("Sample"));
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
-        write_folder_manifest(&folder_dir, folder_id, "Sample", vec![ManifestItemRef {
-            item_id: request_id,
-            item_type: ItemType::Request,
-            name: "Broken Request".to_string(),
-            order: 0,
-        }]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
+        write_folder_manifest(
+            &folder_dir,
+            folder_id,
+            "Sample",
+            vec![ManifestItemRef {
+                item_id: request_id,
+                item_type: ItemType::Request,
+                name: "Broken Request".to_string(),
+                order: 0,
+            }],
+        );
         let request_path = folder_dir.join(request_file_name("Broken Request"));
         fs::write(&request_path, "not = valid = toml").expect("write invalid request file");
 
@@ -4009,25 +4138,52 @@ expanded_item_ids = ["{folder_id}"]
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let folder_id = Ulid::new();
         let good_request_id = Ulid::new();
         let missing_request_id = Ulid::new();
         let mismatched_request_id = Ulid::new();
         let folder_dir = paths.root.join(folder_dir_name("Sample"));
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
-        write_folder_manifest(&folder_dir, folder_id, "Sample", vec![
-            ManifestItemRef { item_id: good_request_id, item_type: ItemType::Request, name: "Good Request".to_string(), order: 0 },
-            ManifestItemRef { item_id: missing_request_id, item_type: ItemType::Request, name: "Missing Request".to_string(), order: 1 },
-            ManifestItemRef { item_id: mismatched_request_id, item_type: ItemType::Request, name: "Wrong Id Request".to_string(), order: 2 },
-        ]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
+        write_folder_manifest(
+            &folder_dir,
+            folder_id,
+            "Sample",
+            vec![
+                ManifestItemRef {
+                    item_id: good_request_id,
+                    item_type: ItemType::Request,
+                    name: "Good Request".to_string(),
+                    order: 0,
+                },
+                ManifestItemRef {
+                    item_id: missing_request_id,
+                    item_type: ItemType::Request,
+                    name: "Missing Request".to_string(),
+                    order: 1,
+                },
+                ManifestItemRef {
+                    item_id: mismatched_request_id,
+                    item_type: ItemType::Request,
+                    name: "Wrong Id Request".to_string(),
+                    order: 2,
+                },
+            ],
+        );
         write_request_payload(
             &folder_dir,
             good_request_id,
@@ -4074,22 +4230,44 @@ expanded_item_ids = ["{folder_id}"]
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let folder_id = Ulid::new();
         let duplicate_id = Ulid::new();
         let folder_dir = paths.root.join(folder_dir_name("Sample"));
-        write_workspace_file(&paths, vec![ManifestItemRef {
-            item_id: folder_id,
-            item_type: ItemType::Folder,
-            name: "Sample".to_string(),
-            order: 0,
-        }]);
-        write_folder_manifest(&folder_dir, folder_id, "Sample", vec![
-            ManifestItemRef { item_id: duplicate_id, item_type: ItemType::Request, name: "First".to_string(), order: 0 },
-            ManifestItemRef { item_id: duplicate_id, item_type: ItemType::Request, name: "Second".to_string(), order: 1 },
-        ]);
+        write_workspace_file(
+            &paths,
+            vec![ManifestItemRef {
+                item_id: folder_id,
+                item_type: ItemType::Folder,
+                name: "Sample".to_string(),
+                order: 0,
+            }],
+        );
+        write_folder_manifest(
+            &folder_dir,
+            folder_id,
+            "Sample",
+            vec![
+                ManifestItemRef {
+                    item_id: duplicate_id,
+                    item_type: ItemType::Request,
+                    name: "First".to_string(),
+                    order: 0,
+                },
+                ManifestItemRef {
+                    item_id: duplicate_id,
+                    item_type: ItemType::Request,
+                    name: "Second".to_string(),
+                    order: 1,
+                },
+            ],
+        );
         write_request_payload(
             &folder_dir,
             duplicate_id,
@@ -4129,23 +4307,43 @@ expanded_item_ids = ["{folder_id}"]
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage.save_workspace(&WorkspaceFile::default()).expect("save workspace");
-        storage.save_local_state(&LocalStateFile::default()).expect("save local state");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
 
         let valid_folder_id = Ulid::new();
         let broken_folder_id = Ulid::new();
         let valid_dir = paths.root.join(folder_dir_name("Valid"));
         let broken_dir = paths.root.join(folder_dir_name("Broken"));
 
-        write_workspace_file(&paths, vec![
-            ManifestItemRef { item_id: valid_folder_id, item_type: ItemType::Folder, name: "Valid".to_string(), order: 0 },
-            ManifestItemRef { item_id: broken_folder_id, item_type: ItemType::Folder, name: "Broken".to_string(), order: 1 },
-        ]);
+        write_workspace_file(
+            &paths,
+            vec![
+                ManifestItemRef {
+                    item_id: valid_folder_id,
+                    item_type: ItemType::Folder,
+                    name: "Valid".to_string(),
+                    order: 0,
+                },
+                ManifestItemRef {
+                    item_id: broken_folder_id,
+                    item_type: ItemType::Folder,
+                    name: "Broken".to_string(),
+                    order: 1,
+                },
+            ],
+        );
         write_folder_manifest(&valid_dir, valid_folder_id, "Valid", vec![]);
         // Write broken manifest for broken folder
         fs::create_dir_all(&broken_dir).expect("create broken folder dir");
-        fs::write(broken_dir.join(FOLDER_MANIFEST_FILE_NAME), "not = valid = toml")
-            .expect("write broken manifest");
+        fs::write(
+            broken_dir.join(FOLDER_MANIFEST_FILE_NAME),
+            "not = valid = toml",
+        )
+        .expect("write broken manifest");
 
         let load = startup_preload(&storage, &paths, None, vec![]);
         let StartupLoad::Ready { state, messages } = load else {
@@ -4197,11 +4395,21 @@ expanded_item_ids = ["{folder_id}"]
 
         tree.move_request_node(request_id, folder_id, 0);
 
-        assert!(!tree.roots.contains(&request_id), "request should be removed from roots");
+        assert!(
+            !tree.roots.contains(&request_id),
+            "request should be removed from roots"
+        );
         let folder_node = tree.nodes.get(&folder_id).unwrap();
-        assert!(folder_node.children.contains(&request_id), "request should be in folder children");
+        assert!(
+            folder_node.children.contains(&request_id),
+            "request should be in folder children"
+        );
         let rows = tree.visible_rows();
         let ids: Vec<Ulid> = rows.iter().map(|r| r.id).collect();
-        assert_eq!(ids.iter().filter(|&&id| id == request_id).count(), 1, "request should appear exactly once");
+        assert_eq!(
+            ids.iter().filter(|&&id| id == request_id).count(),
+            1,
+            "request should appear exactly once"
+        );
     }
 }

@@ -232,7 +232,11 @@ impl RegistryRepository {
         if entry.path == "." {
             // Legacy single-workspace layout: data lives at the data root.
             let local_dir = self.data_root.local_root.join("default");
-            BeamPaths::from_workspace_root(self.data_root.root.clone(), local_dir)
+            BeamPaths::from_workspace_root(
+                self.data_root.root.clone(),
+                local_dir,
+                self.data_root.log_file.clone(),
+            )
         } else {
             self.data_root.workspace_paths(&entry.path)
         }
@@ -315,7 +319,8 @@ mod tests {
     fn make_repo(dir: &std::path::Path) -> RegistryRepository {
         let data_root = dir.join("beam");
         let local_root = dir.join("beam_local");
-        RegistryRepository::new(DataRootPaths::new(data_root, local_root))
+        let logs_root = dir.join("beam_logs");
+        RegistryRepository::new(DataRootPaths::new(data_root, local_root, logs_root))
     }
 
     #[test]
@@ -380,7 +385,13 @@ mod tests {
         let id = entry.workspace_id;
         repo.delete_workspace(&mut registry, id, true)
             .expect("delete");
-        assert!(!registry.registry.workspaces.iter().any(|e| e.workspace_id == id));
+        assert!(
+            !registry
+                .registry
+                .workspaces
+                .iter()
+                .any(|e| e.workspace_id == id)
+        );
     }
 
     #[test]

@@ -149,7 +149,7 @@ fn init_theme_registry(preferred_theme_name: Option<SharedString>, cx: &mut App)
     let registry = ThemeRegistry::global_mut(cx);
     for (theme_path, content) in embedded_theme_contents() {
         if let Err(error) = registry.load_themes_from_str(&content) {
-            eprintln!("Failed to preload theme file {theme_path}: {error}");
+            log::error!("Failed to preload theme file {theme_path}: {error}");
         }
     }
 
@@ -1971,7 +1971,7 @@ impl BeamView {
             .map(|state| state.run_id)
             .map(|id| id.to_string())
             .unwrap_or_else(|| "none".to_string());
-        eprintln!(
+        log::info!(
             "request_send_finish request_id={request_id_text} run_id={run_id_text} outcome=canceled_by_user"
         );
         self.cancel_request_run_for(request_id);
@@ -2117,7 +2117,7 @@ impl BeamView {
         cx.set_menus(build_macos_system_menus(cx));
         cx.refresh_windows();
         if let Err(error) = Self::persist_theme_state_from_app(cx) {
-            eprintln!("{error}");
+            log::error!("{error}");
         }
     }
 
@@ -2140,7 +2140,7 @@ impl BeamView {
             cx.refresh_windows();
             if persist {
                 if let Err(error) = Self::persist_theme_state_from_app(cx) {
-                    eprintln!("{error}");
+                    log::error!("{error}");
                 }
             }
             return true;
@@ -2770,14 +2770,14 @@ impl BeamView {
                     command_id: next_command_id(),
                 };
                 if let Err(error) = self.publish_app_command(command) {
-                    eprintln!("{error}");
+                    log::error!("{error}");
                     if error.starts_with("Backpressure:") {
                         self.pending_request_save_due_at =
                             Some(Instant::now() + Duration::from_millis(100));
                     }
                 }
             }
-            Err(error) => eprintln!("{error}"),
+            Err(error) => log::error!("{error}"),
         }
         self.request_save_in_flight = false;
         if self.pending_request_save_due_at.is_some() && !self.request_save_tick_scheduled {
@@ -4038,7 +4038,7 @@ impl BeamView {
                 } => {
                     self.pending_request_placements.remove(command_id);
                     self.shell.apply_event(&event);
-                    eprintln!(
+                    log::error!(
                         "sync_failure command_id={} operation={} error={}",
                         command_id,
                         operation.as_str(),
@@ -4259,18 +4259,20 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        eprintln!(
+        log::debug!(
             "rename_tree_node_from_modal invoked: id={}, kind={:?}, requested_name={}",
-            node_id, node_kind, requested_name
+            node_id,
+            node_kind,
+            requested_name
         );
         let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
-            eprintln!("rename: node not found for id={node_id}");
+            log::error!("rename: node not found for id={node_id}");
             window.push_notification("Unable to rename: item not found.", cx);
             return;
         };
         let next_name = requested_name.trim();
         if next_name.is_empty() {
-            eprintln!("rename: rejected empty name");
+            log::warn!("rename: rejected empty name");
             window.push_notification("Name cannot be empty.", cx);
             return;
         }
@@ -4278,14 +4280,14 @@ impl BeamView {
         let validated_name = match node_kind {
             TreeNodeKind::Folder => {
                 let Some(_parent) = self.parent_ref_for_add_folder(node_id) else {
-                    eprintln!("rename: unable to determine folder parent for id={node_id}");
+                    log::error!("rename: unable to determine folder parent for id={node_id}");
                     window.push_notification("Unable to determine folder parent.", cx);
                     return;
                 };
                 let validated = match validate_rename(&node.name, next_name) {
                     Ok(value) => value,
                     Err(RenameValidationError::EmptyName) => {
-                        eprintln!("rename: folder empty name after validation");
+                        log::warn!("rename: folder empty name after validation");
                         window.push_notification("Folder name cannot be empty.", cx);
                         return;
                     }
@@ -4294,14 +4296,14 @@ impl BeamView {
             }
             TreeNodeKind::Request => {
                 let Some(_parent) = self.parent_ref_for_add_request(node_id) else {
-                    eprintln!("rename: unable to determine request parent for id={node_id}");
+                    log::error!("rename: unable to determine request parent for id={node_id}");
                     window.push_notification("Unable to determine request parent.", cx);
                     return;
                 };
                 let validated = match validate_rename(&node.name, next_name) {
                     Ok(value) => value,
                     Err(RenameValidationError::EmptyName) => {
-                        eprintln!("rename: request empty name after validation");
+                        log::warn!("rename: request empty name after validation");
                         window.push_notification("Request name cannot be empty.", cx);
                         return;
                     }
@@ -4870,7 +4872,7 @@ impl BeamView {
             return;
         }
         let run_id = self.begin_request_run_for(request_id);
-        eprintln!("request_send_start request_id={request_id_text} run_id={run_id}");
+        log::info!("request_send_start request_id={request_id_text} run_id={run_id}");
         self.response_status = "Sending...".to_string();
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
@@ -4883,7 +4885,7 @@ impl BeamView {
                         state.status = RequestExecutionStatus::Failed;
                     }
                 }
-                eprintln!(
+                log::error!(
                     "request_send_finish request_id={request_id_text} run_id={run_id} outcome=runtime_error"
                 );
                 self.response_status = "Error".to_string();
@@ -4944,7 +4946,7 @@ impl BeamView {
                     request_id,
                     run_id,
                 ) {
-                    eprintln!(
+                    log::debug!(
                         "request_send_finish request_id={request_id_text} run_id={run_id} outcome=stale_ignored active_run_id={active_run_id_text}"
                     );
                     return;
@@ -4960,7 +4962,7 @@ impl BeamView {
                     request_id,
                 );
                 let Some(outcome) = maybe_outcome else {
-                    eprintln!(
+                    log::info!(
                         "request_send_finish request_id={request_id_text} run_id={run_id} outcome=canceled"
                     );
                     if should_update_visible_response {
@@ -4999,27 +5001,27 @@ impl BeamView {
                         command_id: next_command_id(),
                     };
                     if let Err(error) = this.publish_app_command(command) {
-                        eprintln!(
+                        log::error!(
                             "Failed to queue script-driven environment update command: {error}"
                         );
                     }
                 }
                 if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
-                    eprintln!("Failed to persist response snapshot: {error}");
+                    log::error!("Failed to persist response snapshot: {error}");
                 }
                 match outcome.script_result.as_ref() {
                     Some(script_result) => {
                         if let Err(error) = Self::persist_script_result(request_id, script_result) {
-                            eprintln!("Failed to persist script result: {error}");
+                            log::error!("Failed to persist script result: {error}");
                         }
                     }
                     None => {
                         if let Err(error) = Self::clear_script_result_for_request(request_id) {
-                            eprintln!("Failed to clear script result: {error}");
+                            log::error!("Failed to clear script result: {error}");
                         }
                     }
                 }
-                eprintln!(
+                log::info!(
                     "request_send_finish request_id={request_id_text} run_id={run_id} outcome=completed"
                 );
                 cx.notify();
@@ -7764,7 +7766,7 @@ impl BeamView {
                                         if let Err(error) =
                                             Self::clear_script_result_for_request(request_id)
                                         {
-                                            eprintln!("Failed to clear script result: {error}");
+                                            log::error!("Failed to clear script result: {error}");
                                         }
                                     }
                                     cx.notify();

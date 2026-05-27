@@ -19,6 +19,7 @@ reqwest = { version = "0.12", default-features = false, features = ["multipart",
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 rust-embed = "8.8"
 rquickjs = { version = "0.9", features = ["chrono"] }
+log = "0.4"
 
 [dev-dependencies]
 tempfile = "3.20"
