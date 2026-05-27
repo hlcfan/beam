@@ -1,19 +1,20 @@
 # Beam
 
-A HTTP client for developers built with Rust and Iced.
+A HTTP client for developers built with Rust and gpui and gpui-component.
 
 ![Beam Screenshot](screenshot.png)
 
 ## Features
 
-- 🚀 Fast and lightweigh
-- 📁 Request collections
-- 🔐 Multiple authentication methods (Bearer, Basic, API Key)
-- 🌍 Environment variables support
-- 📝 Request body formats (JSON, XML, Text)
-- 📜 Post-request scripts with JavaScript
-- 💾 Persistent storage for requests and collections
-- 🎨 Clean, intuitive interface
+- 🚀 Fast, lightweight native desktop app built with Rust and GPUI
+- 🗂️ Multi-workspace organization with folders and requests
+- 🌐 HTTP request with common methods (GET, POST, PUT, DELETE, PATCH, HEAD, and OPTIONS)
+- 🔐 Authentication support for Bearer, Basic, and API Key (header or query)
+- 📝 Request body formats for JSON, XML, Text, GraphQL, Form URL-Encoded, and Multipart
+- 🌍 Global environments with `{{variable}}` interpolation in URLs, params, headers, auth, and bodies
+- 📜 Post-response JavaScript scripting with console output, tests, and environment updates
+- 💾 Persistent TOML-based storage for workspaces, requests, environments, local history, and script results
+- 🎨 Theme support with light/dark mode and a clean desktop interface
 
 ## Installation
 
