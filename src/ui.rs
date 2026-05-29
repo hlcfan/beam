@@ -6462,21 +6462,41 @@ impl BeamView {
                                         menu
                                     }),
                             )
-                            .child(
-                                Input::new(&self.url_input)
+                            .child({
+                                let url_entity = self.url_input.clone();
+                                div()
+                                    .id("env-hover-url")
                                     .flex_1()
-                                    .small()
-                                    .appearance(false)
-                                    .context_menu({
-                                        move |menu, _, cx| {
-                                            Self::build_text_edit_context_menu(
-                                                menu,
-                                                url_has_selection,
-                                                cx.theme().muted_foreground,
-                                            )
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &url_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
                                         }
-                                    }),
-                            )
+                                    }))
+                                    .child(
+                                        Input::new(&self.url_input)
+                                            .flex_1()
+                                            .small()
+                                            .appearance(false)
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        url_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            })
                             .child(
                                 Button::new("send-request")
                                     .ghost()
@@ -6577,10 +6597,13 @@ impl BeamView {
             )
     }
 
-    fn render_env_var_hover_overlay(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn update_env_var_hover_for_input(
+        &mut self,
+        input_entity: &Entity<InputState>,
+        pos: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
         let env_id = self.selected_environment_id_for_view();
-
-        // Refresh the cached resolved env when the effective environment changes.
         let cache_stale = self
             .env_var_resolved_cache
             .as_ref()
@@ -6597,75 +6620,41 @@ impl BeamView {
             .map(|(_, m)| m.clone())
             .unwrap_or_default();
 
-        // Collect all inputs that can contain {{var}} tokens.
-        let mut inputs: Vec<Entity<InputState>> = vec![self.url_input.clone()];
-        inputs.extend(self.request_header_name_inputs.iter().cloned());
-        inputs.extend(self.request_header_value_inputs.iter().cloned());
-        inputs.extend(self.request_param_name_inputs.iter().cloned());
-        inputs.extend(self.request_param_value_inputs.iter().cloned());
-        inputs.push(self.request_auth_bearer_token_input.clone());
-        inputs.push(self.request_auth_basic_username_input.clone());
-        inputs.push(self.request_auth_basic_password_input.clone());
-        inputs.push(self.request_auth_api_key_name_input.clone());
-        inputs.push(self.request_auth_api_key_value_input.clone());
-
-        let mut elements: Vec<AnyElement> = Vec::new();
-        let mut token_idx = 0usize;
-
-        for input_entity in &inputs {
-            let text = input_entity.read(cx).value().to_string();
-            for (byte_range, var_name) in find_env_var_ranges(&text) {
+        let input = input_entity.read(cx);
+        let text = input.value().to_string();
+        let mut found: Option<EnvVarHoverInfo> = None;
+        for (byte_range, var_name) in find_env_var_ranges(&text) {
+            let Some(bounds) = input.range_to_bounds(&byte_range) else {
+                continue;
+            };
+            if bounds.contains(&pos) {
                 let resolved = resolved_env.get(&var_name).cloned();
-                let Some(bounds) = input_entity.read(cx).range_to_bounds(&byte_range) else {
-                    token_idx += 1;
-                    continue;
-                };
-                if bounds.size.width < px(2.) {
-                    token_idx += 1;
-                    continue;
-                }
-
-                let var_name_enter = var_name.clone();
-                let resolved_enter = resolved.clone();
-                let bounds_enter = bounds;
-                let bounds_exit = bounds;
-
-                elements.push(
-                    deferred(
-                        anchored()
-                            .anchor(gpui::Anchor::TopLeft)
-                            .position(bounds.origin)
-                            .child(
-                                div()
-                                    .id(("env-var-hover", token_idx as u64))
-                                    .w(bounds.size.width)
-                                    .h(bounds.size.height)
-                                    .on_hover(cx.listener(move |this, hovered, _, cx| {
-                                        if *hovered {
-                                            this.env_var_hover = Some(EnvVarHoverInfo {
-                                                var_name: var_name_enter.clone(),
-                                                resolved_value: resolved_enter.clone(),
-                                                token_bounds: bounds_enter,
-                                            });
-                                        } else if this
-                                            .env_var_hover
-                                            .as_ref()
-                                            .map(|h| h.token_bounds.origin == bounds_exit.origin)
-                                            .unwrap_or(false)
-                                        {
-                                            this.env_var_hover = None;
-                                        }
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .with_priority(1)
-                    .into_any_element(),
-                );
-
-                token_idx += 1;
+                found = Some(EnvVarHoverInfo {
+                    var_name,
+                    resolved_value: resolved,
+                    token_bounds: bounds,
+                });
+                break;
             }
         }
+
+        if self.env_var_hover.as_ref().map(|h| &h.token_bounds)
+            != found.as_ref().map(|h| &h.token_bounds)
+        {
+            self.env_var_hover = found;
+            cx.notify();
+        }
+    }
+
+    fn clear_env_var_hover(&mut self, cx: &mut Context<Self>) {
+        if self.env_var_hover.is_some() {
+            self.env_var_hover = None;
+            cx.notify();
+        }
+    }
+
+    fn render_env_var_hover_overlay(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut elements: Vec<AnyElement> = Vec::new();
 
         if let Some(hover_info) = &self.env_var_hover {
             let popup_x = hover_info.token_bounds.origin.x;
@@ -7065,40 +7054,76 @@ impl BeamView {
                                     )),
                                 ),
                             )
-                            .child(
-                                div().flex_1().child(
-                                    Input::new(&key_input)
-                                        .small()
-                                        .w_full()
-                                        .appearance(false)
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    key_has_selection,
-                                                    cx.theme().muted_foreground,
-                                                )
-                                            }
-                                        }),
-                                ),
-                            )
-                            .child(
-                                div().flex_1().child(
-                                    Input::new(&value_input)
-                                        .small()
-                                        .w_full()
-                                        .appearance(false)
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    value_has_selection,
-                                                    cx.theme().muted_foreground,
-                                                )
-                                            }
-                                        }),
-                                ),
-                            )
+                            .child({
+                                let key_entity = key_input.clone();
+                                div()
+                                    .id(("env-hover-param-key", index as u64))
+                                    .flex_1()
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &key_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
+                                        }
+                                    }))
+                                    .child(
+                                        Input::new(&key_input)
+                                            .small()
+                                            .w_full()
+                                            .appearance(false)
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        key_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            })
+                            .child({
+                                let value_entity = value_input.clone();
+                                div()
+                                    .id(("env-hover-param-value", index as u64))
+                                    .flex_1()
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &value_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
+                                        }
+                                    }))
+                                    .child(
+                                        Input::new(&value_input)
+                                            .small()
+                                            .w_full()
+                                            .appearance(false)
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        value_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            })
                             .child(
                                 div().w(px(28.0)).child(
                                     Button::new(format!("delete-request-param-{index}"))
@@ -7158,39 +7183,76 @@ impl BeamView {
                                     )),
                                 ),
                             )
-                            .child(
-                                div().flex_1().child(
-                                    Input::new(&key_input)
-                                        .small()
-                                        .w_full()
-                                        .appearance(false)
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    key_has_selection,
-                                                    cx.theme().muted_foreground,
-                                                )
-                                            }
-                                        }),
-                                ),
-                            )
-                            .child(
-                                div().flex_1().child(
-                                    Input::new(&value_input)
-                                        .small()
-                                        .w_full()
-                                        .appearance(false)
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    value_has_selection,
-                                                    cx.theme().muted_foreground,
-                                                )
-                                            }
-                                        }),
-                                ),
+                            .child({
+                                let key_entity = key_input.clone();
+                                div()
+                                    .id(("env-hover-header-key", index as u64))
+                                    .flex_1()
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &key_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
+                                        }
+                                    }))
+                                    .child(
+                                        Input::new(&key_input)
+                                            .small()
+                                            .w_full()
+                                            .appearance(false)
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        key_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            })
+                            .child({
+                                let value_entity = value_input.clone();
+                                div()
+                                    .id(("env-hover-header-value", index as u64))
+                                    .flex_1()
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &value_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
+                                        }
+                                    }))
+                                    .child(
+                                        Input::new(&value_input)
+                                            .small()
+                                            .w_full()
+                                            .appearance(false)
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        value_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            },
                             )
                             .child(
                                 div().w(px(28.0)).child(
@@ -7342,74 +7404,150 @@ impl BeamView {
                                 .text_color(cx.theme().muted_foreground)
                                 .child("No auth header will be added.")
                                 .into_any_element(),
-                            AuthConfig::Bearer { .. } => v_flex()
-                                .w_full()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Token"),
-                                )
-                                .child(
-                                    Input::new(&self.request_auth_bearer_token_input)
-                                        .small()
-                                        .w_full()
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    bearer_has_selection,
-                                                    cx.theme().muted_foreground,
+                            AuthConfig::Bearer { .. } => {
+                                let bearer_entity =
+                                    self.request_auth_bearer_token_input.clone();
+                                v_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Token"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("env-hover-auth-bearer")
+                                            .on_mouse_move(cx.listener(
+                                                move |this, event: &MouseMoveEvent, _, cx| {
+                                                    this.update_env_var_hover_for_input(
+                                                        &bearer_entity,
+                                                        event.position,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
+                                            .on_hover(cx.listener(
+                                                |this, hovered: &bool, _, cx| {
+                                                    if !hovered {
+                                                        this.clear_env_var_hover(cx);
+                                                    }
+                                                },
+                                            ))
+                                            .child(
+                                                Input::new(
+                                                    &self.request_auth_bearer_token_input,
                                                 )
-                                            }
-                                        }),
-                                )
-                                .into_any_element(),
-                            AuthConfig::Basic { .. } => v_flex()
-                                .w_full()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Username"),
-                                )
-                                .child(
-                                    Input::new(&self.request_auth_basic_username_input)
-                                        .small()
-                                        .w_full()
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    basic_username_has_selection,
-                                                    cx.theme().muted_foreground,
+                                                .small()
+                                                .w_full()
+                                                .context_menu({
+                                                    move |menu, _, cx| {
+                                                        Self::build_text_edit_context_menu(
+                                                            menu,
+                                                            bearer_has_selection,
+                                                            cx.theme().muted_foreground,
+                                                        )
+                                                    }
+                                                }),
+                                            ),
+                                    )
+                                    .into_any_element()
+                            }
+                            AuthConfig::Basic { .. } => {
+                                let username_entity =
+                                    self.request_auth_basic_username_input.clone();
+                                let password_entity =
+                                    self.request_auth_basic_password_input.clone();
+                                v_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Username"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("env-hover-auth-basic-username")
+                                            .on_mouse_move(cx.listener(
+                                                move |this, event: &MouseMoveEvent, _, cx| {
+                                                    this.update_env_var_hover_for_input(
+                                                        &username_entity,
+                                                        event.position,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
+                                            .on_hover(cx.listener(
+                                                |this, hovered: &bool, _, cx| {
+                                                    if !hovered {
+                                                        this.clear_env_var_hover(cx);
+                                                    }
+                                                },
+                                            ))
+                                            .child(
+                                                Input::new(
+                                                    &self.request_auth_basic_username_input,
                                                 )
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Password"),
-                                )
-                                .child(
-                                    Input::new(&self.request_auth_basic_password_input)
-                                        .small()
-                                        .w_full()
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                Self::build_text_edit_context_menu(
-                                                    menu,
-                                                    basic_password_has_selection,
-                                                    cx.theme().muted_foreground,
+                                                .small()
+                                                .w_full()
+                                                .context_menu({
+                                                    move |menu, _, cx| {
+                                                        Self::build_text_edit_context_menu(
+                                                            menu,
+                                                            basic_username_has_selection,
+                                                            cx.theme().muted_foreground,
+                                                        )
+                                                    }
+                                                }),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Password"),
+                                    )
+                                    .child(
+                                        div()
+                                            .id("env-hover-auth-basic-password")
+                                            .on_mouse_move(cx.listener(
+                                                move |this, event: &MouseMoveEvent, _, cx| {
+                                                    this.update_env_var_hover_for_input(
+                                                        &password_entity,
+                                                        event.position,
+                                                        cx,
+                                                    );
+                                                },
+                                            ))
+                                            .on_hover(cx.listener(
+                                                |this, hovered: &bool, _, cx| {
+                                                    if !hovered {
+                                                        this.clear_env_var_hover(cx);
+                                                    }
+                                                },
+                                            ))
+                                            .child(
+                                                Input::new(
+                                                    &self.request_auth_basic_password_input,
                                                 )
-                                            }
-                                        }),
-                                )
-                                .into_any_element(),
+                                                .small()
+                                                .w_full()
+                                                .context_menu({
+                                                    move |menu, _, cx| {
+                                                        Self::build_text_edit_context_menu(
+                                                            menu,
+                                                            basic_password_has_selection,
+                                                            cx.theme().muted_foreground,
+                                                        )
+                                                    }
+                                                }),
+                                            ),
+                                    )
+                                    .into_any_element()
+                            }
                             AuthConfig::ApiKey { location, .. } => {
                                 let using_header =
                                     matches!(location, crate::models::ApiKeyLocation::Header);
@@ -7473,40 +7611,80 @@ impl BeamView {
                                     .text_color(cx.theme().muted_foreground)
                                     .child("Key Value"),
                             )
-                            .child(
-                                Input::new(&self.request_auth_api_key_value_input)
-                                    .small()
-                                    .w_full()
-                                    .context_menu({
-                                        move |menu, _, cx| {
-                                            Self::build_text_edit_context_menu(
-                                                menu,
-                                                api_key_value_has_selection,
-                                                cx.theme().muted_foreground,
-                                            )
+                            .child({
+                                let api_key_value_entity =
+                                    self.request_auth_api_key_value_input.clone();
+                                div()
+                                    .id("env-hover-auth-apikey-value")
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &api_key_value_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
                                         }
-                                    }),
-                            )
+                                    }))
+                                    .child(
+                                        Input::new(&self.request_auth_api_key_value_input)
+                                            .small()
+                                            .w_full()
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        api_key_value_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            })
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
                                     .child("Header / Query Name"),
                             )
-                            .child(
-                                Input::new(&self.request_auth_api_key_name_input)
-                                    .small()
-                                    .w_full()
-                                    .context_menu({
-                                        move |menu, _, cx| {
-                                            Self::build_text_edit_context_menu(
-                                                menu,
-                                                api_key_name_has_selection,
-                                                cx.theme().muted_foreground,
-                                            )
+                            .child({
+                                let api_key_name_entity =
+                                    self.request_auth_api_key_name_input.clone();
+                                div()
+                                    .id("env-hover-auth-apikey-name")
+                                    .on_mouse_move(cx.listener(
+                                        move |this, event: &MouseMoveEvent, _, cx| {
+                                            this.update_env_var_hover_for_input(
+                                                &api_key_name_entity,
+                                                event.position,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                        if !hovered {
+                                            this.clear_env_var_hover(cx);
                                         }
-                                    }),
-                            )
+                                    }))
+                                    .child(
+                                        Input::new(&self.request_auth_api_key_name_input)
+                                            .small()
+                                            .w_full()
+                                            .context_menu({
+                                                move |menu, _, cx| {
+                                                    Self::build_text_edit_context_menu(
+                                                        menu,
+                                                        api_key_name_has_selection,
+                                                        cx.theme().muted_foreground,
+                                                    )
+                                                }
+                                            }),
+                                    )
+                            })
                             .into_any_element()
                             }
                         }
