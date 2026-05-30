@@ -6971,49 +6971,72 @@ impl BeamView {
                     .read(cx)
                     .selected_range()
                     .is_empty();
-                Input::new(&self.request_body_editor)
-                    .h_full()
-                    .p_0()
-                    .border_0()
-                    .focus_bordered(false)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(cx.theme().mono_font_size)
-                    .context_menu({
-                        let view = cx.entity();
-                        move |menu, window, cx| {
-                            let muted_foreground = cx.theme().muted_foreground;
-                            let menu = menu.min_w(px(180.0)).item(
-                                PopupMenuItem::element(move |_, _| {
-                                    h_flex()
-                                        .w_full()
-                                        .cursor_pointer()
-                                        .items_center()
-                                        .gap_2()
-                                        .px_2()
-                                        .py_1()
-                                        .child(
-                                            Icon::default()
-                                                .path("icons/indent.svg")
-                                                .size(px(14.0))
-                                                .text_color(muted_foreground),
+                {
+                    let request_body_editor = self.request_body_editor.clone();
+                    div()
+                        .id("env-hover-request-body")
+                        .h_full()
+                        .w_full()
+                        .on_mouse_move(cx.listener(
+                            move |this, event: &MouseMoveEvent, _, cx| {
+                                this.update_env_var_hover_for_input(
+                                    &request_body_editor,
+                                    event.position,
+                                    cx,
+                                );
+                            },
+                        ))
+                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                            if !hovered {
+                                this.clear_env_var_hover(cx);
+                            }
+                        }))
+                        .child(
+                            Input::new(&self.request_body_editor)
+                                .h_full()
+                                .p_0()
+                                .border_0()
+                                .focus_bordered(false)
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_size(cx.theme().mono_font_size)
+                                .context_menu({
+                                    let view = cx.entity();
+                                    move |menu, window, cx| {
+                                        let muted_foreground = cx.theme().muted_foreground;
+                                        let menu = menu.min_w(px(180.0)).item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                h_flex()
+                                                    .w_full()
+                                                    .cursor_pointer()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .child(
+                                                        Icon::default()
+                                                            .path("icons/indent.svg")
+                                                            .size(px(14.0))
+                                                            .text_color(muted_foreground),
+                                                    )
+                                                    .child("Format")
+                                            })
+                                            .on_click(window.listener_for(
+                                                &view,
+                                                |this, _, window, cx| {
+                                                    this.format_request_body(window, cx);
+                                                },
+                                            )),
+                                        );
+                                        Self::build_text_edit_context_menu_with_find(
+                                            menu,
+                                            request_body_has_selection,
+                                            muted_foreground,
                                         )
-                                        .child("Format")
-                                })
-                                .on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.format_request_body(window, cx);
-                                    },
-                                )),
-                            );
-                            Self::build_text_edit_context_menu_with_find(
-                                menu,
-                                request_body_has_selection,
-                                muted_foreground,
-                            )
-                        }
-                    })
-                    .into_any_element()
+                                    }
+                                }),
+                        )
+                        .into_any_element()
+                }
             }
             RequestTab::PostScript => self.render_post_script_editor_and_results(window, cx),
             RequestTab::Params => {
