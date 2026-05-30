@@ -22,8 +22,8 @@ rquickjs = { version = "0.9", features = ["chrono"] }
 log = "0.4"
 
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/hlcfan/gpui-component", branch = "fix-scroll-direction-on-wrap" }
-gpui-component-assets = { git = "https://github.com/hlcfan/gpui-component", branch = "fix-scroll-direction-on-wrap" }
+gpui-component = { git = "https://github.com/hlcfan/gpui-component", rev = "09b987d697cad726e8a054b918b293a43b847701" }
+gpui-component-assets = { git = "https://github.com/hlcfan/gpui-component", rev = "09b987d697cad726e8a054b918b293a43b847701" }
 
 [dev-dependencies]
 tempfile = "3.20"
