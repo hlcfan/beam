@@ -1942,7 +1942,7 @@ impl Render for WorkspaceDeleteDialogView {
                     .child(
                         Button::new("delete-workspace-cancel")
                             .small()
-                            .ghost()
+
                             .cursor_pointer()
                             .label("Cancel")
                             .on_click(move |_, window, cx| {
@@ -1952,8 +1952,7 @@ impl Render for WorkspaceDeleteDialogView {
                     .child(
                         Button::new("delete-workspace-submit")
                             .small()
-                            .bg(cx.theme().danger)
-                            .text_color(cx.theme().danger_foreground)
+                            .danger()
                             .cursor_pointer()
                             .label("Delete")
                             .on_click(cx.listener(|this, _, window, cx| {
