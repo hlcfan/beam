@@ -110,13 +110,6 @@ pub struct CreateWorkspaceInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeleteWorkspaceInput {
-    pub workspace_id: ulid::Ulid,
-    /// Whether to also delete the workspace directory from disk.
-    pub delete_data: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenameWorkspaceInput {
     pub workspace_id: ulid::Ulid,
     pub new_name: String,

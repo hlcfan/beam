@@ -1867,6 +1867,103 @@ impl Render for WorkspaceNameDialogView {
     }
 }
 
+struct WorkspaceDeleteDialogView {
+    target_view: Entity<BeamView>,
+    workspace_id: Ulid,
+    workspace_name: String,
+    fallback_workspace_name: String,
+}
+
+impl WorkspaceDeleteDialogView {
+    fn new(
+        target_view: Entity<BeamView>,
+        workspace_id: Ulid,
+        workspace_name: String,
+        fallback_workspace_name: String,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            target_view,
+            workspace_id,
+            workspace_name,
+            fallback_workspace_name,
+        }
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace_id = self.workspace_id;
+        let _ = self.target_view.update(cx, |this, cx| {
+            if let Err(error) = this.publish_app_command(AppCommand::DeleteWorkspace {
+                workspace_id,
+                command_id: next_command_id(),
+            }) {
+                window.push_notification(error, cx);
+                return;
+            }
+            window.close_dialog(cx);
+        });
+    }
+}
+
+impl Render for WorkspaceDeleteDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace_name = self.workspace_name.clone();
+        let fallback_workspace_name = self.fallback_workspace_name.clone();
+
+        v_flex()
+            .w(px(460.0))
+            .p_3()
+            .gap_3()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(format!(
+                                "Delete workspace \"{workspace_name}\"? You will switch to \"{fallback_workspace_name}\"."
+                            )),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                "This deletes the workspace files from disk after switching to the next workspace.",
+                            ),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("delete-workspace-cancel")
+                            .small()
+                            .ghost()
+                            .cursor_pointer()
+                            .label("Cancel")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("delete-workspace-submit")
+                            .small()
+                            .bg(cx.theme().danger)
+                            .text_color(cx.theme().danger_foreground)
+                            .cursor_pointer()
+                            .label("Delete")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit(window, cx);
+                            })),
+                    ),
+            )
+    }
+}
+
 impl BeamView {
     fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
         let run_id = self.next_request_run_id;
@@ -2244,6 +2341,11 @@ impl BeamView {
     fn sync_request_editor_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.refresh_active_request_cache();
         self.show_invalid_url_border = false;
+        let active_tab = self.request.active_tab;
+        self.request = RequestAuthoringState {
+            active_tab,
+            ..RequestAuthoringState::default()
+        };
         Self::hydrate_request_from_selection(&mut self.request, &self.shell);
         self.request.ensure_trailing_empty_row();
         self.rebuild_request_param_inputs(window, cx);
@@ -3861,6 +3963,30 @@ impl BeamView {
         .detach();
     }
 
+    fn apply_active_workspace_ui_state(
+        &mut self,
+        workspace_id: Option<Ulid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.invalidate_env_var_resolved_cache();
+        let data_root = DataRootPaths::default_user_config();
+        if let Some(workspace_id) = workspace_id
+            && let Some(entry) = self
+                .shell
+                .workspace
+                .all_workspaces
+                .iter()
+                .find(|entry| entry.workspace_id == workspace_id)
+        {
+            self.current_workspace_paths = data_root.workspace_paths(&entry.path);
+        }
+        self.active_request_cache = None;
+        self.request_file_index = Self::build_request_file_index(&self.shell);
+        self.prune_request_execution_states();
+        self.sync_request_editor_from_selection(window, cx);
+    }
+
     fn process_app_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut did_apply_any = false;
         let mut should_sync_editor = false;
@@ -4006,23 +4132,38 @@ impl BeamView {
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
                     self.shell.apply_event(&event);
-                    self.invalidate_env_var_resolved_cache();
-                    // Derive new workspace paths from the switched workspace.
-                    let data_root = DataRootPaths::default_user_config();
-                    if let Some(entry) = self
-                        .shell
-                        .workspace
-                        .all_workspaces
-                        .iter()
-                        .find(|e| e.workspace_id == *workspace_id)
-                    {
-                        self.current_workspace_paths = data_root.workspace_paths(&entry.path);
+                    self.apply_active_workspace_ui_state(Some(*workspace_id), window, cx);
+                }
+                AppEvent::WorkspaceDeleted {
+                    workspace_id,
+                    new_active_workspace_id,
+                    workspace_name,
+                    new_active_workspace_name,
+                    ..
+                } => {
+                    let deleted_active = self.shell.workspace.workspace_id == Some(*workspace_id);
+                    self.shell.apply_event(&event);
+                    if deleted_active {
+                        self.apply_active_workspace_ui_state(*new_active_workspace_id, window, cx);
+                        if !new_active_workspace_name.is_empty() {
+                            window.push_notification(
+                                format!(
+                                    "Workspace \"{workspace_name}\" deleted. Switched to \"{new_active_workspace_name}\"."
+                                ),
+                                cx,
+                            );
+                        } else {
+                            window.push_notification(
+                                format!("Workspace \"{workspace_name}\" deleted."),
+                                cx,
+                            );
+                        }
+                    } else {
+                        window.push_notification(
+                            format!("Workspace \"{workspace_name}\" deleted."),
+                            cx,
+                        );
                     }
-                    // Reset UI state for the new workspace.
-                    self.active_request_cache = None;
-                    self.request_file_index = Self::build_request_file_index(&self.shell);
-                    self.prune_request_execution_states();
-                    self.sync_request_editor_from_selection(window, cx);
                 }
                 _ => self.shell.apply_event(&event),
             }
@@ -6191,23 +6332,12 @@ impl BeamView {
                     let view_del = view_for_delete.clone();
                     menu = menu.item(
                         PopupMenuItem::element(move |_, _| {
-                            div()
-                                .w_full()
-                                .cursor_pointer()
-                                .child("Delete Current Workspace")
+                            div().w_full().cursor_pointer().child("Delete Workspace...")
                         })
                         .on_click(window.listener_for(
                             &view_del,
-                            |this, _, _, _cx| {
-                                if let Some(workspace_id) = this.shell.workspace.workspace_id {
-                                    this.app_command_tx
-                                        .send(AppCommand::DeleteWorkspace {
-                                            workspace_id,
-                                            delete_data: false,
-                                            command_id: next_command_id(),
-                                        })
-                                        .ok();
-                                }
+                            |this, _, _, cx| {
+                                this.show_delete_workspace_dialog(cx);
                             },
                         )),
                     );
@@ -6238,6 +6368,67 @@ impl BeamView {
     fn show_rename_workspace_dialog(&mut self, cx: &mut Context<Self>) {
         let current_name = self.shell.workspace.workspace_name.clone();
         self.open_workspace_name_dialog(WorkspaceDialogMode::Rename, current_name, cx);
+    }
+
+    fn fallback_workspace_after_delete(&self) -> Option<(Ulid, String)> {
+        let current_workspace_id = self.shell.workspace.workspace_id?;
+        let workspaces = &self.shell.workspace.all_workspaces;
+        let current_index = workspaces
+            .iter()
+            .position(|entry| entry.workspace_id == current_workspace_id)?;
+
+        workspaces
+            .get(current_index + 1)
+            .or_else(|| {
+                current_index
+                    .checked_sub(1)
+                    .and_then(|index| workspaces.get(index))
+            })
+            .map(|entry| (entry.workspace_id, entry.name.clone()))
+    }
+
+    fn show_delete_workspace_dialog(&mut self, cx: &mut Context<Self>) {
+        let Some(workspace_id) = self.shell.workspace.workspace_id else {
+            return;
+        };
+        let Some((_, fallback_workspace_name)) = self.fallback_workspace_after_delete() else {
+            return;
+        };
+        let workspace_name = self.shell.workspace.workspace_name.clone();
+        let view = cx.entity();
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    let dialog_view = cx.new(|cx| {
+                        WorkspaceDeleteDialogView::new(
+                            view.clone(),
+                            workspace_id,
+                            workspace_name.clone(),
+                            fallback_workspace_name.clone(),
+                            window,
+                            cx,
+                        )
+                    });
+                    window.defer(cx, move |window, cx| {
+                        let submit_dv = dialog_view.clone();
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            let ok_dv = submit_dv.clone();
+                            dialog
+                                .title("Delete Workspace")
+                                .w(px(500.0))
+                                .child(dialog_view.clone())
+                                .on_ok(move |_, window, cx| {
+                                    let _ = ok_dv.update(cx, |this, cx| {
+                                        this.submit(window, cx);
+                                    });
+                                    false
+                                })
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
     }
 
     fn open_workspace_name_dialog(
@@ -6977,15 +7168,13 @@ impl BeamView {
                         .id("env-hover-request-body")
                         .h_full()
                         .w_full()
-                        .on_mouse_move(cx.listener(
-                            move |this, event: &MouseMoveEvent, _, cx| {
-                                this.update_env_var_hover_for_input(
-                                    &request_body_editor,
-                                    event.position,
-                                    cx,
-                                );
-                            },
-                        ))
+                        .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                            this.update_env_var_hover_for_input(
+                                &request_body_editor,
+                                event.position,
+                                cx,
+                            );
+                        }))
                         .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
                             if !hovered {
                                 this.clear_env_var_hover(cx);
@@ -7275,8 +7464,7 @@ impl BeamView {
                                                 }
                                             }),
                                     )
-                            },
-                            )
+                            })
                             .child(
                                 div().w(px(28.0)).child(
                                     Button::new(format!("delete-request-header-{index}"))
@@ -7299,169 +7487,160 @@ impl BeamView {
 
                 table.into_any_element()
             }
-            RequestTab::Auth => {
-                div()
-                    .h_full()
-                    .w_full()
-                    .gap_3()
-                    .child({
-                        let bearer_input = self.request_auth_bearer_token_input.clone();
-                        let basic_username_input = self.request_auth_basic_username_input.clone();
-                        let basic_password_input = self.request_auth_basic_password_input.clone();
-                        let api_key_name_input = self.request_auth_api_key_name_input.clone();
-                        let api_key_value_input = self.request_auth_api_key_value_input.clone();
-                        let is_none = matches!(self.request.auth, AuthConfig::None);
-                        let is_bearer = matches!(self.request.auth, AuthConfig::Bearer { .. });
-                        let is_basic = matches!(self.request.auth, AuthConfig::Basic { .. });
-                        let is_api_key = matches!(self.request.auth, AuthConfig::ApiKey { .. });
+            RequestTab::Auth => div()
+                .h_full()
+                .w_full()
+                .gap_3()
+                .child({
+                    let bearer_input = self.request_auth_bearer_token_input.clone();
+                    let basic_username_input = self.request_auth_basic_username_input.clone();
+                    let basic_password_input = self.request_auth_basic_password_input.clone();
+                    let api_key_name_input = self.request_auth_api_key_name_input.clone();
+                    let api_key_value_input = self.request_auth_api_key_value_input.clone();
+                    let is_none = matches!(self.request.auth, AuthConfig::None);
+                    let is_bearer = matches!(self.request.auth, AuthConfig::Bearer { .. });
+                    let is_basic = matches!(self.request.auth, AuthConfig::Basic { .. });
+                    let is_api_key = matches!(self.request.auth, AuthConfig::ApiKey { .. });
 
-                        h_flex()
-                            .items_center()
-                            .gap_1()
-                            .w_full()
-                            .child(
-                                Button::new("auth-mode-none")
-                                    .small()
-                                    .ghost()
-                                    .cursor_pointer()
-                                    .selected(is_none)
-                                    .label("None")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.request.auth = AuthConfig::None;
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("auth-mode-bearer")
-                                    .small()
-                                    .ghost()
-                                    .cursor_pointer()
-                                    .selected(is_bearer)
-                                    .label("Bearer Token")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let token = bearer_input.read(cx).value().to_string();
-                                        this.request.auth = AuthConfig::Bearer {
-                                            token: (!token.trim().is_empty()).then_some(token),
-                                        };
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("auth-mode-basic")
-                                    .small()
-                                    .ghost()
-                                    .cursor_pointer()
-                                    .selected(is_basic)
-                                    .label("Basic Auth")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let username =
-                                            basic_username_input.read(cx).value().to_string();
-                                        let password =
-                                            basic_password_input.read(cx).value().to_string();
-                                        this.request.auth = AuthConfig::Basic {
-                                            username: (!username.trim().is_empty())
-                                                .then_some(username),
-                                            password: (!password.trim().is_empty())
-                                                .then_some(password),
-                                        };
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(
-                                Button::new("auth-mode-apikey")
-                                    .small()
-                                    .ghost()
-                                    .cursor_pointer()
-                                    .selected(is_api_key)
-                                    .label("API Key")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        let key = api_key_name_input.read(cx).value().to_string();
-                                        let value =
-                                            api_key_value_input.read(cx).value().to_string();
-                                        this.request.auth = AuthConfig::ApiKey {
-                                            key: if key.trim().is_empty() {
-                                                Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
-                                            } else {
-                                                Some(key)
+                    h_flex()
+                        .items_center()
+                        .gap_1()
+                        .w_full()
+                        .child(
+                            Button::new("auth-mode-none")
+                                .small()
+                                .ghost()
+                                .cursor_pointer()
+                                .selected(is_none)
+                                .label("None")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.request.auth = AuthConfig::None;
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("auth-mode-bearer")
+                                .small()
+                                .ghost()
+                                .cursor_pointer()
+                                .selected(is_bearer)
+                                .label("Bearer Token")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let token = bearer_input.read(cx).value().to_string();
+                                    this.request.auth = AuthConfig::Bearer {
+                                        token: (!token.trim().is_empty()).then_some(token),
+                                    };
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("auth-mode-basic")
+                                .small()
+                                .ghost()
+                                .cursor_pointer()
+                                .selected(is_basic)
+                                .label("Basic Auth")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let username =
+                                        basic_username_input.read(cx).value().to_string();
+                                    let password =
+                                        basic_password_input.read(cx).value().to_string();
+                                    this.request.auth = AuthConfig::Basic {
+                                        username: (!username.trim().is_empty()).then_some(username),
+                                        password: (!password.trim().is_empty()).then_some(password),
+                                    };
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new("auth-mode-apikey")
+                                .small()
+                                .ghost()
+                                .cursor_pointer()
+                                .selected(is_api_key)
+                                .label("API Key")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    let key = api_key_name_input.read(cx).value().to_string();
+                                    let value = api_key_value_input.read(cx).value().to_string();
+                                    this.request.auth = AuthConfig::ApiKey {
+                                        key: if key.trim().is_empty() {
+                                            Some(DEFAULT_API_KEY_HEADER_NAME.to_string())
+                                        } else {
+                                            Some(key)
+                                        },
+                                        value: (!value.trim().is_empty()).then_some(value),
+                                        location: crate::models::ApiKeyLocation::Header,
+                                    };
+                                    this.schedule_request_save(cx);
+                                    cx.notify();
+                                })),
+                        )
+                })
+                .child({
+                    let bearer_has_selection = !self
+                        .request_auth_bearer_token_input
+                        .read(cx)
+                        .selected_range()
+                        .is_empty();
+                    let basic_username_has_selection = !self
+                        .request_auth_basic_username_input
+                        .read(cx)
+                        .selected_range()
+                        .is_empty();
+                    let basic_password_has_selection = !self
+                        .request_auth_basic_password_input
+                        .read(cx)
+                        .selected_range()
+                        .is_empty();
+                    let api_key_value_has_selection = !self
+                        .request_auth_api_key_value_input
+                        .read(cx)
+                        .selected_range()
+                        .is_empty();
+                    let api_key_name_has_selection = !self
+                        .request_auth_api_key_name_input
+                        .read(cx)
+                        .selected_range()
+                        .is_empty();
+                    match &self.request.auth {
+                        AuthConfig::None => div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("No auth header will be added.")
+                            .into_any_element(),
+                        AuthConfig::Bearer { .. } => {
+                            let bearer_entity = self.request_auth_bearer_token_input.clone();
+                            v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Token"),
+                                )
+                                .child(
+                                    div()
+                                        .id("env-hover-auth-bearer")
+                                        .on_mouse_move(cx.listener(
+                                            move |this, event: &MouseMoveEvent, _, cx| {
+                                                this.update_env_var_hover_for_input(
+                                                    &bearer_entity,
+                                                    event.position,
+                                                    cx,
+                                                );
                                             },
-                                            value: (!value.trim().is_empty()).then_some(value),
-                                            location: crate::models::ApiKeyLocation::Header,
-                                        };
-                                        this.schedule_request_save(cx);
-                                        cx.notify();
-                                    })),
-                            )
-                    })
-                    .child({
-                        let bearer_has_selection = !self
-                            .request_auth_bearer_token_input
-                            .read(cx)
-                            .selected_range()
-                            .is_empty();
-                        let basic_username_has_selection = !self
-                            .request_auth_basic_username_input
-                            .read(cx)
-                            .selected_range()
-                            .is_empty();
-                        let basic_password_has_selection = !self
-                            .request_auth_basic_password_input
-                            .read(cx)
-                            .selected_range()
-                            .is_empty();
-                        let api_key_value_has_selection = !self
-                            .request_auth_api_key_value_input
-                            .read(cx)
-                            .selected_range()
-                            .is_empty();
-                        let api_key_name_has_selection = !self
-                            .request_auth_api_key_name_input
-                            .read(cx)
-                            .selected_range()
-                            .is_empty();
-                        match &self.request.auth {
-                            AuthConfig::None => div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("No auth header will be added.")
-                                .into_any_element(),
-                            AuthConfig::Bearer { .. } => {
-                                let bearer_entity =
-                                    self.request_auth_bearer_token_input.clone();
-                                v_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("Token"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("env-hover-auth-bearer")
-                                            .on_mouse_move(cx.listener(
-                                                move |this, event: &MouseMoveEvent, _, cx| {
-                                                    this.update_env_var_hover_for_input(
-                                                        &bearer_entity,
-                                                        event.position,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .on_hover(cx.listener(
-                                                |this, hovered: &bool, _, cx| {
-                                                    if !hovered {
-                                                        this.clear_env_var_hover(cx);
-                                                    }
-                                                },
-                                            ))
-                                            .child(
-                                                Input::new(
-                                                    &self.request_auth_bearer_token_input,
-                                                )
+                                        ))
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            if !hovered {
+                                                this.clear_env_var_hover(cx);
+                                            }
+                                        }))
+                                        .child(
+                                            Input::new(&self.request_auth_bearer_token_input)
                                                 .small()
                                                 .w_full()
                                                 .context_menu({
@@ -7473,47 +7652,41 @@ impl BeamView {
                                                         )
                                                     }
                                                 }),
-                                            ),
-                                    )
-                                    .into_any_element()
-                            }
-                            AuthConfig::Basic { .. } => {
-                                let username_entity =
-                                    self.request_auth_basic_username_input.clone();
-                                let password_entity =
-                                    self.request_auth_basic_password_input.clone();
-                                v_flex()
-                                    .w_full()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("Username"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("env-hover-auth-basic-username")
-                                            .on_mouse_move(cx.listener(
-                                                move |this, event: &MouseMoveEvent, _, cx| {
-                                                    this.update_env_var_hover_for_input(
-                                                        &username_entity,
-                                                        event.position,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .on_hover(cx.listener(
-                                                |this, hovered: &bool, _, cx| {
-                                                    if !hovered {
-                                                        this.clear_env_var_hover(cx);
-                                                    }
-                                                },
-                                            ))
-                                            .child(
-                                                Input::new(
-                                                    &self.request_auth_basic_username_input,
-                                                )
+                                        ),
+                                )
+                                .into_any_element()
+                        }
+                        AuthConfig::Basic { .. } => {
+                            let username_entity = self.request_auth_basic_username_input.clone();
+                            let password_entity = self.request_auth_basic_password_input.clone();
+                            v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Username"),
+                                )
+                                .child(
+                                    div()
+                                        .id("env-hover-auth-basic-username")
+                                        .on_mouse_move(cx.listener(
+                                            move |this, event: &MouseMoveEvent, _, cx| {
+                                                this.update_env_var_hover_for_input(
+                                                    &username_entity,
+                                                    event.position,
+                                                    cx,
+                                                );
+                                            },
+                                        ))
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            if !hovered {
+                                                this.clear_env_var_hover(cx);
+                                            }
+                                        }))
+                                        .child(
+                                            Input::new(&self.request_auth_basic_username_input)
                                                 .small()
                                                 .w_full()
                                                 .context_menu({
@@ -7525,37 +7698,33 @@ impl BeamView {
                                                         )
                                                     }
                                                 }),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("Password"),
-                                    )
-                                    .child(
-                                        div()
-                                            .id("env-hover-auth-basic-password")
-                                            .on_mouse_move(cx.listener(
-                                                move |this, event: &MouseMoveEvent, _, cx| {
-                                                    this.update_env_var_hover_for_input(
-                                                        &password_entity,
-                                                        event.position,
-                                                        cx,
-                                                    );
-                                                },
-                                            ))
-                                            .on_hover(cx.listener(
-                                                |this, hovered: &bool, _, cx| {
-                                                    if !hovered {
-                                                        this.clear_env_var_hover(cx);
-                                                    }
-                                                },
-                                            ))
-                                            .child(
-                                                Input::new(
-                                                    &self.request_auth_basic_password_input,
-                                                )
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Password"),
+                                )
+                                .child(
+                                    div()
+                                        .id("env-hover-auth-basic-password")
+                                        .on_mouse_move(cx.listener(
+                                            move |this, event: &MouseMoveEvent, _, cx| {
+                                                this.update_env_var_hover_for_input(
+                                                    &password_entity,
+                                                    event.position,
+                                                    cx,
+                                                );
+                                            },
+                                        ))
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            if !hovered {
+                                                this.clear_env_var_hover(cx);
+                                            }
+                                        }))
+                                        .child(
+                                            Input::new(&self.request_auth_basic_password_input)
                                                 .small()
                                                 .w_full()
                                                 .context_menu({
@@ -7567,153 +7736,158 @@ impl BeamView {
                                                         )
                                                     }
                                                 }),
-                                            ),
-                                    )
-                                    .into_any_element()
-                            }
-                            AuthConfig::ApiKey { location, .. } => {
-                                let using_header =
-                                    matches!(location, crate::models::ApiKeyLocation::Header);
-                                let using_query =
-                                    matches!(location, crate::models::ApiKeyLocation::Query);
-                                v_flex()
-                            .w_full()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("auth-apikey-location-header")
-                                            .small()
-                                            .ghost()
-                                            .cursor_pointer()
-                                            .selected(using_header)
-                                            .label("Header")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if let AuthConfig::ApiKey { key, value, .. } =
-                                                    &this.request.auth
-                                                {
-                                                    this.request.auth = AuthConfig::ApiKey {
+                                        ),
+                                )
+                                .into_any_element()
+                        }
+                        AuthConfig::ApiKey { location, .. } => {
+                            let using_header =
+                                matches!(location, crate::models::ApiKeyLocation::Header);
+                            let using_query =
+                                matches!(location, crate::models::ApiKeyLocation::Query);
+                            v_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1()
+                                        .child(
+                                            Button::new("auth-apikey-location-header")
+                                                .small()
+                                                .ghost()
+                                                .cursor_pointer()
+                                                .selected(using_header)
+                                                .label("Header")
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    if let AuthConfig::ApiKey {
+                                                        key, value, ..
+                                                    } = &this.request.auth
+                                                    {
+                                                        this.request.auth = AuthConfig::ApiKey {
                                                         key: key.clone(),
                                                         value: value.clone(),
                                                         location:
                                                             crate::models::ApiKeyLocation::Header,
                                                     };
-                                                    this.schedule_request_save(cx);
-                                                    cx.notify();
-                                                }
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("auth-apikey-location-query")
-                                            .small()
-                                            .ghost()
-                                            .cursor_pointer()
-                                            .selected(using_query)
-                                            .label("Query")
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if let AuthConfig::ApiKey { key, value, .. } =
-                                                    &this.request.auth
-                                                {
-                                                    this.request.auth = AuthConfig::ApiKey {
+                                                        this.schedule_request_save(cx);
+                                                        cx.notify();
+                                                    }
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("auth-apikey-location-query")
+                                                .small()
+                                                .ghost()
+                                                .cursor_pointer()
+                                                .selected(using_query)
+                                                .label("Query")
+                                                .on_click(
+                                                    cx.listener(move |this, _, _, cx| {
+                                                        if let AuthConfig::ApiKey {
+                                                            key,
+                                                            value,
+                                                            ..
+                                                        } = &this.request.auth
+                                                        {
+                                                            this.request.auth = AuthConfig::ApiKey {
                                                         key: key.clone(),
                                                         value: value.clone(),
                                                         location:
                                                             crate::models::ApiKeyLocation::Query,
                                                     };
-                                                    this.schedule_request_save(cx);
-                                                    cx.notify();
-                                                }
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Key Value"),
-                            )
-                            .child({
-                                let api_key_value_entity =
-                                    self.request_auth_api_key_value_input.clone();
-                                div()
-                                    .id("env-hover-auth-apikey-value")
-                                    .on_mouse_move(cx.listener(
-                                        move |this, event: &MouseMoveEvent, _, cx| {
-                                            this.update_env_var_hover_for_input(
-                                                &api_key_value_entity,
-                                                event.position,
-                                                cx,
-                                            );
-                                        },
-                                    ))
-                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                        if !hovered {
-                                            this.clear_env_var_hover(cx);
-                                        }
-                                    }))
-                                    .child(
-                                        Input::new(&self.request_auth_api_key_value_input)
-                                            .small()
-                                            .w_full()
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
-                                                        menu,
-                                                        api_key_value_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
-                            })
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Header / Query Name"),
-                            )
-                            .child({
-                                let api_key_name_entity =
-                                    self.request_auth_api_key_name_input.clone();
-                                div()
-                                    .id("env-hover-auth-apikey-name")
-                                    .on_mouse_move(cx.listener(
-                                        move |this, event: &MouseMoveEvent, _, cx| {
-                                            this.update_env_var_hover_for_input(
-                                                &api_key_name_entity,
-                                                event.position,
-                                                cx,
-                                            );
-                                        },
-                                    ))
-                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                        if !hovered {
-                                            this.clear_env_var_hover(cx);
-                                        }
-                                    }))
-                                    .child(
-                                        Input::new(&self.request_auth_api_key_name_input)
-                                            .small()
-                                            .w_full()
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
-                                                        menu,
-                                                        api_key_name_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
-                            })
-                            .into_any_element()
-                            }
+                                                            this.schedule_request_save(cx);
+                                                            cx.notify();
+                                                        }
+                                                    }),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Key Value"),
+                                )
+                                .child({
+                                    let api_key_value_entity =
+                                        self.request_auth_api_key_value_input.clone();
+                                    div()
+                                        .id("env-hover-auth-apikey-value")
+                                        .on_mouse_move(cx.listener(
+                                            move |this, event: &MouseMoveEvent, _, cx| {
+                                                this.update_env_var_hover_for_input(
+                                                    &api_key_value_entity,
+                                                    event.position,
+                                                    cx,
+                                                );
+                                            },
+                                        ))
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            if !hovered {
+                                                this.clear_env_var_hover(cx);
+                                            }
+                                        }))
+                                        .child(
+                                            Input::new(&self.request_auth_api_key_value_input)
+                                                .small()
+                                                .w_full()
+                                                .context_menu({
+                                                    move |menu, _, cx| {
+                                                        Self::build_text_edit_context_menu(
+                                                            menu,
+                                                            api_key_value_has_selection,
+                                                            cx.theme().muted_foreground,
+                                                        )
+                                                    }
+                                                }),
+                                        )
+                                })
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child("Header / Query Name"),
+                                )
+                                .child({
+                                    let api_key_name_entity =
+                                        self.request_auth_api_key_name_input.clone();
+                                    div()
+                                        .id("env-hover-auth-apikey-name")
+                                        .on_mouse_move(cx.listener(
+                                            move |this, event: &MouseMoveEvent, _, cx| {
+                                                this.update_env_var_hover_for_input(
+                                                    &api_key_name_entity,
+                                                    event.position,
+                                                    cx,
+                                                );
+                                            },
+                                        ))
+                                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                            if !hovered {
+                                                this.clear_env_var_hover(cx);
+                                            }
+                                        }))
+                                        .child(
+                                            Input::new(&self.request_auth_api_key_name_input)
+                                                .small()
+                                                .w_full()
+                                                .context_menu({
+                                                    move |menu, _, cx| {
+                                                        Self::build_text_edit_context_menu(
+                                                            menu,
+                                                            api_key_name_has_selection,
+                                                            cx.theme().muted_foreground,
+                                                        )
+                                                    }
+                                                }),
+                                        )
+                                })
+                                .into_any_element()
                         }
-                    })
-                    .into_any_element()
-            }
+                    }
+                })
+                .into_any_element(),
         }
     }
 

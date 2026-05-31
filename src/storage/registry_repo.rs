@@ -99,13 +99,11 @@ impl RegistryRepository {
         Ok(entry)
     }
 
-    /// Delete a workspace from the registry. If `delete_data` is true, also removes the
-    /// workspace directory from disk.
+    /// Delete a workspace from the registry and remove the workspace directory from disk.
     pub fn delete_workspace(
         &self,
         registry: &mut WorkspacesRegistryFile,
         workspace_id: Ulid,
-        delete_data: bool,
     ) -> Result<()> {
         let entry = registry
             .registry
@@ -118,20 +116,18 @@ impl RegistryRepository {
                 id: workspace_id.to_string(),
             })?;
 
-        if delete_data {
-            let ws_paths = self.workspace_paths(&entry);
-            if ws_paths.root.exists() {
-                fs::remove_dir_all(&ws_paths.root).map_err(|source| BeamError::Io {
-                    path: ws_paths.root.clone(),
-                    source,
-                })?;
-            }
-            if ws_paths.local_dir.exists() {
-                fs::remove_dir_all(&ws_paths.local_dir).map_err(|source| BeamError::Io {
-                    path: ws_paths.local_dir.clone(),
-                    source,
-                })?;
-            }
+        let ws_paths = self.workspace_paths(&entry);
+        if ws_paths.root.exists() {
+            fs::remove_dir_all(&ws_paths.root).map_err(|source| BeamError::Io {
+                path: ws_paths.root.clone(),
+                source,
+            })?;
+        }
+        if ws_paths.local_dir.exists() {
+            fs::remove_dir_all(&ws_paths.local_dir).map_err(|source| BeamError::Io {
+                path: ws_paths.local_dir.clone(),
+                source,
+            })?;
         }
 
         registry
@@ -339,8 +335,7 @@ mod tests {
             .create_workspace(&mut registry, "Extra")
             .expect("create");
         let id = entry.workspace_id;
-        repo.delete_workspace(&mut registry, id, true)
-            .expect("delete");
+        repo.delete_workspace(&mut registry, id).expect("delete");
         assert!(
             !registry
                 .registry
