@@ -1200,18 +1200,6 @@ impl AppShellState {
                 // Keep the current theme; reset sync lifecycle.
                 self.sync_lifecycle = SyncLifecycleState::default();
             }
-            AppEvent::WorkspaceCreated {
-                workspace,
-                all_workspaces,
-                ..
-            } => {
-                self.workspace.all_workspaces = all_workspaces.clone();
-                // If this is the first workspace entry, set it as current.
-                if self.workspace.workspace_id.is_none() {
-                    self.workspace.workspace_id = Some(workspace.workspace_id);
-                    self.workspace.workspace_name = workspace.name.clone();
-                }
-            }
             AppEvent::WorkspaceDeleted {
                 workspace_id,
                 all_workspaces,
@@ -1505,11 +1493,6 @@ pub enum AppEvent {
         request_pane_data: HashMap<Ulid, RequestPaneData>,
         environments: Vec<EnvironmentMeta>,
         environment_selection: LocalEnvironmentSelectionState,
-        command_id: String,
-    },
-    WorkspaceCreated {
-        workspace: WorkspaceEntry,
-        all_workspaces: Vec<WorkspaceEntry>,
         command_id: String,
     },
     WorkspaceDeleted {
@@ -2021,17 +2004,38 @@ fn handle_workspace_command(
             let entry = registry_repo
                 .create_workspace(registry, &name)
                 .map_err(|e| e.to_string())?;
+            registry_repo
+                .set_active_workspace(registry, entry.workspace_id)
+                .map_err(|e| e.to_string())?;
 
             // Bootstrap the new workspace files.
             let ws_paths = registry_repo.workspace_paths(&entry);
-            let ws_backend = FileSystemStorage::new(ws_paths);
+            let ws_backend = FileSystemStorage::new(ws_paths.clone());
             let mut ws_repo = WorkspaceRepository::new(ws_backend).map_err(|e| e.to_string())?;
             ws_repo.initialize().map_err(|e| e.to_string())?;
 
+            let local_state = ws_repo.load_local_state().unwrap_or_default();
+            let (workspace_tree, shared_store, request_pane_data, _warnings) =
+                load_workspace_tree(&ws_paths, &local_state);
+            let mut env_warnings = Vec::new();
+            let environments = load_environments(&ws_paths, &mut env_warnings);
+
+            *storage = ws_repo;
+
             let all_workspaces = registry.registry.workspaces.clone();
-            Ok(vec![AppEvent::WorkspaceCreated {
-                workspace: entry,
+            Ok(vec![AppEvent::WorkspaceSwitched {
+                workspace_id: entry.workspace_id,
+                workspace_name: entry.name,
                 all_workspaces,
+                workspace_tree,
+                shared_store,
+                request_pane_data,
+                environments,
+                environment_selection: LocalEnvironmentSelectionState {
+                    active_global_environment_id: local_state
+                        .local_state
+                        .active_global_environment_id,
+                },
                 command_id,
             }])
         }
@@ -3613,6 +3617,58 @@ mod tests {
         assert!(state.workspace_tree.node(deleted_request_id).is_none());
         assert_eq!(state.request_pane_data, next_request_pane_data);
         assert_eq!(state.environments, next_environments);
+    }
+
+    #[test]
+    fn create_workspace_switches_to_new_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam").join("placeholder"));
+        let backend = FileSystemStorage::new(paths);
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("init storage");
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::CreateWorkspace {
+                name: "Created Workspace".to_string(),
+                command_id: command_id.clone(),
+            })
+            .expect("queue create workspace");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let created_workspace_id = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::WorkspaceSwitched {
+                    workspace_id,
+                    workspace_name,
+                    command_id: event_command_id,
+                    ..
+                } if event_command_id == &command_id && workspace_name == "Created Workspace" => {
+                    Some(*workspace_id)
+                }
+                _ => None,
+            })
+            .expect("create should emit WorkspaceSwitched");
+
+        assert_eq!(state.workspace.workspace_id, Some(created_workspace_id));
+        assert_eq!(state.workspace.workspace_name, "Created Workspace");
+        assert!(state.workspace.all_workspaces.iter().any(|workspace| {
+            workspace.workspace_id == created_workspace_id && workspace.name == "Created Workspace"
+        }));
+
+        let registry_file = dir.path().join("beam").join("workspaces.toml");
+        let persisted_registry: WorkspacesRegistryFile =
+            toml::from_str(&fs::read_to_string(&registry_file).expect("read registry"))
+                .expect("decode registry");
+        assert_eq!(
+            persisted_registry.registry.active_workspace_id,
+            Some(created_workspace_id)
+        );
     }
 
     #[test]
