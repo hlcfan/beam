@@ -1871,7 +1871,6 @@ struct WorkspaceDeleteDialogView {
     target_view: Entity<BeamView>,
     workspace_id: Ulid,
     workspace_name: String,
-    fallback_workspace_name: String,
 }
 
 impl WorkspaceDeleteDialogView {
@@ -1879,7 +1878,6 @@ impl WorkspaceDeleteDialogView {
         target_view: Entity<BeamView>,
         workspace_id: Ulid,
         workspace_name: String,
-        fallback_workspace_name: String,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Self {
@@ -1887,7 +1885,6 @@ impl WorkspaceDeleteDialogView {
             target_view,
             workspace_id,
             workspace_name,
-            fallback_workspace_name,
         }
     }
 
@@ -1909,7 +1906,6 @@ impl WorkspaceDeleteDialogView {
 impl Render for WorkspaceDeleteDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace_name = self.workspace_name.clone();
-        let fallback_workspace_name = self.fallback_workspace_name.clone();
 
         v_flex()
             .w(px(460.0))
@@ -1922,15 +1918,14 @@ impl Render for WorkspaceDeleteDialogView {
                         div()
                             .text_sm()
                             .child(format!(
-                                "Delete workspace \"{workspace_name}\"? You will switch to \"{fallback_workspace_name}\"."
+                                "Delete workspace \"{workspace_name}\"?"
                             )),
                     )
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_sm()
                             .child(
-                                "This deletes the workspace files from disk after switching to the next workspace.",
+                                "This deletes the workspace files from disk.",
                             ),
                     ),
             )
@@ -6316,7 +6311,7 @@ impl BeamView {
                 let view_new = view_for_new.clone();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, _| {
-                        div().w_full().cursor_pointer().child("New Workspace...")
+                        div().w_full().cursor_pointer().child("New Workspace")
                     })
                     .on_click(window.listener_for(
                         &view_new,
@@ -6331,7 +6326,7 @@ impl BeamView {
                     let view_del = view_for_delete.clone();
                     menu = menu.item(
                         PopupMenuItem::element(move |_, _| {
-                            div().w_full().cursor_pointer().child("Delete Workspace...")
+                            div().w_full().cursor_pointer().child("Delete Workspace")
                         })
                         .on_click(window.listener_for(
                             &view_del,
@@ -6346,7 +6341,7 @@ impl BeamView {
                 let view_ren = view_for_rename.clone();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, _| {
-                        div().w_full().cursor_pointer().child("Rename Workspace...")
+                        div().w_full().cursor_pointer().child("Rename Workspace")
                     })
                     .on_click(window.listener_for(
                         &view_ren,
@@ -6369,30 +6364,11 @@ impl BeamView {
         self.open_workspace_name_dialog(WorkspaceDialogMode::Rename, current_name, cx);
     }
 
-    fn fallback_workspace_after_delete(&self) -> Option<(Ulid, String)> {
-        let current_workspace_id = self.shell.workspace.workspace_id?;
-        let workspaces = &self.shell.workspace.all_workspaces;
-        let current_index = workspaces
-            .iter()
-            .position(|entry| entry.workspace_id == current_workspace_id)?;
-
-        workspaces
-            .get(current_index + 1)
-            .or_else(|| {
-                current_index
-                    .checked_sub(1)
-                    .and_then(|index| workspaces.get(index))
-            })
-            .map(|entry| (entry.workspace_id, entry.name.clone()))
-    }
-
     fn show_delete_workspace_dialog(&mut self, cx: &mut Context<Self>) {
         let Some(workspace_id) = self.shell.workspace.workspace_id else {
             return;
         };
-        let Some((_, fallback_workspace_name)) = self.fallback_workspace_after_delete() else {
-            return;
-        };
+
         let workspace_name = self.shell.workspace.workspace_name.clone();
         let view = cx.entity();
         cx.defer(move |cx| {
@@ -6403,7 +6379,6 @@ impl BeamView {
                             view.clone(),
                             workspace_id,
                             workspace_name.clone(),
-                            fallback_workspace_name.clone(),
                             window,
                             cx,
                         )
@@ -6411,13 +6386,13 @@ impl BeamView {
                     window.defer(cx, move |window, cx| {
                         let submit_dv = dialog_view.clone();
                         window.open_dialog(cx, move |dialog, _, _| {
-                            let ok_dv = submit_dv.clone();
+                            let submit_dv_for_ok = submit_dv.clone();
                             dialog
                                 .title("Delete Workspace")
                                 .w(px(500.0))
                                 .child(dialog_view.clone())
                                 .on_ok(move |_, window, cx| {
-                                    let _ = ok_dv.update(cx, |this, cx| {
+                                    let _ = submit_dv_for_ok.update(cx, |this, cx| {
                                         this.submit(window, cx);
                                     });
                                     false

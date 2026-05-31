@@ -2051,6 +2051,8 @@ fn handle_workspace_command(
             registry_repo
                 .delete_workspace(registry, workspace_id)
                 .map_err(|e| e.to_string())?;
+            // Set the active workspace to the first one after delete_workspace func call
+            // This contradicts with the UI logic, which falls back to the next workspace
             let new_active_workspace_id = registry.registry.active_workspace_id;
             let all_workspaces = registry.registry.workspaces.clone();
             let mut new_active_workspace_name = String::new();
