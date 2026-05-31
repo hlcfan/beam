@@ -1924,6 +1924,7 @@ impl Render for WorkspaceDeleteDialogView {
                     .child(
                         div()
                             .text_sm()
+                            .font_semibold()
                             .child(
                                 "This deletes the workspace files from disk.",
                             ),
@@ -1937,7 +1938,7 @@ impl Render for WorkspaceDeleteDialogView {
                     .child(
                         Button::new("delete-workspace-cancel")
                             .small()
-
+                            .ghost()
                             .cursor_pointer()
                             .label("Cancel")
                             .on_click(move |_, window, cx| {
