@@ -50,13 +50,19 @@ tar -xzf beam-linux-x86_64.tar.gz
 ### Build
 
 ```bash
-cargo build --release
+cargo build
 ```
 
 ### Run
 
 ```bash
 cargo run
+```
+
+### Test
+
+```
+cargo test
 ```
 
 ## License
