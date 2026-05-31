@@ -1917,17 +1917,13 @@ impl Render for WorkspaceDeleteDialogView {
                     .child(
                         div()
                             .text_sm()
-                            .child(format!(
-                                "Delete workspace \"{workspace_name}\"?"
-                            )),
+                            .child(format!("Delete workspace \"{workspace_name}\"?")),
                     )
                     .child(
                         div()
                             .text_sm()
                             .font_semibold()
-                            .child(
-                                "This deletes the workspace files from disk.",
-                            ),
+                            .child("This deletes the workspace files from disk."),
                     ),
             )
             .child(
