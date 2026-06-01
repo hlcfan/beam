@@ -7008,10 +7008,12 @@ impl BeamView {
                     .h(px(520.0))
                     .overflow_hidden()
                     .child(
-                        markdown(POST_SCRIPT_API_HELP_MARKDOWN)
-                            .text_sm()
-                            .selectable(true)
-                            .scrollable(true),
+                        div().size_full().overflow_y_scrollbar().child(
+                            markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                                .w_full()
+                                .text_sm()
+                                .selectable(true),
+                        ),
                     ),
             );
         tabs = tabs.child(
