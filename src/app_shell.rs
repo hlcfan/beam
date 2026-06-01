@@ -1200,32 +1200,29 @@ impl AppShellState {
                 // Keep the current theme; reset sync lifecycle.
                 self.sync_lifecycle = SyncLifecycleState::default();
             }
-            AppEvent::WorkspaceCreated {
-                workspace,
-                all_workspaces,
-                ..
-            } => {
-                self.workspace.all_workspaces = all_workspaces.clone();
-                // If this is the first workspace entry, set it as current.
-                if self.workspace.workspace_id.is_none() {
-                    self.workspace.workspace_id = Some(workspace.workspace_id);
-                    self.workspace.workspace_name = workspace.name.clone();
-                }
-            }
             AppEvent::WorkspaceDeleted {
                 workspace_id,
                 all_workspaces,
                 new_active_workspace_id,
+                workspace_name: _,
+                new_active_workspace_name,
+                workspace_tree,
+                shared_store,
+                request_pane_data,
+                environments,
+                environment_selection,
                 ..
             } => {
                 self.workspace.all_workspaces = all_workspaces.clone();
                 if self.workspace.workspace_id == Some(*workspace_id) {
                     self.workspace.workspace_id = *new_active_workspace_id;
-                    self.workspace.workspace_name = all_workspaces
-                        .iter()
-                        .find(|e| Some(e.workspace_id) == *new_active_workspace_id)
-                        .map(|e| e.name.clone())
-                        .unwrap_or_default();
+                    self.workspace.workspace_name = new_active_workspace_name.clone();
+                    self.workspace_tree = workspace_tree.clone();
+                    self.shared_store = shared_store.clone();
+                    self.request_pane_data = request_pane_data.clone();
+                    self.environments = environments.clone();
+                    self.environment_selection = environment_selection.clone();
+                    self.sync_lifecycle = SyncLifecycleState::default();
                 }
             }
             AppEvent::WorkspaceRenamed {
@@ -1380,7 +1377,6 @@ pub enum AppCommand {
     },
     DeleteWorkspace {
         workspace_id: Ulid,
-        delete_data: bool,
         command_id: String,
     },
     RenameWorkspace {
@@ -1499,15 +1495,17 @@ pub enum AppEvent {
         environment_selection: LocalEnvironmentSelectionState,
         command_id: String,
     },
-    WorkspaceCreated {
-        workspace: WorkspaceEntry,
-        all_workspaces: Vec<WorkspaceEntry>,
-        command_id: String,
-    },
     WorkspaceDeleted {
         workspace_id: Ulid,
+        workspace_name: String,
         all_workspaces: Vec<WorkspaceEntry>,
         new_active_workspace_id: Option<Ulid>,
+        new_active_workspace_name: String,
+        workspace_tree: WorkspaceTreeState,
+        shared_store: SharedStore,
+        request_pane_data: HashMap<Ulid, RequestPaneData>,
+        environments: Vec<EnvironmentMeta>,
+        environment_selection: LocalEnvironmentSelectionState,
         command_id: String,
     },
     WorkspaceRenamed {
@@ -2006,34 +2004,109 @@ fn handle_workspace_command(
             let entry = registry_repo
                 .create_workspace(registry, &name)
                 .map_err(|e| e.to_string())?;
+            registry_repo
+                .set_active_workspace(registry, entry.workspace_id)
+                .map_err(|e| e.to_string())?;
 
             // Bootstrap the new workspace files.
             let ws_paths = registry_repo.workspace_paths(&entry);
-            let ws_backend = FileSystemStorage::new(ws_paths);
+            let ws_backend = FileSystemStorage::new(ws_paths.clone());
             let mut ws_repo = WorkspaceRepository::new(ws_backend).map_err(|e| e.to_string())?;
             ws_repo.initialize().map_err(|e| e.to_string())?;
 
+            let local_state = ws_repo.load_local_state().unwrap_or_default();
+            let (workspace_tree, shared_store, request_pane_data, _warnings) =
+                load_workspace_tree(&ws_paths, &local_state);
+            let mut env_warnings = Vec::new();
+            let environments = load_environments(&ws_paths, &mut env_warnings);
+
+            *storage = ws_repo;
+
             let all_workspaces = registry.registry.workspaces.clone();
-            Ok(vec![AppEvent::WorkspaceCreated {
-                workspace: entry,
+            Ok(vec![AppEvent::WorkspaceSwitched {
+                workspace_id: entry.workspace_id,
+                workspace_name: entry.name,
                 all_workspaces,
+                workspace_tree,
+                shared_store,
+                request_pane_data,
+                environments,
+                environment_selection: LocalEnvironmentSelectionState {
+                    active_global_environment_id: local_state
+                        .local_state
+                        .active_global_environment_id,
+                },
                 command_id,
             }])
         }
         AppCommand::DeleteWorkspace {
             workspace_id,
-            delete_data,
             command_id,
         } => {
+            let workspace_name = registry
+                .registry
+                .workspaces
+                .iter()
+                .find(|e| e.workspace_id == workspace_id)
+                .map(|entry| entry.name.clone())
+                .ok_or_else(|| format!("workspace {workspace_id} not found in registry"))?;
+            let deleted_active_workspace =
+                registry.registry.active_workspace_id == Some(workspace_id);
             registry_repo
-                .delete_workspace(registry, workspace_id, delete_data)
+                .delete_workspace(registry, workspace_id)
                 .map_err(|e| e.to_string())?;
             let new_active_workspace_id = registry.registry.active_workspace_id;
             let all_workspaces = registry.registry.workspaces.clone();
+            let mut new_active_workspace_name = String::new();
+            let mut workspace_tree = WorkspaceTreeState::default();
+            let mut shared_store = SharedStore::default();
+            let mut request_pane_data = HashMap::new();
+            let mut environments = Vec::new();
+            let mut environment_selection = LocalEnvironmentSelectionState::default();
+
+            if deleted_active_workspace && let Some(active_workspace_id) = new_active_workspace_id {
+                let entry = registry
+                    .registry
+                    .workspaces
+                    .iter()
+                    .find(|e| e.workspace_id == active_workspace_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!("workspace {active_workspace_id} not found in registry")
+                    })?;
+
+                let new_paths = registry_repo.workspace_paths(&entry);
+                let new_backend = FileSystemStorage::new(new_paths.clone());
+                let mut new_repo =
+                    WorkspaceRepository::new(new_backend).map_err(|e| e.to_string())?;
+
+                new_repo.initialize().map_err(|e| e.to_string())?;
+
+                let local_state = new_repo.load_local_state().unwrap_or_default();
+                (workspace_tree, shared_store, request_pane_data, _) =
+                    load_workspace_tree(&new_paths, &local_state);
+                let mut env_warnings = Vec::new();
+                environments = load_environments(&new_paths, &mut env_warnings);
+                environment_selection = LocalEnvironmentSelectionState {
+                    active_global_environment_id: local_state
+                        .local_state
+                        .active_global_environment_id,
+                };
+                new_active_workspace_name = entry.name;
+                *storage = new_repo;
+            }
+
             Ok(vec![AppEvent::WorkspaceDeleted {
                 workspace_id,
+                workspace_name,
                 all_workspaces,
                 new_active_workspace_id,
+                new_active_workspace_name,
+                workspace_tree,
+                shared_store,
+                request_pane_data,
+                environments,
+                environment_selection,
                 command_id,
             }])
         }
@@ -3389,6 +3462,211 @@ mod tests {
         assert!(state.workspace_tree.node(request_id).is_none());
         assert!(state.request_pane_data.get(&request_id).is_none());
         assert_eq!(state.workspace_tree.selected_request_id(), None);
+    }
+
+    #[test]
+    fn app_shell_reducer_replaces_active_workspace_state_after_delete() {
+        let deleted_workspace_id = Ulid::new();
+        let next_workspace_id = Ulid::new();
+        let deleted_request_id = Ulid::new();
+        let next_request_id = Ulid::new();
+        let now = Utc::now();
+
+        let mut state = AppShellState::default();
+        state.workspace.workspace_id = Some(deleted_workspace_id);
+        state.workspace.workspace_name = "Deleted".to_string();
+        state.workspace.all_workspaces = vec![
+            WorkspaceEntry {
+                workspace_id: deleted_workspace_id,
+                name: "Deleted".to_string(),
+                path: "deleted".to_string(),
+                created_at: now,
+            },
+            WorkspaceEntry {
+                workspace_id: next_workspace_id,
+                name: "Next".to_string(),
+                path: "next".to_string(),
+                created_at: now,
+            },
+        ];
+        state.workspace_tree.roots.push(deleted_request_id);
+        state.workspace_tree.nodes.insert(
+            deleted_request_id,
+            TreeNode {
+                id: deleted_request_id,
+                name: "Deleted Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://deleted.example.com".to_string()),
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        state
+            .workspace_tree
+            .set_selected_request(Some(deleted_request_id));
+        state.request_pane_data.insert(
+            deleted_request_id,
+            RequestPaneData {
+                method: HttpMethod::Get,
+                url: "https://deleted.example.com".to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                post_script: None,
+            },
+        );
+
+        let mut next_workspace_tree = WorkspaceTreeState::default();
+        next_workspace_tree.roots.push(next_request_id);
+        next_workspace_tree.nodes.insert(
+            next_request_id,
+            TreeNode {
+                id: next_request_id,
+                name: "Next Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Post),
+                request_url: Some("https://next.example.com".to_string()),
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        next_workspace_tree.set_selected_request(Some(next_request_id));
+
+        let mut next_shared_store = SharedStore::default();
+        next_shared_store.nodes.insert(
+            next_request_id,
+            Node {
+                id: next_request_id,
+                name: "Next Request".to_string(),
+                kind: NodeKind::Request,
+                description: None,
+                created_at: Some(now),
+                updated_at: Some(now),
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        next_shared_store.root_ids.push(next_request_id);
+        next_shared_store.requests.insert(
+            next_request_id,
+            sample_request_file(
+                next_request_id,
+                "Next Request",
+                HttpMethod::Post,
+                "https://next.example.com",
+            ),
+        );
+
+        let next_request_pane_data = HashMap::from([(
+            next_request_id,
+            RequestPaneData {
+                method: HttpMethod::Post,
+                url: "https://next.example.com".to_string(),
+                headers: Vec::new(),
+                query_params: Vec::new(),
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                post_script: None,
+            },
+        )]);
+        let next_environments = vec![EnvironmentMeta {
+            environment_id: Ulid::new(),
+            scope: EnvironmentScope::Global,
+            name: "Global".to_string(),
+            file_name: "global.env.toml".to_string(),
+            description: None,
+            created_at: now,
+            updated_at: now,
+        }];
+
+        state.apply_event(&AppEvent::WorkspaceDeleted {
+            workspace_id: deleted_workspace_id,
+            workspace_name: "Deleted".to_string(),
+            all_workspaces: vec![WorkspaceEntry {
+                workspace_id: next_workspace_id,
+                name: "Next".to_string(),
+                path: "next".to_string(),
+                created_at: now,
+            }],
+            new_active_workspace_id: Some(next_workspace_id),
+            new_active_workspace_name: "Next".to_string(),
+            workspace_tree: next_workspace_tree.clone(),
+            shared_store: next_shared_store,
+            request_pane_data: next_request_pane_data.clone(),
+            environments: next_environments.clone(),
+            environment_selection: LocalEnvironmentSelectionState {
+                active_global_environment_id: next_environments
+                    .first()
+                    .map(|environment| environment.environment_id),
+            },
+            command_id: Ulid::new().to_string(),
+        });
+
+        assert_eq!(state.workspace.workspace_id, Some(next_workspace_id));
+        assert_eq!(state.workspace.workspace_name, "Next");
+        assert_eq!(
+            state.workspace_tree.selected_request_id(),
+            Some(next_request_id)
+        );
+        assert!(state.workspace_tree.node(deleted_request_id).is_none());
+        assert_eq!(state.request_pane_data, next_request_pane_data);
+        assert_eq!(state.environments, next_environments);
+    }
+
+    #[test]
+    fn create_workspace_switches_to_new_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam").join("placeholder"));
+        let backend = FileSystemStorage::new(paths);
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("init storage");
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::CreateWorkspace {
+                name: "Created Workspace".to_string(),
+                command_id: command_id.clone(),
+            })
+            .expect("queue create workspace");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let created_workspace_id = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::WorkspaceSwitched {
+                    workspace_id,
+                    workspace_name,
+                    command_id: event_command_id,
+                    ..
+                } if event_command_id == &command_id && workspace_name == "Created Workspace" => {
+                    Some(*workspace_id)
+                }
+                _ => None,
+            })
+            .expect("create should emit WorkspaceSwitched");
+
+        assert_eq!(state.workspace.workspace_id, Some(created_workspace_id));
+        assert_eq!(state.workspace.workspace_name, "Created Workspace");
+        assert!(state.workspace.all_workspaces.iter().any(|workspace| {
+            workspace.workspace_id == created_workspace_id && workspace.name == "Created Workspace"
+        }));
+
+        let registry_file = dir.path().join("beam").join("workspaces.toml");
+        let persisted_registry: WorkspacesRegistryFile =
+            toml::from_str(&fs::read_to_string(&registry_file).expect("read registry"))
+                .expect("decode registry");
+        assert_eq!(
+            persisted_registry.registry.active_workspace_id,
+            Some(created_workspace_id)
+        );
     }
 
     #[test]
