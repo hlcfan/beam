@@ -6,15 +6,21 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 
 ## Features
 
-- Fast, lightweight native desktop app built with Rust and GPUI
+- Native, local-first, no telemetry
 - Multi-workspace organization with folders and requests
 - HTTP request with common methods (GET, POST, PUT, DELETE, PATCH, HEAD, and OPTIONS)
 - Authentication support for Bearer, Basic, and API Key (header or query)
 - Request body formats for JSON, XML, Text, GraphQL, Form URL-Encoded, and Multipart
 - Global environments with `{{variable}}` interpolation in URLs, params, headers, auth, and bodies
 - Post-response JavaScript scripting with console output, tests, and environment updates
-- Persistent TOML-based storage for workspaces, requests, environments, local history, and script results
+- Persistent TOML-based storage for workspaces, requests, environments, local history, and script results on your machine
 - Theme support with light/dark mode and a clean desktop interface
+
+## Privacy
+
+Beam is local-first. It stores your data in local TOML files on your machine so you can inspect, back up, and manage it yourself.
+
+Beam does not send telemetry or analytics data. There is no account requirement and no cloud dependency for core usage.
 
 ## Installation
 
