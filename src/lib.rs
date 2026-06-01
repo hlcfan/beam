@@ -4,6 +4,7 @@ pub mod error;
 pub mod logger;
 pub mod models;
 pub mod paths;
+pub mod post_script_help;
 pub mod request_authoring;
 pub mod schema;
 pub mod script;

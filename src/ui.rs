@@ -38,6 +38,7 @@ use crate::models::{
     LocalStateFile, RequestFile,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
+use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
 use crate::request_authoring::{
     RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
     validate_rename,
@@ -500,56 +501,6 @@ const RESPONSE_BODY_TRUNCATED_NOTE: &str =
     "[Response body omitted from local history (truncated).]";
 const MACOS_COMMAND_ICON_PATH: &str = "icons/command.svg";
 const NON_MACOS_COMMAND_ICON_PATH: &str = "icons/chevron-up.svg";
-const POST_SCRIPT_API_HELP_MARKDOWN: &str = r#"### Supported Post Script APIs
-
-Scripts run with a small Postman-style runtime. Environment writes require an active environment.
-
-#### `pm.response`
-
-- `status`
-- `statusText`
-- `responseTime`
-- `bodySize`
-- `headers.get(name)`
-- `headers.has(name)`
-- `text()`
-- `json()`
-
-#### `pm.environment`
-
-- `get(key)`
-- `has(key)`
-- `set(key, value)`
-- `setAll(obj)`
-- `setIfPresent(key, value)`
-- `unset(key)`
-- `clear()`
-
-#### Assertions
-
-- `pm.test(name, fn)`
-- `pm.test.status(code)`
-- `pm.test.statusOneOf([codes])`
-- `pm.test.json(path, expected)`
-- `pm.test.jsonExists(path)`
-- `pm.test.header(name, expected)`
-- `pm.test.responseTimeLessThan(ms)`
-
-#### Utilities
-
-- `pm.extract(sourcePath, envVarName, defaultValue)`
-- `pm.fail(message)`
-- `console.log(...)`
-- `console.info(...)`
-- `console.warn(...)`
-- `console.error(...)`
-- `console.debug(...)`
-
-#### Examples
-
-- `pm.test.status(200)`
-- `pm.environment.set("token", pm.response.json().token)`
-"#;
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
 struct PersistedScriptResult {
@@ -7026,7 +6977,7 @@ impl BeamView {
         };
         let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
             .anchor(gpui::Anchor::BottomLeft)
-            .open_delay(Duration::from_millis(200))
+            .open_delay(Duration::from_millis(100))
             .close_delay(Duration::from_millis(150))
             .trigger(
                 div()
@@ -7054,7 +7005,7 @@ impl BeamView {
             .child(
                 div()
                     .w(px(360.0))
-                    .h(px(320.0))
+                    .h(px(520.0))
                     .overflow_hidden()
                     .child(
                         markdown(POST_SCRIPT_API_HELP_MARKDOWN)
