@@ -4615,6 +4615,7 @@ impl BeamView {
         let response_body_editor = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("json")
+                .replaceable(false)
                 .line_number(true)
                 .tab_size(TabSize {
                     tab_size: 2,
