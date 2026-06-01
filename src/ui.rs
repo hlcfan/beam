@@ -12,13 +12,14 @@ use gpui_component::{
     ThemeMode, ThemeRegistry, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
+    hover_card::HoverCard,
     input::{self, Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     tag::Tag,
-    text::html,
+    text::{html, markdown},
     v_flex,
 };
 use reqwest::{Client, Method};
@@ -37,6 +38,7 @@ use crate::models::{
     LocalStateFile, RequestFile,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
+use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
 use crate::request_authoring::{
     RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
     validate_rename,
@@ -6973,19 +6975,66 @@ impl BeamView {
         } else {
             h_flex().items_center().gap_1().child("Post Script")
         };
+        let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
+            .anchor(gpui::Anchor::BottomLeft)
+            .open_delay(Duration::from_millis(100))
+            .close_delay(Duration::from_millis(150))
+            .trigger(
+                div()
+                    .id("tab-Post Script-help-trigger")
+                    .flex()
+                    .flex_shrink_0()
+                    .w(px(18.0))
+                    .h(px(18.0))
+                    .rounded_full()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().secondary)
+                    .cursor_pointer()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_xs()
+                            .font_semibold()
+                            .line_height(relative(1.0))
+                            .text_color(cx.theme().secondary_foreground)
+                            .child("i"),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(360.0))
+                    .h(px(520.0))
+                    .overflow_hidden()
+                    .child(
+                        div().size_full().overflow_y_scrollbar().child(
+                            markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                                .w_full()
+                                .text_sm()
+                                .selectable(true),
+                        ),
+                    ),
+            );
         tabs = tabs.child(
-            Button::new("tab-Post Script")
-                .small()
-                .ghost()
-                .cursor_pointer()
-                .selected(self.request.active_tab == RequestTab::PostScript)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.request.active_tab = RequestTab::PostScript;
-                    this.post_script_editor.update(cx, |state, cx| {
-                        state.focus(window, cx);
-                    });
-                }))
-                .child(post_script_label),
+            h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Button::new("tab-Post Script")
+                        .small()
+                        .ghost()
+                        .cursor_pointer()
+                        .selected(self.request.active_tab == RequestTab::PostScript)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.request.active_tab = RequestTab::PostScript;
+                            this.post_script_editor.update(cx, |state, cx| {
+                                state.focus(window, cx);
+                            });
+                        }))
+                        .child(post_script_label),
+                )
+                .child(post_script_help_trigger),
         );
 
         tabs
