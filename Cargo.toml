@@ -7,8 +7,8 @@ edition = "2024"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 dirs = "6.0"
 gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["tree-sitter-javascript"] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["tree-sitter-javascript"], rev = "6dfb32cd2c5e1bd6f86ce758398580f42d49970f" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "6dfb32cd2c5e1bd6f86ce758398580f42d49970f" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -20,10 +20,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 rust-embed = "8.8"
 rquickjs = { version = "0.9", features = ["chrono"] }
 log = "0.4"
-
-[patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/hlcfan/gpui-component", rev = "09b987d697cad726e8a054b918b293a43b847701" }
-gpui-component-assets = { git = "https://github.com/hlcfan/gpui-component", rev = "09b987d697cad726e8a054b918b293a43b847701" }
 
 [dev-dependencies]
 tempfile = "3.20"
