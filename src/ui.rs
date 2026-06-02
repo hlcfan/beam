@@ -428,6 +428,27 @@ fn trailing_tree_drop_slot_target(
     }
 }
 
+fn tree_row_shows_before_drop_slot(rows: &[crate::app_shell::TreeRow], row_index: usize) -> bool {
+    if row_index == 0 {
+        return true;
+    }
+
+    rows.get(row_index - 1)
+        .zip(rows.get(row_index))
+        .is_some_and(|(previous, current)| previous.depth != current.depth)
+}
+
+fn tree_row_shows_after_drop_slot(rows: &[crate::app_shell::TreeRow], row_index: usize) -> bool {
+    let Some(current) = rows.get(row_index) else {
+        return false;
+    };
+
+    match rows.get(row_index + 1) {
+        Some(next) => next.depth <= current.depth,
+        None => true,
+    }
+}
+
 struct TreeDragPreview {
     label: String,
     kind: TreeNodeKind,
@@ -6545,8 +6566,8 @@ impl BeamView {
                                 for ix in visible_range {
                                     let row = rows[ix].clone();
                                     let show_before_slot =
-                                        ix == 0 || rows[ix - 1].depth > row.depth;
-                                    let show_after_slot = true;
+                                        tree_row_shows_before_drop_slot(&rows, ix);
+                                    let show_after_slot = tree_row_shows_after_drop_slot(&rows, ix);
                                     let trailing_after_slot_target =
                                         list_view.update(app, |this, _| {
                                             trailing_tree_drop_slot_target(&rows, ix, |id| {
@@ -9163,6 +9184,7 @@ mod tests {
         apply_request_run_completion_status, completion_updates_selected_request_ui,
         request_run_completion_is_current, response_summary_for_selected_request,
         send_button_state_for_selected_request, trailing_tree_drop_slot_target,
+        tree_row_shows_after_drop_slot, tree_row_shows_before_drop_slot,
     };
     use crate::app_shell::{TreeNodeKind, TreeRow};
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
@@ -9479,5 +9501,58 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         }];
 
         assert_eq!(trailing_tree_drop_slot_target(&rows, 0, |_| None), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn folder_to_first_child_transition_uses_child_before_slot() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let rows = vec![
+            TreeRow {
+                id: folder_id,
+                kind: TreeNodeKind::Folder,
+                depth: 0,
+                selected: false,
+            },
+            TreeRow {
+                id: request_id,
+                kind: TreeNodeKind::Request,
+                depth: 1,
+                selected: false,
+            },
+        ];
+
+        assert!(tree_row_shows_before_drop_slot(&rows, 1));
+        assert!(!tree_row_shows_after_drop_slot(&rows, 0));
+    }
+
+    #[::core::prelude::v1::test]
+    fn child_to_parent_transition_keeps_both_drop_slots() {
+        let folder_id = Ulid::new();
+        let nested_request_id = Ulid::new();
+        let root_request_id = Ulid::new();
+        let rows = vec![
+            TreeRow {
+                id: folder_id,
+                kind: TreeNodeKind::Folder,
+                depth: 0,
+                selected: false,
+            },
+            TreeRow {
+                id: nested_request_id,
+                kind: TreeNodeKind::Request,
+                depth: 1,
+                selected: false,
+            },
+            TreeRow {
+                id: root_request_id,
+                kind: TreeNodeKind::Request,
+                depth: 0,
+                selected: false,
+            },
+        ];
+
+        assert!(tree_row_shows_after_drop_slot(&rows, 1));
+        assert!(tree_row_shows_before_drop_slot(&rows, 2));
     }
 }
