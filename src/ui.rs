@@ -6516,7 +6516,7 @@ impl BeamView {
                                 let mut elements = Vec::with_capacity(visible_range.len());
                                 for ix in visible_range {
                                     let row = rows[ix].clone();
-                                    let show_before_slot = ix == 0;
+                                    let show_before_slot = ix == 0 || rows[ix - 1].depth > row.depth;
                                     let show_after_slot = true;
                                     let el = list_view.update(app, |this, cx| {
                                         this.render_tree_row(
