@@ -409,6 +409,25 @@ enum TreeMoveAction {
     MoveFolder(MoveFolderInput),
 }
 
+fn trailing_tree_drop_slot_target(
+    rows: &[crate::app_shell::TreeRow],
+    row_index: usize,
+    mut parent_id_for: impl FnMut(Ulid) -> Option<Ulid>,
+) -> Option<Ulid> {
+    let row = rows.get(row_index)?;
+    if row_index + 1 != rows.len() || row.depth == 0 {
+        return None;
+    }
+
+    let mut current_id = row.id;
+    loop {
+        match parent_id_for(current_id) {
+            Some(parent_id) => current_id = parent_id,
+            None => return Some(current_id),
+        }
+    }
+}
+
 struct TreeDragPreview {
     label: String,
     kind: TreeNodeKind,
@@ -5701,6 +5720,7 @@ impl BeamView {
         row: &crate::app_shell::TreeRow,
         show_before_slot: bool,
         show_after_slot: bool,
+        trailing_after_slot_target: Option<Ulid>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -5890,6 +5910,14 @@ impl BeamView {
                 this.child(self.render_tree_drop_slot(
                     row_id,
                     row_kind,
+                    TreeDropPlacement::After,
+                    cx,
+                ))
+            })
+            .when_some(trailing_after_slot_target, |this, target_id| {
+                this.child(self.render_tree_drop_slot(
+                    target_id,
+                    TreeNodeKind::Folder,
                     TreeDropPlacement::After,
                     cx,
                 ))
@@ -6516,13 +6544,24 @@ impl BeamView {
                                 let mut elements = Vec::with_capacity(visible_range.len());
                                 for ix in visible_range {
                                     let row = rows[ix].clone();
-                                    let show_before_slot = ix == 0 || rows[ix - 1].depth > row.depth;
+                                    let show_before_slot =
+                                        ix == 0 || rows[ix - 1].depth > row.depth;
                                     let show_after_slot = true;
+                                    let trailing_after_slot_target =
+                                        list_view.update(app, |this, _| {
+                                            trailing_tree_drop_slot_target(&rows, ix, |id| {
+                                                this.shell
+                                                    .workspace_tree
+                                                    .node(id)
+                                                    .and_then(|node| node.parent_id)
+                                            })
+                                        });
                                     let el = list_view.update(app, |this, cx| {
                                         this.render_tree_row(
                                             &row,
                                             show_before_slot,
                                             show_after_slot,
+                                            trailing_after_slot_target,
                                             window,
                                             cx,
                                         )
@@ -7003,18 +7042,14 @@ impl BeamView {
                     ),
             )
             .child(
-                div()
-                    .w(px(360.0))
-                    .h(px(520.0))
-                    .overflow_hidden()
-                    .child(
-                        div().size_full().overflow_y_scrollbar().child(
-                            markdown(POST_SCRIPT_API_HELP_MARKDOWN)
-                                .w_full()
-                                .text_sm()
-                                .selectable(true),
-                        ),
+                div().w(px(360.0)).h(px(520.0)).overflow_hidden().child(
+                    div().size_full().overflow_y_scrollbar().child(
+                        markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                            .w_full()
+                            .text_sm()
+                            .selectable(true),
                     ),
+                ),
             );
         tabs = tabs.child(
             h_flex()
@@ -9127,8 +9162,9 @@ mod tests {
         EnvironmentManagerDialogView, RequestExecutionState, RequestExecutionStatus,
         apply_request_run_completion_status, completion_updates_selected_request_ui,
         request_run_completion_is_current, response_summary_for_selected_request,
-        send_button_state_for_selected_request,
+        send_button_state_for_selected_request, trailing_tree_drop_slot_target,
     };
+    use crate::app_shell::{TreeNodeKind, TreeRow};
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
 
     fn ready_request() -> RequestAuthoringState {
@@ -9402,5 +9438,46 @@ updated_at = "2026-05-27T08:30:00.000000Z"
             .expect_err("environment files with nested schema_version should be rejected");
 
         assert!(error.contains("Failed to parse environment file"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn trailing_tree_drop_slot_targets_last_root_ancestor_for_nested_tail_row() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let rows = vec![
+            TreeRow {
+                id: folder_id,
+                kind: TreeNodeKind::Folder,
+                depth: 0,
+                selected: false,
+            },
+            TreeRow {
+                id: request_id,
+                kind: TreeNodeKind::Request,
+                depth: 1,
+                selected: false,
+            },
+        ];
+
+        assert_eq!(
+            trailing_tree_drop_slot_target(&rows, 1, |id| match id {
+                value if value == request_id => Some(folder_id),
+                _ => None,
+            }),
+            Some(folder_id)
+        );
+    }
+
+    #[::core::prelude::v1::test]
+    fn trailing_tree_drop_slot_is_absent_for_last_root_row() {
+        let request_id = Ulid::new();
+        let rows = vec![TreeRow {
+            id: request_id,
+            kind: TreeNodeKind::Request,
+            depth: 0,
+            selected: false,
+        }];
+
+        assert_eq!(trailing_tree_drop_slot_target(&rows, 0, |_| None), None);
     }
 }
