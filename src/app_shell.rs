@@ -917,6 +917,28 @@ impl AppShellState {
         }
     }
 
+    pub fn replace_moved_folder_subtree_paths(
+        &mut self,
+        folder_id: Ulid,
+        old_root: &Path,
+        new_root: &Path,
+    ) {
+        self.workspace_tree
+            .replace_subtree_path_prefix(folder_id, old_root, new_root);
+        for request_id in self.workspace_tree.subtree_request_ids(folder_id) {
+            let Some(request_file) = self.shared_store.requests.get_mut(&request_id) else {
+                continue;
+            };
+            let Some(existing_path) = request_file.file_path.as_ref() else {
+                continue;
+            };
+            let Ok(relative) = existing_path.strip_prefix(old_root) else {
+                continue;
+            };
+            request_file.file_path = Some(new_root.join(relative));
+        }
+    }
+
     pub fn apply_event(&mut self, event: &AppEvent) {
         match event {
             AppEvent::SyncStarted { operation, .. } => {
@@ -2690,6 +2712,7 @@ mod tests {
     use crate::schema::SCHEMA_VERSION_V1;
     use crate::storage::fs_backend::FileSystemStorage;
     use crate::storage::registry_repo::RegistryRepository;
+    use crate::storage::MoveFolderInput;
     use crate::storage::workspace_repo::WorkspaceRepository;
     use chrono::Utc;
 
@@ -4635,6 +4658,94 @@ expanded_item_ids = ["{folder_id}"]
             message.text.contains("Failed to parse folder manifest")
                 && message.text.contains("folder.toml")
         }));
+    }
+
+    #[test]
+    fn startup_load_after_repo_folder_move_keeps_single_root_folder_and_subtree() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        let mut storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
+        storage.initialize().expect("initialize workspace");
+
+        let folder_a = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Folder A".to_string(),
+            })
+            .expect("create folder A");
+        let folder_b = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef {
+                    folder_id: Some(folder_a.folder.folder_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Folder B".to_string(),
+            })
+            .expect("create folder B");
+        let request_c = storage
+            .create_request(CreateRequestInput {
+                parent: crate::storage::RequestParentRef {
+                    folder_id: Some(folder_b.folder.folder_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Request C".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+            })
+            .expect("create request C");
+
+        storage
+            .move_folder(MoveFolderInput {
+                folder_id: folder_b.folder.folder_id,
+                new_parent: crate::storage::FolderParentRef { folder_id: None },
+                insertion_index: 1,
+                known_folder_manifest_path: None,
+                known_target_manifest_path: None,
+            })
+            .expect("move folder B to root");
+
+        let load = startup_preload(&storage, &paths, None, vec![]);
+        let StartupLoad::Ready { state, messages } = load else {
+            panic!("startup should be ready");
+        };
+
+        let folder_a_node = state
+            .shared_store
+            .nodes
+            .get(&folder_a.folder.folder_id)
+            .expect("folder A loaded");
+        let folder_b_node = state
+            .shared_store
+            .nodes
+            .get(&folder_b.folder.folder_id)
+            .expect("folder B loaded");
+        let request_c_node = state
+            .shared_store
+            .nodes
+            .get(&request_c.meta.request_id)
+            .expect("request C loaded");
+
+        assert_eq!(
+            state.shared_store.root_ids,
+            vec![folder_a.folder.folder_id, folder_b.folder.folder_id]
+        );
+        assert_eq!(
+            state.workspace_tree.roots,
+            vec![folder_a.folder.folder_id, folder_b.folder.folder_id]
+        );
+        assert!(folder_a_node.children.is_empty(), "folder A should not retain folder B");
+        assert_eq!(folder_b_node.parent_id, None, "folder B should be root after reload");
+        assert_eq!(folder_b_node.children, vec![request_c.meta.request_id]);
+        assert_eq!(request_c_node.parent_id, Some(folder_b.folder.folder_id));
+        assert!(
+            messages
+                .iter()
+                .all(|message| !message.text.contains("Duplicate node_id")),
+            "startup should not report duplicate node ids after a clean folder move"
+        );
     }
 
     #[test]

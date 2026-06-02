@@ -672,6 +672,13 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             self.backend.rename(&old_folder_dir, &new_folder_dir)?;
         }
 
+        write_folder_manifest(&self.backend, &self.store, input.folder_id, &new_folder_dir)?;
+        refresh_request_paths_in_folder_subtree(
+            self.backend.paths(),
+            &mut self.store,
+            input.folder_id,
+        )?;
+
         // Update manifests for source and destination
         write_parent_manifest(&self.backend, &self.store, source_parent_id)?;
         if source_parent_id != destination_parent_id {
@@ -1650,6 +1657,34 @@ fn path_has_ancestor(store: &SharedStore, start_id: Ulid, ancestor_id: Ulid) -> 
     false
 }
 
+fn refresh_request_paths_in_folder_subtree(
+    paths: &crate::paths::BeamPaths,
+    store: &mut SharedStore,
+    folder_id: Ulid,
+) -> Result<()> {
+    let mut stack = vec![folder_id];
+    while let Some(node_id) = stack.pop() {
+        let Some(node) = store.nodes.get(&node_id) else {
+            continue;
+        };
+        for &child_id in &node.children {
+            let Some(child) = store.nodes.get(&child_id) else {
+                continue;
+            };
+            match child.kind {
+                NodeKind::Folder => stack.push(child_id),
+                NodeKind::Request => {
+                    let next_path = request_file_path(paths, store, child_id)?;
+                    if let Some(request_file) = store.requests.get_mut(&child_id) {
+                        request_file.file_path = Some(next_path);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -2014,6 +2049,98 @@ mod tests {
         assert_eq!(
             storage.store.nodes.get(&request_id).unwrap().parent_id,
             Some(folder_id)
+        );
+    }
+
+    #[test]
+    fn move_folder_to_root_preserves_subtree_across_reload() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        let mut storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
+        storage.initialize().expect("initialize workspace");
+
+        let folder_a = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Folder A".to_string(),
+            })
+            .expect("create folder A");
+        let folder_b = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef {
+                    folder_id: Some(folder_a.folder.folder_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Folder B".to_string(),
+            })
+            .expect("create folder B");
+        let request_c = storage
+            .create_request(CreateRequestInput {
+                parent: crate::storage::RequestParentRef {
+                    folder_id: Some(folder_b.folder.folder_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Request C".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+            })
+            .expect("create request C");
+
+        let old_nested_dir = paths
+            .root
+            .join(folder_dir_name("Folder A"))
+            .join(folder_dir_name("Folder B"));
+        let new_root_dir = paths.root.join(folder_dir_name("Folder B"));
+        assert!(old_nested_dir.exists(), "nested folder should exist before move");
+
+        storage
+            .move_folder(MoveFolderInput {
+                folder_id: folder_b.folder.folder_id,
+                new_parent: crate::storage::FolderParentRef { folder_id: None },
+                insertion_index: 1,
+                known_folder_manifest_path: None,
+                known_target_manifest_path: None,
+            })
+            .expect("move folder B to root");
+
+        assert!(
+            !old_nested_dir.exists(),
+            "old nested folder dir should be removed after move"
+        );
+        assert!(new_root_dir.exists(), "moved folder should exist at workspace root");
+
+        let reloaded = WorkspaceRepository::new(backend).expect("reload workspace into memory");
+        let folder_a_node = reloaded
+            .store
+            .nodes
+            .get(&folder_a.folder.folder_id)
+            .expect("folder A present after reload");
+        let folder_b_node = reloaded
+            .store
+            .nodes
+            .get(&folder_b.folder.folder_id)
+            .expect("folder B present after reload");
+        let request_c_node = reloaded
+            .store
+            .nodes
+            .get(&request_c.meta.request_id)
+            .expect("request C present after reload");
+
+        assert_eq!(reloaded.store.root_ids, vec![folder_a.folder.folder_id, folder_b.folder.folder_id]);
+        assert!(folder_a_node.children.is_empty(), "folder A should no longer contain folder B");
+        assert_eq!(folder_b_node.parent_id, None, "folder B should move to root");
+        assert_eq!(
+            folder_b_node.children,
+            vec![request_c.meta.request_id],
+            "folder B should retain request C after reload"
+        );
+        assert_eq!(
+            request_c_node.parent_id,
+            Some(folder_b.folder.folder_id),
+            "request C should remain under folder B"
         );
     }
 }

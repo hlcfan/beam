@@ -3609,7 +3609,13 @@ impl BeamView {
             TreeMoveAction::MoveRequest(_) => unreachable!(),
         };
 
-        let paths = BeamPaths::default_user_config();
+        let old_folder_dir = crate::workspace_tree::folder_dir_path(
+            &self.current_workspace_paths,
+            &self.shell.shared_store,
+            folder_id,
+        )
+        .ok();
+        let paths = self.current_workspace_paths.clone();
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
             let result: std::result::Result<(), String> = cx
@@ -3638,6 +3644,22 @@ impl BeamView {
                         insertion_index,
                         folder_name,
                     );
+                    if let Some(old_folder_dir) = old_folder_dir.as_ref()
+                        && let Ok(new_folder_dir) = crate::workspace_tree::folder_dir_path(
+                            &this.current_workspace_paths,
+                            &this.shell.shared_store,
+                            folder_id,
+                        )
+                    {
+                        this.shell.replace_moved_folder_subtree_paths(
+                            folder_id,
+                            old_folder_dir,
+                            &new_folder_dir,
+                        );
+                        this.request_file_index = Self::build_request_file_index(&this.shell);
+                        this.active_request_cache = None;
+                        this.refresh_active_request_cache();
+                    }
                     if let Some(request_id) = preferred_selected_request_id {
                         this.shell.workspace_tree.select_request(request_id);
                     }
