@@ -8610,12 +8610,63 @@ impl BeamView {
                             .gap_2()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("Status: {}", self.response_status))
+                            .child(self.render_response_status_summary(cx))
                             .child(format!("Time: {}", self.response_time))
                             .child(format!("Size: {}", self.response_size)),
                     ),
             )
             .child(response_container)
+    }
+
+    fn render_response_status_summary(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (status_code, status_text) = Self::response_status_code_and_text(&self.response_status);
+        let trigger = h_flex()
+            .items_center()
+            .gap_1()
+            .child("Status:")
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .when(status_text.is_some(), |div| div.cursor_pointer())
+                    .child(status_code),
+            ).cursor_pointer();
+
+        match status_text {
+            Some(status_text) => HoverCard::new("response-status-summary")
+                .anchor(gpui::Anchor::BottomRight)
+                .open_delay(Duration::from_millis(100))
+                .close_delay(Duration::from_millis(150))
+                .trigger(trigger)
+                .child(
+                    div()
+                        .occlude()
+                        .text_sm()
+                        .child(status_text),
+                )
+                .into_any_element(),
+            None => trigger.into_any_element(),
+        }
+    }
+
+    fn response_status_code_and_text(status: &str) -> (String, Option<String>) {
+        let Some(status_code) = Self::parse_response_status_code(status) else {
+            return (status.to_string(), None);
+        };
+
+        let status_code_text = status_code.to_string();
+        let status_text = status
+            .strip_prefix(&status_code_text)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                reqwest::StatusCode::from_u16(status_code)
+                    .ok()
+                    .and_then(|status| status.canonical_reason())
+                    .map(str::to_string)
+            });
+
+        (status_code_text, status_text)
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
