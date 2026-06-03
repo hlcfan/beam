@@ -324,6 +324,7 @@ struct BeamView {
     response_body_editor: Entity<InputState>,
     response_headers_raw: String,
     response_content_type: Option<String>,
+    response_history_entries: Vec<ResponseHistoryEntry>,
     post_script_editor: Entity<InputState>,
     active_response_tab: ResponseTab,
     response_status: String,
@@ -766,12 +767,21 @@ struct RequestHistoryHeader {
     value: String,
 }
 
+#[derive(Clone)]
+struct ResponseHistoryEntry {
+    title: String,
+    summary: String,
+    snapshot: StoredResponseSnapshot,
+}
+
+#[derive(Clone)]
 struct StoredResponseSnapshot {
     status: String,
     time: String,
     size: String,
     body: String,
     headers_raw: String,
+    content_type: Option<String>,
 }
 
 impl EnvironmentManagerDialogView {
@@ -2430,22 +2440,40 @@ impl BeamView {
         });
     }
 
+    fn apply_response_snapshot(
+        &mut self,
+        snapshot: &StoredResponseSnapshot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let content_type = snapshot.content_type.clone();
+        let formatted_body =
+            Self::auto_format_response_body(&snapshot.body, content_type.as_deref());
+        self.response_status = snapshot.status.clone();
+        self.response_time = snapshot.time.clone();
+        self.response_size = snapshot.size.clone();
+        self.response_headers_raw = snapshot.headers_raw.clone();
+        self.response_content_type = content_type;
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_value(formatted_body.clone(), window, cx);
+        });
+    }
+
     fn sync_response_pane_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
+            self.response_history_entries.clear();
             self.clear_response_pane(window, cx);
             self.script_result = None;
             return;
         };
 
-        if let Some(snapshot) = Self::load_latest_response_snapshot(request_id) {
-            self.response_status = snapshot.status;
-            self.response_time = snapshot.time;
-            self.response_size = snapshot.size;
-            self.response_headers_raw = snapshot.headers_raw;
-            let formatted_body = Self::auto_format_response_body(&snapshot.body, None);
-            self.response_body_editor.update(cx, |input, cx| {
-                input.set_value(formatted_body, window, cx);
-            });
+        self.response_history_entries = Self::load_response_history_entries(request_id);
+        if let Some(snapshot) = self
+            .response_history_entries
+            .first()
+            .map(|entry| entry.snapshot.clone())
+        {
+            self.apply_response_snapshot(&snapshot, window, cx);
         } else {
             self.clear_response_pane(window, cx);
         }
@@ -2463,7 +2491,7 @@ impl BeamView {
         self.response_size = size;
     }
 
-    fn load_latest_response_snapshot(request_id: Ulid) -> Option<StoredResponseSnapshot> {
+    fn load_request_history_file(request_id: Ulid) -> Option<RequestHistoryFile> {
         let paths = BeamPaths::default_user_config();
         let history_file_path = paths
             .local_dir
@@ -2471,19 +2499,19 @@ impl BeamView {
             .join(format!("{request_id}.history.toml"));
         let content = fs::read_to_string(history_file_path).ok()?;
         let history_file: RequestHistoryFile = toml::from_str(&content).ok()?;
-        if let Some(meta) = history_file.meta.as_ref() {
-            let _ = (&meta.schema_version, &meta.updated_at);
-            if meta.request_id != request_id.to_string() {
-                return None;
-            }
-        }
-        let latest_execution = history_file.executions.last()?;
 
-        let status = latest_execution
+        Some(history_file)
+    }
+
+    fn response_snapshot_from_history_execution(
+        paths: &BeamPaths,
+        execution: &RequestHistoryExecution,
+    ) -> StoredResponseSnapshot {
+        let status = execution
             .status
             .map(|code| code.to_string())
             .unwrap_or_else(|| "—".to_string());
-        let time = latest_execution
+        let time = execution
             .duration_ms
             .map(|ms| format!("{ms} ms"))
             .unwrap_or_else(|| "—".to_string());
@@ -2491,8 +2519,9 @@ impl BeamView {
         let mut size = "—".to_string();
         let mut body = String::new();
         let mut headers_raw = String::new();
+        let mut content_type = None;
 
-        if let Some(summary) = latest_execution.response_summary.as_ref() {
+        if let Some(summary) = execution.response_summary.as_ref() {
             if let Some(bytes) = summary.body_bytes.and_then(|n| usize::try_from(n).ok()) {
                 size = format_bytes(bytes);
             }
@@ -2503,10 +2532,16 @@ impl BeamView {
                     .map(|header| format!("{}: {}", header.name, header.value))
                     .collect::<Vec<_>>()
                     .join("\n");
+                content_type = summary
+                    .headers
+                    .iter()
+                    .find(|header| header.name.eq_ignore_ascii_case("content-type"))
+                    .map(|header| header.value.clone());
             }
             body = if summary.body_truncated {
                 RESPONSE_BODY_TRUNCATED_NOTE.to_string()
             } else if let Some(body_ref) = summary.body_ref.as_ref() {
+                // TODO: no need load the body body_ref, only load it when preview the history entry
                 let body_path = paths.local_dir.join("history/responses").join(body_ref);
                 fs::read(body_path)
                     .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
@@ -2516,13 +2551,47 @@ impl BeamView {
             };
         }
 
-        Some(StoredResponseSnapshot {
+        StoredResponseSnapshot {
             status,
             time,
             size,
             body,
             headers_raw,
-        })
+            content_type,
+        }
+    }
+
+    fn load_response_history_entries(request_id: Ulid) -> Vec<ResponseHistoryEntry> {
+        let Some(history_file) = Self::load_request_history_file(request_id) else {
+            return Vec::new();
+        };
+        let paths = BeamPaths::default_user_config();
+        let total = history_file.executions.len();
+
+        history_file
+            .executions
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(index, execution)| {
+                let snapshot = Self::response_snapshot_from_history_execution(&paths, execution);
+                let title = if index + 1 == total {
+                    "Latest response".to_string()
+                } else {
+                    format!("Response #{}", index + 1)
+                };
+                let summary = format!(
+                    "{} | {} | {}",
+                    snapshot.status, snapshot.time, snapshot.size
+                );
+
+                ResponseHistoryEntry {
+                    title,
+                    summary,
+                    snapshot,
+                }
+            })
+            .collect()
     }
 
     fn script_result_file_path(request_id: Ulid) -> PathBuf {
@@ -4901,6 +4970,7 @@ impl BeamView {
             response_body_editor,
             response_headers_raw: String::new(),
             response_content_type: None,
+            response_history_entries: Vec::new(),
             post_script_editor,
             active_response_tab: ResponseTab::Body,
             response_status: "—".to_string(),
@@ -5118,6 +5188,9 @@ impl BeamView {
                 }
                 if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
                     log::error!("Failed to persist response snapshot: {error}");
+                }
+                if Some(request_id) == this.shell.workspace_tree.selected_request_id() {
+                    this.response_history_entries = Self::load_response_history_entries(request_id);
                 }
                 match outcome.script_result.as_ref() {
                     Some(script_result) => {
@@ -8293,7 +8366,7 @@ impl BeamView {
             .child(editor_container)
     }
 
-    fn render_response_tabs(&self, cx: &mut Context<Self>) -> Div {
+    fn render_response_tabs(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut tabs = h_flex().items_center().gap_1().w_full();
         let tab_specs = [
             (ResponseTab::Body, "Body"),
@@ -8314,6 +8387,73 @@ impl BeamView {
                     .label(label),
             );
         }
+
+        let response_histories = self.response_history_entries.clone();
+        let response_history_view = cx.entity();
+        tabs = tabs.child(
+            Button::new("response-history-dropdown")
+                .small()
+                .ghost()
+                .cursor_pointer()
+                .rounded(px(6.0))
+                .disabled(self.shell.workspace_tree.selected_request_id().is_none())
+                .icon(
+                    Icon::default()
+                        .path("icons/history.svg")
+                        .size(px(14.0))
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .dropdown_menu(move |menu, window, _| {
+                    let mut menu = menu.min_w(px(220.0)).scrollable(true).max_h(px(280.0));
+                    if response_histories.is_empty() {
+                        return menu.item(
+                            PopupMenuItem::element(move |_, cx| {
+                                div()
+                                    .w_full()
+                                    .px_2()
+                                    .py_1()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("No response history")
+                            })
+                            .disabled(true),
+                        );
+                    }
+
+                    for entry in response_histories.clone() {
+                        let item_view = response_history_view.clone();
+                        let title = entry.title.clone();
+                        let summary = entry.summary.clone();
+                        let snapshot = entry.snapshot.clone();
+                        menu = menu.item(
+                            PopupMenuItem::element(move |_, cx| {
+                                v_flex()
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .gap_0p5()
+                                    .px_2()
+                                    .py_1()
+                                    .child(div().text_sm().child(title.clone()))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child(summary.clone()),
+                                    )
+                            })
+                            .on_click(window.listener_for(
+                                &item_view,
+                                move |this, _, window, cx| {
+                                    this.apply_response_snapshot(&snapshot, window, cx);
+                                    cx.notify();
+                                },
+                            )),
+                        );
+                    }
+
+                    menu
+                }),
+        );
 
         tabs
     }
@@ -8552,7 +8692,7 @@ impl BeamView {
             )
     }
 
-    fn render_response_panel(&self, _: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn render_response_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let is_sending = self
             .shell
             .workspace_tree
@@ -8603,7 +8743,7 @@ impl BeamView {
                     .justify_between()
                     .w_full()
                     .gap_2()
-                    .child(self.render_response_tabs(cx))
+                    .child(self.render_response_tabs(window, cx))
                     .child(
                         h_flex()
                             .items_center()
@@ -8618,7 +8758,7 @@ impl BeamView {
             .child(response_container)
     }
 
-    fn render_response_status_summary(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_response_status_summary(&self, _cx: &mut Context<Self>) -> AnyElement {
         let (status_code, status_text) = Self::response_status_code_and_text(&self.response_status);
         let trigger = h_flex()
             .items_center()
@@ -8629,7 +8769,8 @@ impl BeamView {
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .when(status_text.is_some(), |div| div.cursor_pointer())
                     .child(status_code),
-            ).cursor_pointer();
+            )
+            .cursor_pointer();
 
         match status_text {
             Some(status_text) => HoverCard::new("response-status-summary")
@@ -8637,12 +8778,7 @@ impl BeamView {
                 .open_delay(Duration::from_millis(100))
                 .close_delay(Duration::from_millis(150))
                 .trigger(trigger)
-                .child(
-                    div()
-                        .occlude()
-                        .text_sm()
-                        .child(status_text),
-                )
+                .child(div().occlude().text_sm().child(status_text))
                 .into_any_element(),
             None => trigger.into_any_element(),
         }
