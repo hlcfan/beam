@@ -771,7 +771,7 @@ struct RequestHistoryHeader {
 struct ResponseHistoryEntry {
     title: String,
     summary: String,
-    snapshot: StoredResponseSnapshot,
+    execution: RequestHistoryExecution,
 }
 
 #[derive(Clone)]
@@ -2471,7 +2471,7 @@ impl BeamView {
         if let Some(snapshot) = self
             .response_history_entries
             .first()
-            .map(|entry| entry.snapshot.clone())
+            .map(Self::load_response_snapshot_for_history_entry)
         {
             self.apply_response_snapshot(&snapshot, window, cx);
         } else {
@@ -2507,24 +2507,12 @@ impl BeamView {
         paths: &BeamPaths,
         execution: &RequestHistoryExecution,
     ) -> StoredResponseSnapshot {
-        let status = execution
-            .status
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "—".to_string());
-        let time = execution
-            .duration_ms
-            .map(|ms| format!("{ms} ms"))
-            .unwrap_or_else(|| "—".to_string());
-
-        let mut size = "—".to_string();
+        let (status, time, size) = Self::response_history_summary_parts(execution);
         let mut body = String::new();
         let mut headers_raw = String::new();
         let mut content_type = None;
 
         if let Some(summary) = execution.response_summary.as_ref() {
-            if let Some(bytes) = summary.body_bytes.and_then(|n| usize::try_from(n).ok()) {
-                size = format_bytes(bytes);
-            }
             if !summary.headers.is_empty() {
                 headers_raw = summary
                     .headers
@@ -2541,7 +2529,6 @@ impl BeamView {
             body = if summary.body_truncated {
                 RESPONSE_BODY_TRUNCATED_NOTE.to_string()
             } else if let Some(body_ref) = summary.body_ref.as_ref() {
-                // TODO: no need load the body body_ref, only load it when preview the history entry
                 let body_path = paths.local_dir.join("history/responses").join(body_ref);
                 fs::read(body_path)
                     .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
@@ -2561,11 +2548,39 @@ impl BeamView {
         }
     }
 
+    fn response_history_summary_parts(
+        execution: &RequestHistoryExecution,
+    ) -> (String, String, String) {
+        let status = execution
+            .status
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let time = execution
+            .duration_ms
+            .map(|ms| format!("{ms} ms"))
+            .unwrap_or_else(|| "—".to_string());
+        let size = execution
+            .response_summary
+            .as_ref()
+            .and_then(|summary| summary.body_bytes)
+            .and_then(|n| usize::try_from(n).ok())
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".to_string());
+
+        (status, time, size)
+    }
+
+    fn load_response_snapshot_for_history_entry(
+        entry: &ResponseHistoryEntry,
+    ) -> StoredResponseSnapshot {
+        let paths = BeamPaths::default_user_config();
+        Self::response_snapshot_from_history_execution(&paths, &entry.execution)
+    }
+
     fn load_response_history_entries(request_id: Ulid) -> Vec<ResponseHistoryEntry> {
         let Some(history_file) = Self::load_request_history_file(request_id) else {
             return Vec::new();
         };
-        let paths = BeamPaths::default_user_config();
         let total = history_file.executions.len();
 
         history_file
@@ -2574,21 +2589,18 @@ impl BeamView {
             .enumerate()
             .rev()
             .map(|(index, execution)| {
-                let snapshot = Self::response_snapshot_from_history_execution(&paths, execution);
+                let (status, time, size) = Self::response_history_summary_parts(execution);
                 let title = if index + 1 == total {
                     "Latest response".to_string()
                 } else {
                     format!("Response #{}", index + 1)
                 };
-                let summary = format!(
-                    "{} | {} | {}",
-                    snapshot.status, snapshot.time, snapshot.size
-                );
+                let summary = format!("{status} | {time} | {size}");
 
                 ResponseHistoryEntry {
                     title,
                     summary,
-                    snapshot,
+                    execution: execution.clone(),
                 }
             })
             .collect()
@@ -8424,7 +8436,7 @@ impl BeamView {
                         let item_view = response_history_view.clone();
                         let title = entry.title.clone();
                         let summary = entry.summary.clone();
-                        let snapshot = entry.snapshot.clone();
+                        let history_entry = entry.clone();
                         menu = menu.item(
                             PopupMenuItem::element(move |_, cx| {
                                 v_flex()
@@ -8444,6 +8456,9 @@ impl BeamView {
                             .on_click(window.listener_for(
                                 &item_view,
                                 move |this, _, window, cx| {
+                                    let snapshot = Self::load_response_snapshot_for_history_entry(
+                                        &history_entry,
+                                    );
                                     this.apply_response_snapshot(&snapshot, window, cx);
                                     cx.notify();
                                 },
