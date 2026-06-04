@@ -8829,8 +8829,10 @@ impl BeamView {
             .child(response_container)
     }
 
-    fn render_response_status_summary(&self, _cx: &mut Context<Self>) -> AnyElement {
+    fn render_response_status_summary(&self, cx: &mut Context<Self>) -> AnyElement {
         let (status_code, status_text) = Self::response_status_code_and_text(&self.response_status);
+        let status_color =
+            Self::status_code_in_color(Self::parse_response_status_code(&self.response_status), cx);
         let trigger = h_flex()
             .items_center()
             .gap_1()
@@ -8838,6 +8840,7 @@ impl BeamView {
             .child(
                 div()
                     .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(status_color)
                     .when(status_text.is_some(), |div| div.cursor_pointer())
                     .child(status_code),
             )
