@@ -328,6 +328,7 @@ struct BeamView {
     post_script_editor: Entity<InputState>,
     active_response_tab: ResponseTab,
     response_status: String,
+    response_status_code: Option<u16>,
     response_time: String,
     response_size: String,
     script_result: Option<PersistedScriptResult>,
@@ -778,6 +779,7 @@ struct ResponseHistoryEntry {
 #[derive(Clone)]
 struct StoredResponseSnapshot {
     status: String,
+    status_code: Option<u16>,
     time: String,
     size: String,
     body: String,
@@ -2068,6 +2070,7 @@ impl BeamView {
 
         self.cancel_request_run_for(request_id);
         self.response_status = "Canceled".to_string();
+        self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
     }
@@ -2432,6 +2435,7 @@ impl BeamView {
 
     fn clear_response_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.response_status = "—".to_string();
+        self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
@@ -2451,6 +2455,7 @@ impl BeamView {
         let formatted_body =
             Self::auto_format_response_body(&snapshot.body, content_type.as_deref());
         self.response_status = snapshot.status.clone();
+        self.response_status_code = snapshot.status_code;
         self.response_time = snapshot.time.clone();
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
@@ -2480,14 +2485,16 @@ impl BeamView {
         }
         self.script_result = Self::load_script_result(request_id);
 
-        let (status, time, size) = response_summary_for_selected_request(
+        let (status, status_code, time, size) = response_summary_for_selected_request(
             Some(request_id),
             &self.request_execution_states,
             &self.response_status,
+            self.response_status_code,
             &self.response_time,
             &self.response_size,
         );
         self.response_status = status;
+        self.response_status_code = status_code;
         self.response_time = time;
         self.response_size = size;
     }
@@ -2508,7 +2515,7 @@ impl BeamView {
         paths: &BeamPaths,
         execution: &RequestHistoryExecution,
     ) -> StoredResponseSnapshot {
-        let (status, time, size) = Self::response_history_summary_parts(execution);
+        let (status, status_code, time, size) = Self::response_history_summary_parts(execution);
         let mut body = String::new();
         let mut headers_raw = String::new();
         let mut content_type = None;
@@ -2541,6 +2548,7 @@ impl BeamView {
 
         StoredResponseSnapshot {
             status,
+            status_code,
             time,
             size,
             body,
@@ -2551,7 +2559,7 @@ impl BeamView {
 
     fn response_history_summary_parts(
         execution: &RequestHistoryExecution,
-    ) -> (String, String, String) {
+    ) -> (String, Option<u16>, String, String) {
         let status = execution
             .status
             .map(|code| code.to_string())
@@ -2568,7 +2576,7 @@ impl BeamView {
             .map(format_bytes)
             .unwrap_or_else(|| "—".to_string());
 
-        (status, time, size)
+        (status, execution.status, time, size)
     }
 
     fn status_code_in_color(status: Option<u16>, cx: &App) -> Hsla {
@@ -4998,6 +5006,7 @@ impl BeamView {
             post_script_editor,
             active_response_tab: ResponseTab::Body,
             response_status: "—".to_string(),
+            response_status_code: None,
             response_time: "—".to_string(),
             response_size: "—".to_string(),
             script_result: None,
@@ -5089,6 +5098,7 @@ impl BeamView {
         }
         let run_id = self.begin_request_run_for(request_id);
         self.response_status = "Sending...".to_string();
+        self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
         let http_runtime = match shared_http_runtime() {
@@ -5102,6 +5112,7 @@ impl BeamView {
                 }
 
                 self.response_status = "Error".to_string();
+                self.response_status_code = None;
                 self.response_body_editor.update(cx, |input, cx| {
                     input.set_value(error, window, cx);
                 });
@@ -5169,6 +5180,7 @@ impl BeamView {
                 let Some(outcome) = maybe_outcome else {
                     if should_update_visible_response {
                         this.response_status = "Canceled".to_string();
+                        this.response_status_code = None;
                         this.response_time = "—".to_string();
                         this.response_size = "—".to_string();
                     }
@@ -5177,6 +5189,7 @@ impl BeamView {
                 };
                 let response = outcome.response;
                 let response_status = response.status.clone();
+                let response_status_code = response.status_code;
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
                 let response_body = Self::auto_format_response_body(
@@ -5186,6 +5199,7 @@ impl BeamView {
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
+                    this.response_status_code = response_status_code;
                     this.response_time = response_time;
                     this.response_size = response_size;
                     this.response_body_editor.update(cx, |input, cx| {
@@ -5254,7 +5268,7 @@ impl BeamView {
         }
 
         let runtime_response = ScriptRuntimeResponse {
-            status: Self::parse_response_status_code(&response.status).unwrap_or(0),
+            status: response.status_code.unwrap_or(0),
             status_text: response.status.clone(),
             headers: Self::parse_response_headers(&response.headers),
             body: response.body.clone(),
@@ -5407,7 +5421,7 @@ impl BeamView {
         });
         history_file.executions.push(RequestHistoryExecution {
             timestamp: Some(response.timestamp.clone()),
-            status: Self::parse_response_status_code(&response.status),
+            status: response.status_code,
             duration_ms: Self::parse_response_duration_ms(&response.time),
             response_summary: Some(RequestHistoryResponseSummary {
                 body_bytes: Some(response.body.len() as u64),
@@ -5424,13 +5438,6 @@ impl BeamView {
             .map_err(|error| format!("Failed to encode history file: {error}"))?;
         fs::write(history_path, content)
             .map_err(|error| format!("Failed to write history file: {error}"))
-    }
-
-    fn parse_response_status_code(status: &str) -> Option<u16> {
-        status
-            .split_whitespace()
-            .next()
-            .and_then(|token| token.parse::<u16>().ok())
     }
 
     fn parse_response_duration_ms(time: &str) -> Option<u64> {
@@ -8830,9 +8837,9 @@ impl BeamView {
     }
 
     fn render_response_status_summary(&self, cx: &mut Context<Self>) -> AnyElement {
-        let (status_code, status_text) = Self::response_status_code_and_text(&self.response_status);
-        let status_color =
-            Self::status_code_in_color(Self::parse_response_status_code(&self.response_status), cx);
+        let (status_code, status_text) =
+            Self::response_status_code_and_text(&self.response_status, self.response_status_code);
+        let status_color = Self::status_code_in_color(self.response_status_code, cx);
         let trigger = h_flex()
             .items_center()
             .gap_1()
@@ -8858,8 +8865,11 @@ impl BeamView {
         }
     }
 
-    fn response_status_code_and_text(status: &str) -> (String, Option<String>) {
-        let Some(status_code) = Self::parse_response_status_code(status) else {
+    fn response_status_code_and_text(
+        status: &str,
+        status_code: Option<u16>,
+    ) -> (String, Option<String>) {
+        let Some(status_code) = status_code else {
             return (status.to_string(), None);
         };
 
@@ -8919,6 +8929,7 @@ impl BeamView {
 
 struct HttpResponseSnapshot {
     status: String,
+    status_code: Option<u16>,
     time: String,
     size: String,
     timestamp: String,
@@ -9007,20 +9018,27 @@ fn response_summary_for_selected_request(
     selected_request_id: Option<Ulid>,
     execution_states: &HashMap<Ulid, RequestExecutionState>,
     fallback_status: &str,
+    fallback_status_code: Option<u16>,
     fallback_time: &str,
     fallback_size: &str,
-) -> (String, String, String) {
+) -> (String, Option<u16>, String, String) {
     if let Some(request_id) = selected_request_id {
         if execution_states
             .get(&request_id)
             .is_some_and(|state| state.status == RequestExecutionStatus::Sending)
         {
-            return ("Sending...".to_string(), "—".to_string(), "—".to_string());
+            return (
+                "Sending...".to_string(),
+                None,
+                "—".to_string(),
+                "—".to_string(),
+            );
         }
     }
 
     (
         fallback_status.to_string(),
+        fallback_status_code,
         fallback_time.to_string(),
         fallback_size.to_string(),
     )
@@ -9195,6 +9213,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
         Err(error) => {
             return HttpResponseSnapshot {
                 status: "Error".to_string(),
+                status_code: None,
                 time: "—".to_string(),
                 size: "—".to_string(),
                 timestamp: Utc::now().to_rfc3339(),
@@ -9350,6 +9369,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                     let body = String::from_utf8_lossy(&bytes).to_string();
                     HttpResponseSnapshot {
                         status: status_text,
+                        status_code: Some(status.as_u16()),
                         time: format!("{} ms", start.elapsed().as_millis()),
                         size: format_bytes(bytes.len()),
                         timestamp: completed_at,
@@ -9360,6 +9380,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 }
                 Err(error) => HttpResponseSnapshot {
                     status: status_text,
+                    status_code: Some(status.as_u16()),
                     time: format!("{} ms", start.elapsed().as_millis()),
                     size: "—".to_string(),
                     timestamp: completed_at,
@@ -9371,6 +9392,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
         }
         Err(error) => HttpResponseSnapshot {
             status: "Error".to_string(),
+            status_code: None,
             time: format!("{} ms", start.elapsed().as_millis()),
             size: "—".to_string(),
             timestamp: Utc::now().to_rfc3339(),
@@ -9684,6 +9706,7 @@ mod tests {
             Some(request_a),
             &execution_states,
             "200",
+            Some(200),
             "120 ms",
             "1.2 KB",
         );
@@ -9691,18 +9714,25 @@ mod tests {
             Some(request_b),
             &execution_states,
             "200",
+            Some(200),
             "120 ms",
             "1.2 KB",
         );
 
         assert_eq!(
             selected_a,
-            ("Sending...".to_string(), "—".to_string(), "—".to_string())
+            (
+                "Sending...".to_string(),
+                None,
+                "—".to_string(),
+                "—".to_string()
+            )
         );
         assert_eq!(
             selected_b,
             (
                 "200".to_string(),
+                Some(200),
                 "120 ms".to_string(),
                 "1.2 KB".to_string()
             )
