@@ -746,6 +746,8 @@ struct RequestHistoryMeta {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct RequestHistoryExecution {
+    #[serde(default)]
+    timestamp: Option<String>,
     status: Option<u16>,
     duration_ms: Option<u64>,
     response_summary: Option<RequestHistoryResponseSummary>,
@@ -2593,7 +2595,11 @@ impl BeamView {
                 let title = if index + 1 == total {
                     "Latest response".to_string()
                 } else {
-                    format!("Response #{}", index + 1)
+                    execution
+                        .timestamp
+                        .as_deref()
+                        .map(Self::format_human_timestamp)
+                        .unwrap_or_else(|| format!("Response #{}", index + 1))
                 };
                 let summary = format!("{status} | {time} | {size}");
 
@@ -5394,6 +5400,7 @@ impl BeamView {
             updated_at: Some(Utc::now().to_rfc3339()),
         });
         history_file.executions.push(RequestHistoryExecution {
+            timestamp: Some(response.timestamp.clone()),
             status: Self::parse_response_status_code(&response.status),
             duration_ms: Self::parse_response_duration_ms(&response.time),
             response_summary: Some(RequestHistoryResponseSummary {
@@ -8858,10 +8865,12 @@ impl BeamView {
     }
 }
 
+// TODO: is this a good naming?
 struct HttpResponseView {
     status: String,
     time: String,
     size: String,
+    timestamp: String,
     body: String,
     headers: String,
     content_type: Option<String>,
@@ -9137,6 +9146,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                 status: "Error".to_string(),
                 time: "—".to_string(),
                 size: "—".to_string(),
+                timestamp: Utc::now().to_rfc3339(),
                 body: error,
                 headers: String::new(),
                 content_type: None,
@@ -9282,6 +9292,8 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let completed_at = Utc::now().to_rfc3339();
+
             match response.bytes().await {
                 Ok(bytes) => {
                     let body = String::from_utf8_lossy(&bytes).to_string();
@@ -9289,6 +9301,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                         status: status_text,
                         time: format!("{} ms", start.elapsed().as_millis()),
                         size: format_bytes(bytes.len()),
+                        timestamp: completed_at,
                         body,
                         headers,
                         content_type,
@@ -9298,6 +9311,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                     status: status_text,
                     time: format!("{} ms", start.elapsed().as_millis()),
                     size: "—".to_string(),
+                    timestamp: completed_at,
                     body: format!("Failed to read response body: {error}"),
                     headers,
                     content_type,
@@ -9308,6 +9322,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
             status: "Error".to_string(),
             time: format!("{} ms", start.elapsed().as_millis()),
             size: "—".to_string(),
+            timestamp: Utc::now().to_rfc3339(),
             body: format!("Request failed: {error}"),
             headers: String::new(),
             content_type: None,
