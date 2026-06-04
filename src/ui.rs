@@ -5044,7 +5044,7 @@ impl BeamView {
         struct RequestRunCompletion {
             request_id: Ulid,
             run_id: u64,
-            outcome: Option<SendRequestOutcome>,
+            outcome: Option<RequestExecutionOutcome>,
         }
 
         let latest_script = self.post_script_editor.read(cx).value().to_string();
@@ -5236,11 +5236,11 @@ impl BeamView {
         request_id: Option<Ulid>,
         no_environment_selected: bool,
         environment_variables: Vec<EnvironmentVariable>,
-    ) -> SendRequestOutcome {
+    ) -> RequestExecutionOutcome {
         let response = execute_http_request(request.clone()).await;
         let script_text = request.post_script.clone().unwrap_or_default();
         if script_text.trim().is_empty() {
-            return SendRequestOutcome {
+            return RequestExecutionOutcome {
                 response,
                 script_result: None,
                 updated_environment_variables: None,
@@ -5277,7 +5277,7 @@ impl BeamView {
         let request_id_text = request_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| "unknown-request".to_string());
-        SendRequestOutcome {
+        RequestExecutionOutcome {
             response,
             script_result: Some(Self::to_persisted_script_result(
                 &script_exec_result,
@@ -5372,7 +5372,7 @@ impl BeamView {
 
     fn persist_response_snapshot(
         request_id: Ulid,
-        response: &HttpResponseView,
+        response: &HttpResponseSnapshot,
     ) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let history_dir = paths.local_dir.join("history");
@@ -8865,8 +8865,7 @@ impl BeamView {
     }
 }
 
-// TODO: is this a good naming?
-struct HttpResponseView {
+struct HttpResponseSnapshot {
     status: String,
     time: String,
     size: String,
@@ -8876,8 +8875,8 @@ struct HttpResponseView {
     content_type: Option<String>,
 }
 
-struct SendRequestOutcome {
-    response: HttpResponseView,
+struct RequestExecutionOutcome {
+    response: HttpResponseSnapshot,
     script_result: Option<PersistedScriptResult>,
     updated_environment_variables: Option<Vec<EnvironmentVariable>>,
 }
@@ -9137,12 +9136,12 @@ fn resolve_template_variables(input: &str, resolved_env: &HashMap<String, String
     output
 }
 
-async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
+async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSnapshot {
     let start = Instant::now();
     let client = match shared_http_client() {
         Ok(client) => client,
         Err(error) => {
-            return HttpResponseView {
+            return HttpResponseSnapshot {
                 status: "Error".to_string(),
                 time: "—".to_string(),
                 size: "—".to_string(),
@@ -9297,7 +9296,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
             match response.bytes().await {
                 Ok(bytes) => {
                     let body = String::from_utf8_lossy(&bytes).to_string();
-                    HttpResponseView {
+                    HttpResponseSnapshot {
                         status: status_text,
                         time: format!("{} ms", start.elapsed().as_millis()),
                         size: format_bytes(bytes.len()),
@@ -9307,7 +9306,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                         content_type,
                     }
                 }
-                Err(error) => HttpResponseView {
+                Err(error) => HttpResponseSnapshot {
                     status: status_text,
                     time: format!("{} ms", start.elapsed().as_millis()),
                     size: "—".to_string(),
@@ -9318,7 +9317,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                 },
             }
         }
-        Err(error) => HttpResponseView {
+        Err(error) => HttpResponseSnapshot {
             status: "Error".to_string(),
             time: format!("{} ms", start.elapsed().as_millis()),
             size: "—".to_string(),
