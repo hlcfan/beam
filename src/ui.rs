@@ -772,7 +772,6 @@ struct RequestHistoryHeader {
 #[derive(Clone)]
 struct ResponseHistoryEntry {
     title: String,
-    summary: String,
     execution: RequestHistoryExecution,
 }
 
@@ -2572,6 +2571,16 @@ impl BeamView {
         (status, time, size)
     }
 
+    fn response_history_status_color(status: Option<u16>, cx: &App) -> Hsla {
+        match status {
+            Some(200..=299) => cx.theme().success,
+            Some(300..=399) => cx.theme().warning,
+            Some(400..=599) => cx.theme().danger,
+            Some(100..=199) => cx.theme().info,
+            _ => cx.theme().muted_foreground,
+        }
+    }
+
     fn load_response_snapshot_for_history_entry(
         entry: &ResponseHistoryEntry,
     ) -> StoredResponseSnapshot {
@@ -2591,7 +2600,6 @@ impl BeamView {
             .enumerate()
             .rev()
             .map(|(index, execution)| {
-                let (status, time, size) = Self::response_history_summary_parts(execution);
                 let title = if index + 1 == total {
                     "Latest response".to_string()
                 } else {
@@ -2601,11 +2609,9 @@ impl BeamView {
                         .map(Self::format_human_timestamp)
                         .unwrap_or_else(|| format!("Response #{}", index + 1))
                 };
-                let summary = format!("{status} | {time} | {size}");
 
                 ResponseHistoryEntry {
                     title,
-                    summary,
                     execution: execution.clone(),
                 }
             })
@@ -8442,10 +8448,30 @@ impl BeamView {
                     for entry in response_histories.clone() {
                         let item_view = response_history_view.clone();
                         let title = entry.title.clone();
-                        let summary = entry.summary.clone();
                         let history_entry = entry.clone();
                         menu = menu.item(
                             PopupMenuItem::element(move |_, cx| {
+                                let status_text = entry
+                                    .execution
+                                    .status
+                                    .map(|code| code.to_string())
+                                    .unwrap_or_else(|| "—".to_string());
+                                let time_text = entry
+                                    .execution
+                                    .duration_ms
+                                    .map(|ms| format!("{ms} ms"))
+                                    .unwrap_or_else(|| "—".to_string());
+                                let size_text = entry
+                                    .execution
+                                    .response_summary
+                                    .as_ref()
+                                    .and_then(|summary| summary.body_bytes)
+                                    .and_then(|n| usize::try_from(n).ok())
+                                    .map(format_bytes)
+                                    .unwrap_or_else(|| "—".to_string());
+                                let status_color =
+                                    Self::response_history_status_color(entry.execution.status, cx);
+
                                 v_flex()
                                     .w_full()
                                     .cursor_pointer()
@@ -8454,10 +8480,33 @@ impl BeamView {
                                     .py_1()
                                     .child(div().text_sm().child(title.clone()))
                                     .child(
-                                        div()
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1()
                                             .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(summary.clone()),
+                                            .child(
+                                                div().text_color(status_color).child(status_text),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child("|"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(time_text),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child("|"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_color(cx.theme().muted_foreground)
+                                                    .child(size_text),
+                                            ),
                                     )
                             })
                             .on_click(window.listener_for(
