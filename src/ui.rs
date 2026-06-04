@@ -8856,10 +8856,19 @@ impl BeamView {
         match status_text {
             Some(status_text) => HoverCard::new("response-status-summary")
                 .anchor(gpui::Anchor::BottomRight)
+                .appearance(false)
                 .open_delay(Duration::from_millis(100))
                 .close_delay(Duration::from_millis(150))
                 .trigger(trigger)
-                .child(div().occlude().text_sm().child(status_text))
+                .child(
+                    div()
+                        .occlude()
+                        .popover_style(cx)
+                        .px_2()
+                        .py_0()
+                        .text_sm()
+                        .child(status_text),
+                )
                 .into_any_element(),
             None => trigger.into_any_element(),
         }
