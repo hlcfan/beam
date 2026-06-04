@@ -2571,7 +2571,7 @@ impl BeamView {
         (status, time, size)
     }
 
-    fn response_history_status_color(status: Option<u16>, cx: &App) -> Hsla {
+    fn status_code_in_color(status: Option<u16>, cx: &App) -> Hsla {
         match status {
             Some(200..=299) => cx.theme().success,
             Some(300..=399) => cx.theme().warning,
@@ -8470,7 +8470,7 @@ impl BeamView {
                                     .map(format_bytes)
                                     .unwrap_or_else(|| "—".to_string());
                                 let status_color =
-                                    Self::response_history_status_color(entry.execution.status, cx);
+                                    Self::status_code_in_color(entry.execution.status, cx);
 
                                 v_flex()
                                     .w_full()
