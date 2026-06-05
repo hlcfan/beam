@@ -21,7 +21,7 @@ use gpui_component::{
     scroll::ScrollableElement,
     tag::Tag,
     text::{html, markdown},
-    v_flex, v_virtual_list,
+    v_flex, v_virtual_list, VirtualListScrollHandle,
 };
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
@@ -8471,7 +8471,7 @@ impl BeamView {
                     let menu_response_histories = response_histories.clone();
                     let menu_response_history_view = response_history_view.clone();
                     let menu_popup_menu = popup_menu.clone();
-                    let scroll_handle = gpui_component::VirtualListScrollHandle::new();
+                    let scroll_handle = VirtualListScrollHandle::new();
 
                     menu = menu.item(
                         PopupMenuItem::element(move |_, _cx| {
