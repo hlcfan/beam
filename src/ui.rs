@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
@@ -20,7 +21,7 @@ use gpui_component::{
     scroll::ScrollableElement,
     tag::Tag,
     text::{html, markdown},
-    v_flex,
+    v_flex, v_virtual_list,
 };
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
@@ -772,7 +773,8 @@ struct RequestHistoryHeader {
 
 #[derive(Clone)]
 struct ResponseHistoryEntry {
-    title: String,
+    timestamp_text: String,
+    status_text: String,
     execution: RequestHistoryExecution,
 }
 
@@ -2600,26 +2602,25 @@ impl BeamView {
         let Some(history_file) = Self::load_request_history_file(request_id) else {
             return Vec::new();
         };
-        let total = history_file.executions.len();
 
         history_file
             .executions
             .iter()
-            .enumerate()
             .rev()
-            .map(|(index, execution)| {
-                let title = if index + 1 == total {
-                    "Latest response".to_string()
-                } else {
-                    execution
-                        .timestamp
-                        .as_deref()
-                        .map(Self::format_human_timestamp)
-                        .unwrap_or_else(|| format!("Response #{}", index + 1))
-                };
+            .map(|execution| {
+                let timestamp_text = execution
+                    .timestamp
+                    .as_deref()
+                    .map(Self::format_human_timestamp)
+                    .unwrap_or_else(|| "Unknown time".to_string());
+                let status_text = execution
+                    .status
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "—".to_string());
 
                 ResponseHistoryEntry {
-                    title,
+                    timestamp_text,
+                    status_text,
                     execution: execution.clone(),
                 }
             })
@@ -8435,8 +8436,10 @@ impl BeamView {
                         .size(px(14.0))
                         .text_color(cx.theme().muted_foreground),
                 )
-                .dropdown_menu(move |menu, window, _| {
-                    let mut menu = menu.min_w(px(220.0)).scrollable(true).max_h(px(280.0));
+                .dropdown_menu(move |menu, _window, menu_cx| {
+                    let list_width_px = 180.0;
+                    let mut menu = menu.min_w(px(list_width_px));
+
                     if response_histories.is_empty() {
                         return menu.item(
                             PopupMenuItem::element(move |_, cx| {
@@ -8452,82 +8455,113 @@ impl BeamView {
                         );
                     }
 
-                    for entry in response_histories.clone() {
-                        let item_view = response_history_view.clone();
-                        let title = entry.title.clone();
-                        let history_entry = entry.clone();
-                        menu = menu.item(
-                            PopupMenuItem::element(move |_, cx| {
-                                let status_text = entry
-                                    .execution
-                                    .status
-                                    .map(|code| code.to_string())
-                                    .unwrap_or_else(|| "—".to_string());
-                                let time_text = entry
-                                    .execution
-                                    .duration_ms
-                                    .map(|ms| format!("{ms} ms"))
-                                    .unwrap_or_else(|| "—".to_string());
-                                let size_text = entry
-                                    .execution
-                                    .response_summary
-                                    .as_ref()
-                                    .and_then(|summary| summary.body_bytes)
-                                    .and_then(|n| usize::try_from(n).ok())
-                                    .map(format_bytes)
-                                    .unwrap_or_else(|| "—".to_string());
-                                let status_color =
-                                    Self::status_code_in_color(entry.execution.status, cx);
+                    let popup_menu = menu_cx.entity().clone();
+                    let row_width_px = 172.0;
+                    let row_height_px = 32.0;
+                    let row_height = px(row_height_px);
+                    let row_content_height = px(28.0);
+                    let list_height =
+                        px((response_histories.len() as f32 * row_height_px).min(280.0));
+                    let row_sizes = Rc::new(
+                        response_histories
+                            .iter()
+                            .map(|_| size(px(row_width_px), row_height))
+                            .collect::<Vec<_>>(),
+                    );
+                    let menu_response_histories = response_histories.clone();
+                    let menu_response_history_view = response_history_view.clone();
+                    let menu_popup_menu = popup_menu.clone();
+                    let scroll_handle = gpui_component::VirtualListScrollHandle::new();
 
-                                v_flex()
-                                    .w_full()
-                                    .cursor_pointer()
-                                    .gap_0p5()
-                                    .px_2()
-                                    .py_1()
-                                    .child(div().text_sm().child(title.clone()))
-                                    .child(
-                                        h_flex()
-                                            .items_center()
-                                            .gap_1()
-                                            .text_xs()
-                                            .child(
-                                                div().text_color(status_color).child(status_text),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child("|"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(time_text),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child("|"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(size_text),
-                                            ),
-                                    )
-                            })
-                            .on_click(window.listener_for(
-                                &item_view,
-                                move |this, _, window, cx| {
-                                    let snapshot = Self::load_response_snapshot_for_history_entry(
-                                        &history_entry,
-                                    );
-                                    this.apply_response_snapshot(&snapshot, window, cx);
-                                    cx.notify();
-                                },
-                            )),
-                        );
-                    }
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _cx| {
+                            let row_sizes = row_sizes.clone();
+                            let list_response_histories = menu_response_histories.clone();
+                            let list_response_history_view = menu_response_history_view.clone();
+                            let list_popup_menu = menu_popup_menu.clone();
+                            let scroll_handle = scroll_handle.clone();
+
+                            div()
+                                .min_w(px(list_width_px))
+                                .mx(px(-8.0))
+                                .p_1()
+                                .h(list_height)
+                                .child(
+                                v_virtual_list(
+                                    list_response_history_view,
+                                    "response-history-dropdown-list",
+                                    row_sizes,
+                                    move |_, visible_range, _, cx| {
+                                        visible_range
+                                            .map(|ix| {
+                                                let entry = list_response_histories[ix].clone();
+                                                let popup_menu = list_popup_menu.clone();
+                                                let timestamp_text = entry.timestamp_text.clone();
+                                                let status_text = entry.status_text.clone();
+                                                let history_entry = entry.clone();
+                                                let status_color =
+                                                    Self::status_code_in_color(
+                                                        entry.execution.status,
+                                                        cx,
+                                                    );
+                                                div().w_full().h(row_height).pb(px(4.0)).child(
+                                                    ListItem::new(format!(
+                                                        "response-history-dropdown-row-{ix}"
+                                                    ))
+                                                    .w_full()
+                                                    .h(row_content_height)
+                                                    .rounded(px(6.0))
+                                                    .cursor_pointer()
+                                                    .px_1()
+                                                    .py_1()
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .text_sm()
+                                                            .child(
+                                                                div()
+                                                                    .text_color(
+                                                                        cx.theme().muted_foreground,
+                                                                    )
+                                                                    .child(timestamp_text),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_color(status_color)
+                                                                    .child(status_text),
+                                                            ),
+                                                    )
+                                                    .on_click(
+                                                        cx.listener(move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            window.prevent_default();
+                                                            let snapshot =
+                                                                Self::load_response_snapshot_for_history_entry(
+                                                                    &history_entry,
+                                                                );
+                                                            this.apply_response_snapshot(
+                                                                &snapshot,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            popup_menu.update(cx, |_, cx| {
+                                                                cx.emit(DismissEvent)
+                                                            });
+                                                            cx.notify();
+                                                        }),
+                                                    ),
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                    },
+                                )
+                                .track_scroll(&scroll_handle),
+                            )
+                        })
+                        .disabled(true),
+                    );
 
                     menu
                 }),
