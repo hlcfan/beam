@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
@@ -20,7 +21,7 @@ use gpui_component::{
     scroll::ScrollableElement,
     tag::Tag,
     text::{html, markdown},
-    v_flex,
+    v_flex, v_virtual_list, VirtualListScrollHandle,
 };
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
@@ -324,9 +325,11 @@ struct BeamView {
     response_body_editor: Entity<InputState>,
     response_headers_raw: String,
     response_content_type: Option<String>,
+    response_history_entries: Vec<ResponseHistoryEntry>,
     post_script_editor: Entity<InputState>,
     active_response_tab: ResponseTab,
     response_status: String,
+    response_status_code: Option<u16>,
     response_time: String,
     response_size: String,
     script_result: Option<PersistedScriptResult>,
@@ -745,6 +748,8 @@ struct RequestHistoryMeta {
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 struct RequestHistoryExecution {
+    #[serde(default)]
+    timestamp: Option<String>,
     status: Option<u16>,
     duration_ms: Option<u64>,
     response_summary: Option<RequestHistoryResponseSummary>,
@@ -766,12 +771,22 @@ struct RequestHistoryHeader {
     value: String,
 }
 
+#[derive(Clone)]
+struct ResponseHistoryEntry {
+    timestamp_text: String,
+    status_text: String,
+    execution: RequestHistoryExecution,
+}
+
+#[derive(Clone)]
 struct StoredResponseSnapshot {
     status: String,
+    status_code: Option<u16>,
     time: String,
     size: String,
     body: String,
     headers_raw: String,
+    content_type: Option<String>,
 }
 
 impl EnvironmentManagerDialogView {
@@ -2057,6 +2072,7 @@ impl BeamView {
 
         self.cancel_request_run_for(request_id);
         self.response_status = "Canceled".to_string();
+        self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
     }
@@ -2421,6 +2437,7 @@ impl BeamView {
 
     fn clear_response_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.response_status = "—".to_string();
+        self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
@@ -2430,40 +2447,61 @@ impl BeamView {
         });
     }
 
+    fn apply_response_snapshot(
+        &mut self,
+        snapshot: &StoredResponseSnapshot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let content_type = snapshot.content_type.clone();
+        let formatted_body =
+            Self::auto_format_response_body(&snapshot.body, content_type.as_deref());
+        self.response_status = snapshot.status.clone();
+        self.response_status_code = snapshot.status_code;
+        self.response_time = snapshot.time.clone();
+        self.response_size = snapshot.size.clone();
+        self.response_headers_raw = snapshot.headers_raw.clone();
+        self.response_content_type = content_type;
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_value(formatted_body.clone(), window, cx);
+        });
+    }
+
     fn sync_response_pane_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
+            self.response_history_entries.clear();
             self.clear_response_pane(window, cx);
             self.script_result = None;
             return;
         };
 
-        if let Some(snapshot) = Self::load_latest_response_snapshot(request_id) {
-            self.response_status = snapshot.status;
-            self.response_time = snapshot.time;
-            self.response_size = snapshot.size;
-            self.response_headers_raw = snapshot.headers_raw;
-            let formatted_body = Self::auto_format_response_body(&snapshot.body, None);
-            self.response_body_editor.update(cx, |input, cx| {
-                input.set_value(formatted_body, window, cx);
-            });
+        self.response_history_entries = Self::load_response_history_entries(request_id);
+        if let Some(snapshot) = self
+            .response_history_entries
+            .first()
+            .map(Self::load_response_snapshot_for_history_entry)
+        {
+            self.apply_response_snapshot(&snapshot, window, cx);
         } else {
             self.clear_response_pane(window, cx);
         }
         self.script_result = Self::load_script_result(request_id);
 
-        let (status, time, size) = response_summary_for_selected_request(
+        let (status, status_code, time, size) = response_summary_for_selected_request(
             Some(request_id),
             &self.request_execution_states,
             &self.response_status,
+            self.response_status_code,
             &self.response_time,
             &self.response_size,
         );
         self.response_status = status;
+        self.response_status_code = status_code;
         self.response_time = time;
         self.response_size = size;
     }
 
-    fn load_latest_response_snapshot(request_id: Ulid) -> Option<StoredResponseSnapshot> {
+    fn load_request_history_file(request_id: Ulid) -> Option<RequestHistoryFile> {
         let paths = BeamPaths::default_user_config();
         let history_file_path = paths
             .local_dir
@@ -2471,31 +2509,20 @@ impl BeamView {
             .join(format!("{request_id}.history.toml"));
         let content = fs::read_to_string(history_file_path).ok()?;
         let history_file: RequestHistoryFile = toml::from_str(&content).ok()?;
-        if let Some(meta) = history_file.meta.as_ref() {
-            let _ = (&meta.schema_version, &meta.updated_at);
-            if meta.request_id != request_id.to_string() {
-                return None;
-            }
-        }
-        let latest_execution = history_file.executions.last()?;
 
-        let status = latest_execution
-            .status
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "—".to_string());
-        let time = latest_execution
-            .duration_ms
-            .map(|ms| format!("{ms} ms"))
-            .unwrap_or_else(|| "—".to_string());
+        Some(history_file)
+    }
 
-        let mut size = "—".to_string();
+    fn response_snapshot_from_history_execution(
+        paths: &BeamPaths,
+        execution: &RequestHistoryExecution,
+    ) -> StoredResponseSnapshot {
+        let (status, status_code, time, size) = Self::response_history_summary_parts(execution);
         let mut body = String::new();
         let mut headers_raw = String::new();
+        let mut content_type = None;
 
-        if let Some(summary) = latest_execution.response_summary.as_ref() {
-            if let Some(bytes) = summary.body_bytes.and_then(|n| usize::try_from(n).ok()) {
-                size = format_bytes(bytes);
-            }
+        if let Some(summary) = execution.response_summary.as_ref() {
             if !summary.headers.is_empty() {
                 headers_raw = summary
                     .headers
@@ -2503,6 +2530,11 @@ impl BeamView {
                     .map(|header| format!("{}: {}", header.name, header.value))
                     .collect::<Vec<_>>()
                     .join("\n");
+                content_type = summary
+                    .headers
+                    .iter()
+                    .find(|header| header.name.eq_ignore_ascii_case("content-type"))
+                    .map(|header| header.value.clone());
             }
             body = if summary.body_truncated {
                 RESPONSE_BODY_TRUNCATED_NOTE.to_string()
@@ -2516,13 +2548,83 @@ impl BeamView {
             };
         }
 
-        Some(StoredResponseSnapshot {
+        StoredResponseSnapshot {
             status,
+            status_code,
             time,
             size,
             body,
             headers_raw,
-        })
+            content_type,
+        }
+    }
+
+    fn response_history_summary_parts(
+        execution: &RequestHistoryExecution,
+    ) -> (String, Option<u16>, String, String) {
+        let status = execution
+            .status
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "—".to_string());
+        let time = execution
+            .duration_ms
+            .map(|ms| format!("{ms} ms"))
+            .unwrap_or_else(|| "—".to_string());
+        let size = execution
+            .response_summary
+            .as_ref()
+            .and_then(|summary| summary.body_bytes)
+            .and_then(|n| usize::try_from(n).ok())
+            .map(format_bytes)
+            .unwrap_or_else(|| "—".to_string());
+
+        (status, execution.status, time, size)
+    }
+
+    fn status_code_in_color(status: Option<u16>, cx: &App) -> Hsla {
+        match status {
+            Some(200..=299) => cx.theme().success,
+            Some(300..=399) => cx.theme().warning,
+            Some(400..=599) => cx.theme().danger,
+            Some(100..=199) => cx.theme().info,
+            _ => cx.theme().muted_foreground,
+        }
+    }
+
+    fn load_response_snapshot_for_history_entry(
+        entry: &ResponseHistoryEntry,
+    ) -> StoredResponseSnapshot {
+        let paths = BeamPaths::default_user_config();
+        Self::response_snapshot_from_history_execution(&paths, &entry.execution)
+    }
+
+    fn load_response_history_entries(request_id: Ulid) -> Vec<ResponseHistoryEntry> {
+        let Some(history_file) = Self::load_request_history_file(request_id) else {
+            return Vec::new();
+        };
+
+        history_file
+            .executions
+            .iter()
+            .rev()
+            .map(|execution| {
+                let timestamp_text = execution
+                    .timestamp
+                    .as_deref()
+                    .map(Self::format_human_timestamp)
+                    .unwrap_or_else(|| "Unknown time".to_string());
+                let status_text = execution
+                    .status
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "—".to_string());
+
+                ResponseHistoryEntry {
+                    timestamp_text,
+                    status_text,
+                    execution: execution.clone(),
+                }
+            })
+            .collect()
     }
 
     fn script_result_file_path(request_id: Ulid) -> PathBuf {
@@ -4901,9 +5003,11 @@ impl BeamView {
             response_body_editor,
             response_headers_raw: String::new(),
             response_content_type: None,
+            response_history_entries: Vec::new(),
             post_script_editor,
             active_response_tab: ResponseTab::Body,
             response_status: "—".to_string(),
+            response_status_code: None,
             response_time: "—".to_string(),
             response_size: "—".to_string(),
             script_result: None,
@@ -4956,7 +5060,7 @@ impl BeamView {
         struct RequestRunCompletion {
             request_id: Ulid,
             run_id: u64,
-            outcome: Option<SendRequestOutcome>,
+            outcome: Option<RequestExecutionOutcome>,
         }
 
         let latest_script = self.post_script_editor.read(cx).value().to_string();
@@ -4995,6 +5099,7 @@ impl BeamView {
         }
         let run_id = self.begin_request_run_for(request_id);
         self.response_status = "Sending...".to_string();
+        self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
         let http_runtime = match shared_http_runtime() {
@@ -5008,6 +5113,7 @@ impl BeamView {
                 }
 
                 self.response_status = "Error".to_string();
+                self.response_status_code = None;
                 self.response_body_editor.update(cx, |input, cx| {
                     input.set_value(error, window, cx);
                 });
@@ -5075,6 +5181,7 @@ impl BeamView {
                 let Some(outcome) = maybe_outcome else {
                     if should_update_visible_response {
                         this.response_status = "Canceled".to_string();
+                        this.response_status_code = None;
                         this.response_time = "—".to_string();
                         this.response_size = "—".to_string();
                     }
@@ -5083,6 +5190,7 @@ impl BeamView {
                 };
                 let response = outcome.response;
                 let response_status = response.status.clone();
+                let response_status_code = response.status_code;
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
                 let response_body = Self::auto_format_response_body(
@@ -5092,6 +5200,7 @@ impl BeamView {
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
+                    this.response_status_code = response_status_code;
                     this.response_time = response_time;
                     this.response_size = response_size;
                     this.response_body_editor.update(cx, |input, cx| {
@@ -5119,6 +5228,9 @@ impl BeamView {
                 if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
                     log::error!("Failed to persist response snapshot: {error}");
                 }
+                if Some(request_id) == this.shell.workspace_tree.selected_request_id() {
+                    this.response_history_entries = Self::load_response_history_entries(request_id);
+                }
                 match outcome.script_result.as_ref() {
                     Some(script_result) => {
                         if let Err(error) = Self::persist_script_result(request_id, script_result) {
@@ -5145,11 +5257,11 @@ impl BeamView {
         request_id: Option<Ulid>,
         no_environment_selected: bool,
         environment_variables: Vec<EnvironmentVariable>,
-    ) -> SendRequestOutcome {
+    ) -> RequestExecutionOutcome {
         let response = execute_http_request(request.clone()).await;
         let script_text = request.post_script.clone().unwrap_or_default();
         if script_text.trim().is_empty() {
-            return SendRequestOutcome {
+            return RequestExecutionOutcome {
                 response,
                 script_result: None,
                 updated_environment_variables: None,
@@ -5157,7 +5269,7 @@ impl BeamView {
         }
 
         let runtime_response = ScriptRuntimeResponse {
-            status: Self::parse_response_status_code(&response.status).unwrap_or(0),
+            status: response.status_code.unwrap_or(0),
             status_text: response.status.clone(),
             headers: Self::parse_response_headers(&response.headers),
             body: response.body.clone(),
@@ -5186,7 +5298,7 @@ impl BeamView {
         let request_id_text = request_id
             .map(|id| id.to_string())
             .unwrap_or_else(|| "unknown-request".to_string());
-        SendRequestOutcome {
+        RequestExecutionOutcome {
             response,
             script_result: Some(Self::to_persisted_script_result(
                 &script_exec_result,
@@ -5281,7 +5393,7 @@ impl BeamView {
 
     fn persist_response_snapshot(
         request_id: Ulid,
-        response: &HttpResponseView,
+        response: &HttpResponseSnapshot,
     ) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let history_dir = paths.local_dir.join("history");
@@ -5309,7 +5421,8 @@ impl BeamView {
             updated_at: Some(Utc::now().to_rfc3339()),
         });
         history_file.executions.push(RequestHistoryExecution {
-            status: Self::parse_response_status_code(&response.status),
+            timestamp: Some(response.timestamp.clone()),
+            status: response.status_code,
             duration_ms: Self::parse_response_duration_ms(&response.time),
             response_summary: Some(RequestHistoryResponseSummary {
                 body_bytes: Some(response.body.len() as u64),
@@ -5326,13 +5439,6 @@ impl BeamView {
             .map_err(|error| format!("Failed to encode history file: {error}"))?;
         fs::write(history_path, content)
             .map_err(|error| format!("Failed to write history file: {error}"))
-    }
-
-    fn parse_response_status_code(status: &str) -> Option<u16> {
-        status
-            .split_whitespace()
-            .next()
-            .and_then(|token| token.parse::<u16>().ok())
     }
 
     fn parse_response_duration_ms(time: &str) -> Option<u64> {
@@ -8293,7 +8399,7 @@ impl BeamView {
             .child(editor_container)
     }
 
-    fn render_response_tabs(&self, cx: &mut Context<Self>) -> Div {
+    fn render_response_tabs(&self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
         let mut tabs = h_flex().items_center().gap_1().w_full();
         let tab_specs = [
             (ResponseTab::Body, "Body"),
@@ -8314,6 +8420,152 @@ impl BeamView {
                     .label(label),
             );
         }
+
+        let response_histories = self.response_history_entries.clone();
+        let response_history_view = cx.entity();
+        tabs = tabs.child(
+            Button::new("response-history-dropdown")
+                .small()
+                .ghost()
+                .cursor_pointer()
+                .rounded(px(6.0))
+                .disabled(self.shell.workspace_tree.selected_request_id().is_none())
+                .icon(
+                    Icon::default()
+                        .path("icons/history.svg")
+                        .size(px(14.0))
+                        .text_color(cx.theme().muted_foreground),
+                )
+                .dropdown_menu(move |menu, _window, menu_cx| {
+                    let list_width_px = 180.0;
+                    let mut menu = menu.min_w(px(list_width_px));
+
+                    if response_histories.is_empty() {
+                        return menu.item(
+                            PopupMenuItem::element(move |_, cx| {
+                                div()
+                                    .w_full()
+                                    .px_2()
+                                    .py_1()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("No response history")
+                            })
+                            .disabled(true),
+                        );
+                    }
+
+                    let popup_menu = menu_cx.entity().clone();
+                    let row_width_px = 172.0;
+                    let row_height_px = 32.0;
+                    let row_height = px(row_height_px);
+                    let row_content_height = px(28.0);
+                    let list_height =
+                        px((response_histories.len() as f32 * row_height_px).min(280.0));
+                    let row_sizes = Rc::new(
+                        response_histories
+                            .iter()
+                            .map(|_| size(px(row_width_px), row_height))
+                            .collect::<Vec<_>>(),
+                    );
+                    let menu_response_histories = response_histories.clone();
+                    let menu_response_history_view = response_history_view.clone();
+                    let menu_popup_menu = popup_menu.clone();
+                    let scroll_handle = VirtualListScrollHandle::new();
+
+                    menu = menu.item(
+                        PopupMenuItem::element(move |_, _cx| {
+                            let row_sizes = row_sizes.clone();
+                            let list_response_histories = menu_response_histories.clone();
+                            let list_response_history_view = menu_response_history_view.clone();
+                            let list_popup_menu = menu_popup_menu.clone();
+                            let scroll_handle = scroll_handle.clone();
+
+                            div()
+                                .min_w(px(list_width_px))
+                                .mx(px(-8.0))
+                                .p_1()
+                                .h(list_height)
+                                .child(
+                                v_virtual_list(
+                                    list_response_history_view,
+                                    "response-history-dropdown-list",
+                                    row_sizes,
+                                    move |_, visible_range, _, cx| {
+                                        visible_range
+                                            .map(|ix| {
+                                                let entry = list_response_histories[ix].clone();
+                                                let popup_menu = list_popup_menu.clone();
+                                                let timestamp_text = entry.timestamp_text.clone();
+                                                let status_text = entry.status_text.clone();
+                                                let history_entry = entry.clone();
+                                                let status_color =
+                                                    Self::status_code_in_color(
+                                                        entry.execution.status,
+                                                        cx,
+                                                    );
+                                                div().w_full().h(row_height).pb(px(4.0)).child(
+                                                    ListItem::new(format!(
+                                                        "response-history-dropdown-row-{ix}"
+                                                    ))
+                                                    .w_full()
+                                                    .h(row_content_height)
+                                                    .rounded(px(6.0))
+                                                    .cursor_pointer()
+                                                    .px_1()
+                                                    .py_1()
+                                                    .child(
+                                                        h_flex()
+                                                            .w_full()
+                                                            .items_center()
+                                                            .justify_between()
+                                                            .text_sm()
+                                                            .child(
+                                                                div()
+                                                                    .text_color(
+                                                                        cx.theme().muted_foreground,
+                                                                    )
+                                                                    .child(timestamp_text),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_color(status_color)
+                                                                    .child(status_text),
+                                                            ),
+                                                    )
+                                                    .on_click(
+                                                        cx.listener(move |this, _, window, cx| {
+                                                            cx.stop_propagation();
+                                                            window.prevent_default();
+                                                            let snapshot =
+                                                                Self::load_response_snapshot_for_history_entry(
+                                                                    &history_entry,
+                                                                );
+                                                            this.apply_response_snapshot(
+                                                                &snapshot,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                            popup_menu.update(cx, |_, cx| {
+                                                                cx.emit(DismissEvent)
+                                                            });
+                                                            cx.notify();
+                                                        }),
+                                                    ),
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                    },
+                                )
+                                .track_scroll(&scroll_handle),
+                            )
+                        })
+                        .disabled(true),
+                    );
+
+                    menu
+                }),
+        );
 
         tabs
     }
@@ -8552,7 +8804,7 @@ impl BeamView {
             )
     }
 
-    fn render_response_panel(&self, _: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn render_response_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let is_sending = self
             .shell
             .workspace_tree
@@ -8603,19 +8855,81 @@ impl BeamView {
                     .justify_between()
                     .w_full()
                     .gap_2()
-                    .child(self.render_response_tabs(cx))
+                    .child(self.render_response_tabs(window, cx))
                     .child(
                         h_flex()
                             .items_center()
                             .gap_2()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("Status: {}", self.response_status))
+                            .child(self.render_response_status_summary(cx))
                             .child(format!("Time: {}", self.response_time))
                             .child(format!("Size: {}", self.response_size)),
                     ),
             )
             .child(response_container)
+    }
+
+    fn render_response_status_summary(&self, cx: &mut Context<Self>) -> AnyElement {
+        let (status_code, status_text) =
+            Self::response_status_code_and_text(&self.response_status, self.response_status_code);
+        let status_color = Self::status_code_in_color(self.response_status_code, cx);
+        let trigger = h_flex()
+            .items_center()
+            .gap_1()
+            .child("Status:")
+            .child(
+                div()
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(status_color)
+                    .when(status_text.is_some(), |div| div.cursor_pointer())
+                    .child(status_code),
+            )
+            .cursor_pointer();
+
+        match status_text {
+            Some(status_text) => HoverCard::new("response-status-summary")
+                .anchor(gpui::Anchor::BottomRight)
+                .appearance(false)
+                .open_delay(Duration::from_millis(100))
+                .close_delay(Duration::from_millis(150))
+                .trigger(trigger)
+                .child(
+                    div()
+                        .occlude()
+                        .popover_style(cx)
+                        .px_2()
+                        .py_0()
+                        .text_sm()
+                        .child(status_text),
+                )
+                .into_any_element(),
+            None => trigger.into_any_element(),
+        }
+    }
+
+    fn response_status_code_and_text(
+        status: &str,
+        status_code: Option<u16>,
+    ) -> (String, Option<String>) {
+        let Some(status_code) = status_code else {
+            return (status.to_string(), None);
+        };
+
+        let status_code_text = status_code.to_string();
+        let status_text = status
+            .strip_prefix(&status_code_text)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                reqwest::StatusCode::from_u16(status_code)
+                    .ok()
+                    .and_then(|status| status.canonical_reason())
+                    .map(str::to_string)
+            });
+
+        (status_code_text, status_text)
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
@@ -8656,17 +8970,19 @@ impl BeamView {
     }
 }
 
-struct HttpResponseView {
+struct HttpResponseSnapshot {
     status: String,
+    status_code: Option<u16>,
     time: String,
     size: String,
+    timestamp: String,
     body: String,
     headers: String,
     content_type: Option<String>,
 }
 
-struct SendRequestOutcome {
-    response: HttpResponseView,
+struct RequestExecutionOutcome {
+    response: HttpResponseSnapshot,
     script_result: Option<PersistedScriptResult>,
     updated_environment_variables: Option<Vec<EnvironmentVariable>>,
 }
@@ -8745,20 +9061,27 @@ fn response_summary_for_selected_request(
     selected_request_id: Option<Ulid>,
     execution_states: &HashMap<Ulid, RequestExecutionState>,
     fallback_status: &str,
+    fallback_status_code: Option<u16>,
     fallback_time: &str,
     fallback_size: &str,
-) -> (String, String, String) {
+) -> (String, Option<u16>, String, String) {
     if let Some(request_id) = selected_request_id {
         if execution_states
             .get(&request_id)
             .is_some_and(|state| state.status == RequestExecutionStatus::Sending)
         {
-            return ("Sending...".to_string(), "—".to_string(), "—".to_string());
+            return (
+                "Sending...".to_string(),
+                None,
+                "—".to_string(),
+                "—".to_string(),
+            );
         }
     }
 
     (
         fallback_status.to_string(),
+        fallback_status_code,
         fallback_time.to_string(),
         fallback_size.to_string(),
     )
@@ -8926,15 +9249,17 @@ fn resolve_template_variables(input: &str, resolved_env: &HashMap<String, String
     output
 }
 
-async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseView {
+async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSnapshot {
     let start = Instant::now();
     let client = match shared_http_client() {
         Ok(client) => client,
         Err(error) => {
-            return HttpResponseView {
+            return HttpResponseSnapshot {
                 status: "Error".to_string(),
+                status_code: None,
                 time: "—".to_string(),
                 size: "—".to_string(),
+                timestamp: Utc::now().to_rfc3339(),
                 body: error,
                 headers: String::new(),
                 content_type: None,
@@ -9080,32 +9405,40 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseVie
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
+            let completed_at = Utc::now().to_rfc3339();
+
             match response.bytes().await {
                 Ok(bytes) => {
                     let body = String::from_utf8_lossy(&bytes).to_string();
-                    HttpResponseView {
+                    HttpResponseSnapshot {
                         status: status_text,
+                        status_code: Some(status.as_u16()),
                         time: format!("{} ms", start.elapsed().as_millis()),
                         size: format_bytes(bytes.len()),
+                        timestamp: completed_at,
                         body,
                         headers,
                         content_type,
                     }
                 }
-                Err(error) => HttpResponseView {
+                Err(error) => HttpResponseSnapshot {
                     status: status_text,
+                    status_code: Some(status.as_u16()),
                     time: format!("{} ms", start.elapsed().as_millis()),
                     size: "—".to_string(),
+                    timestamp: completed_at,
                     body: format!("Failed to read response body: {error}"),
                     headers,
                     content_type,
                 },
             }
         }
-        Err(error) => HttpResponseView {
+        Err(error) => HttpResponseSnapshot {
             status: "Error".to_string(),
+            status_code: None,
             time: format!("{} ms", start.elapsed().as_millis()),
             size: "—".to_string(),
+            timestamp: Utc::now().to_rfc3339(),
             body: format!("Request failed: {error}"),
             headers: String::new(),
             content_type: None,
@@ -9416,6 +9749,7 @@ mod tests {
             Some(request_a),
             &execution_states,
             "200",
+            Some(200),
             "120 ms",
             "1.2 KB",
         );
@@ -9423,18 +9757,25 @@ mod tests {
             Some(request_b),
             &execution_states,
             "200",
+            Some(200),
             "120 ms",
             "1.2 KB",
         );
 
         assert_eq!(
             selected_a,
-            ("Sending...".to_string(), "—".to_string(), "—".to_string())
+            (
+                "Sending...".to_string(),
+                None,
+                "—".to_string(),
+                "—".to_string()
+            )
         );
         assert_eq!(
             selected_b,
             (
                 "200".to_string(),
+                Some(200),
                 "120 ms".to_string(),
                 "1.2 KB".to_string()
             )
