@@ -10,7 +10,7 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
-    ThemeMode, ThemeRegistry, TitleBar, WindowExt as _,
+    ThemeMode, ThemeRegistry, TitleBar, VirtualListScrollHandle, WindowExt as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
     hover_card::HoverCard,
@@ -21,7 +21,7 @@ use gpui_component::{
     scroll::ScrollableElement,
     tag::Tag,
     text::{html, markdown},
-    v_flex, v_virtual_list, VirtualListScrollHandle,
+    v_flex, v_virtual_list,
 };
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
@@ -349,6 +349,9 @@ struct BeamView {
     pending_request_save_due_at: Option<Instant>,
     request_save_tick_scheduled: bool,
     request_save_in_flight: bool,
+    pending_response_scroll_offset_persistence_due_at: Option<Instant>,
+    response_scroll_offset_persistence_tick_scheduled: bool,
+    suppress_response_scroll_offset_persistence: bool,
     show_invalid_url_border: bool,
     active_request_cache: Option<RequestFile>,
     request_file_index: HashMap<Ulid, PathBuf>,
@@ -2417,6 +2420,129 @@ impl BeamView {
         self.sync_response_pane_from_selection(window, cx);
     }
 
+    fn on_response_body_editor_updated(&mut self, cx: &mut Context<Self>) {
+        if self.suppress_response_scroll_offset_persistence {
+            return;
+        }
+        self.schedule_response_scroll_offset_persistence(cx);
+    }
+
+    fn schedule_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
+        if !self.response_scroll_offset_needs_persist(cx) {
+            return;
+        }
+        self.pending_response_scroll_offset_persistence_due_at =
+            Some(Instant::now() + Duration::from_millis(150));
+        if self.response_scroll_offset_persistence_tick_scheduled {
+            return;
+        }
+        self.response_scroll_offset_persistence_tick_scheduled = true;
+        self.schedule_response_scroll_offset_persistence_tick(cx);
+    }
+
+    fn process_pending_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
+        let Some(due_at) = self.pending_response_scroll_offset_persistence_due_at else {
+            self.response_scroll_offset_persistence_tick_scheduled = false;
+            return;
+        };
+        if Instant::now() < due_at {
+            self.schedule_response_scroll_offset_persistence_tick(cx);
+            return;
+        }
+        self.pending_response_scroll_offset_persistence_due_at = None;
+        self.response_scroll_offset_persistence_tick_scheduled = false;
+        if self.response_scroll_offset_needs_persist(cx) {
+            self.persist_current_response_scroll_offset(cx);
+        }
+    }
+
+    fn schedule_response_scroll_offset_persistence_tick(&self, cx: &mut Context<Self>) {
+        let view = cx.entity();
+
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .spawn(async move {
+                    std::thread::sleep(Duration::from_millis(25));
+                })
+                .await;
+            let _ = view.update(cx, |this, cx| {
+                this.process_pending_response_scroll_offset_persistence(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn response_scroll_offset_needs_persist(&self, cx: &App) -> bool {
+        let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
+            return false;
+        };
+        let Some(pane_data) = self.shell.request_pane_data.get(&request_id) else {
+            return false;
+        };
+        self.current_response_scroll_offset(cx) != pane_data.response_scroll_offset
+    }
+
+    fn current_response_scroll_offset(&self, cx: &App) -> Point<Pixels> {
+        self.response_body_editor.read(cx).scroll_offset()
+    }
+
+    fn persist_current_response_scroll_offset(&mut self, cx: &App) {
+        let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
+            return;
+        };
+        self.persist_response_scroll_offset_for_request(request_id, cx);
+    }
+
+    fn update_response_body_editor_with_scroll_persistence_suppressed(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut InputState, &mut Window, &mut Context<InputState>),
+    ) {
+        self.suppress_response_scroll_offset_persistence = true;
+        self.response_body_editor.update(cx, |input, cx| {
+            update(input, window, cx);
+        });
+        self.suppress_response_scroll_offset_persistence = false;
+    }
+
+    fn restore_selected_request_response_scroll_offset(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
+            return;
+        };
+        let Some(pane_data) = self.shell.request_pane_data.get(&request_id) else {
+            return;
+        };
+
+        let response_scroll_offset = pane_data.response_scroll_offset;
+
+        let previous_focus = window.focused(cx);
+        self.response_body_editor.update(cx, |input, cx| {
+            input.defer_scroll_offset(response_scroll_offset, cx);
+        });
+        if let Some(previous_focus) = previous_focus {
+            previous_focus.focus(window, cx);
+        }
+    }
+
+    fn select_request(&mut self, request_id: Ulid, window: &mut Window, cx: &mut Context<Self>) {
+        self.persist_current_response_scroll_offset(cx);
+        self.pending_response_scroll_offset_persistence_due_at = None;
+        self.shell.workspace_tree.select_request(request_id);
+        self.sync_request_editor_from_selection(window, cx);
+    }
+
+    fn persist_response_scroll_offset_for_request(&mut self, request_id: Ulid, cx: &App) {
+        let response_scroll_offset = self.current_response_scroll_offset(cx);
+        if let Some(pane_data) = self.shell.request_pane_data.get_mut(&request_id) {
+            pane_data.response_scroll_offset = response_scroll_offset;
+        }
+    }
+
     fn refresh_active_request_cache(&mut self) {
         let selected_request_id = self.shell.workspace_tree.selected_request_id();
         let cached_request_id = self
@@ -2442,9 +2568,13 @@ impl BeamView {
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
         self.response_content_type = None;
-        self.response_body_editor.update(cx, |input, cx| {
-            input.set_value(String::new(), window, cx);
-        });
+        self.update_response_body_editor_with_scroll_persistence_suppressed(
+            window,
+            cx,
+            |input, window, cx| {
+                input.set_value(String::new(), window, cx);
+            },
+        );
     }
 
     fn apply_response_snapshot(
@@ -2462,9 +2592,13 @@ impl BeamView {
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
         self.response_content_type = content_type;
-        self.response_body_editor.update(cx, |input, cx| {
-            input.set_value(formatted_body.clone(), window, cx);
-        });
+        self.update_response_body_editor_with_scroll_persistence_suppressed(
+            window,
+            cx,
+            |input, window, cx| {
+                input.set_value(formatted_body.clone(), window, cx);
+            },
+        );
     }
 
     fn sync_response_pane_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2482,6 +2616,7 @@ impl BeamView {
             .map(Self::load_response_snapshot_for_history_entry)
         {
             self.apply_response_snapshot(&snapshot, window, cx);
+            self.restore_selected_request_response_scroll_offset(window, cx);
         } else {
             self.clear_response_pane(window, cx);
         }
@@ -2846,6 +2981,12 @@ impl BeamView {
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
             return None;
         };
+        let response_scroll_offset = self
+            .shell
+            .request_pane_data
+            .get(&request_id)
+            .map(|pane_data| pane_data.response_scroll_offset)
+            .unwrap_or(point(px(0.), px(0.)));
         let pane_data = RequestPaneData {
             method: self.request.method,
             url: self.request.url.clone(),
@@ -2854,6 +2995,7 @@ impl BeamView {
             auth: self.request.auth.clone(),
             body: self.request.body.clone(),
             post_script: self.request.post_script.clone(),
+            response_scroll_offset,
         };
         self.shell
             .request_pane_data
@@ -2862,7 +3004,7 @@ impl BeamView {
     }
 
     fn schedule_request_save_with_delay(&mut self, delay: Duration, cx: &mut Context<Self>) {
-        if self.sync_selected_request_pane_data().is_none() {
+        if self.shell.workspace_tree.selected_request_id().is_none() {
             return;
         }
         self.pending_request_save_due_at = Some(Instant::now() + delay);
@@ -4601,8 +4743,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.shell.workspace_tree.select_request(request_id);
-        self.sync_request_editor_from_selection(window, cx);
+        self.select_request(request_id, window, cx);
         self.send_request(window, cx);
     }
 
@@ -4991,6 +5132,9 @@ impl BeamView {
                     cx.notify();
                 }
             }),
+            cx.observe(&response_body_editor, |this: &mut Self, _, cx| {
+                this.on_response_body_editor_updated(cx);
+            }),
         ];
 
         let request_file_index = Self::build_request_file_index(&shell);
@@ -5027,6 +5171,9 @@ impl BeamView {
             pending_request_save_due_at: None,
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
+            pending_response_scroll_offset_persistence_due_at: None,
+            response_scroll_offset_persistence_tick_scheduled: false,
+            suppress_response_scroll_offset_persistence: false,
             show_invalid_url_border: false,
             active_request_cache: None,
             request_file_index,
@@ -5114,9 +5261,13 @@ impl BeamView {
 
                 self.response_status = "Error".to_string();
                 self.response_status_code = None;
-                self.response_body_editor.update(cx, |input, cx| {
-                    input.set_value(error, window, cx);
-                });
+                self.update_response_body_editor_with_scroll_persistence_suppressed(
+                    window,
+                    cx,
+                    |input, window, cx| {
+                        input.set_value(error, window, cx);
+                    },
+                );
                 cx.notify();
                 return;
             }
@@ -5203,9 +5354,13 @@ impl BeamView {
                     this.response_status_code = response_status_code;
                     this.response_time = response_time;
                     this.response_size = response_size;
-                    this.response_body_editor.update(cx, |input, cx| {
-                        input.set_value(response_body.clone(), window, cx);
-                    });
+                    this.update_response_body_editor_with_scroll_persistence_suppressed(
+                        window,
+                        cx,
+                        |input, window, cx| {
+                            input.set_value(response_body.clone(), window, cx);
+                        },
+                    );
                     this.response_headers_raw = response_headers;
                     this.response_content_type = response.content_type.clone();
                     this.script_result = outcome.script_result.clone();
@@ -5848,10 +6003,14 @@ impl BeamView {
             return;
         }
 
-        self.response_body_editor.update(cx, |input, cx| {
-            input.set_value(formatted, window, cx);
-            input.focus(window, cx);
-        });
+        self.update_response_body_editor_with_scroll_persistence_suppressed(
+            window,
+            cx,
+            |input, window, cx| {
+                input.set_value(formatted, window, cx);
+                input.focus(window, cx);
+            },
+        );
         cx.notify();
     }
 
@@ -5946,11 +6105,10 @@ impl BeamView {
                             }
                         }
                         TreeNodeKind::Request => {
-                            this.shell.workspace_tree.select_request(row_id);
+                            this.select_request(row_id, window, cx);
                             if let Err(error) = this.persist_last_opened_request_id(row_id) {
                                 window.push_notification(error, cx);
                             }
-                            this.sync_request_editor_from_selection(window, cx);
                         }
                     })),
             )
