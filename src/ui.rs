@@ -6878,7 +6878,7 @@ impl BeamView {
                                 elements
                             }
                         })
-                        .flex_grow()
+                        .flex_grow_1()
                         .size_full()
                         .with_sizing_behavior(ListSizingBehavior::Auto)
                         .track_scroll(&self.collection_scroll_handle),
