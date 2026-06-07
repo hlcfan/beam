@@ -2522,7 +2522,7 @@ impl BeamView {
 
         let previous_focus = window.focused(cx);
         self.response_body_editor.update(cx, |input, cx| {
-            input.defer_scroll_offset(response_scroll_offset, cx);
+            input.update_scroll_offset(Some(response_scroll_offset), cx);
         });
         if let Some(previous_focus) = previous_focus {
             previous_focus.focus(window, cx);

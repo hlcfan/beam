@@ -25,8 +25,8 @@ log = "0.4"
 tempfile = "3.20"
 
 [patch."https://github.com/longbridge/gpui-component"]
-gpui-component = { git = "https://github.com/hlcfan/gpui-component/", rev = "9fdf04a" }
-gpui-component-assets = { git = "https://github.com/hlcfan/gpui-component/", rev = "9fdf04a" }
+gpui-component = { path = "../gpui-component/crates/ui" }
+gpui-component-assets = { path = "../gpui-component/crates/assets" }
 
 [package.metadata.bundle]
 name = "Beam"
