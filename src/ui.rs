@@ -6072,7 +6072,12 @@ impl BeamView {
         };
         let indent = px((row.depth as f32) * 14.0);
 
-        let mut row_content = h_flex().w_full().items_center().justify_start().gap_2();
+        let mut row_content = h_flex()
+            .w_full()
+            .items_center()
+            .justify_start()
+            .gap_2()
+            .text_sm();
         if let Some(icon_path) = chevron_icon {
             row_content = row_content.child(
                 Icon::default()
