@@ -6834,7 +6834,7 @@ impl BeamView {
         cx.notify();
     }
 
-    fn render_collections_panel(
+    fn render_workspace_panel(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -9695,7 +9695,7 @@ impl Render for BeamView {
                         .child(
                             resizable_panel()
                                 .size(px(left_size))
-                                .child(self.render_collections_panel(window, cx)),
+                                .child(self.render_workspace_panel(window, cx)),
                         )
                         .child(resizable_panel().child({
                             let workspace =
