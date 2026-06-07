@@ -360,6 +360,7 @@ struct BeamView {
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
     pending_request_placements: HashMap<String, PendingRequestPlacement>,
+    pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -384,6 +385,15 @@ enum PendingRequestPlacement {
     After {
         parent: RequestParentRef,
         after_request_id: Ulid,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PendingFolderPlacement {
+    After {
+        parent: FolderParentRef,
+        insertion_index: usize,
+        known_target_manifest_path: Option<KnownParentManifestPath>,
     },
 }
 
@@ -4258,6 +4268,7 @@ impl BeamView {
                     error,
                 } => {
                     self.pending_request_placements.remove(command_id);
+                    self.pending_folder_placements.remove(command_id);
                     self.shell.apply_event(&event);
                     log::error!(
                         "sync_failure command_id={} operation={} error={}",
@@ -4286,6 +4297,36 @@ impl BeamView {
                         window.push_notification(error, cx);
                     }
                     self.refresh_environment_manager_dialog_if_open(None, window, cx);
+                }
+                AppEvent::FolderUpserted {
+                    folder,
+                    manifest_path,
+                    command_id,
+                } => {
+                    self.shell.apply_event(&event);
+                    if let Some(placement) = self.pending_folder_placements.remove(command_id) {
+                        match placement {
+                            PendingFolderPlacement::After {
+                                parent,
+                                insertion_index,
+                                known_target_manifest_path,
+                            } => {
+                                self.perform_tree_move_action(
+                                    TreeMoveAction::MoveFolder(MoveFolderInput {
+                                        folder_id: folder.folder_id,
+                                        new_parent: parent,
+                                        insertion_index,
+                                        known_folder_manifest_path: manifest_path.clone(),
+                                        known_target_manifest_path,
+                                    }),
+                                    None,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
                     self.shell.apply_event(&event);
@@ -4346,6 +4387,10 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
+            window.push_notification("Unable to determine request parent.", cx);
+            return;
+        };
         let Some((parent, known_parent_manifest_path)) =
             self.request_parent_input_for_tree_node(node_id)
         else {
@@ -4353,19 +4398,43 @@ impl BeamView {
             return;
         };
         let command_id = next_command_id();
-        self.pending_request_placements.insert(
-            command_id.clone(),
-            PendingRequestPlacement::Append { parent },
-        );
-        let command = AppCommand::CreateRequest {
-            input: CreateRequestInput {
-                parent,
-                known_parent_manifest_path,
-                name: self.next_new_request_name(parent),
-                method: HttpMethod::Get,
-                url: String::new(),
-            },
-            command_id,
+        let command = match node.kind {
+            TreeNodeKind::Folder => {
+                self.pending_request_placements.insert(
+                    command_id.clone(),
+                    PendingRequestPlacement::Append { parent },
+                );
+                AppCommand::CreateRequest {
+                    input: CreateRequestInput {
+                        parent,
+                        known_parent_manifest_path,
+                        name: self.next_new_request_name(parent),
+                        method: HttpMethod::Get,
+                        url: String::new(),
+                    },
+                    command_id,
+                }
+            }
+            TreeNodeKind::Request => {
+                self.pending_request_placements.insert(
+                    command_id.clone(),
+                    PendingRequestPlacement::After {
+                        parent,
+                        after_request_id: node_id,
+                    },
+                );
+                AppCommand::CreateRequestAfter {
+                    input: CreateRequestInput {
+                        parent,
+                        known_parent_manifest_path,
+                        name: self.next_new_request_name(parent),
+                        method: HttpMethod::Get,
+                        url: String::new(),
+                    },
+                    source_request_id: node_id,
+                    command_id,
+                }
+            }
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
@@ -4378,20 +4447,41 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((parent, _known_parent_manifest_path)) =
+        let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
+            window.push_notification("Unable to determine folder parent.", cx);
+            return;
+        };
+        let Some((parent, known_parent_manifest_path)) =
             self.folder_parent_input_for_tree_node(node_id)
         else {
             window.push_notification("Unable to determine folder parent.", cx);
             return;
         };
         let folder_name = self.next_new_folder_name(parent);
+        let command_id = next_command_id();
+        if node.kind == TreeNodeKind::Request {
+            let Some((_, insertion_index)) =
+                self.sibling_destination_for_target(node_id, TreeDropPlacement::After)
+            else {
+                window.push_notification("Unable to determine folder position.", cx);
+                return;
+            };
+            self.pending_folder_placements.insert(
+                command_id.clone(),
+                PendingFolderPlacement::After {
+                    parent,
+                    insertion_index,
+                    known_target_manifest_path: known_parent_manifest_path.clone(),
+                },
+            );
+        }
         let command = AppCommand::CreateFolder {
             input: CreateFolderInput {
                 parent,
-                known_parent_manifest_path: None,
+                known_parent_manifest_path,
                 name: folder_name,
             },
-            command_id: next_command_id(),
+            command_id,
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
@@ -5039,6 +5129,7 @@ impl BeamView {
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
             pending_request_placements: HashMap::new(),
+            pending_folder_placements: HashMap::new(),
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
