@@ -6113,7 +6113,7 @@ impl BeamView {
                 ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
                     .rounded(px(8.0))
-                    .py_0p5()
+                    .py_1()
                     .pr(px(6.0))
                     .pl(indent + px(6.0))
                     .selected(row.selected)
