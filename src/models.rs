@@ -31,6 +31,33 @@ pub enum EnvironmentScope {
     Global,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppFontSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl AppFontSize {
+    pub const fn pixels(self) -> f32 {
+        match self {
+            Self::Small => 14.0,
+            Self::Medium => 16.0,
+            Self::Large => 18.0,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Small => "Small",
+            Self::Medium => "Medium (Default)",
+            Self::Large => "Large",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiKeyLocation {
@@ -158,7 +185,9 @@ pub struct QueryParamField {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
     None,
-    Bearer { token: Option<String> },
+    Bearer {
+        token: Option<String>,
+    },
     Basic {
         username: Option<String>,
         password: Option<String>,
@@ -178,8 +207,12 @@ pub enum BodyConfig {
         media_type: Option<String>,
         text: String,
     },
-    Json { text: String },
-    Xml { text: String },
+    Json {
+        text: String,
+    },
+    Xml {
+        text: String,
+    },
     FormUrlEncoded {
         #[serde(default)]
         fields: Vec<QueryParamField>,
@@ -246,6 +279,8 @@ pub struct LocalState {
     pub last_opened_request_id: Option<Ulid>,
     #[serde(default)]
     pub theme_name: Option<String>,
+    #[serde(default)]
+    pub font_size: AppFontSize,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -308,6 +343,7 @@ impl Default for LocalStateFile {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
                 theme_name: None,
+                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -391,9 +427,8 @@ mod tests {
 
     #[test]
     fn body_config_rejects_title_case_mode_values() {
-        let err =
-            toml::from_str::<BodyConfig>("mode = \"Json\"\ntext = \"{}\"")
-                .expect_err("title-case body config should fail");
+        let err = toml::from_str::<BodyConfig>("mode = \"Json\"\ntext = \"{}\"")
+            .expect_err("title-case body config should fail");
         let message = err.to_string();
         assert!(
             message.contains("unknown variant"),

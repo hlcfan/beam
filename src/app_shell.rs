@@ -10,8 +10,8 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable, FolderFile,
-    HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
+    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable,
+    FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
     WorkspaceEntry, WorkspaceFile, WorkspacesRegistryFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
@@ -607,6 +607,7 @@ pub struct LocalEnvironmentSelectionState {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LocalThemeState {
     pub theme_name: Option<String>,
+    pub font_size: AppFontSize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -2232,6 +2233,7 @@ where
             },
             theme: LocalThemeState {
                 theme_name: local_state.local_state.theme_name.clone(),
+                font_size: local_state.local_state.font_size,
             },
             workspace: WorkspaceState {
                 workspace_id: workspace_entry.map(|e| e.workspace_id),
@@ -2710,9 +2712,9 @@ mod tests {
     };
     use crate::paths::DataRootPaths;
     use crate::schema::SCHEMA_VERSION_V1;
+    use crate::storage::MoveFolderInput;
     use crate::storage::fs_backend::FileSystemStorage;
     use crate::storage::registry_repo::RegistryRepository;
-    use crate::storage::MoveFolderInput;
     use crate::storage::workspace_repo::WorkspaceRepository;
     use chrono::Utc;
 
@@ -3882,6 +3884,7 @@ mod tests {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(request_id),
                 theme_name: None,
+                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -3923,6 +3926,7 @@ mod tests {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(Ulid::new()),
                 theme_name: None,
+                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -4013,6 +4017,7 @@ schema_version = 1
 last_opened_request_id = "{request_id}"
 active_global_environment_id = "{env_id}"
 theme_name = "One Dark"
+font_size = "large"
 updated_at = "2026-05-01T03:42:36.157016+00:00"
 
 [tree_state]
@@ -4118,6 +4123,7 @@ post_response = "console.log(response.status)"
             Some("console.log(response.status)")
         );
         assert_eq!(state.theme.theme_name.as_deref(), Some("One Dark"));
+        assert_eq!(state.theme.font_size, AppFontSize::Large);
         assert_eq!(
             state
                 .shared_store
@@ -4258,6 +4264,7 @@ updated_at = "2026-01-01T00:00:00Z"
                 active_global_environment_id: None,
                 last_opened_request_id: None,
                 theme_name: None,
+                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState {
@@ -4736,8 +4743,14 @@ expanded_item_ids = ["{folder_id}"]
             state.workspace_tree.roots,
             vec![folder_a.folder.folder_id, folder_b.folder.folder_id]
         );
-        assert!(folder_a_node.children.is_empty(), "folder A should not retain folder B");
-        assert_eq!(folder_b_node.parent_id, None, "folder B should be root after reload");
+        assert!(
+            folder_a_node.children.is_empty(),
+            "folder A should not retain folder B"
+        );
+        assert_eq!(
+            folder_b_node.parent_id, None,
+            "folder B should be root after reload"
+        );
         assert_eq!(folder_b_node.children, vec![request_c.meta.request_id]);
         assert_eq!(request_c_node.parent_id, Some(folder_b.folder.folder_id));
         assert!(

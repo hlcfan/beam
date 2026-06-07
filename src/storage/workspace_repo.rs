@@ -6,7 +6,7 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
+    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
     EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, ItemType, LocalStateFile,
     ManifestItemRef, QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
     WorkspaceFile,
@@ -1134,6 +1134,21 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         local_state.local_state.updated_at = Utc::now();
         self.save_local_state(&local_state)
     }
+
+    pub fn persist_font_size_state(&self, font_size: AppFontSize) -> Result<()> {
+        let mut local_state = match self.load_local_state() {
+            Ok(state) => state,
+            Err(_) => LocalStateFile::default(),
+        };
+
+        if local_state.local_state.font_size == font_size {
+            return Ok(());
+        }
+
+        local_state.local_state.font_size = font_size;
+        local_state.local_state.updated_at = Utc::now();
+        self.save_local_state(&local_state)
+    }
 }
 
 impl<B: StorageIoBackend> WorkspaceStorage for WorkspaceRepository<B> {
@@ -1805,6 +1820,23 @@ mod tests {
     }
 
     #[test]
+    fn persist_font_size_state_updates_local_state() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
+
+        storage
+            .persist_font_size_state(AppFontSize::Large)
+            .expect("persist font size state");
+        let loaded = storage.load_local_state().expect("load local state");
+
+        assert_eq!(loaded.local_state.font_size, AppFontSize::Large);
+    }
+
+    #[test]
     fn request_toml_uses_explicit_auth_type_and_body_mode() {
         use chrono::Utc;
         use ulid::Ulid;
@@ -2094,7 +2126,10 @@ mod tests {
             .join(folder_dir_name("Folder A"))
             .join(folder_dir_name("Folder B"));
         let new_root_dir = paths.root.join(folder_dir_name("Folder B"));
-        assert!(old_nested_dir.exists(), "nested folder should exist before move");
+        assert!(
+            old_nested_dir.exists(),
+            "nested folder should exist before move"
+        );
 
         storage
             .move_folder(MoveFolderInput {
@@ -2110,7 +2145,10 @@ mod tests {
             !old_nested_dir.exists(),
             "old nested folder dir should be removed after move"
         );
-        assert!(new_root_dir.exists(), "moved folder should exist at workspace root");
+        assert!(
+            new_root_dir.exists(),
+            "moved folder should exist at workspace root"
+        );
 
         let reloaded = WorkspaceRepository::new(backend).expect("reload workspace into memory");
         let folder_a_node = reloaded
@@ -2129,9 +2167,18 @@ mod tests {
             .get(&request_c.meta.request_id)
             .expect("request C present after reload");
 
-        assert_eq!(reloaded.store.root_ids, vec![folder_a.folder.folder_id, folder_b.folder.folder_id]);
-        assert!(folder_a_node.children.is_empty(), "folder A should no longer contain folder B");
-        assert_eq!(folder_b_node.parent_id, None, "folder B should move to root");
+        assert_eq!(
+            reloaded.store.root_ids,
+            vec![folder_a.folder.folder_id, folder_b.folder.folder_id]
+        );
+        assert!(
+            folder_a_node.children.is_empty(),
+            "folder A should no longer contain folder B"
+        );
+        assert_eq!(
+            folder_b_node.parent_id, None,
+            "folder B should move to root"
+        );
         assert_eq!(
             folder_b_node.children,
             vec![request_c.meta.request_id],
