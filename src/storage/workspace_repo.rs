@@ -1385,7 +1385,7 @@ fn default_request_file(name: &str, method: HttpMethod, url: String) -> RequestF
             url,
             headers: vec![HeaderField {
                 name: "User-Agent".to_string(),
-                value: "BeamApp/1.0".to_string(),
+                value: "BeamApp/0.1".to_string(),
                 enabled: true,
                 description: None,
                 secret: false,
