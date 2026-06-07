@@ -360,6 +360,7 @@ struct BeamView {
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
     pending_request_placements: HashMap<String, PendingRequestPlacement>,
+    pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -384,6 +385,15 @@ enum PendingRequestPlacement {
     After {
         parent: RequestParentRef,
         after_request_id: Ulid,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PendingFolderPlacement {
+    After {
+        parent: FolderParentRef,
+        insertion_index: usize,
+        known_target_manifest_path: Option<KnownParentManifestPath>,
     },
 }
 
@@ -4258,6 +4268,7 @@ impl BeamView {
                     error,
                 } => {
                     self.pending_request_placements.remove(command_id);
+                    self.pending_folder_placements.remove(command_id);
                     self.shell.apply_event(&event);
                     log::error!(
                         "sync_failure command_id={} operation={} error={}",
@@ -4286,6 +4297,36 @@ impl BeamView {
                         window.push_notification(error, cx);
                     }
                     self.refresh_environment_manager_dialog_if_open(None, window, cx);
+                }
+                AppEvent::FolderUpserted {
+                    folder,
+                    manifest_path,
+                    command_id,
+                } => {
+                    self.shell.apply_event(&event);
+                    if let Some(placement) = self.pending_folder_placements.remove(command_id) {
+                        match placement {
+                            PendingFolderPlacement::After {
+                                parent,
+                                insertion_index,
+                                known_target_manifest_path,
+                            } => {
+                                self.perform_tree_move_action(
+                                    TreeMoveAction::MoveFolder(MoveFolderInput {
+                                        folder_id: folder.folder_id,
+                                        new_parent: parent,
+                                        insertion_index,
+                                        known_folder_manifest_path: manifest_path.clone(),
+                                        known_target_manifest_path,
+                                    }),
+                                    None,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
                     self.shell.apply_event(&event);
@@ -4346,6 +4387,10 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
+            window.push_notification("Unable to determine request parent.", cx);
+            return;
+        };
         let Some((parent, known_parent_manifest_path)) =
             self.request_parent_input_for_tree_node(node_id)
         else {
@@ -4353,19 +4398,43 @@ impl BeamView {
             return;
         };
         let command_id = next_command_id();
-        self.pending_request_placements.insert(
-            command_id.clone(),
-            PendingRequestPlacement::Append { parent },
-        );
-        let command = AppCommand::CreateRequest {
-            input: CreateRequestInput {
-                parent,
-                known_parent_manifest_path,
-                name: self.next_new_request_name(parent),
-                method: HttpMethod::Get,
-                url: String::new(),
-            },
-            command_id,
+        let command = match node.kind {
+            TreeNodeKind::Folder => {
+                self.pending_request_placements.insert(
+                    command_id.clone(),
+                    PendingRequestPlacement::Append { parent },
+                );
+                AppCommand::CreateRequest {
+                    input: CreateRequestInput {
+                        parent,
+                        known_parent_manifest_path,
+                        name: self.next_new_request_name(parent),
+                        method: HttpMethod::Get,
+                        url: String::new(),
+                    },
+                    command_id,
+                }
+            }
+            TreeNodeKind::Request => {
+                self.pending_request_placements.insert(
+                    command_id.clone(),
+                    PendingRequestPlacement::After {
+                        parent,
+                        after_request_id: node_id,
+                    },
+                );
+                AppCommand::CreateRequestAfter {
+                    input: CreateRequestInput {
+                        parent,
+                        known_parent_manifest_path,
+                        name: self.next_new_request_name(parent),
+                        method: HttpMethod::Get,
+                        url: String::new(),
+                    },
+                    source_request_id: node_id,
+                    command_id,
+                }
+            }
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
@@ -4374,24 +4443,45 @@ impl BeamView {
 
     fn add_folder_from_tree_node(
         &mut self,
-        _node_id: Ulid,
+        node_id: Ulid,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((parent, _known_parent_manifest_path)) =
-            self.folder_parent_input_for_tree_node(_node_id)
+        let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
+            window.push_notification("Unable to determine folder parent.", cx);
+            return;
+        };
+        let Some((parent, known_parent_manifest_path)) =
+            self.folder_parent_input_for_tree_node(node_id)
         else {
             window.push_notification("Unable to determine folder parent.", cx);
             return;
         };
         let folder_name = self.next_new_folder_name(parent);
+        let command_id = next_command_id();
+        if node.kind == TreeNodeKind::Request {
+            let Some((_, insertion_index)) =
+                self.sibling_destination_for_target(node_id, TreeDropPlacement::After)
+            else {
+                window.push_notification("Unable to determine folder position.", cx);
+                return;
+            };
+            self.pending_folder_placements.insert(
+                command_id.clone(),
+                PendingFolderPlacement::After {
+                    parent,
+                    insertion_index,
+                    known_target_manifest_path: known_parent_manifest_path.clone(),
+                },
+            );
+        }
         let command = AppCommand::CreateFolder {
             input: CreateFolderInput {
                 parent,
-                known_parent_manifest_path: None,
+                known_parent_manifest_path,
                 name: folder_name,
             },
-            command_id: next_command_id(),
+            command_id,
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
@@ -5039,6 +5129,7 @@ impl BeamView {
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
             pending_request_placements: HashMap::new(),
+            pending_folder_placements: HashMap::new(),
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
@@ -6083,58 +6174,17 @@ impl BeamView {
     ) -> PopupMenu {
         let row_id = row.id;
         let row_kind = row.kind;
-        let view = cx.entity();
         let muted_foreground = cx.theme().muted_foreground;
         let mut menu = menu.min_w(px(180.0));
         match row_kind {
             TreeNodeKind::Folder => {
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Request")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/folder-add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Folder")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_folder_from_tree_node(row_id, window, cx);
-                        },
-                    )),
+                let view = cx.entity();
+                menu = self.build_tree_create_context_menu_group(
+                    menu,
+                    row_id,
+                    muted_foreground,
+                    window,
+                    cx,
                 );
                 menu = menu.separator();
                 menu = menu.item(
@@ -6192,6 +6242,7 @@ impl BeamView {
                 );
             }
             TreeNodeKind::Request => {
+                let view = cx.entity();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, _| {
                         h_flex()
@@ -6239,6 +6290,14 @@ impl BeamView {
                             this.copy_request_as_curl_from_tree_node(row_id, window, cx);
                         },
                     )),
+                );
+                menu = menu.separator();
+                menu = self.build_tree_create_context_menu_group(
+                    menu,
+                    row_id,
+                    muted_foreground,
+                    window,
+                    cx,
                 );
                 menu = menu.separator();
                 menu = menu.item(
@@ -6321,6 +6380,60 @@ impl BeamView {
             }
         }
         menu
+    }
+
+    fn build_tree_create_context_menu_group(
+        &self,
+        menu: PopupMenu,
+        row_id: Ulid,
+        muted_foreground: Hsla,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PopupMenu {
+        let view = cx.entity();
+        let view2 = view.clone();
+        menu.item(
+            PopupMenuItem::element(move |_, _| {
+                h_flex()
+                    .w_full()
+                    .cursor_pointer()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/add.svg")
+                            .size(px(14.0))
+                            .text_color(muted_foreground),
+                    )
+                    .child("HTTP")
+            })
+            .on_click(window.listener_for(&view, move |this, _, window, cx| {
+                this.add_request_from_tree_node(row_id, window, cx);
+            })),
+        )
+        .item(
+            PopupMenuItem::element(move |_, _| {
+                h_flex()
+                    .w_full()
+                    .cursor_pointer()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/folder-add.svg")
+                            .size(px(14.0))
+                            .text_color(muted_foreground),
+                    )
+                    .child("Folder")
+            })
+            .on_click(window.listener_for(&view2, move |this, _, window, cx| {
+                this.add_folder_from_tree_node(row_id, window, cx);
+            })),
+        )
     }
 
     fn build_empty_space_context_menu(
