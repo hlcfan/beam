@@ -166,17 +166,6 @@ fn init_theme_registry(
     BeamView::apply_font_size(preferred_font_size, cx);
 }
 
-fn app_font_size_from_pixels(font_size: Pixels) -> AppFontSize {
-    let font_size = font_size.as_f32();
-    if font_size <= 15.0 {
-        AppFontSize::Small
-    } else if font_size >= 17.0 {
-        AppFontSize::Large
-    } else {
-        AppFontSize::Medium
-    }
-}
-
 pub fn run_app(
     state: AppShellState,
     startup_messages: Vec<StartupMessage>,
@@ -645,7 +634,7 @@ impl SettingsDialogView {
 impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_theme_name = cx.theme().theme_name().clone();
-        let active_font_size = app_font_size_from_pixels(cx.theme().font_size);
+        let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
             .sorted_themes()
             .into_iter()
@@ -2289,7 +2278,7 @@ impl BeamView {
     }
 
     fn apply_theme_mode(mode: ThemeMode, cx: &mut App) {
-        let active_font_size = app_font_size_from_pixels(cx.theme().font_size);
+        let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
         Theme::change(mode, None, cx);
         Self::apply_font_size(active_font_size, cx);
         #[cfg(target_os = "macos")]
@@ -2325,7 +2314,6 @@ impl BeamView {
     }
 
     fn apply_named_theme_by_name(theme_name: &str, cx: &mut App, persist: bool) -> bool {
-        let active_font_size = app_font_size_from_pixels(cx.theme().font_size);
         let stored_theme_name: SharedString = theme_name.to_string().into();
         let theme_config = ThemeRegistry::global(cx)
             .themes()
@@ -2333,7 +2321,6 @@ impl BeamView {
             .cloned();
         if let Some(theme_config) = theme_config {
             Theme::global_mut(cx).apply_config(&theme_config);
-            Self::apply_font_size(active_font_size, cx);
             #[cfg(target_os = "macos")]
             cx.set_menus(build_macos_system_menus(cx));
             if persist {

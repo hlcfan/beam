@@ -41,6 +41,16 @@ pub enum AppFontSize {
 }
 
 impl AppFontSize {
+    pub fn from_pixels_value(font_size: f32) -> Self {
+        if font_size <= 15.0 {
+            Self::Small
+        } else if font_size >= 17.0 {
+            Self::Large
+        } else {
+            Self::Medium
+        }
+    }
+
     pub const fn pixels(self) -> f32 {
         match self {
             Self::Small => 14.0,
@@ -434,6 +444,18 @@ mod tests {
             message.contains("unknown variant"),
             "unexpected error message: {message}"
         );
+    }
+
+    #[test]
+    fn app_font_size_maps_from_pixel_values() {
+        assert_eq!(super::AppFontSize::from_pixels_value(14.0), super::AppFontSize::Small);
+        assert_eq!(super::AppFontSize::from_pixels_value(15.0), super::AppFontSize::Small);
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(16.0),
+            super::AppFontSize::Medium
+        );
+        assert_eq!(super::AppFontSize::from_pixels_value(17.0), super::AppFontSize::Large);
+        assert_eq!(super::AppFontSize::from_pixels_value(18.0), super::AppFontSize::Large);
     }
 
     #[test]
