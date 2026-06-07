@@ -10,8 +10,8 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable, FolderFile,
-    HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
+    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable,
+    FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
     WorkspaceEntry, WorkspaceFile, WorkspacesRegistryFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
@@ -607,6 +607,7 @@ pub struct LocalEnvironmentSelectionState {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LocalThemeState {
     pub theme_name: Option<String>,
+    pub font_size: AppFontSize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -2199,6 +2200,18 @@ where
         }
     };
 
+    let app_settings = match storage.load_app_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            return StartupLoad::Fatal {
+                message: StartupMessage {
+                    severity: StartupMessageSeverity::Fatal,
+                    text: format!("Failed to load app settings: {error}"),
+                },
+            };
+        }
+    };
+
     let (workspace_tree, shared_store, request_pane_data, mut warnings) =
         load_workspace_tree(paths, &local_state);
     // TOCHECK: environments can be load with collection tree in parallel
@@ -2231,7 +2244,8 @@ where
                 active_global_environment_id: local_state.local_state.active_global_environment_id,
             },
             theme: LocalThemeState {
-                theme_name: local_state.local_state.theme_name.clone(),
+                theme_name: app_settings.app_settings.theme_name.clone(),
+                font_size: app_settings.app_settings.font_size,
             },
             workspace: WorkspaceState {
                 workspace_id: workspace_entry.map(|e| e.workspace_id),
@@ -2704,15 +2718,15 @@ mod tests {
 
     use super::*;
     use crate::models::{
-        EnvironmentMeta, EnvironmentScope, FolderMeta, LocalState, ManifestItemRef,
-        RequestDefinition, RequestMeta, ScriptConfig, TreeState, WorkspaceMeta,
+        AppSettingsFile, EnvironmentMeta, EnvironmentScope, FolderMeta, LocalState,
+        ManifestItemRef, RequestDefinition, RequestMeta, ScriptConfig, TreeState, WorkspaceMeta,
         WorkspacesRegistryFile,
     };
     use crate::paths::DataRootPaths;
     use crate::schema::SCHEMA_VERSION_V1;
+    use crate::storage::MoveFolderInput;
     use crate::storage::fs_backend::FileSystemStorage;
     use crate::storage::registry_repo::RegistryRepository;
-    use crate::storage::MoveFolderInput;
     use crate::storage::workspace_repo::WorkspaceRepository;
     use chrono::Utc;
 
@@ -3881,7 +3895,6 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(request_id),
-                theme_name: None,
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -3922,7 +3935,6 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(Ulid::new()),
-                theme_name: None,
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -4012,7 +4024,6 @@ schema_version = 1
 [local_state]
 last_opened_request_id = "{request_id}"
 active_global_environment_id = "{env_id}"
-theme_name = "One Dark"
 updated_at = "2026-05-01T03:42:36.157016+00:00"
 
 [tree_state]
@@ -4021,6 +4032,16 @@ expanded_item_ids = ["{folder_id}"]
             env_id = env_id
         );
         fs::write(&paths.local_state_file, local_state_toml).expect("write local state");
+        storage
+            .save_app_settings(&AppSettingsFile {
+                schema_version: SCHEMA_VERSION_V1,
+                app_settings: crate::models::AppSettings {
+                    theme_name: Some("One Dark".to_string()),
+                    font_size: AppFontSize::Large,
+                    updated_at: Utc::now(),
+                },
+            })
+            .expect("save app settings");
 
         let folder_manifest_path = write_folder_manifest(
             &folder_dir,
@@ -4118,6 +4139,7 @@ post_response = "console.log(response.status)"
             Some("console.log(response.status)")
         );
         assert_eq!(state.theme.theme_name.as_deref(), Some("One Dark"));
+        assert_eq!(state.theme.font_size, AppFontSize::Large);
         assert_eq!(
             state
                 .shared_store
@@ -4257,7 +4279,6 @@ updated_at = "2026-01-01T00:00:00Z"
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
-                theme_name: None,
                 updated_at: Utc::now(),
             },
             tree_state: TreeState {
@@ -4736,8 +4757,14 @@ expanded_item_ids = ["{folder_id}"]
             state.workspace_tree.roots,
             vec![folder_a.folder.folder_id, folder_b.folder.folder_id]
         );
-        assert!(folder_a_node.children.is_empty(), "folder A should not retain folder B");
-        assert_eq!(folder_b_node.parent_id, None, "folder B should be root after reload");
+        assert!(
+            folder_a_node.children.is_empty(),
+            "folder A should not retain folder B"
+        );
+        assert_eq!(
+            folder_b_node.parent_id, None,
+            "folder B should be root after reload"
+        );
         assert_eq!(folder_b_node.children, vec![request_c.meta.request_id]);
         assert_eq!(request_c_node.parent_id, Some(folder_b.folder.folder_id));
         assert!(

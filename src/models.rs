@@ -31,6 +31,51 @@ pub enum EnvironmentScope {
     Global,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppFontSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl AppFontSize {
+    pub fn from_pixels_value(font_size: f32) -> Self {
+        if font_size <= 15.0 {
+            Self::Small
+        } else if font_size >= 17.0 {
+            Self::Large
+        } else {
+            Self::Medium
+        }
+    }
+
+    pub const fn pixels(self) -> f32 {
+        match self {
+            Self::Small => 14.0,
+            Self::Medium => 16.0,
+            Self::Large => 18.0,
+        }
+    }
+
+    pub const fn mono_pixels(self) -> f32 {
+        match self {
+            Self::Small => 11.0,
+            Self::Medium => 13.0,
+            Self::Large => 15.0,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Small => "Small",
+            Self::Medium => "Medium (Default)",
+            Self::Large => "Large",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApiKeyLocation {
@@ -158,7 +203,9 @@ pub struct QueryParamField {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
     None,
-    Bearer { token: Option<String> },
+    Bearer {
+        token: Option<String>,
+    },
     Basic {
         username: Option<String>,
         password: Option<String>,
@@ -178,8 +225,12 @@ pub enum BodyConfig {
         media_type: Option<String>,
         text: String,
     },
-    Json { text: String },
-    Xml { text: String },
+    Json {
+        text: String,
+    },
+    Xml {
+        text: String,
+    },
     FormUrlEncoded {
         #[serde(default)]
         fields: Vec<QueryParamField>,
@@ -244,8 +295,6 @@ pub struct LocalStateFile {
 pub struct LocalState {
     pub active_global_environment_id: Option<Ulid>,
     pub last_opened_request_id: Option<Ulid>,
-    #[serde(default)]
-    pub theme_name: Option<String>,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -275,6 +324,21 @@ pub struct WorkspaceEntry {
     /// Directory name relative to the data root (slugified from name).
     pub path: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSettingsFile {
+    pub schema_version: u32,
+    pub app_settings: AppSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(default)]
+    pub theme_name: Option<String>,
+    #[serde(default)]
+    pub font_size: AppFontSize,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl WorkspacesRegistryFile {
@@ -307,10 +371,22 @@ impl Default for LocalStateFile {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
-                theme_name: None,
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
+        }
+    }
+}
+
+impl Default for AppSettingsFile {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION_V1,
+            app_settings: AppSettings {
+                theme_name: None,
+                font_size: AppFontSize::default(),
+                updated_at: Utc::now(),
+            },
         }
     }
 }
@@ -391,14 +467,44 @@ mod tests {
 
     #[test]
     fn body_config_rejects_title_case_mode_values() {
-        let err =
-            toml::from_str::<BodyConfig>("mode = \"Json\"\ntext = \"{}\"")
-                .expect_err("title-case body config should fail");
+        let err = toml::from_str::<BodyConfig>("mode = \"Json\"\ntext = \"{}\"")
+            .expect_err("title-case body config should fail");
         let message = err.to_string();
         assert!(
             message.contains("unknown variant"),
             "unexpected error message: {message}"
         );
+    }
+
+    #[test]
+    fn app_font_size_maps_from_pixel_values() {
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(14.0),
+            super::AppFontSize::Small
+        );
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(15.0),
+            super::AppFontSize::Small
+        );
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(16.0),
+            super::AppFontSize::Medium
+        );
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(17.0),
+            super::AppFontSize::Large
+        );
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(18.0),
+            super::AppFontSize::Large
+        );
+    }
+
+    #[test]
+    fn app_font_size_maps_to_mono_pixel_values() {
+        assert_eq!(super::AppFontSize::Small.mono_pixels(), 11.0);
+        assert_eq!(super::AppFontSize::Medium.mono_pixels(), 13.0);
+        assert_eq!(super::AppFontSize::Large.mono_pixels(), 15.0);
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub enum SchemaKind {
     Request,
     Environment,
     LocalState,
+    AppSettings,
     WorkspacesRegistry,
 }
 
@@ -23,6 +24,7 @@ impl std::fmt::Display for SchemaKind {
             Self::Request => "request",
             Self::Environment => "environment",
             Self::LocalState => "local_state",
+            Self::AppSettings => "app_settings",
             Self::WorkspacesRegistry => "workspaces_registry",
         };
         write!(f, "{value}")
