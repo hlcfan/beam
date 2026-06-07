@@ -7360,10 +7360,10 @@ impl BeamView {
             h_flex()
                 .items_center()
                 .gap_1()
-                .child("Post Script")
+                .child("Script")
                 .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(color))
         } else {
-            h_flex().items_center().gap_1().child("Post Script")
+            h_flex().items_center().gap_1().child("Script")
         };
         let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
             .anchor(gpui::Anchor::BottomLeft)
