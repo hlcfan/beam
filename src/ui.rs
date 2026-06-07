@@ -4374,12 +4374,12 @@ impl BeamView {
 
     fn add_folder_from_tree_node(
         &mut self,
-        _node_id: Ulid,
+        node_id: Ulid,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some((parent, _known_parent_manifest_path)) =
-            self.folder_parent_input_for_tree_node(_node_id)
+            self.folder_parent_input_for_tree_node(node_id)
         else {
             window.push_notification("Unable to determine folder parent.", cx);
             return;
@@ -6083,58 +6083,17 @@ impl BeamView {
     ) -> PopupMenu {
         let row_id = row.id;
         let row_kind = row.kind;
-        let view = cx.entity();
         let muted_foreground = cx.theme().muted_foreground;
         let mut menu = menu.min_w(px(180.0));
         match row_kind {
             TreeNodeKind::Folder => {
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Request")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/folder-add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Folder")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_folder_from_tree_node(row_id, window, cx);
-                        },
-                    )),
+                let view = cx.entity();
+                menu = self.build_tree_create_context_menu_group(
+                    menu,
+                    row_id,
+                    muted_foreground,
+                    window,
+                    cx,
                 );
                 menu = menu.separator();
                 menu = menu.item(
@@ -6192,6 +6151,7 @@ impl BeamView {
                 );
             }
             TreeNodeKind::Request => {
+                let view = cx.entity();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, _| {
                         h_flex()
@@ -6239,6 +6199,14 @@ impl BeamView {
                             this.copy_request_as_curl_from_tree_node(row_id, window, cx);
                         },
                     )),
+                );
+                menu = menu.separator();
+                menu = self.build_tree_create_context_menu_group(
+                    menu,
+                    row_id,
+                    muted_foreground,
+                    window,
+                    cx,
                 );
                 menu = menu.separator();
                 menu = menu.item(
@@ -6321,6 +6289,60 @@ impl BeamView {
             }
         }
         menu
+    }
+
+    fn build_tree_create_context_menu_group(
+        &self,
+        menu: PopupMenu,
+        row_id: Ulid,
+        muted_foreground: Hsla,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PopupMenu {
+        let view = cx.entity();
+        let view2 = view.clone();
+        menu.item(
+            PopupMenuItem::element(move |_, _| {
+                h_flex()
+                    .w_full()
+                    .cursor_pointer()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/add.svg")
+                            .size(px(14.0))
+                            .text_color(muted_foreground),
+                    )
+                    .child("HTTP")
+            })
+            .on_click(window.listener_for(&view, move |this, _, window, cx| {
+                this.add_request_from_tree_node(row_id, window, cx);
+            })),
+        )
+        .item(
+            PopupMenuItem::element(move |_, _| {
+                h_flex()
+                    .w_full()
+                    .cursor_pointer()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/folder-add.svg")
+                            .size(px(14.0))
+                            .text_color(muted_foreground),
+                    )
+                    .child("Folder")
+            })
+            .on_click(window.listener_for(&view2, move |this, _, window, cx| {
+                this.add_folder_from_tree_node(row_id, window, cx);
+            })),
+        )
     }
 
     fn build_empty_space_context_menu(
