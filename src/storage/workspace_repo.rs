@@ -98,7 +98,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 name: "Sample Request".to_string(),
                 kind: NodeKind::Request,
                 description: Some(
-                    "Calls httpbin.org/get so you can send a request right away.".to_string(),
+                    "Calls httpbingo.org/get so you can send a request right away.".to_string(),
                 ),
                 created_at: Some(now),
                 updated_at: Some(now),
@@ -113,14 +113,14 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                     request_id,
                     name: "Sample Request".to_string(),
                     description: Some(
-                        "Calls httpbin.org/get so you can send a request right away.".to_string(),
+                        "Calls httpbingo.org/get so you can send a request right away.".to_string(),
                     ),
                     created_at: now,
                     updated_at: now,
                 },
                 request: RequestDefinition {
                     method: crate::models::HttpMethod::Get,
-                    url: "https://httpbin.org/get".to_string(),
+                    url: "https://httpbingo.org/get".to_string(),
                     headers: Vec::new(),
                     query_params: Vec::new(),
                 },

@@ -4044,7 +4044,7 @@ updated_at = "2026-05-01T03:42:36.158281+00:00"
 
 [request]
 method = "GET"
-url = "https://httpbin.org/get"
+url = "https://httpbingo.org/get"
 
 [[request.query_params]]
 name = "page"
@@ -4096,7 +4096,7 @@ post_response = "console.log(response.status)"
         assert_eq!(request_node.request_method, Some(HttpMethod::Get));
         assert_eq!(
             request_node.request_url.as_deref(),
-            Some("https://httpbin.org/get")
+            Some("https://httpbingo.org/get")
         );
         assert_eq!(
             request_node.manifest_path.as_deref(),
