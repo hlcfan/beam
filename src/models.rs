@@ -59,6 +59,14 @@ impl AppFontSize {
         }
     }
 
+    pub const fn mono_pixels(self) -> f32 {
+        match self {
+            Self::Small => 11.0,
+            Self::Medium => 13.0,
+            Self::Large => 15.0,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Small => "Small",
@@ -456,6 +464,13 @@ mod tests {
         );
         assert_eq!(super::AppFontSize::from_pixels_value(17.0), super::AppFontSize::Large);
         assert_eq!(super::AppFontSize::from_pixels_value(18.0), super::AppFontSize::Large);
+    }
+
+    #[test]
+    fn app_font_size_maps_to_mono_pixel_values() {
+        assert_eq!(super::AppFontSize::Small.mono_pixels(), 11.0);
+        assert_eq!(super::AppFontSize::Medium.mono_pixels(), 13.0);
+        assert_eq!(super::AppFontSize::Large.mono_pixels(), 15.0);
     }
 
     #[test]

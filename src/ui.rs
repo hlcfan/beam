@@ -2295,7 +2295,9 @@ impl BeamView {
     }
 
     fn apply_font_size(font_size: AppFontSize, cx: &mut App) {
-        Theme::global_mut(cx).font_size = px(font_size.pixels());
+        let theme = Theme::global_mut(cx);
+        theme.font_size = px(font_size.pixels());
+        theme.mono_font_size = px(font_size.mono_pixels());
         cx.refresh_windows();
     }
 
