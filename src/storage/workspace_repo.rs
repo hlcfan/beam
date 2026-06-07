@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
@@ -6,10 +7,10 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentScope,
-    EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    ManifestItemRef, QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
-    WorkspaceFile,
+    AppFontSize, AppSettingsFile, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
+    EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod,
+    ItemType, LocalStateFile, ManifestItemRef, QueryParamField, RequestDefinition, RequestFile,
+    RequestMeta, ScriptConfig, WorkspaceFile,
 };
 use crate::paths::FOLDER_MANIFEST_FILE_NAME;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
@@ -24,6 +25,20 @@ use crate::workspace_tree::{
     folder_dir_name, folder_dir_path, node_by_kind, request_file_name, request_file_path,
     scope_key,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+struct LocalStateAppSettingsSeedFile {
+    #[serde(default)]
+    local_state: LocalStateAppSettingsSeed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
+struct LocalStateAppSettingsSeed {
+    #[serde(default)]
+    theme_name: Option<String>,
+    #[serde(default)]
+    font_size: Option<AppFontSize>,
+}
 
 pub struct WorkspaceRepository<B: StorageIoBackend> {
     backend: B,
@@ -55,6 +70,13 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 .write_toml_file(&self.backend.paths().local_state_file, &local_state)?;
             created_local_state = Some(local_state);
             report.created_local_state_file = true;
+        }
+
+        if !self.backend.paths().app_settings_file.exists() {
+            let app_settings = self.seed_app_settings_file()?;
+            self.backend
+                .write_toml_file(&self.backend.paths().app_settings_file, &app_settings)?;
+            report.created_app_settings_file = true;
         }
 
         if report.created_workspace_file
@@ -1119,35 +1141,76 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             .write_toml_file(&self.backend.paths().local_state_file, local_state_file)
     }
 
+    pub fn load_app_settings(&self) -> Result<AppSettingsFile> {
+        let path = &self.backend.paths().app_settings_file;
+        match self.backend.read_toml_file::<AppSettingsFile>(path) {
+            Ok(settings) => {
+                validate_schema_version(SchemaKind::AppSettings, settings.schema_version)?;
+                Ok(settings)
+            }
+            Err(BeamError::Io { source, .. }) if source.kind() == ErrorKind::NotFound => {
+                let settings = self.seed_app_settings_file()?;
+                self.save_app_settings(&settings)?;
+                Ok(settings)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn save_app_settings(&self, app_settings_file: &AppSettingsFile) -> Result<()> {
+        self.backend
+            .write_toml_file(&self.backend.paths().app_settings_file, app_settings_file)
+    }
+
     pub fn persist_theme_state(&self, theme_name: &str) -> Result<()> {
-        let mut local_state = match self.load_local_state() {
+        let mut app_settings = match self.load_app_settings() {
             Ok(state) => state,
-            Err(_) => LocalStateFile::default(),
+            Err(_) => AppSettingsFile::default(),
         };
 
-        let changed = local_state.local_state.theme_name.as_deref() != Some(theme_name);
+        let changed = app_settings.app_settings.theme_name.as_deref() != Some(theme_name);
         if !changed {
             return Ok(());
         }
 
-        local_state.local_state.theme_name = Some(theme_name.to_string());
-        local_state.local_state.updated_at = Utc::now();
-        self.save_local_state(&local_state)
+        app_settings.app_settings.theme_name = Some(theme_name.to_string());
+        app_settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&app_settings)
     }
 
     pub fn persist_font_size_state(&self, font_size: AppFontSize) -> Result<()> {
-        let mut local_state = match self.load_local_state() {
+        let mut app_settings = match self.load_app_settings() {
             Ok(state) => state,
-            Err(_) => LocalStateFile::default(),
+            Err(_) => AppSettingsFile::default(),
         };
 
-        if local_state.local_state.font_size == font_size {
+        if app_settings.app_settings.font_size == font_size {
             return Ok(());
         }
 
-        local_state.local_state.font_size = font_size;
-        local_state.local_state.updated_at = Utc::now();
-        self.save_local_state(&local_state)
+        app_settings.app_settings.font_size = font_size;
+        app_settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&app_settings)
+    }
+
+    fn seed_app_settings_file(&self) -> Result<AppSettingsFile> {
+        let mut app_settings = AppSettingsFile::default();
+        let local_state_path = &self.backend.paths().local_state_file;
+        if !local_state_path.exists() {
+            return Ok(app_settings);
+        }
+
+        if let Ok(seed) = self
+            .backend
+            .read_toml_file::<LocalStateAppSettingsSeedFile>(local_state_path)
+        {
+            app_settings.app_settings.theme_name = seed.local_state.theme_name;
+            if let Some(font_size) = seed.local_state.font_size {
+                app_settings.app_settings.font_size = font_size;
+            }
+        }
+        app_settings.app_settings.updated_at = Utc::now();
+        Ok(app_settings)
     }
 }
 
@@ -1166,6 +1229,14 @@ impl<B: StorageIoBackend> WorkspaceStorage for WorkspaceRepository<B> {
 
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()> {
         WorkspaceRepository::save_local_state(self, local_state_file)
+    }
+
+    fn load_app_settings(&self) -> Result<AppSettingsFile> {
+        WorkspaceRepository::load_app_settings(self)
+    }
+
+    fn save_app_settings(&self, app_settings_file: &AppSettingsFile) -> Result<()> {
+        WorkspaceRepository::save_app_settings(self, app_settings_file)
     }
 }
 
@@ -1719,9 +1790,11 @@ mod tests {
         let report = storage.initialize().expect("initialize");
         assert!(report.created_workspace_file);
         assert!(report.created_local_state_file);
+        assert!(report.created_app_settings_file);
         assert!(report.created_default_environment);
         assert!(backend.paths.workspace_file.exists());
         assert!(backend.paths.local_state_file.exists());
+        assert!(backend.paths.app_settings_file.exists());
         assert!(
             backend
                 .paths
@@ -1755,6 +1828,7 @@ mod tests {
 
         assert!(!report.created_workspace_file);
         assert!(!report.created_local_state_file);
+        assert!(!report.created_app_settings_file);
         assert!(!report.created_default_environment);
     }
 
@@ -1807,33 +1881,53 @@ mod tests {
         let dir = tempdir().expect("tempdir");
         let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage
-            .save_local_state(&LocalStateFile::default())
-            .expect("save local state");
 
         storage
             .persist_theme_state("One Dark")
             .expect("persist theme state");
-        let loaded = storage.load_local_state().expect("load local state");
+        let loaded = storage.load_app_settings().expect("load app settings");
 
-        assert_eq!(loaded.local_state.theme_name.as_deref(), Some("One Dark"));
+        assert_eq!(loaded.app_settings.theme_name.as_deref(), Some("One Dark"));
     }
 
     #[test]
-    fn persist_font_size_state_updates_local_state() {
+    fn persist_font_size_state_updates_app_settings() {
         let dir = tempdir().expect("tempdir");
         let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
         let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
-        storage
-            .save_local_state(&LocalStateFile::default())
-            .expect("save local state");
 
         storage
             .persist_font_size_state(AppFontSize::Large)
             .expect("persist font size state");
-        let loaded = storage.load_local_state().expect("load local state");
+        let loaded = storage.load_app_settings().expect("load app settings");
 
-        assert_eq!(loaded.local_state.font_size, AppFontSize::Large);
+        assert_eq!(loaded.app_settings.font_size, AppFontSize::Large);
+    }
+
+    #[test]
+    fn load_app_settings_seeds_from_existing_local_state_fields() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        std::fs::create_dir_all(&backend.paths.local_dir).expect("create local dir");
+        let storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
+        std::fs::write(
+            &backend.paths.local_state_file,
+            r#"
+
+[local_state]
+theme_name = "One Dark"
+font_size = "large"
+updated_at = "2026-05-01T03:42:36.157016+00:00"
+"#,
+        )
+        .expect("write local state");
+
+        let loaded = storage.load_app_settings().expect("load app settings");
+
+        assert_eq!(loaded.app_settings.theme_name.as_deref(), Some("One Dark"));
+        assert_eq!(loaded.app_settings.font_size, AppFontSize::Large);
+        assert!(backend.paths.app_settings_file.exists());
     }
 
     #[test]

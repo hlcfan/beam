@@ -2200,6 +2200,18 @@ where
         }
     };
 
+    let app_settings = match storage.load_app_settings() {
+        Ok(settings) => settings,
+        Err(error) => {
+            return StartupLoad::Fatal {
+                message: StartupMessage {
+                    severity: StartupMessageSeverity::Fatal,
+                    text: format!("Failed to load app settings: {error}"),
+                },
+            };
+        }
+    };
+
     let (workspace_tree, shared_store, request_pane_data, mut warnings) =
         load_workspace_tree(paths, &local_state);
     // TOCHECK: environments can be load with collection tree in parallel
@@ -2232,8 +2244,8 @@ where
                 active_global_environment_id: local_state.local_state.active_global_environment_id,
             },
             theme: LocalThemeState {
-                theme_name: local_state.local_state.theme_name.clone(),
-                font_size: local_state.local_state.font_size,
+                theme_name: app_settings.app_settings.theme_name.clone(),
+                font_size: app_settings.app_settings.font_size,
             },
             workspace: WorkspaceState {
                 workspace_id: workspace_entry.map(|e| e.workspace_id),
@@ -2706,8 +2718,8 @@ mod tests {
 
     use super::*;
     use crate::models::{
-        EnvironmentMeta, EnvironmentScope, FolderMeta, LocalState, ManifestItemRef,
-        RequestDefinition, RequestMeta, ScriptConfig, TreeState, WorkspaceMeta,
+        AppSettingsFile, EnvironmentMeta, EnvironmentScope, FolderMeta, LocalState,
+        ManifestItemRef, RequestDefinition, RequestMeta, ScriptConfig, TreeState, WorkspaceMeta,
         WorkspacesRegistryFile,
     };
     use crate::paths::DataRootPaths;
@@ -3883,8 +3895,6 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(request_id),
-                theme_name: None,
-                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -3925,8 +3935,6 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(Ulid::new()),
-                theme_name: None,
-                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
@@ -4016,8 +4024,6 @@ schema_version = 1
 [local_state]
 last_opened_request_id = "{request_id}"
 active_global_environment_id = "{env_id}"
-theme_name = "One Dark"
-font_size = "large"
 updated_at = "2026-05-01T03:42:36.157016+00:00"
 
 [tree_state]
@@ -4026,6 +4032,16 @@ expanded_item_ids = ["{folder_id}"]
             env_id = env_id
         );
         fs::write(&paths.local_state_file, local_state_toml).expect("write local state");
+        storage
+            .save_app_settings(&AppSettingsFile {
+                schema_version: SCHEMA_VERSION_V1,
+                app_settings: crate::models::AppSettings {
+                    theme_name: Some("One Dark".to_string()),
+                    font_size: AppFontSize::Large,
+                    updated_at: Utc::now(),
+                },
+            })
+            .expect("save app settings");
 
         let folder_manifest_path = write_folder_manifest(
             &folder_dir,
@@ -4263,8 +4279,6 @@ updated_at = "2026-01-01T00:00:00Z"
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
-                theme_name: None,
-                font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
             tree_state: TreeState {

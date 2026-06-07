@@ -6,13 +6,14 @@ pub mod registry_repo;
 pub mod workspace_repo;
 
 use crate::error::Result;
-use crate::models::{LocalStateFile, WorkspaceFile};
+use crate::models::{AppSettingsFile, LocalStateFile, WorkspaceFile};
 use ulid::Ulid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct BootstrapReport {
     pub created_workspace_file: bool,
     pub created_local_state_file: bool,
+    pub created_app_settings_file: bool,
     pub created_default_environment: bool,
 }
 
@@ -102,6 +103,8 @@ pub trait WorkspaceStorage {
     fn save_workspace(&self, workspace_file: &WorkspaceFile) -> Result<()>;
     fn load_local_state(&self) -> Result<LocalStateFile>;
     fn save_local_state(&self, local_state_file: &LocalStateFile) -> Result<()>;
+    fn load_app_settings(&self) -> Result<AppSettingsFile>;
+    fn save_app_settings(&self, app_settings_file: &AppSettingsFile) -> Result<()>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

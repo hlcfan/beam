@@ -295,10 +295,6 @@ pub struct LocalStateFile {
 pub struct LocalState {
     pub active_global_environment_id: Option<Ulid>,
     pub last_opened_request_id: Option<Ulid>,
-    #[serde(default)]
-    pub theme_name: Option<String>,
-    #[serde(default)]
-    pub font_size: AppFontSize,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -328,6 +324,21 @@ pub struct WorkspaceEntry {
     /// Directory name relative to the data root (slugified from name).
     pub path: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSettingsFile {
+    pub schema_version: u32,
+    pub app_settings: AppSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppSettings {
+    #[serde(default)]
+    pub theme_name: Option<String>,
+    #[serde(default)]
+    pub font_size: AppFontSize,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl WorkspacesRegistryFile {
@@ -360,11 +371,22 @@ impl Default for LocalStateFile {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
+                updated_at: Utc::now(),
+            },
+            tree_state: TreeState::default(),
+        }
+    }
+}
+
+impl Default for AppSettingsFile {
+    fn default() -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION_V1,
+            app_settings: AppSettings {
                 theme_name: None,
                 font_size: AppFontSize::default(),
                 updated_at: Utc::now(),
             },
-            tree_state: TreeState::default(),
         }
     }
 }
@@ -456,14 +478,26 @@ mod tests {
 
     #[test]
     fn app_font_size_maps_from_pixel_values() {
-        assert_eq!(super::AppFontSize::from_pixels_value(14.0), super::AppFontSize::Small);
-        assert_eq!(super::AppFontSize::from_pixels_value(15.0), super::AppFontSize::Small);
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(14.0),
+            super::AppFontSize::Small
+        );
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(15.0),
+            super::AppFontSize::Small
+        );
         assert_eq!(
             super::AppFontSize::from_pixels_value(16.0),
             super::AppFontSize::Medium
         );
-        assert_eq!(super::AppFontSize::from_pixels_value(17.0), super::AppFontSize::Large);
-        assert_eq!(super::AppFontSize::from_pixels_value(18.0), super::AppFontSize::Large);
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(17.0),
+            super::AppFontSize::Large
+        );
+        assert_eq!(
+            super::AppFontSize::from_pixels_value(18.0),
+            super::AppFontSize::Large
+        );
     }
 
     #[test]

@@ -50,6 +50,9 @@ fn main() {
             if report.created_local_state_file {
                 log::info!("created local-state.toml");
             }
+            if report.created_app_settings_file {
+                log::info!("created app-settings.toml");
+            }
             if report.created_default_environment {
                 log::info!("created default environment");
             }
