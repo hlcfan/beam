@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 pub const FOLDER_MANIFEST_FILE_NAME: &str = "folder.toml";
 pub const WORKSPACES_REGISTRY_FILE_NAME: &str = "workspaces.toml";
+pub const APP_SETTINGS_FILE_NAME: &str = "app-settings.toml";
 
 /// Paths rooted at the data root (`$HOME/beam/`).
 /// Knows where `workspaces.toml` lives and can derive workspace-specific paths.
@@ -13,6 +14,8 @@ pub struct DataRootPaths {
     pub registry_file: PathBuf,
     /// Root for all local (non-synced) state (`$HOME/beam_local`).
     pub local_root: PathBuf,
+    /// Global app settings file under the local root.
+    pub app_settings_file: PathBuf,
     /// Root for all application log files in the OS-native log directory.
     pub logs_root: PathBuf,
     /// Application log file under the OS-native logs root.
@@ -22,11 +25,13 @@ pub struct DataRootPaths {
 impl DataRootPaths {
     pub fn new(root: PathBuf, local_root: PathBuf, logs_root: PathBuf) -> Self {
         let registry_file = root.join(WORKSPACES_REGISTRY_FILE_NAME);
+        let app_settings_file = local_root.join(APP_SETTINGS_FILE_NAME);
         let log_file = logs_root.join("beam.log");
         Self {
             root,
             registry_file,
             local_root,
+            app_settings_file,
             logs_root,
             log_file,
         }
@@ -36,7 +41,12 @@ impl DataRootPaths {
     pub fn workspace_paths(&self, workspace_path: &str) -> BeamPaths {
         let workspace_root = self.root.join(workspace_path);
         let local_dir = self.local_root.join(workspace_path);
-        BeamPaths::from_workspace_root(workspace_root, local_dir, self.log_file.clone())
+        BeamPaths::from_workspace_root(
+            workspace_root,
+            local_dir,
+            self.app_settings_file.clone(),
+            self.log_file.clone(),
+        )
     }
 
     pub fn default_user_config() -> Self {
@@ -64,6 +74,8 @@ pub struct BeamPaths {
     pub local_dir: PathBuf,
     /// `local_dir/local-state.toml`
     pub local_state_file: PathBuf,
+    /// Global app settings file shared by all workspaces.
+    pub app_settings_file: PathBuf,
     /// Application log file in the OS-native logs directory.
     pub log_file: PathBuf,
     /// `root/beam.workspace.toml`
@@ -72,7 +84,12 @@ pub struct BeamPaths {
 
 impl BeamPaths {
     /// Build workspace paths given a workspace data root and a local state directory.
-    pub fn from_workspace_root(root: PathBuf, local_dir: PathBuf, log_file: PathBuf) -> Self {
+    pub fn from_workspace_root(
+        root: PathBuf,
+        local_dir: PathBuf,
+        app_settings_file: PathBuf,
+        log_file: PathBuf,
+    ) -> Self {
         let environments_dir = root.join("environments");
         let local_state_file = local_dir.join("local-state.toml");
         let workspace_file = root.join("beam.workspace.toml");
@@ -81,6 +98,7 @@ impl BeamPaths {
             environments_dir,
             local_dir,
             local_state_file,
+            app_settings_file,
             log_file,
             workspace_file,
         }
@@ -90,8 +108,9 @@ impl BeamPaths {
     /// Used by tests that want a self-contained workspace fixture.
     pub fn from_root(root: PathBuf) -> Self {
         let local_dir = root.join(".beam");
+        let app_settings_file = local_dir.join(APP_SETTINGS_FILE_NAME);
         let log_file = root.join(".beam_logs").join("beam.log");
-        Self::from_workspace_root(root, local_dir, log_file)
+        Self::from_workspace_root(root, local_dir, app_settings_file, log_file)
     }
 
     /// Default user config for the default workspace slug.
@@ -155,7 +174,10 @@ mod tests {
 
     use tempfile::tempdir;
 
-    use super::{BeamPaths, DataRootPaths, default_logs_root, default_root_from_home_dir, slugify};
+    use super::{
+        APP_SETTINGS_FILE_NAME, BeamPaths, DataRootPaths, default_logs_root,
+        default_root_from_home_dir, slugify,
+    };
 
     #[test]
     fn defaults_to_home_beam_directory() {
@@ -213,6 +235,10 @@ mod tests {
             ws_paths.local_state_file,
             local_root.join("my-workspace").join("local-state.toml")
         );
+        assert_eq!(
+            ws_paths.app_settings_file,
+            local_root.join(APP_SETTINGS_FILE_NAME)
+        );
         assert_eq!(ws_paths.log_file, logs_root.join("beam.log"));
         assert_eq!(other_ws_paths.log_file, logs_root.join("beam.log"));
     }
@@ -225,6 +251,10 @@ mod tests {
         let logs_root = dir.path().join("beam_logs");
         let paths = DataRootPaths::new(data_root.clone(), local_root, logs_root.clone());
         assert_eq!(paths.registry_file, data_root.join("workspaces.toml"));
+        assert_eq!(
+            paths.app_settings_file,
+            paths.local_root.join(APP_SETTINGS_FILE_NAME)
+        );
         assert_eq!(paths.log_file, logs_root.join("beam.log"));
     }
 

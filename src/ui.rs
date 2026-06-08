@@ -35,8 +35,8 @@ use crate::app_shell::{
 };
 use crate::assets::{Assets, embedded_theme_contents};
 use crate::models::{
-    AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable, HttpMethod,
-    LocalStateFile, RequestFile,
+    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable,
+    HttpMethod, LocalStateFile, RequestFile,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
@@ -148,7 +148,11 @@ fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
 }
 
 #[cfg(not(target_family = "wasm"))]
-fn init_theme_registry(preferred_theme_name: Option<SharedString>, cx: &mut App) {
+fn init_theme_registry(
+    preferred_theme_name: Option<SharedString>,
+    preferred_font_size: AppFontSize,
+    cx: &mut App,
+) {
     let registry = ThemeRegistry::global_mut(cx);
     for (theme_path, content) in embedded_theme_contents() {
         if let Err(error) = registry.load_themes_from_str(&content) {
@@ -159,6 +163,7 @@ fn init_theme_registry(preferred_theme_name: Option<SharedString>, cx: &mut App)
     if let Some(theme_name) = preferred_theme_name.as_ref() {
         let _ = BeamView::apply_named_theme_by_name(theme_name.as_ref(), cx, false);
     }
+    BeamView::apply_font_size(preferred_font_size, cx);
 }
 
 pub fn run_app(
@@ -171,7 +176,11 @@ pub fn run_app(
     app.run(move |cx| {
         gpui_component::init(cx);
         #[cfg(not(target_family = "wasm"))]
-        init_theme_registry(state.theme.theme_name.clone().map(Into::into), cx);
+        init_theme_registry(
+            state.theme.theme_name.clone().map(Into::into),
+            state.theme.font_size,
+            cx,
+        );
         cx.bind_keys([
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-q", QuitApp, None),
@@ -363,6 +372,7 @@ struct BeamView {
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
     pending_request_placements: HashMap<String, PendingRequestPlacement>,
+    pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: UniformListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -387,6 +397,15 @@ enum PendingRequestPlacement {
     After {
         parent: RequestParentRef,
         after_request_id: Ulid,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PendingFolderPlacement {
+    After {
+        parent: FolderParentRef,
+        insertion_index: usize,
+        known_target_manifest_path: Option<KnownParentManifestPath>,
     },
 }
 
@@ -618,18 +637,22 @@ impl SettingsDialogView {
 impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_theme_name = cx.theme().theme_name().clone();
+        let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
             .sorted_themes()
             .into_iter()
             .map(|theme| theme.name.clone())
             .collect();
+        let font_size_options = [AppFontSize::Small, AppFontSize::Medium, AppFontSize::Large];
 
         let mut right_panel = v_flex().w_full().h_full().gap_3();
         match self.selected_section {
             SettingsSection::Theme => {
                 let beam_view = self.beam_view.clone();
+                let font_size_beam_view = beam_view.clone();
                 let active_theme_name_for_menu = active_theme_name.clone();
                 let theme_options_for_menu = theme_options.clone();
+                let font_size_options_for_menu = font_size_options;
                 right_panel = right_panel
                     .child(div().text_sm().font_semibold().child("Theme"))
                     .child(
@@ -677,6 +700,52 @@ impl Render for SettingsDialogView {
                                     )
                                 })
                             }),
+                    )
+                    .child(div().mt_4().text_sm().font_semibold().child("Font size"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Choose the app font scale for the interface."),
+                    )
+                    .child(
+                        DropdownButton::new("settings-font-size-dropdown")
+                            .w(px(320.0))
+                            .button(
+                                Button::new("settings-font-size-dropdown-button")
+                                    .w(px(290.0))
+                                    .justify_start()
+                                    .label(active_font_size.label()),
+                            )
+                            .dropdown_menu(move |menu, window, _| {
+                                font_size_options_for_menu.into_iter().fold(
+                                    menu.scrollable(true).max_h(px(220.0)),
+                                    |menu, font_size| {
+                                        let target_view = font_size_beam_view.clone();
+                                        menu.item(
+                                            PopupMenuItem::element(move |_, _| {
+                                                div()
+                                                    .w_full()
+                                                    .px_2()
+                                                    .py_1()
+                                                    .cursor_pointer()
+                                                    .child(font_size.label())
+                                            })
+                                            .checked(font_size == active_font_size)
+                                            .on_click(window.listener_for(
+                                                &target_view,
+                                                move |this: &mut BeamView, _, window, cx| {
+                                                    this.apply_font_size_setting(
+                                                        font_size,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            )),
+                                        )
+                                    },
+                                )
+                            }),
                     );
             }
         }
@@ -713,7 +782,7 @@ impl Render for SettingsDialogView {
                                         this.selected_section = SettingsSection::Theme;
                                         cx.notify();
                                     }))
-                                    .child("Theme"),
+                                    .child("Appearance"),
                             ),
                     )
                     .child(
@@ -2212,10 +2281,11 @@ impl BeamView {
     }
 
     fn apply_theme_mode(mode: ThemeMode, cx: &mut App) {
+        let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
         Theme::change(mode, None, cx);
+        Self::apply_font_size(active_font_size, cx);
         #[cfg(target_os = "macos")]
         cx.set_menus(build_macos_system_menus(cx));
-        cx.refresh_windows();
         if let Err(error) = Self::persist_theme_state_from_app(cx) {
             log::error!("{error}");
         }
@@ -2225,6 +2295,27 @@ impl BeamView {
         if Self::apply_named_theme_by_name(theme_name.as_ref(), cx, true) {
             return;
         }
+    }
+
+    fn apply_font_size(font_size: AppFontSize, cx: &mut App) {
+        let theme = Theme::global_mut(cx);
+        theme.font_size = px(font_size.pixels());
+        theme.mono_font_size = px(font_size.mono_pixels());
+        cx.refresh_windows();
+    }
+
+    fn apply_font_size_setting(
+        &mut self,
+        font_size: AppFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::apply_font_size(font_size, cx);
+        self.shell.theme.font_size = font_size;
+        if let Err(error) = self.persist_font_size_state(font_size) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
     }
 
     fn apply_named_theme_by_name(theme_name: &str, cx: &mut App, persist: bool) -> bool {
@@ -2237,7 +2328,6 @@ impl BeamView {
             Theme::global_mut(cx).apply_config(&theme_config);
             #[cfg(target_os = "macos")]
             cx.set_menus(build_macos_system_menus(cx));
-            cx.refresh_windows();
             if persist {
                 if let Err(error) = Self::persist_theme_state_from_app(cx) {
                     log::error!("{error}");
@@ -4216,6 +4306,15 @@ impl BeamView {
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 
+    fn persist_font_size_state(&self, font_size: AppFontSize) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_font_size_state(font_size)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
     fn persist_theme_state_from_app(cx: &App) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let backend = FileSystemStorage::new(paths);
@@ -4400,6 +4499,7 @@ impl BeamView {
                     error,
                 } => {
                     self.pending_request_placements.remove(command_id);
+                    self.pending_folder_placements.remove(command_id);
                     self.shell.apply_event(&event);
                     log::error!(
                         "sync_failure command_id={} operation={} error={}",
@@ -4428,6 +4528,36 @@ impl BeamView {
                         window.push_notification(error, cx);
                     }
                     self.refresh_environment_manager_dialog_if_open(None, window, cx);
+                }
+                AppEvent::FolderUpserted {
+                    folder,
+                    manifest_path,
+                    command_id,
+                } => {
+                    self.shell.apply_event(&event);
+                    if let Some(placement) = self.pending_folder_placements.remove(command_id) {
+                        match placement {
+                            PendingFolderPlacement::After {
+                                parent,
+                                insertion_index,
+                                known_target_manifest_path,
+                            } => {
+                                self.perform_tree_move_action(
+                                    TreeMoveAction::MoveFolder(MoveFolderInput {
+                                        folder_id: folder.folder_id,
+                                        new_parent: parent,
+                                        insertion_index,
+                                        known_folder_manifest_path: manifest_path.clone(),
+                                        known_target_manifest_path,
+                                    }),
+                                    None,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
                     self.shell.apply_event(&event);
@@ -4488,6 +4618,10 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
+            window.push_notification("Unable to determine request parent.", cx);
+            return;
+        };
         let Some((parent, known_parent_manifest_path)) =
             self.request_parent_input_for_tree_node(node_id)
         else {
@@ -4495,19 +4629,43 @@ impl BeamView {
             return;
         };
         let command_id = next_command_id();
-        self.pending_request_placements.insert(
-            command_id.clone(),
-            PendingRequestPlacement::Append { parent },
-        );
-        let command = AppCommand::CreateRequest {
-            input: CreateRequestInput {
-                parent,
-                known_parent_manifest_path,
-                name: self.next_new_request_name(parent),
-                method: HttpMethod::Get,
-                url: String::new(),
-            },
-            command_id,
+        let command = match node.kind {
+            TreeNodeKind::Folder => {
+                self.pending_request_placements.insert(
+                    command_id.clone(),
+                    PendingRequestPlacement::Append { parent },
+                );
+                AppCommand::CreateRequest {
+                    input: CreateRequestInput {
+                        parent,
+                        known_parent_manifest_path,
+                        name: self.next_new_request_name(parent),
+                        method: HttpMethod::Get,
+                        url: String::new(),
+                    },
+                    command_id,
+                }
+            }
+            TreeNodeKind::Request => {
+                self.pending_request_placements.insert(
+                    command_id.clone(),
+                    PendingRequestPlacement::After {
+                        parent,
+                        after_request_id: node_id,
+                    },
+                );
+                AppCommand::CreateRequestAfter {
+                    input: CreateRequestInput {
+                        parent,
+                        known_parent_manifest_path,
+                        name: self.next_new_request_name(parent),
+                        method: HttpMethod::Get,
+                        url: String::new(),
+                    },
+                    source_request_id: node_id,
+                    command_id,
+                }
+            }
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
@@ -4516,24 +4674,45 @@ impl BeamView {
 
     fn add_folder_from_tree_node(
         &mut self,
-        _node_id: Ulid,
+        node_id: Ulid,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((parent, _known_parent_manifest_path)) =
-            self.folder_parent_input_for_tree_node(_node_id)
+        let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
+            window.push_notification("Unable to determine folder parent.", cx);
+            return;
+        };
+        let Some((parent, known_parent_manifest_path)) =
+            self.folder_parent_input_for_tree_node(node_id)
         else {
             window.push_notification("Unable to determine folder parent.", cx);
             return;
         };
         let folder_name = self.next_new_folder_name(parent);
+        let command_id = next_command_id();
+        if node.kind == TreeNodeKind::Request {
+            let Some((_, insertion_index)) =
+                self.sibling_destination_for_target(node_id, TreeDropPlacement::After)
+            else {
+                window.push_notification("Unable to determine folder position.", cx);
+                return;
+            };
+            self.pending_folder_placements.insert(
+                command_id.clone(),
+                PendingFolderPlacement::After {
+                    parent,
+                    insertion_index,
+                    known_target_manifest_path: known_parent_manifest_path.clone(),
+                },
+            );
+        }
         let command = AppCommand::CreateFolder {
             input: CreateFolderInput {
                 parent,
-                known_parent_manifest_path: None,
+                known_parent_manifest_path,
                 name: folder_name,
             },
-            command_id: next_command_id(),
+            command_id,
         };
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
@@ -5186,6 +5365,7 @@ impl BeamView {
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
             pending_request_placements: HashMap::new(),
+            pending_folder_placements: HashMap::new(),
             _subscriptions,
             collection_scroll_handle: UniformListScrollHandle::new(),
             collection_context_menu_row: None,
@@ -6051,7 +6231,12 @@ impl BeamView {
         };
         let indent = px((row.depth as f32) * 14.0);
 
-        let mut row_content = h_flex().w_full().items_center().justify_start().gap_2();
+        let mut row_content = h_flex()
+            .w_full()
+            .items_center()
+            .justify_start()
+            .gap_2()
+            .text_sm();
         if let Some(icon_path) = chevron_icon {
             row_content = row_content.child(
                 Icon::default()
@@ -6087,7 +6272,7 @@ impl BeamView {
                 ListItem::new(format!("tree-row-{}", row_id))
                     .w_full()
                     .rounded(px(8.0))
-                    .py_0p5()
+                    .py_1()
                     .pr(px(6.0))
                     .pl(indent + px(6.0))
                     .selected(row.selected)
@@ -6241,58 +6426,17 @@ impl BeamView {
     ) -> PopupMenu {
         let row_id = row.id;
         let row_kind = row.kind;
-        let view = cx.entity();
         let muted_foreground = cx.theme().muted_foreground;
         let mut menu = menu.min_w(px(180.0));
         match row_kind {
             TreeNodeKind::Folder => {
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Request")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/folder-add.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Add Folder")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.add_folder_from_tree_node(row_id, window, cx);
-                        },
-                    )),
+                let view = cx.entity();
+                menu = self.build_tree_create_context_menu_group(
+                    menu,
+                    row_id,
+                    muted_foreground,
+                    window,
+                    cx,
                 );
                 menu = menu.separator();
                 menu = menu.item(
@@ -6350,6 +6494,7 @@ impl BeamView {
                 );
             }
             TreeNodeKind::Request => {
+                let view = cx.entity();
                 menu = menu.item(
                     PopupMenuItem::element(move |_, _| {
                         h_flex()
@@ -6397,6 +6542,14 @@ impl BeamView {
                             this.copy_request_as_curl_from_tree_node(row_id, window, cx);
                         },
                     )),
+                );
+                menu = menu.separator();
+                menu = self.build_tree_create_context_menu_group(
+                    menu,
+                    row_id,
+                    muted_foreground,
+                    window,
+                    cx,
                 );
                 menu = menu.separator();
                 menu = menu.item(
@@ -6479,6 +6632,60 @@ impl BeamView {
             }
         }
         menu
+    }
+
+    fn build_tree_create_context_menu_group(
+        &self,
+        menu: PopupMenu,
+        row_id: Ulid,
+        muted_foreground: Hsla,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> PopupMenu {
+        let view = cx.entity();
+        let view2 = view.clone();
+        menu.item(
+            PopupMenuItem::element(move |_, _| {
+                h_flex()
+                    .w_full()
+                    .cursor_pointer()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/add.svg")
+                            .size(px(14.0))
+                            .text_color(muted_foreground),
+                    )
+                    .child("HTTP")
+            })
+            .on_click(window.listener_for(&view, move |this, _, window, cx| {
+                this.add_request_from_tree_node(row_id, window, cx);
+            })),
+        )
+        .item(
+            PopupMenuItem::element(move |_, _| {
+                h_flex()
+                    .w_full()
+                    .cursor_pointer()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/folder-add.svg")
+                            .size(px(14.0))
+                            .text_color(muted_foreground),
+                    )
+                    .child("Folder")
+            })
+            .on_click(window.listener_for(&view2, move |this, _, window, cx| {
+                this.add_folder_from_tree_node(row_id, window, cx);
+            })),
+        )
     }
 
     fn build_empty_space_context_menu(
@@ -6785,7 +6992,7 @@ impl BeamView {
         cx.notify();
     }
 
-    fn render_collections_panel(
+    fn render_workspace_panel(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -7316,10 +7523,10 @@ impl BeamView {
             h_flex()
                 .items_center()
                 .gap_1()
-                .child("Post Script")
+                .child("Script")
                 .child(div().w(px(6.0)).h(px(6.0)).rounded_full().bg(color))
         } else {
-            h_flex().items_center().gap_1().child("Post Script")
+            h_flex().items_center().gap_1().child("Script")
         };
         let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
             .anchor(gpui::Anchor::BottomLeft)
@@ -9646,7 +9853,7 @@ impl Render for BeamView {
                         .child(
                             resizable_panel()
                                 .size(px(left_size))
-                                .child(self.render_collections_panel(window, cx)),
+                                .child(self.render_workspace_panel(window, cx)),
                         )
                         .child(resizable_panel().child({
                             let workspace =
