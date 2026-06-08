@@ -6,6 +6,7 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Instant;
 
+use gpui::{Pixels, Point, point, px};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
@@ -132,7 +133,7 @@ pub struct TreeNode {
     pub children: Vec<Ulid>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RequestPaneData {
     pub method: HttpMethod,
     pub url: String,
@@ -141,6 +142,7 @@ pub struct RequestPaneData {
     pub auth: AuthConfig,
     pub body: BodyConfig,
     pub post_script: Option<String>,
+    pub response_scroll_offset: Point<Pixels>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -983,6 +985,11 @@ impl AppShellState {
                 }
             }
             AppEvent::RequestUpserted { request, .. } => {
+                let response_scroll_offset = self
+                    .request_pane_data
+                    .get(&request.meta.request_id)
+                    .map(|pane_data| pane_data.response_scroll_offset)
+                    .unwrap_or(point(px(0.), px(0.)));
                 self.shared_store
                     .requests
                     .insert(request.meta.request_id, request.clone());
@@ -1000,6 +1007,7 @@ impl AppShellState {
                         auth: request.auth.clone(),
                         body: request.body.clone(),
                         post_script: request.scripts.post_response.clone(),
+                        response_scroll_offset,
                     },
                 );
                 let _ = self.workspace_tree.upsert_request_node(
@@ -1036,6 +1044,11 @@ impl AppShellState {
                 insertion_index,
                 ..
             } => {
+                let response_scroll_offset = self
+                    .request_pane_data
+                    .get(&request.meta.request_id)
+                    .map(|pane_data| pane_data.response_scroll_offset)
+                    .unwrap_or(point(px(0.), px(0.)));
                 self.shared_store
                     .requests
                     .insert(request.meta.request_id, request.clone());
@@ -1092,6 +1105,7 @@ impl AppShellState {
                         auth: request.auth.clone(),
                         body: request.body.clone(),
                         post_script: request.scripts.post_response.clone(),
+                        response_scroll_offset,
                     },
                 );
                 match new_parent_id {
@@ -2692,6 +2706,7 @@ fn parse_request_tree_meta(path: &Path) -> Result<(RequestFile, RequestPaneData)
         auth: request_file.auth.clone(),
         body: request_file.body.clone(),
         post_script: request_file.scripts.post_response.clone(),
+        response_scroll_offset: point(px(0.), px(0.)),
     };
     Ok((request_file, pane_data))
 }
@@ -3553,6 +3568,7 @@ mod tests {
                 auth: AuthConfig::None,
                 body: BodyConfig::None,
                 post_script: None,
+                response_scroll_offset: point(px(0.), px(0.)),
             },
         );
 
@@ -3608,6 +3624,7 @@ mod tests {
                 auth: AuthConfig::None,
                 body: BodyConfig::None,
                 post_script: None,
+                response_scroll_offset: point(px(0.), px(0.)),
             },
         )]);
         let next_environments = vec![EnvironmentMeta {
