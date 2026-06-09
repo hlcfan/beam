@@ -7332,31 +7332,26 @@ impl BeamView {
             let resolved = build_enabled_environment_lookup(&env_vars);
             self.env_var_resolved_cache = Some((env_id, resolved));
         }
-        let resolved_env = self
-            .env_var_resolved_cache
-            .as_ref()
-            .map(|(_, m)| m.clone())
-            .unwrap_or_default();
 
-        let input = input_entity.read(cx);
-        let text = input.value().to_string();
-        let line_height = input.line_height().unwrap_or(px(20.));
-        let mut found: Option<EnvVarHoverInfo> = None;
+        let found = {
+            let input = input_entity.read(cx);
+            let text = input.value();
+            let line_height = input.line_height().unwrap_or(px(20.));
+            let resolved_env = self.env_var_resolved_cache.as_ref().map(|(_, m)| m);
 
-        for (byte_range, var_name) in find_env_var_ranges(&text) {
-            let Some(bounds) = find_token_hover_bounds(&input, &byte_range, pos, line_height)
-            else {
-                continue;
-            };
-            let resolved = resolved_env.get(&var_name).cloned();
-            found = Some(EnvVarHoverInfo {
-                var_name,
-                resolved_value: resolved,
-                token_bounds: bounds,
-            });
+            find_env_var_ranges(text.as_ref())
+                .into_iter()
+                .find_map(|(byte_range, var_name)| {
+                    let bounds = find_token_hover_bounds(input, &byte_range, pos, line_height)?;
+                    let resolved_value = resolved_env.and_then(|m| m.get(&var_name).cloned());
 
-            break;
-        }
+                    Some(EnvVarHoverInfo {
+                        var_name,
+                        resolved_value,
+                        token_bounds: bounds,
+                    })
+                })
+        };
 
         if self.env_var_hover.as_ref().map(|h| &h.token_bounds)
             != found.as_ref().map(|h| &h.token_bounds)
