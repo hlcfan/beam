@@ -7340,20 +7340,22 @@ impl BeamView {
 
         let input = input_entity.read(cx);
         let text = input.value().to_string();
+        let line_height = input.line_height().unwrap_or(px(20.));
         let mut found: Option<EnvVarHoverInfo> = None;
+
         for (byte_range, var_name) in find_env_var_ranges(&text) {
-            let Some(bounds) = input.range_to_bounds(&byte_range) else {
+            let Some(bounds) = find_token_hover_bounds(&input, &byte_range, pos, line_height)
+            else {
                 continue;
             };
-            if bounds.contains(&pos) {
-                let resolved = resolved_env.get(&var_name).cloned();
-                found = Some(EnvVarHoverInfo {
-                    var_name,
-                    resolved_value: resolved,
-                    token_bounds: bounds,
-                });
-                break;
-            }
+            let resolved = resolved_env.get(&var_name).cloned();
+            found = Some(EnvVarHoverInfo {
+                var_name,
+                resolved_value: resolved,
+                token_bounds: bounds,
+            });
+
+            break;
         }
 
         if self.env_var_hover.as_ref().map(|h| &h.token_bounds)
@@ -9565,6 +9567,77 @@ fn build_enabled_environment_lookup(
         .collect()
 }
 
+/// Return the visual-line segment of `byte_range` (a `{{var}}` token) that contains `pos`,
+/// or `None` if the cursor is not over the token. When soft-wrap splits the token across
+/// visual lines, `InputState::range_to_bounds` collapses it into a single rect with negative
+/// width, so we walk byte-by-byte and reassemble per-line segments here.
+fn find_token_hover_bounds(
+    input: &InputState,
+    byte_range: &std::ops::Range<usize>,
+    pos: Point<Pixels>,
+    line_height: Pixels,
+) -> Option<Bounds<Pixels>> {
+    let token_bounds = input.range_to_bounds(byte_range)?;
+    if token_bounds.size.width > px(0.) && token_bounds.size.height < line_height + px(1.) {
+        return token_bounds.contains(&pos).then_some(token_bounds);
+    }
+
+    let mut seg_origin: Option<Point<Pixels>> = None;
+    let mut seg_right = px(0.);
+
+    let close = |origin: Point<Pixels>, right: Pixels| Bounds {
+        origin,
+        size: Size {
+            width: right - origin.x,
+            height: line_height,
+        },
+    };
+
+    for byte_offset in byte_range.start..byte_range.end {
+        let Some(b) = input.range_to_bounds(&(byte_offset..byte_offset + 1)) else {
+            continue;
+        };
+
+        let byte_wraps = b.size.height > line_height + px(1.) || b.size.width <= px(0.);
+        if byte_wraps {
+            if let Some(origin) = seg_origin.take() {
+                let segment = close(origin, seg_right);
+                if segment.contains(&pos) {
+                    return Some(segment);
+                }
+            }
+            continue;
+        }
+
+        let byte_right = b.origin.x + b.size.width;
+        match seg_origin {
+            None => {
+                seg_origin = Some(b.origin);
+                seg_right = byte_right;
+            }
+            Some(origin) if (b.origin.y - origin.y).abs() < px(1.) => {
+                seg_right = byte_right;
+            }
+            Some(origin) => {
+                let segment = close(origin, seg_right);
+                if segment.contains(&pos) {
+                    return Some(segment);
+                }
+
+                seg_origin = Some(b.origin);
+                seg_right = byte_right;
+            }
+        }
+    }
+
+    if let Some(origin) = seg_origin {
+        let segment = close(origin, seg_right);
+        if segment.contains(&pos) {
+            return Some(segment);
+        }
+    }
+    None
+}
 /// Find all `{{var_name}}` tokens in `text`, returning their byte ranges and variable names.
 fn find_env_var_ranges(text: &str) -> Vec<(std::ops::Range<usize>, String)> {
     let mut result = Vec::new();
