@@ -63,7 +63,9 @@ actions!(
         SendActiveRequest,
         CreateRequestBelowActive,
         FocusUrlInput,
-        OpenSettings
+        OpenSettings,
+        SelectNextRequestInTree,
+        SelectPrevRequestInTree
     ]
 );
 
@@ -202,6 +204,8 @@ pub fn run_app(
             KeyBinding::new("ctrl-l", FocusUrlInput, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
+            KeyBinding::new("ctrl-j", SelectNextRequestInTree, None),
+            KeyBinding::new("ctrl-k", SelectPrevRequestInTree, None),
         ]);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
@@ -271,6 +275,50 @@ pub fn run_app(
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
                                     beam_view.open_settings_dialog(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &SelectNextRequestInTree, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.select_neighbor_request(
+                                        TreeNeighborDirection::Next,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &SelectPrevRequestInTree, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.select_neighbor_request(
+                                        TreeNeighborDirection::Prev,
+                                        window,
+                                        cx,
+                                    );
                                 });
                             });
                         }
@@ -387,6 +435,12 @@ struct BeamView {
 enum ResponseTab {
     Body,
     Headers,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TreeNeighborDirection {
+    Next,
+    Prev,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2626,6 +2680,51 @@ impl BeamView {
         self.sync_request_editor_from_selection(window, cx);
     }
 
+    /// Moves the workspace tree selection to the next or previous request in
+    /// pre-order traversal of the full tree. Folders that contain the target
+    /// are auto-expanded by `WorkspaceTreeState::select_request`, so collapsing
+    /// a folder no longer hides its requests from `ctrl-j` / `ctrl-k`.
+    fn select_neighbor_request(
+        &mut self,
+        direction: TreeNeighborDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ordered = self.shell.workspace_tree.ordered_request_ids();
+        if ordered.is_empty() {
+            return;
+        }
+
+        let next_id = match self
+            .shell
+            .workspace_tree
+            .selected_request_id()
+            .and_then(|current| ordered.iter().position(|id| *id == current))
+        {
+            Some(index) => match direction {
+                TreeNeighborDirection::Next => ordered[(index + 1) % ordered.len()],
+                TreeNeighborDirection::Prev => {
+                    if index == 0 {
+                        ordered[ordered.len() - 1]
+                    } else {
+                        ordered[index - 1]
+                    }
+                }
+            },
+            None => ordered[0],
+        };
+
+        if Some(next_id) == self.shell.workspace_tree.selected_request_id() {
+            return;
+        }
+
+        self.select_request(next_id, window, cx);
+        if let Err(error) = self.persist_tree_expansion_state() {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
     fn persist_response_scroll_offset_for_request(&mut self, request_id: Ulid, cx: &App) {
         let response_scroll_offset = self.current_response_scroll_offset(cx);
         if let Some(pane_data) = self.shell.request_pane_data.get_mut(&request_id) {
@@ -4257,6 +4356,7 @@ impl BeamView {
 
     fn persist_tree_expansion_state(&self) -> Result<(), String> {
         let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        // TODO: can we not initialize WorkspaceRepository everytime
         let storage = WorkspaceRepository::new(backend)
             .map_err(|error| format!("Failed to load workspace: {error}"))?;
         let mut local_state = match storage.load_local_state() {

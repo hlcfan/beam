@@ -219,6 +219,29 @@ impl WorkspaceTreeState {
         }
     }
 
+    /// Returns every request node id in pre-order traversal of the full tree
+    /// (root → first child → ... → sibling), ignoring the current `expanded` set.
+    /// Folders are visited but not included in the result.
+    pub fn ordered_request_ids(&self) -> Vec<Ulid> {
+        let mut out = Vec::new();
+        for root in &self.roots {
+            self.collect_request_ids(*root, &mut out);
+        }
+        out
+    }
+
+    fn collect_request_ids(&self, id: Ulid, out: &mut Vec<Ulid>) {
+        let Some(node) = self.nodes.get(&id) else {
+            return;
+        };
+        if node.kind == TreeNodeKind::Request {
+            out.push(id);
+        }
+        for child_id in &node.children {
+            self.collect_request_ids(*child_id, out);
+        }
+    }
+
     pub fn node(&self, id: Ulid) -> Option<&TreeNode> {
         self.nodes.get(&id)
     }
