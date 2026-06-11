@@ -204,8 +204,12 @@ pub fn run_app(
             KeyBinding::new("ctrl-l", FocusUrlInput, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
-            KeyBinding::new("ctrl-j", SelectNextRequestInTree, None),
-            KeyBinding::new("ctrl-k", SelectPrevRequestInTree, None),
+            KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
+            KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-alt-down", SelectNextRequestInTree, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-alt-up", SelectPrevRequestInTree, None),
         ]);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
@@ -2683,7 +2687,7 @@ impl BeamView {
     /// Moves the workspace tree selection to the next or previous request in
     /// pre-order traversal of the full tree. Folders that contain the target
     /// are auto-expanded by `WorkspaceTreeState::select_request`, so collapsing
-    /// a folder no longer hides its requests from `ctrl-j` / `ctrl-k`.
+    /// a folder no longer hides its requests from `cmd-alt-up` / `cmd-alt-down`.
     fn select_neighbor_request(
         &mut self,
         direction: TreeNeighborDirection,
