@@ -2896,12 +2896,17 @@ impl BeamView {
         self.commit_request_selection(window, cx);
     }
 
-    /// Persists the tree expansion state (which `select_request` may have
-    /// mutated by auto-expanding the new request's ancestors) and notifies
-    /// the framework that the request selection changed. Shared by both
-    /// `select_neighbor_request` and `navigate_request_view_history`.
+    /// Persists all local-state side effects of a request selection change
+    /// (tree expansion, last opened request id) and notifies the framework.
+    /// Shared by `select_neighbor_request`, `navigate_request_view_history`,
+    /// and the tree row click handler.
     fn commit_request_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.persist_tree_expansion_state() {
+            window.push_notification(error, cx);
+        }
+        if let Some(request_id) = self.shell.workspace_tree.selected_request_id()
+            && let Err(error) = self.persist_last_opened_request_id(request_id)
+        {
             window.push_notification(error, cx);
         }
         cx.notify();
