@@ -65,7 +65,9 @@ actions!(
         FocusUrlInput,
         OpenSettings,
         SelectNextRequestInTree,
-        SelectPrevRequestInTree
+        SelectPrevRequestInTree,
+        SelectNextRequestInViewHistory,
+        SelectPrevRequestInViewHistory
     ]
 );
 
@@ -204,8 +206,20 @@ pub fn run_app(
             KeyBinding::new("ctrl-l", FocusUrlInput, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
-            KeyBinding::new("ctrl-j", SelectNextRequestInTree, None),
-            KeyBinding::new("ctrl-k", SelectPrevRequestInTree, None),
+            KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
+            KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-alt-down", SelectNextRequestInTree, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-alt-up", SelectPrevRequestInTree, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-alt-right", SelectNextRequestInViewHistory, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-alt-left", SelectPrevRequestInViewHistory, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-alt-right", SelectNextRequestInViewHistory, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-alt-left", SelectPrevRequestInViewHistory, None),
         ]);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
@@ -326,6 +340,50 @@ pub fn run_app(
                 }
             });
         });
+        cx.on_action(|_: &SelectNextRequestInViewHistory, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.navigate_request_view_history(
+                                        RequestViewHistoryDirection::Next,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &SelectPrevRequestInViewHistory, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.navigate_request_view_history(
+                                        RequestViewHistoryDirection::Prev,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
         cx.on_action(|switch: &SwitchThemeMode, cx: &mut App| {
             BeamView::apply_theme_mode(switch.0, cx);
         });
@@ -429,6 +487,8 @@ struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
+    /// In-memory sequence of requests the user has selected. Cleared on workspace switch.
+    request_view_history: RequestViewHistory,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -441,6 +501,95 @@ enum ResponseTab {
 enum TreeNeighborDirection {
     Next,
     Prev,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RequestViewHistoryDirection {
+    Next,
+    Prev,
+}
+
+/// Tracks the in-memory sequence of requests the user has viewed. The cursor
+/// always points at the currently selected request so back/forward navigation
+/// can move the cursor without mutating the history itself.
+#[derive(Clone, Debug, Default)]
+struct RequestViewHistory {
+    entries: Vec<Ulid>,
+    cursor: Option<usize>,
+}
+
+impl RequestViewHistory {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.cursor = None;
+    }
+
+    /// Records a new visit. If the user had stepped back in the history, the
+    /// forward entries are truncated (browser-style) before appending the new
+    /// request. Re-selecting the entry already at the cursor is a no-op that
+    /// leaves the forward history intact. If the request already lives in the
+    /// history, the entries are collapsed down to just before the existing
+    /// occurrence (the re-visit then re-appends it at the new tip), which
+    /// keeps the backward path duplicate-free.
+    fn visit(&mut self, request_id: Ulid) {
+        if let Some(cursor) = self.cursor
+            && self.entries.get(cursor) == Some(&request_id)
+        {
+            return;
+        }
+        if let Some(existing) = self.entries.iter().position(|id| *id == request_id) {
+            self.entries.truncate(existing);
+        } else if let Some(cursor) = self.cursor
+            && cursor + 1 < self.entries.len()
+        {
+            self.entries.truncate(cursor + 1);
+        }
+        self.entries.push(request_id);
+        self.cursor = self.entries.len().checked_sub(1);
+    }
+
+    /// Drops the entry for `request_id` (if any) and shifts the cursor so it
+    /// keeps pointing at the same logical selection, or clamps to the new
+    /// tip / `None` if there is nothing left to point at. This is called
+    /// when a request is deleted so that `go_back` / `go_forward` cannot
+    /// land on a missing id.
+    fn prune(&mut self, request_id: Ulid) {
+        let Some(index) = self.entries.iter().position(|id| *id == request_id) else {
+            return;
+        };
+        self.entries.remove(index);
+        if self.entries.is_empty() {
+            self.cursor = None;
+            return;
+        }
+        let new_tip = self.entries.len() - 1;
+        self.cursor = Some(match self.cursor {
+            Some(c) if c > index => c - 1,
+            Some(c) => c.min(new_tip),
+            None => new_tip,
+        });
+    }
+
+    /// Moves the cursor back by one entry. Returns the request id at the new
+    /// position, or `None` if the cursor is already at the start.
+    fn go_back(&mut self) -> Option<Ulid> {
+        let cursor = self.cursor?;
+        if cursor == 0 {
+            return None;
+        }
+        self.cursor = Some(cursor - 1);
+        self.entries.get(cursor - 1).copied()
+    }
+
+    /// Moves the cursor forward by one entry. Returns the request id at the
+    /// new position, or `None` if the cursor is already at the tip.
+    fn go_forward(&mut self) -> Option<Ulid> {
+        let cursor = self.cursor?;
+        let next = cursor + 1;
+        let id = self.entries.get(next).copied()?;
+        self.cursor = Some(next);
+        Some(id)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2677,13 +2826,14 @@ impl BeamView {
         self.persist_current_response_scroll_offset(cx);
         self.pending_response_scroll_offset_persistence_due_at = None;
         self.shell.workspace_tree.select_request(request_id);
+        self.request_view_history.visit(request_id);
         self.sync_request_editor_from_selection(window, cx);
     }
 
     /// Moves the workspace tree selection to the next or previous request in
     /// pre-order traversal of the full tree. Folders that contain the target
     /// are auto-expanded by `WorkspaceTreeState::select_request`, so collapsing
-    /// a folder no longer hides its requests from `ctrl-j` / `ctrl-k`.
+    /// a folder no longer hides its requests from `cmd-alt-up` / `cmd-alt-down`.
     fn select_neighbor_request(
         &mut self,
         direction: TreeNeighborDirection,
@@ -2719,10 +2869,56 @@ impl BeamView {
         }
 
         self.select_request(next_id, window, cx);
+        self.commit_request_selection(window, cx);
+    }
+
+    /// Navigates the request view history (the in-memory sequence of requests
+    /// the user has selected). `ctrl+[` moves the cursor back; `ctrl+]`
+    /// moves it forward. When the cursor is already at the corresponding
+    /// end of the history the call is a no-op.
+    fn navigate_request_view_history(
+        &mut self,
+        direction: RequestViewHistoryDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next_id = match direction {
+            RequestViewHistoryDirection::Prev => self.request_view_history.go_back(),
+            RequestViewHistoryDirection::Next => self.request_view_history.go_forward(),
+        };
+        let Some(next_id) = next_id else {
+            return;
+        };
+        if Some(next_id) == self.shell.workspace_tree.selected_request_id() {
+            return;
+        }
+        self.select_request(next_id, window, cx);
+        self.commit_request_selection(window, cx);
+    }
+
+    /// Persists all local-state side effects of a request selection change
+    /// (tree expansion, last opened request id) and notifies the framework.
+    /// Shared by `select_neighbor_request`, `navigate_request_view_history`,
+    /// and the tree row click handler.
+    fn commit_request_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.persist_tree_expansion_state() {
             window.push_notification(error, cx);
         }
+        if let Some(request_id) = self.shell.workspace_tree.selected_request_id()
+            && let Err(error) = self.persist_last_opened_request_id(request_id)
+        {
+            window.push_notification(error, cx);
+        }
         cx.notify();
+    }
+
+    /// Initializes the request view history with whatever request the shell
+    /// already has selected at startup, so the very first `cmd-alt-down` / `cmd-alt-up`
+    /// keypress has a meaningful anchor to step from.
+    fn seed_request_view_history(&mut self) {
+        if let Some(request_id) = self.shell.workspace_tree.selected_request_id() {
+            self.request_view_history.visit(request_id);
+        }
     }
 
     fn persist_response_scroll_offset_for_request(&mut self, request_id: Ulid, cx: &App) {
@@ -4094,7 +4290,7 @@ impl BeamView {
                         this.refresh_active_request_cache();
                     }
                     if let Some(request_id) = preferred_selected_request_id {
-                        this.shell.workspace_tree.select_request(request_id);
+                        this.select_request(request_id, window, cx);
                     }
                     cx.notify();
                 }
@@ -4468,6 +4664,7 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         self.invalidate_env_var_resolved_cache();
+        self.request_view_history.clear();
         let data_root = DataRootPaths::default_user_config();
         if let Some(workspace_id) = workspace_id
             && let Some(entry) = self
@@ -4483,6 +4680,7 @@ impl BeamView {
         self.request_file_index = Self::build_request_file_index(&self.shell);
         self.prune_request_execution_states();
         self.sync_request_editor_from_selection(window, cx);
+        self.seed_request_view_history();
     }
 
     fn process_app_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -4552,11 +4750,9 @@ impl BeamView {
                                 }
                             }
                         }
-                        self.shell
-                            .workspace_tree
-                            .select_request(request.meta.request_id);
+                        self.select_request(request.meta.request_id, window, cx);
+                        self.commit_request_selection(window, cx);
                         selected_request_to_persist = Some(request.meta.request_id);
-                        should_sync_editor = true;
                     }
                 }
                 AppEvent::RequestDeleted { request_id, .. } => {
@@ -4564,6 +4760,7 @@ impl BeamView {
                         self.shell.workspace_tree.selected_request_id() == Some(*request_id);
                     self.clear_request_execution_state(*request_id);
                     self.request_file_index.remove(request_id);
+                    self.request_view_history.prune(*request_id);
                     self.shell.apply_event(&event);
                     if deleted_selected {
                         should_sync_editor = true;
@@ -5472,6 +5669,7 @@ impl BeamView {
             tree_drag_hover: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
+            request_view_history: RequestViewHistory::default(),
         };
         view.refresh_active_request_cache();
         view.rebuild_request_param_inputs(window, cx);
@@ -5479,6 +5677,7 @@ impl BeamView {
         view.sync_request_auth_inputs(window, cx);
         view.rebuild_request_auth_input_subscriptions(window, cx);
         view.sync_response_pane_from_selection(window, cx);
+        view.seed_request_view_history();
         view.schedule_app_event_poll(window, cx);
         view
     }
@@ -10069,10 +10268,11 @@ mod tests {
 
     use super::{
         EnvironmentManagerDialogView, RequestExecutionState, RequestExecutionStatus,
-        apply_request_run_completion_status, completion_updates_selected_request_ui,
-        request_run_completion_is_current, response_summary_for_selected_request,
-        send_button_state_for_selected_request, trailing_tree_drop_slot_target,
-        tree_row_shows_after_drop_slot, tree_row_shows_before_drop_slot,
+        RequestViewHistory, apply_request_run_completion_status,
+        completion_updates_selected_request_ui, request_run_completion_is_current,
+        response_summary_for_selected_request, send_button_state_for_selected_request,
+        trailing_tree_drop_slot_target, tree_row_shows_after_drop_slot,
+        tree_row_shows_before_drop_slot,
     };
     use crate::app_shell::{TreeNodeKind, TreeRow};
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
@@ -10450,5 +10650,153 @@ updated_at = "2026-05-27T08:30:00.000000Z"
 
         assert!(tree_row_shows_after_drop_slot(&rows, 1));
         assert!(tree_row_shows_before_drop_slot(&rows, 2));
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_records_and_steps_back_forward() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+
+        assert_eq!(history.go_back(), Some(r2));
+        assert_eq!(history.go_back(), Some(r1));
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), Some(r2));
+        assert_eq!(history.go_forward(), Some(r3));
+        assert_eq!(history.go_forward(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_truncates_forward_on_new_visit_after_back() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let r4 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+        assert_eq!(history.go_back(), Some(r2));
+
+        // New visit after stepping back should drop the forward entries.
+        history.visit(r4);
+        assert_eq!(history.go_forward(), None);
+        assert_eq!(history.go_back(), Some(r2));
+        assert_eq!(history.go_back(), Some(r1));
+        assert_eq!(history.go_back(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_visit_at_cursor_is_no_op() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+        history.visit(r1);
+        history.visit(r2);
+        assert_eq!(history.go_back(), Some(r1));
+
+        // Visiting the same entry already at the cursor should not duplicate
+        // and should keep the cursor pinned at that entry.
+        history.visit(r1);
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), Some(r2));
+        assert_eq!(history.go_forward(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_clear_resets_state() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+        history.visit(r1);
+        history.visit(r2);
+        assert_eq!(history.go_back(), Some(r1));
+
+        history.clear();
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_revisit_existing_entry_does_not_duplicate() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+        // Step back so r3 and the cursor sit at r2.
+        assert_eq!(history.go_back(), Some(r2));
+
+        // Re-selecting r1 (a request that already lives in the backward
+        // history) must collapse the entries down to [r1] so the backward
+        // path stays duplicate-free.
+        history.visit(r1);
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_prune_drops_deleted_request() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+        // Step back so the cursor is parked on r2; this is the request the
+        // user is going to delete.
+        assert_eq!(history.go_back(), Some(r2));
+
+        history.prune(r2);
+        // r2 is gone; r1 (back) and r3 (forward of where the cursor sat)
+        // remain, and the cursor clamps to the new tip (r3).
+        assert_eq!(history.go_back(), Some(r1));
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), Some(r3));
+        assert_eq!(history.go_forward(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_prune_unselected_request_keeps_cursor() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+
+        // Deleting r1 (a backward entry) must not affect the cursor (r3).
+        history.prune(r1);
+        assert_eq!(history.go_back(), Some(r2));
+        // After removing r1 the cursor sits on r2; one more step back must
+        // return None rather than a stale id.
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), Some(r3));
+        assert_eq!(history.go_forward(), None);
+    }
+
+    #[::core::prelude::v1::test]
+    fn request_view_history_prune_tip_only_entry_clears_history() {
+        let r1 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+        history.visit(r1);
+
+        history.prune(r1);
+        assert!(history.entries.is_empty());
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), None);
     }
 }
