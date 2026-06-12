@@ -487,8 +487,7 @@ struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
-    /// In-memory sequence of requests the user has selected. Powers
-    /// `ctrl+[` / `ctrl+]` back/forward navigation. Cleared on workspace switch.
+    /// In-memory sequence of requests the user has selected. Cleared on workspace switch.
     request_view_history: RequestViewHistory,
 }
 
