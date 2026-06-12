@@ -2913,7 +2913,7 @@ impl BeamView {
     }
 
     /// Initializes the request view history with whatever request the shell
-    /// already has selected at startup, so the very first `ctrl+[` / `ctrl+]`
+    /// already has selected at startup, so the very first `cmd-alt-down` / `cmd-alt-up`
     /// keypress has a meaningful anchor to step from.
     fn seed_request_view_history(&mut self) {
         if let Some(request_id) = self.shell.workspace_tree.selected_request_id() {
