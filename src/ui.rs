@@ -17,6 +17,7 @@ use gpui_component::{
     input::{self, Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
     menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
+    native_menu::NativeMenu,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     tag::Tag,
@@ -67,7 +68,9 @@ actions!(
         SelectNextRequestInTree,
         SelectPrevRequestInTree,
         SelectNextRequestInViewHistory,
-        SelectPrevRequestInViewHistory
+        SelectPrevRequestInViewHistory,
+        FormatRequestBody,
+        FormatResponseBody
     ]
 );
 
@@ -5292,6 +5295,24 @@ impl BeamView {
         self.handle_send_or_cancel_action(window, cx);
     }
 
+    fn on_action_format_request_body(
+        &mut self,
+        _: &FormatRequestBody,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.format_request_body(window, cx);
+    }
+
+    fn on_action_format_response_body(
+        &mut self,
+        _: &FormatResponseBody,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.format_response_body(window, cx);
+    }
+
     fn copy_request_as_curl_from_tree_node(
         &mut self,
         request_id: Ulid,
@@ -5522,6 +5543,7 @@ impl BeamView {
                     tab_size: 2,
                     hard_tabs: false,
                 })
+                .soft_wrap(false)
                 .searchable(true)
                 .placeholder("Enter request body...")
                 .default_value(request_body_text)
@@ -5537,7 +5559,9 @@ impl BeamView {
                     hard_tabs: false,
                 })
                 .searchable(true)
+                .soft_wrap(false)
                 .placeholder("Response body will appear here...")
+                .default_value("aa")
         });
 
         let post_script_editor = cx.new(|cx| {
@@ -7885,111 +7909,25 @@ impl BeamView {
         tabs
     }
 
-    fn context_menu_item_row(
-        label: &'static str,
-        icon_path: &'static str,
-        shortcut: &'static str,
-        muted_color: Hsla,
-    ) -> Div {
-        h_flex()
-            .w_full()
-            .cursor_pointer()
-            .items_center()
-            .justify_between()
-            .gap_3()
-            .px_2()
-            .py_1()
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        Icon::default()
-                            .path(icon_path)
-                            .size(px(14.0))
-                            .text_color(muted_color),
-                    )
-                    .child(label),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted_color.opacity(0.7))
-                    .child(shortcut),
-            )
-    }
-
-    fn context_menu_action_item(
-        label: &'static str,
-        icon_path: &'static str,
-        shortcut: &'static str,
-        muted_color: Hsla,
-        action: Box<dyn Action>,
-        disabled: bool,
-    ) -> PopupMenuItem {
-        PopupMenuItem::element(move |_, _| {
-            Self::context_menu_item_row(label, icon_path, shortcut, muted_color)
-        })
-        .action(action)
-        .disabled(disabled)
-    }
-
     fn build_text_edit_context_menu(
-        menu: PopupMenu,
+        menu: NativeMenu,
         has_selection: bool,
-        muted_color: Hsla,
-    ) -> PopupMenu {
-        menu.min_w(px(180.0))
-            .item(Self::context_menu_action_item(
-                "Cut",
-                "icons/cut.svg",
-                "Cmd+X",
-                muted_color,
-                Box::new(input::Cut),
-                !has_selection,
-            ))
-            .item(Self::context_menu_action_item(
-                "Copy",
-                "icons/copy.svg",
-                "Cmd+C",
-                muted_color,
-                Box::new(input::Copy),
-                !has_selection,
-            ))
-            .item(Self::context_menu_action_item(
-                "Paste",
-                "icons/clipboard-paste.svg",
-                "Cmd+V",
-                muted_color,
-                Box::new(input::Paste),
-                false,
-            ))
+        _muted_color: Hsla,
+    ) -> NativeMenu {
+        menu.menu_with_disabled("Cut", !has_selection, Box::new(input::Cut))
+            .menu_with_disabled("Copy", !has_selection, Box::new(input::Copy))
+            .menu("Paste", Box::new(input::Paste))
             .separator()
-            .item(Self::context_menu_action_item(
-                "Select All",
-                "icons/square-dashed-text.svg",
-                "Cmd+A",
-                muted_color,
-                Box::new(input::SelectAll),
-                false,
-            ))
+            .menu("Select All", Box::new(input::SelectAll))
     }
 
     fn build_text_edit_context_menu_with_find(
-        menu: PopupMenu,
+        menu: NativeMenu,
         has_selection: bool,
         muted_color: Hsla,
-    ) -> PopupMenu {
+    ) -> NativeMenu {
         let menu = menu
-            .min_w(px(180.0))
-            .item(Self::context_menu_action_item(
-                "Find",
-                "icons/search.svg",
-                "Cmd+F",
-                muted_color,
-                Box::new(input::Search),
-                false,
-            ))
+            .menu("Find", Box::new(input::Search))
             .separator();
         Self::build_text_edit_context_menu(menu, has_selection, muted_color)
     }
@@ -8054,40 +7992,16 @@ impl BeamView {
                                 .focus_bordered(false)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_size(cx.theme().mono_font_size)
-                                .context_menu({
-                                    let view = cx.entity();
-                                    move |menu, window, cx| {
-                                        let muted_foreground = cx.theme().muted_foreground;
-                                        let menu = menu.min_w(px(180.0)).item(
-                                            PopupMenuItem::element(move |_, _| {
-                                                h_flex()
-                                                    .w_full()
-                                                    .cursor_pointer()
-                                                    .items_center()
-                                                    .gap_2()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .child(
-                                                        Icon::default()
-                                                            .path("icons/indent.svg")
-                                                            .size(px(14.0))
-                                                            .text_color(muted_foreground),
-                                                    )
-                                                    .child("Format")
-                                            })
-                                            .on_click(window.listener_for(
-                                                &view,
-                                                |this, _, window, cx| {
-                                                    this.format_request_body(window, cx);
-                                                },
-                                            )),
-                                        );
-                                        Self::build_text_edit_context_menu_with_find(
-                                            menu,
-                                            request_body_has_selection,
-                                            muted_foreground,
-                                        )
-                                    }
+                                .context_menu(move |menu, _window, cx| {
+                                    let muted_foreground = cx.theme().muted_foreground;
+                                    let menu = menu
+                                        .menu("Format", Box::new(FormatRequestBody))
+                                        .separator();
+                                    Self::build_text_edit_context_menu_with_find(
+                                        menu,
+                                        request_body_has_selection,
+                                        muted_foreground,
+                                    )
                                 }),
                         )
                         .into_any_element()
@@ -9252,42 +9166,16 @@ impl BeamView {
                     .disabled(true)
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(cx.theme().mono_font_size)
-                    .context_menu({
-                        let view = cx.entity();
-                        move |menu, window, cx| {
-                            let muted_foreground = cx.theme().muted_foreground;
-                            let menu = menu
-                                .min_w(px(180.0))
-                                .item(
-                                    PopupMenuItem::element(move |_, _| {
-                                        h_flex()
-                                            .w_full()
-                                            .cursor_pointer()
-                                            .items_center()
-                                            .gap_2()
-                                            .px_2()
-                                            .py_1()
-                                            .child(
-                                                Icon::default()
-                                                    .path("icons/indent.svg")
-                                                    .size(px(14.0))
-                                                    .text_color(muted_foreground),
-                                            )
-                                            .child("Format")
-                                    })
-                                    .on_click(
-                                        window.listener_for(&view, |this, _, window, cx| {
-                                            this.format_response_body(window, cx);
-                                        }),
-                                    ),
-                                )
-                                .separator();
-                            Self::build_text_edit_context_menu(
-                                menu,
-                                response_body_has_selection,
-                                muted_foreground,
-                            )
-                        }
+                    .context_menu(move |menu, _window, cx| {
+                        let muted_foreground = cx.theme().muted_foreground;
+                        let menu = menu
+                            .menu("Format", Box::new(FormatResponseBody))
+                            .separator();
+                        Self::build_text_edit_context_menu(
+                            menu,
+                            response_body_has_selection,
+                            muted_foreground,
+                        )
                     })
                     .into_any_element()
             }
@@ -10212,6 +10100,8 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_send_active_request))
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_focus_url_input))
+            .on_action(cx.listener(Self::on_action_format_request_body))
+            .on_action(cx.listener(Self::on_action_format_response_body))
             .bg(cx.theme().background)
             .child(TitleBar::new().child(self.render_title_bar_content(window, cx)))
             .child(
