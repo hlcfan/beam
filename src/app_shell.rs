@@ -633,6 +633,8 @@ pub struct LocalEnvironmentSelectionState {
 pub struct LocalThemeState {
     pub theme_name: Option<String>,
     pub font_size: AppFontSize,
+    pub auto_format_response: bool,
+    pub wrap_body_editor: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -2283,6 +2285,8 @@ where
             theme: LocalThemeState {
                 theme_name: app_settings.app_settings.theme_name.clone(),
                 font_size: app_settings.app_settings.font_size,
+                auto_format_response: app_settings.app_settings.auto_format_response,
+                wrap_body_editor: app_settings.app_settings.wrap_body_editor,
             },
             workspace: WorkspaceState {
                 workspace_id: workspace_entry.map(|e| e.workspace_id),
@@ -4078,6 +4082,8 @@ expanded_item_ids = ["{folder_id}"]
                 app_settings: crate::models::AppSettings {
                     theme_name: Some("One Dark".to_string()),
                     font_size: AppFontSize::Large,
+                    auto_format_response: true,
+                    wrap_body_editor: false,
                     updated_at: Utc::now(),
                 },
             })
@@ -4180,6 +4186,8 @@ post_response = "console.log(response.status)"
         );
         assert_eq!(state.theme.theme_name.as_deref(), Some("One Dark"));
         assert_eq!(state.theme.font_size, AppFontSize::Large);
+        assert!(state.theme.auto_format_response);
+        assert!(!state.theme.wrap_body_editor);
         assert_eq!(
             state
                 .shared_store

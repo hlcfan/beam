@@ -844,6 +844,13 @@ impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_theme_name = cx.theme().theme_name().clone();
         let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
+        let (auto_format_response, wrap_body_editor) = {
+            let beam_view = self.beam_view.read(cx);
+            (
+                beam_view.shell.theme.auto_format_response,
+                beam_view.shell.theme.wrap_body_editor,
+            )
+        };
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
             .sorted_themes()
             .into_iter()
@@ -856,6 +863,8 @@ impl Render for SettingsDialogView {
             SettingsSection::Theme => {
                 let beam_view = self.beam_view.clone();
                 let font_size_beam_view = beam_view.clone();
+                let auto_format_beam_view = beam_view.clone();
+                let wrap_body_editor_beam_view = beam_view.clone();
                 let active_theme_name_for_menu = active_theme_name.clone();
                 let theme_options_for_menu = theme_options.clone();
                 let font_size_options_for_menu = font_size_options;
@@ -952,6 +961,77 @@ impl Render for SettingsDialogView {
                                     },
                                 )
                             }),
+                    )
+                    .child(div().mt_4().text_sm().font_semibold().child("Response"))
+                    .child(
+                        h_flex()
+                            .items_start()
+                            .gap_3()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .p_3()
+                            .child(
+                                gpui_component::checkbox::Checkbox::new(
+                                    "settings-auto-format-response",
+                                )
+                                .checked(auto_format_response)
+                                .on_click(cx.listener(move |_, checked: &bool, window, cx| {
+                                    auto_format_beam_view.update(cx, |this, cx| {
+                                        this.apply_auto_format_response_setting(
+                                            *checked, window, cx,
+                                        );
+                                    });
+                                })),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(div().text_sm().font_medium().child("Auto format response"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Automatically formats the response body after a request completes."),
+                                    ),
+                            ),
+                    )
+                    .child(div().mt_4().text_sm().font_semibold().child("Editors"))
+                    .child(
+                        h_flex()
+                            .items_start()
+                            .gap_3()
+                            .rounded(px(8.0))
+                            .border_1()
+                            .border_color(cx.theme().border)
+                            .p_3()
+                            .child(
+                                gpui_component::checkbox::Checkbox::new(
+                                    "settings-wrap-body-editor",
+                                )
+                                .checked(wrap_body_editor)
+                                .on_click(cx.listener(move |_, checked: &bool, window, cx| {
+                                    wrap_body_editor_beam_view.update(cx, |this, cx| {
+                                        this.apply_wrap_body_editor_setting(*checked, window, cx);
+                                    });
+                                })),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_medium()
+                                            .child("Wrap the request/response body editor"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Wraps long lines in the request and response body editors."),
+                                    ),
+                            ),
                     );
             }
         }
@@ -2524,6 +2604,38 @@ impl BeamView {
         cx.notify();
     }
 
+    fn apply_auto_format_response_setting(
+        &mut self,
+        auto_format_response: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shell.theme.auto_format_response = auto_format_response;
+        if let Err(error) = self.persist_auto_format_response_state(auto_format_response) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
+    fn apply_wrap_body_editor_setting(
+        &mut self,
+        wrap_body_editor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shell.theme.wrap_body_editor = wrap_body_editor;
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_soft_wrap(wrap_body_editor, window, cx);
+        });
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_soft_wrap(wrap_body_editor, window, cx);
+        });
+        if let Err(error) = self.persist_wrap_body_editor_state(wrap_body_editor) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
     fn apply_named_theme_by_name(theme_name: &str, cx: &mut App, persist: bool) -> bool {
         let stored_theme_name: SharedString = theme_name.to_string().into();
         let theme_config = ThemeRegistry::global(cx)
@@ -2973,7 +3085,7 @@ impl BeamView {
     ) {
         let content_type = snapshot.content_type.clone();
         let formatted_body =
-            Self::auto_format_response_body(&snapshot.body, content_type.as_deref());
+            self.response_body_for_display(&snapshot.body, content_type.as_deref());
         self.response_status = snapshot.status.clone();
         self.response_status_code = snapshot.status_code;
         self.response_time = snapshot.time.clone();
@@ -4614,6 +4726,24 @@ impl BeamView {
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 
+    fn persist_auto_format_response_state(&self, auto_format_response: bool) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_auto_format_response_state(auto_format_response)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
+    fn persist_wrap_body_editor_state(&self, wrap_body_editor: bool) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_wrap_body_editor_state(wrap_body_editor)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
     fn persist_theme_state_from_app(cx: &App) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let backend = FileSystemStorage::new(paths);
@@ -5534,6 +5664,7 @@ impl BeamView {
         let request_body_text = Self::body_editor_text(&request.body);
         let request_body_language = Self::body_editor_language(&request.body);
         let post_script_text = request.post_script.clone().unwrap_or_default();
+        let wrap_body_editor = shell.theme.wrap_body_editor;
 
         let request_body_editor = cx.new(|cx| {
             InputState::new(window, cx)
@@ -5543,7 +5674,7 @@ impl BeamView {
                     tab_size: 2,
                     hard_tabs: false,
                 })
-                .soft_wrap(false)
+                .soft_wrap(wrap_body_editor)
                 .searchable(true)
                 .placeholder("Enter request body...")
                 .default_value(request_body_text)
@@ -5559,7 +5690,7 @@ impl BeamView {
                     hard_tabs: false,
                 })
                 .searchable(true)
-                .soft_wrap(false)
+                .soft_wrap(wrap_body_editor)
                 .placeholder("Response body will appear here...")
                 .default_value("aa")
         });
@@ -5847,10 +5978,8 @@ impl BeamView {
                 let response_status_code = response.status_code;
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
-                let response_body = Self::auto_format_response_body(
-                    &response.body,
-                    response.content_type.as_deref(),
-                );
+                let response_body = this
+                    .response_body_for_display(&response.body, response.content_type.as_deref());
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
@@ -6490,6 +6619,14 @@ impl BeamView {
         }
 
         body.to_string()
+    }
+
+    fn response_body_for_display(&self, body: &str, content_type: Option<&str>) -> String {
+        if self.shell.theme.auto_format_response {
+            Self::auto_format_response_body(body, content_type)
+        } else {
+            body.to_string()
+        }
     }
 
     fn format_response_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7926,9 +8063,7 @@ impl BeamView {
         has_selection: bool,
         muted_color: Hsla,
     ) -> NativeMenu {
-        let menu = menu
-            .menu("Find", Box::new(input::Search))
-            .separator();
+        let menu = menu.menu("Find", Box::new(input::Search)).separator();
         Self::build_text_edit_context_menu(menu, has_selection, muted_color)
     }
 
