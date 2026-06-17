@@ -2379,6 +2379,11 @@ impl Render for WorkspaceDeleteDialogView {
     }
 }
 
+enum BodyFormatHint<'a> {
+    FromConfig(&'a BodyConfig),
+    FromContentType(Option<&'a str>),
+}
+
 impl BeamView {
     fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
         let run_id = self.next_request_run_id;
@@ -6414,7 +6419,16 @@ impl BeamView {
         cx.notify();
     }
 
-    fn format_request_body_text(body: &BodyConfig, text: &str) -> Result<String, String> {
+    fn format_body_text(text: &str, hint: BodyFormatHint<'_>) -> Result<String, String> {
+        match hint {
+            BodyFormatHint::FromConfig(body) => Self::format_body_text_from_config(body, text),
+            BodyFormatHint::FromContentType(content_type) => {
+                Self::format_body_text_from_content_type(text, content_type)
+            }
+        }
+    }
+
+    fn format_body_text_from_config(body: &BodyConfig, text: &str) -> Result<String, String> {
         match body {
             BodyConfig::Json { .. } => {
                 let value = serde_json::from_str::<serde_json::Value>(text)
@@ -6460,6 +6474,32 @@ impl BeamView {
         }
     }
 
+    fn format_body_text_from_content_type(
+        body: &str,
+        content_type: Option<&str>,
+    ) -> Result<String, String> {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            return Err("Body is empty.".into());
+        }
+
+        let ct = content_type.unwrap_or("").to_lowercase();
+
+        if ct.contains("json") || trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Ok(pretty) = serde_json::to_string_pretty(&value) {
+                    return Ok(pretty);
+                }
+            }
+        } else if ct.contains("xml") || ct.contains("html") {
+            if let Some(formatted) = Self::format_xml_or_html(trimmed) {
+                return Ok(formatted);
+            }
+        }
+
+        Err("Unable to format body for the detected content type.".into())
+    }
+
     fn format_request_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity();
         let body = self.request.body.clone();
@@ -6469,7 +6509,9 @@ impl BeamView {
         cx.spawn_in(window, async move |_, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { Self::format_request_body_text(&body, &current_text) })
+                .spawn(async move {
+                    Self::format_body_text(&current_text, BodyFormatHint::FromConfig(&body))
+                })
                 .await;
 
             let _ = view.update_in(cx, |this, window, cx| {
@@ -6511,8 +6553,7 @@ impl BeamView {
                     Self::body_with_updated_text(&this.request.body, formatted.clone());
                 this.request.active_tab = RequestTab::Body;
                 this.request_body_editor.update(cx, |input, cx| {
-                    input.set_value(formatted, window, cx);
-                    input.focus(window, cx);
+                    Self::replace_editor_text(input, formatted, window, cx);
                 });
                 this.schedule_request_save(cx);
                 cx.notify();
@@ -6607,46 +6648,25 @@ impl BeamView {
         }
     }
 
-    fn format_body_by_content_type(body: &str, content_type: Option<&str>) -> String {
-        let trimmed = body.trim();
-        if trimmed.is_empty() {
+    fn response_body_for_display(&self, body: &str, content_type: Option<&str>) -> String {
+        if !self.shell.theme.auto_format_response {
             return body.to_string();
         }
-
-        let ct = content_type.unwrap_or("").to_lowercase();
-
-        if ct.contains("json") || trimmed.starts_with('{') || trimmed.starts_with('[') {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-                    return pretty;
-                }
-            }
-        } else if ct.contains("xml") || ct.contains("html") {
-            if let Some(formatted) = Self::format_xml_or_html(trimmed) {
-                return formatted;
-            }
-        }
-
-        body.to_string()
-    }
-
-    fn response_body_for_display(&self, body: &str, content_type: Option<&str>) -> String {
-        if self.shell.theme.auto_format_response {
-            Self::format_body_by_content_type(body, content_type)
-        } else {
-            body.to_string()
-        }
+        Self::format_body_text(body, BodyFormatHint::FromContentType(content_type))
+            .unwrap_or_else(|_| body.to_string())
     }
 
     fn format_response_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current_text = self.response_body_editor.read(cx).value().to_string();
-        let trimmed = current_text.trim();
-        if trimmed.is_empty() {
+        if current_text.trim().is_empty() {
             return;
         }
 
-        let formatted =
-            Self::format_body_by_content_type(&current_text, self.response_content_type.as_deref());
+        let formatted = Self::format_body_text(
+            &current_text,
+            BodyFormatHint::FromContentType(self.response_content_type.as_deref()),
+        )
+        .unwrap_or_else(|_| current_text.clone());
 
         if formatted == current_text {
             return;
@@ -6656,11 +6676,20 @@ impl BeamView {
             window,
             cx,
             |input, window, cx| {
-                input.set_value(formatted, window, cx);
-                input.focus(window, cx);
+                Self::replace_editor_text(input, formatted, window, cx);
             },
         );
         cx.notify();
+    }
+
+    fn replace_editor_text(
+        input: &mut InputState,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<InputState>,
+    ) {
+        input.set_value(text, window, cx);
+        input.focus(window, cx);
     }
 
     fn body_editor_language(body: &BodyConfig) -> &'static str {
