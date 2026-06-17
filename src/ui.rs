@@ -20,6 +20,7 @@ use gpui_component::{
     native_menu::NativeMenu,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
+    switch::Switch,
     tag::Tag,
     text::{html, markdown},
     v_flex, v_virtual_list,
@@ -824,6 +825,7 @@ struct EnvironmentManagerDialogView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
     Theme,
+    Editor,
 }
 
 struct SettingsDialogView {
@@ -863,8 +865,6 @@ impl Render for SettingsDialogView {
             SettingsSection::Theme => {
                 let beam_view = self.beam_view.clone();
                 let font_size_beam_view = beam_view.clone();
-                let auto_format_beam_view = beam_view.clone();
-                let wrap_body_editor_beam_view = beam_view.clone();
                 let active_theme_name_for_menu = active_theme_name.clone();
                 let theme_options_for_menu = theme_options.clone();
                 let font_size_options_for_menu = font_size_options;
@@ -961,76 +961,71 @@ impl Render for SettingsDialogView {
                                     },
                                 )
                             }),
-                    )
-                    .child(div().mt_4().text_sm().font_semibold().child("Response"))
+                    );
+            }
+            SettingsSection::Editor => {
+                let auto_format_beam_view = self.beam_view.clone();
+                let wrap_body_editor_beam_view = self.beam_view.clone();
+                right_panel = right_panel
                     .child(
                         h_flex()
                             .items_start()
+                            .justify_between()
                             .gap_3()
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .p_3()
-                            .child(
-                                gpui_component::checkbox::Checkbox::new(
-                                    "settings-auto-format-response",
-                                )
-                                .checked(auto_format_response)
-                                .on_click(cx.listener(move |_, checked: &bool, window, cx| {
-                                    auto_format_beam_view.update(cx, |this, cx| {
-                                        this.apply_auto_format_response_setting(
-                                            *checked, window, cx,
-                                        );
-                                    });
-                                })),
-                            )
                             .child(
                                 v_flex()
+                                    .flex_1()
                                     .gap_1()
-                                    .child(div().text_sm().font_medium().child("Auto format response"))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_semibold()
+                                            .child("Editor soft wrap"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Wraps long lines in the body editor."),
+                                    ),
+                            )
+                            .child(
+                                Switch::new("settings-wrap-body-editor")
+                                    .checked(wrap_body_editor)
+                                    .on_click(cx.listener(move |_, checked: &bool, window, cx| {
+                                        wrap_body_editor_beam_view.update(cx, |this, cx| {
+                                            this.apply_wrap_body_editor_setting(*checked, window, cx);
+                                        });
+                                    })),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .mt_4()
+                            .items_start()
+                            .justify_between()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1()
+                                    .child(div().text_sm().font_semibold().child("Auto format response"))
                                     .child(
                                         div()
                                             .text_xs()
                                             .text_color(cx.theme().muted_foreground)
                                             .child("Automatically formats the response body after a request completes."),
                                     ),
-                            ),
-                    )
-                    .child(div().mt_4().text_sm().font_semibold().child("Editors"))
-                    .child(
-                        h_flex()
-                            .items_start()
-                            .gap_3()
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(cx.theme().border)
-                            .p_3()
-                            .child(
-                                gpui_component::checkbox::Checkbox::new(
-                                    "settings-wrap-body-editor",
-                                )
-                                .checked(wrap_body_editor)
-                                .on_click(cx.listener(move |_, checked: &bool, window, cx| {
-                                    wrap_body_editor_beam_view.update(cx, |this, cx| {
-                                        this.apply_wrap_body_editor_setting(*checked, window, cx);
-                                    });
-                                })),
                             )
                             .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .font_medium()
-                                            .child("Wrap the request/response body editor"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child("Wraps long lines in the request and response body editors."),
-                                    ),
+                                Switch::new("settings-auto-format-response")
+                                    .checked(auto_format_response)
+                                    .on_click(cx.listener(move |_, checked: &bool, window, cx| {
+                                        auto_format_beam_view.update(cx, |this, cx| {
+                                            this.apply_auto_format_response_setting(
+                                                *checked, window, cx,
+                                            );
+                                        });
+                                    })),
                             ),
                     );
             }
@@ -1069,6 +1064,20 @@ impl Render for SettingsDialogView {
                                         cx.notify();
                                     }))
                                     .child("Appearance"),
+                            )
+                            .child(
+                                ListItem::new("settings-section-editor")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .rounded(px(8.0))
+                                    .px_2()
+                                    .py_1()
+                                    .selected(self.selected_section == SettingsSection::Editor)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.selected_section = SettingsSection::Editor;
+                                        cx.notify();
+                                    }))
+                                    .child("Editor"),
                             ),
                     )
                     .child(
