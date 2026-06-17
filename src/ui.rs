@@ -6598,7 +6598,7 @@ impl BeamView {
         }
     }
 
-    fn auto_format_response_body(body: &str, content_type: Option<&str>) -> String {
+    fn format_body_by_content_type(body: &str, content_type: Option<&str>) -> String {
         let trimmed = body.trim();
         if trimmed.is_empty() {
             return body.to_string();
@@ -6623,7 +6623,7 @@ impl BeamView {
 
     fn response_body_for_display(&self, body: &str, content_type: Option<&str>) -> String {
         if self.shell.theme.auto_format_response {
-            Self::auto_format_response_body(body, content_type)
+            Self::format_body_by_content_type(body, content_type)
         } else {
             body.to_string()
         }
@@ -6637,7 +6637,7 @@ impl BeamView {
         }
 
         let formatted =
-            Self::auto_format_response_body(&current_text, self.response_content_type.as_deref());
+            Self::format_body_by_content_type(&current_text, self.response_content_type.as_deref());
 
         if formatted == current_text {
             return;
