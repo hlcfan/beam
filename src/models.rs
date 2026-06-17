@@ -338,7 +338,15 @@ pub struct AppSettings {
     pub theme_name: Option<String>,
     #[serde(default)]
     pub font_size: AppFontSize,
+    #[serde(default = "default_auto_format_response")]
+    pub auto_format_response: bool,
+    #[serde(default)]
+    pub wrap_body_editor: bool,
     pub updated_at: DateTime<Utc>,
+}
+
+const fn default_auto_format_response() -> bool {
+    true
 }
 
 impl WorkspacesRegistryFile {
@@ -385,6 +393,8 @@ impl Default for AppSettingsFile {
             app_settings: AppSettings {
                 theme_name: None,
                 font_size: AppFontSize::default(),
+                auto_format_response: default_auto_format_response(),
+                wrap_body_editor: false,
                 updated_at: Utc::now(),
             },
         }

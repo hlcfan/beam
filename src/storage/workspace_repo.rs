@@ -1193,6 +1193,36 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         self.save_app_settings(&app_settings)
     }
 
+    pub fn persist_auto_format_response_state(&self, auto_format_response: bool) -> Result<()> {
+        let mut app_settings = match self.load_app_settings() {
+            Ok(state) => state,
+            Err(_) => AppSettingsFile::default(),
+        };
+
+        if app_settings.app_settings.auto_format_response == auto_format_response {
+            return Ok(());
+        }
+
+        app_settings.app_settings.auto_format_response = auto_format_response;
+        app_settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&app_settings)
+    }
+
+    pub fn persist_wrap_body_editor_state(&self, wrap_body_editor: bool) -> Result<()> {
+        let mut app_settings = match self.load_app_settings() {
+            Ok(state) => state,
+            Err(_) => AppSettingsFile::default(),
+        };
+
+        if app_settings.app_settings.wrap_body_editor == wrap_body_editor {
+            return Ok(());
+        }
+
+        app_settings.app_settings.wrap_body_editor = wrap_body_editor;
+        app_settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&app_settings)
+    }
+
     fn seed_app_settings_file(&self) -> Result<AppSettingsFile> {
         let mut app_settings = AppSettingsFile::default();
         let local_state_path = &self.backend.paths().local_state_file;
@@ -1905,6 +1935,34 @@ mod tests {
     }
 
     #[test]
+    fn persist_auto_format_response_state_updates_app_settings() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+
+        storage
+            .persist_auto_format_response_state(false)
+            .expect("persist auto format response state");
+        let loaded = storage.load_app_settings().expect("load app settings");
+
+        assert!(!loaded.app_settings.auto_format_response);
+    }
+
+    #[test]
+    fn persist_wrap_body_editor_state_updates_app_settings() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+
+        storage
+            .persist_wrap_body_editor_state(true)
+            .expect("persist wrap body editor state");
+        let loaded = storage.load_app_settings().expect("load app settings");
+
+        assert!(loaded.app_settings.wrap_body_editor);
+    }
+
+    #[test]
     fn load_app_settings_seeds_from_existing_local_state_fields() {
         let dir = tempdir().expect("tempdir");
         let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
@@ -1927,6 +1985,8 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
 
         assert_eq!(loaded.app_settings.theme_name.as_deref(), Some("One Dark"));
         assert_eq!(loaded.app_settings.font_size, AppFontSize::Large);
+        assert!(loaded.app_settings.auto_format_response);
+        assert!(!loaded.app_settings.wrap_body_editor);
         assert!(backend.paths.app_settings_file.exists());
     }
 

@@ -20,6 +20,7 @@ use gpui_component::{
     native_menu::NativeMenu,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
+    switch::Switch,
     tag::Tag,
     text::{html, markdown},
     v_flex, v_virtual_list,
@@ -824,6 +825,7 @@ struct EnvironmentManagerDialogView {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
     Theme,
+    Editor,
 }
 
 struct SettingsDialogView {
@@ -844,6 +846,13 @@ impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_theme_name = cx.theme().theme_name().clone();
         let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
+        let (auto_format_response, wrap_body_editor) = {
+            let beam_view = self.beam_view.read(cx);
+            (
+                beam_view.shell.theme.auto_format_response,
+                beam_view.shell.theme.wrap_body_editor,
+            )
+        };
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
             .sorted_themes()
             .into_iter()
@@ -954,6 +963,74 @@ impl Render for SettingsDialogView {
                             }),
                     );
             }
+            SettingsSection::Editor => {
+                let auto_format_beam_view = self.beam_view.clone();
+                let wrap_body_editor_beam_view = self.beam_view.clone();
+                right_panel = right_panel
+                    .child(
+                        h_flex()
+                            .items_start()
+                            .justify_between()
+                            .gap_3()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_semibold()
+                                            .child("Editor soft wrap"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Wraps long lines in the editor."),
+                                    ),
+                            )
+                            .child(
+                                Switch::new("settings-wrap-body-editor")
+                                    .cursor_pointer()
+                                    .checked(wrap_body_editor)
+                                    .on_click(cx.listener(move |_, checked: &bool, window, cx| {
+                                        wrap_body_editor_beam_view.update(cx, |this, cx| {
+                                            this.apply_wrap_body_editor_setting(*checked, window, cx);
+                                        });
+                                    })),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .mt_4()
+                            .items_start()
+                            .justify_between()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .gap_1()
+                                    .child(div().text_sm().font_semibold().child("Auto format response"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().muted_foreground)
+                                            .child("Automatically formats the response body after a request completes."),
+                                    ),
+                            )
+                            .child(
+                                Switch::new("settings-auto-format-response")
+                                    .cursor_pointer()
+                                    .checked(auto_format_response)
+                                    .on_click(cx.listener(move |_, checked: &bool, window, cx| {
+                                        auto_format_beam_view.update(cx, |this, cx| {
+                                            this.apply_auto_format_response_setting(
+                                                *checked, window, cx,
+                                            );
+                                        });
+                                    })),
+                            ),
+                    );
+            }
         }
 
         v_flex()
@@ -989,6 +1066,20 @@ impl Render for SettingsDialogView {
                                         cx.notify();
                                     }))
                                     .child("Appearance"),
+                            )
+                            .child(
+                                ListItem::new("settings-section-editor")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .rounded(px(8.0))
+                                    .px_2()
+                                    .py_1()
+                                    .selected(self.selected_section == SettingsSection::Editor)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.selected_section = SettingsSection::Editor;
+                                        cx.notify();
+                                    }))
+                                    .child("Editor"),
                             ),
                     )
                     .child(
@@ -2290,6 +2381,11 @@ impl Render for WorkspaceDeleteDialogView {
     }
 }
 
+enum BodyFormatHint<'a> {
+    FromConfig(&'a BodyConfig),
+    FromContentType(Option<&'a str>),
+}
+
 impl BeamView {
     fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
         let run_id = self.next_request_run_id;
@@ -2519,6 +2615,38 @@ impl BeamView {
         Self::apply_font_size(font_size, cx);
         self.shell.theme.font_size = font_size;
         if let Err(error) = self.persist_font_size_state(font_size) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
+    fn apply_auto_format_response_setting(
+        &mut self,
+        auto_format_response: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shell.theme.auto_format_response = auto_format_response;
+        if let Err(error) = self.persist_auto_format_response_state(auto_format_response) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
+    fn apply_wrap_body_editor_setting(
+        &mut self,
+        wrap_body_editor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shell.theme.wrap_body_editor = wrap_body_editor;
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_soft_wrap(wrap_body_editor, window, cx);
+        });
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_soft_wrap(wrap_body_editor, window, cx);
+        });
+        if let Err(error) = self.persist_wrap_body_editor_state(wrap_body_editor) {
             window.push_notification(error, cx);
         }
         cx.notify();
@@ -2973,7 +3101,7 @@ impl BeamView {
     ) {
         let content_type = snapshot.content_type.clone();
         let formatted_body =
-            Self::auto_format_response_body(&snapshot.body, content_type.as_deref());
+            self.response_body_for_display(&snapshot.body, content_type.as_deref());
         self.response_status = snapshot.status.clone();
         self.response_status_code = snapshot.status_code;
         self.response_time = snapshot.time.clone();
@@ -4614,6 +4742,24 @@ impl BeamView {
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 
+    fn persist_auto_format_response_state(&self, auto_format_response: bool) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_auto_format_response_state(auto_format_response)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
+    fn persist_wrap_body_editor_state(&self, wrap_body_editor: bool) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_wrap_body_editor_state(wrap_body_editor)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
     fn persist_theme_state_from_app(cx: &App) -> Result<(), String> {
         let paths = BeamPaths::default_user_config();
         let backend = FileSystemStorage::new(paths);
@@ -5534,6 +5680,7 @@ impl BeamView {
         let request_body_text = Self::body_editor_text(&request.body);
         let request_body_language = Self::body_editor_language(&request.body);
         let post_script_text = request.post_script.clone().unwrap_or_default();
+        let wrap_body_editor = shell.theme.wrap_body_editor;
 
         let request_body_editor = cx.new(|cx| {
             InputState::new(window, cx)
@@ -5543,7 +5690,7 @@ impl BeamView {
                     tab_size: 2,
                     hard_tabs: false,
                 })
-                .soft_wrap(false)
+                .soft_wrap(wrap_body_editor)
                 .searchable(true)
                 .placeholder("Enter request body...")
                 .default_value(request_body_text)
@@ -5559,7 +5706,7 @@ impl BeamView {
                     hard_tabs: false,
                 })
                 .searchable(true)
-                .soft_wrap(false)
+                .soft_wrap(wrap_body_editor)
                 .placeholder("Response body will appear here...")
                 .default_value("aa")
         });
@@ -5847,10 +5994,8 @@ impl BeamView {
                 let response_status_code = response.status_code;
                 let response_time = response.time.clone();
                 let response_size = response.size.clone();
-                let response_body = Self::auto_format_response_body(
-                    &response.body,
-                    response.content_type.as_deref(),
-                );
+                let response_body = this
+                    .response_body_for_display(&response.body, response.content_type.as_deref());
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
@@ -6276,7 +6421,16 @@ impl BeamView {
         cx.notify();
     }
 
-    fn format_request_body_text(body: &BodyConfig, text: &str) -> Result<String, String> {
+    fn format_body_text(text: &str, hint: BodyFormatHint<'_>) -> Result<String, String> {
+        match hint {
+            BodyFormatHint::FromConfig(body) => Self::format_body_text_from_config(body, text),
+            BodyFormatHint::FromContentType(content_type) => {
+                Self::format_body_text_from_content_type(text, content_type)
+            }
+        }
+    }
+
+    fn format_body_text_from_config(body: &BodyConfig, text: &str) -> Result<String, String> {
         match body {
             BodyConfig::Json { .. } => {
                 let value = serde_json::from_str::<serde_json::Value>(text)
@@ -6322,6 +6476,32 @@ impl BeamView {
         }
     }
 
+    fn format_body_text_from_content_type(
+        body: &str,
+        content_type: Option<&str>,
+    ) -> Result<String, String> {
+        let trimmed = body.trim();
+        if trimmed.is_empty() {
+            return Err("Body is empty.".into());
+        }
+
+        let ct = content_type.unwrap_or("").to_lowercase();
+
+        if ct.contains("json") || trimmed.starts_with('{') || trimmed.starts_with('[') {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Ok(pretty) = serde_json::to_string_pretty(&value) {
+                    return Ok(pretty);
+                }
+            }
+        } else if ct.contains("xml") || ct.contains("html") {
+            if let Some(formatted) = Self::format_xml_or_html(trimmed) {
+                return Ok(formatted);
+            }
+        }
+
+        Err("Unable to format body for the detected content type.".into())
+    }
+
     fn format_request_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity();
         let body = self.request.body.clone();
@@ -6331,7 +6511,9 @@ impl BeamView {
         cx.spawn_in(window, async move |_, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move { Self::format_request_body_text(&body, &current_text) })
+                .spawn(async move {
+                    Self::format_body_text(&current_text, BodyFormatHint::FromConfig(&body))
+                })
                 .await;
 
             let _ = view.update_in(cx, |this, window, cx| {
@@ -6373,8 +6555,7 @@ impl BeamView {
                     Self::body_with_updated_text(&this.request.body, formatted.clone());
                 this.request.active_tab = RequestTab::Body;
                 this.request_body_editor.update(cx, |input, cx| {
-                    input.set_value(formatted, window, cx);
-                    input.focus(window, cx);
+                    Self::replace_editor_text(input, formatted, window, cx);
                 });
                 this.schedule_request_save(cx);
                 cx.notify();
@@ -6469,38 +6650,25 @@ impl BeamView {
         }
     }
 
-    fn auto_format_response_body(body: &str, content_type: Option<&str>) -> String {
-        let trimmed = body.trim();
-        if trimmed.is_empty() {
+    fn response_body_for_display(&self, body: &str, content_type: Option<&str>) -> String {
+        if !self.shell.theme.auto_format_response {
             return body.to_string();
         }
-
-        let ct = content_type.unwrap_or("").to_lowercase();
-
-        if ct.contains("json") || trimmed.starts_with('{') || trimmed.starts_with('[') {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-                    return pretty;
-                }
-            }
-        } else if ct.contains("xml") || ct.contains("html") {
-            if let Some(formatted) = Self::format_xml_or_html(trimmed) {
-                return formatted;
-            }
-        }
-
-        body.to_string()
+        Self::format_body_text(body, BodyFormatHint::FromContentType(content_type))
+            .unwrap_or_else(|_| body.to_string())
     }
 
     fn format_response_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let current_text = self.response_body_editor.read(cx).value().to_string();
-        let trimmed = current_text.trim();
-        if trimmed.is_empty() {
+        if current_text.trim().is_empty() {
             return;
         }
 
-        let formatted =
-            Self::auto_format_response_body(&current_text, self.response_content_type.as_deref());
+        let formatted = Self::format_body_text(
+            &current_text,
+            BodyFormatHint::FromContentType(self.response_content_type.as_deref()),
+        )
+        .unwrap_or_else(|_| current_text.clone());
 
         if formatted == current_text {
             return;
@@ -6510,11 +6678,20 @@ impl BeamView {
             window,
             cx,
             |input, window, cx| {
-                input.set_value(formatted, window, cx);
-                input.focus(window, cx);
+                Self::replace_editor_text(input, formatted, window, cx);
             },
         );
         cx.notify();
+    }
+
+    fn replace_editor_text(
+        input: &mut InputState,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<InputState>,
+    ) {
+        input.set_value(text, window, cx);
+        input.focus(window, cx);
     }
 
     fn body_editor_language(body: &BodyConfig) -> &'static str {
@@ -7926,9 +8103,7 @@ impl BeamView {
         has_selection: bool,
         muted_color: Hsla,
     ) -> NativeMenu {
-        let menu = menu
-            .menu("Find", Box::new(input::Search))
-            .separator();
+        let menu = menu.menu("Find", Box::new(input::Search)).separator();
         Self::build_text_edit_context_menu(menu, has_selection, muted_color)
     }
 
