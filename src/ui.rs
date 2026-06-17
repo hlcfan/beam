@@ -991,6 +991,7 @@ impl Render for SettingsDialogView {
                             )
                             .child(
                                 Switch::new("settings-wrap-body-editor")
+                                    .cursor_pointer()
                                     .checked(wrap_body_editor)
                                     .on_click(cx.listener(move |_, checked: &bool, window, cx| {
                                         wrap_body_editor_beam_view.update(cx, |this, cx| {
@@ -1018,6 +1019,7 @@ impl Render for SettingsDialogView {
                             )
                             .child(
                                 Switch::new("settings-auto-format-response")
+                                    .cursor_pointer()
                                     .checked(auto_format_response)
                                     .on_click(cx.listener(move |_, checked: &bool, window, cx| {
                                         auto_format_beam_view.update(cx, |this, cx| {
