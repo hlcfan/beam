@@ -986,7 +986,7 @@ impl Render for SettingsDialogView {
                                         div()
                                             .text_xs()
                                             .text_color(cx.theme().muted_foreground)
-                                            .child("Wraps long lines in the body editor."),
+                                            .child("Wraps long lines in the editor."),
                                     ),
                             )
                             .child(
