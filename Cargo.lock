@@ -2372,7 +2372,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+https://github.com/hlcfan/gpui-component?rev=d384706166071415f023d066034765210ec89300#d384706166071415f023d066034765210ec89300"
+source = "git+https://github.com/hlcfan/gpui-component?rev=e96a251f41a37c6730139ab9adf6850c51d01618#e96a251f41a37c6730139ab9adf6850c51d01618"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2422,7 +2422,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+https://github.com/hlcfan/gpui-component?rev=d384706166071415f023d066034765210ec89300#d384706166071415f023d066034765210ec89300"
+source = "git+https://github.com/hlcfan/gpui-component?rev=e96a251f41a37c6730139ab9adf6850c51d01618#e96a251f41a37c6730139ab9adf6850c51d01618"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2436,7 +2436,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+https://github.com/hlcfan/gpui-component?rev=d384706166071415f023d066034765210ec89300#d384706166071415f023d066034765210ec89300"
+source = "git+https://github.com/hlcfan/gpui-component?rev=e96a251f41a37c6730139ab9adf6850c51d01618#e96a251f41a37c6730139ab9adf6850c51d01618"
 dependencies = [
  "proc-macro2",
  "quote",
