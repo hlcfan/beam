@@ -35,7 +35,7 @@ use crate::app_shell::{
     AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupMessage,
     TreeNodeKind,
 };
-use crate::assets::{Assets, embedded_theme_contents};
+use crate::assets::{self, Assets, embedded_theme_contents};
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable,
     HttpMethod, LocalStateFile, RequestFile,
@@ -2378,6 +2378,27 @@ impl Render for WorkspaceDeleteDialogView {
                             })),
                     ),
             )
+    }
+}
+
+/// Append a context-menu item to a [`NativeMenu`], preferring an icon variant.
+///
+/// If `image` is `Some`, the item is added with `menu_with_image_disabled`
+/// (preserving the `disabled` state); otherwise it falls back to the
+/// non-icon `menu_with_disabled` so a missing icon never silently changes
+/// behavior.
+fn append_with_image_or_plain(
+    menu: NativeMenu,
+    label: &str,
+    image: Option<&std::path::Path>,
+    disabled: bool,
+    action: Box<dyn gpui::Action>,
+) -> NativeMenu {
+    match image {
+        Some(path) => {
+            menu.menu_with_image_disabled(label, path.to_string_lossy(), disabled, action)
+        }
+        None => menu.menu_with_disabled(label, disabled, action),
     }
 }
 
@@ -8091,11 +8112,40 @@ impl BeamView {
         has_selection: bool,
         _muted_color: Hsla,
     ) -> NativeMenu {
-        menu.menu_with_disabled("Cut", !has_selection, Box::new(input::Cut))
-            .menu_with_disabled("Copy", !has_selection, Box::new(input::Copy))
-            .menu("Paste", Box::new(input::Paste))
-            .separator()
-            .menu("Select All", Box::new(input::SelectAll))
+        let cut_icon = assets::native_icon_path("icons/cut.svg");
+        let copy_icon = assets::native_icon_path("icons/copy.svg");
+        let paste_icon = assets::native_icon_path("icons/clipboard-paste.svg");
+        let select_all_icon = assets::native_icon_path("icons/square-dashed-text.svg");
+
+        let menu = append_with_image_or_plain(
+            menu,
+            "Cut",
+            cut_icon.as_deref(),
+            !has_selection,
+            Box::new(input::Cut),
+        );
+        let menu = append_with_image_or_plain(
+            menu,
+            "Copy",
+            copy_icon.as_deref(),
+            !has_selection,
+            Box::new(input::Copy),
+        );
+        let menu = append_with_image_or_plain(
+            menu,
+            "Paste",
+            paste_icon.as_deref(),
+            false,
+            Box::new(input::Paste),
+        );
+        let menu = menu.separator();
+        append_with_image_or_plain(
+            menu,
+            "Select All",
+            select_all_icon.as_deref(),
+            false,
+            Box::new(input::SelectAll),
+        )
     }
 
     fn build_text_edit_context_menu_with_find(
@@ -8103,7 +8153,15 @@ impl BeamView {
         has_selection: bool,
         muted_color: Hsla,
     ) -> NativeMenu {
-        let menu = menu.menu("Find", Box::new(input::Search)).separator();
+        let find_icon = assets::native_icon_path("icons/search.svg");
+        let menu = append_with_image_or_plain(
+            menu,
+            "Find",
+            find_icon.as_deref(),
+            false,
+            Box::new(input::Search),
+        )
+        .separator();
         Self::build_text_edit_context_menu(menu, has_selection, muted_color)
     }
 
@@ -8169,9 +8227,16 @@ impl BeamView {
                                 .text_size(cx.theme().mono_font_size)
                                 .context_menu(move |menu, _window, cx| {
                                     let muted_foreground = cx.theme().muted_foreground;
-                                    let menu = menu
-                                        .menu("Format", Box::new(FormatRequestBody))
-                                        .separator();
+                                    let format_icon = assets::native_icon_path("icons/indent.svg");
+                                    let menu = match format_icon.as_deref() {
+                                        Some(path) => menu.menu_with_image(
+                                            "Format",
+                                            path.to_string_lossy(),
+                                            Box::new(FormatRequestBody),
+                                        ),
+                                        None => menu.menu("Format", Box::new(FormatRequestBody)),
+                                    }
+                                    .separator();
                                     Self::build_text_edit_context_menu_with_find(
                                         menu,
                                         request_body_has_selection,
@@ -9343,9 +9408,16 @@ impl BeamView {
                     .text_size(cx.theme().mono_font_size)
                     .context_menu(move |menu, _window, cx| {
                         let muted_foreground = cx.theme().muted_foreground;
-                        let menu = menu
-                            .menu("Format", Box::new(FormatResponseBody))
-                            .separator();
+                        let format_icon = assets::native_icon_path("icons/indent.svg");
+                        let menu = match format_icon.as_deref() {
+                            Some(path) => menu.menu_with_image(
+                                "Format",
+                                path.to_string_lossy(),
+                                Box::new(FormatResponseBody),
+                            ),
+                            None => menu.menu("Format", Box::new(FormatResponseBody)),
+                        }
+                        .separator();
                         Self::build_text_edit_context_menu(
                             menu,
                             response_body_has_selection,
