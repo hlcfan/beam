@@ -2372,7 +2372,7 @@ dependencies = [
 [[package]]
 name = "gpui-component"
 version = "0.5.2"
-source = "git+https://github.com/hlcfan/gpui-component?rev=9302a49c9fad946b68d1eaccc014698e3dfb42fe#9302a49c9fad946b68d1eaccc014698e3dfb42fe"
+source = "git+https://github.com/hlcfan/gpui-component?rev=738f8b722c871f0bf6a8b7255856074a901abdc3#738f8b722c871f0bf6a8b7255856074a901abdc3"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2401,6 +2401,7 @@ dependencies = [
  "paste",
  "raw-window-handle",
  "regex",
+ "resvg",
  "ropey",
  "rust-i18n",
  "schemars",
@@ -2422,7 +2423,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-assets"
 version = "0.5.1"
-source = "git+https://github.com/hlcfan/gpui-component?rev=9302a49c9fad946b68d1eaccc014698e3dfb42fe#9302a49c9fad946b68d1eaccc014698e3dfb42fe"
+source = "git+https://github.com/hlcfan/gpui-component?rev=738f8b722c871f0bf6a8b7255856074a901abdc3#738f8b722c871f0bf6a8b7255856074a901abdc3"
 dependencies = [
  "anyhow",
  "gpui",
@@ -2436,7 +2437,7 @@ dependencies = [
 [[package]]
 name = "gpui-component-macros"
 version = "0.5.1"
-source = "git+https://github.com/hlcfan/gpui-component?rev=9302a49c9fad946b68d1eaccc014698e3dfb42fe#9302a49c9fad946b68d1eaccc014698e3dfb42fe"
+source = "git+https://github.com/hlcfan/gpui-component?rev=738f8b722c871f0bf6a8b7255856074a901abdc3#738f8b722c871f0bf6a8b7255856074a901abdc3"
 dependencies = [
  "proc-macro2",
  "quote",
