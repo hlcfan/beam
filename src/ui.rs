@@ -5571,10 +5571,11 @@ impl BeamView {
             HttpMethod::Patch => "PATCH",
             HttpMethod::Head => "HEAD",
             HttpMethod::Options => "OPTIONS",
+            HttpMethod::Query => "QUERY",
         }
     }
 
-    fn supported_http_methods() -> [HttpMethod; 7] {
+    fn supported_http_methods() -> [HttpMethod; 8] {
         [
             HttpMethod::Get,
             HttpMethod::Post,
@@ -5583,6 +5584,7 @@ impl BeamView {
             HttpMethod::Patch,
             HttpMethod::Head,
             HttpMethod::Options,
+            HttpMethod::Query,
         ]
     }
 
@@ -5596,7 +5598,7 @@ impl BeamView {
                 cx.theme().warning.opacity(1.0),
                 cx.theme().warning_foreground,
             ),
-            HttpMethod::Put | HttpMethod::Patch => {
+            HttpMethod::Put | HttpMethod::Patch | HttpMethod::Query => {
                 (cx.theme().info.opacity(1.0), cx.theme().info_foreground)
             }
             HttpMethod::Delete => (cx.theme().danger.opacity(1.0), cx.theme().danger_foreground),
@@ -10304,6 +10306,10 @@ fn http_method_to_reqwest(method: HttpMethod) -> Method {
         HttpMethod::Patch => Method::PATCH,
         HttpMethod::Head => Method::HEAD,
         HttpMethod::Options => Method::OPTIONS,
+        // TODO: switch to Method::QUERY once the `http` crate releases it
+        HttpMethod::Query => {
+          Method::from_bytes(b"QUERY").expect("QUERY is a valid HTTP method token")
+        }
     }
 }
 
