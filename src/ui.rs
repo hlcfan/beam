@@ -802,6 +802,7 @@ struct ConsoleMessageView {
 
 struct EnvironmentManagerDialogView {
     beam_view: Entity<BeamView>,
+    workspace_paths: BeamPaths,
     options: Vec<(Ulid, String)>,
     environment_file_names: HashMap<Ulid, String>,
     selected_id: Option<Ulid>,
@@ -1212,6 +1213,7 @@ impl EnvironmentManagerDialogView {
 
     fn new(
         beam_view: Entity<BeamView>,
+        workspace_paths: BeamPaths,
         options: Vec<(Ulid, String)>,
         environment_file_names: HashMap<Ulid, String>,
         selected_id: Option<Ulid>,
@@ -1223,6 +1225,7 @@ impl EnvironmentManagerDialogView {
             cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
         let mut view = Self {
             beam_view,
+            workspace_paths,
             options,
             environment_file_names,
             selected_id,
@@ -1268,6 +1271,7 @@ impl EnvironmentManagerDialogView {
 
     fn new_for_sheet(
         beam_view: Entity<BeamView>,
+        workspace_paths: BeamPaths,
         selected_option: Option<(Ulid, String, String)>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1284,6 +1288,7 @@ impl EnvironmentManagerDialogView {
             };
         let mut view = Self::new(
             beam_view,
+            workspace_paths,
             options,
             environment_file_names,
             selected_id,
@@ -1297,15 +1302,7 @@ impl EnvironmentManagerDialogView {
 
     fn environment_file_path(&self, environment_id: Ulid) -> Option<PathBuf> {
         let file_name = self.environment_file_names.get(&environment_id)?;
-        let trimmed = file_name.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-        Some(
-            BeamPaths::default_user_config()
-                .environments_dir
-                .join(trimmed),
-        )
+        environment_file_path_for_workspace(&self.workspace_paths, file_name)
     }
 
     fn load_variables(
@@ -1654,6 +1651,7 @@ impl EnvironmentManagerDialogView {
 
     fn refresh_from_snapshot(
         &mut self,
+        workspace_paths: BeamPaths,
         options: Vec<(Ulid, String)>,
         environment_file_names: HashMap<Ulid, String>,
         active_environment_id: Option<Ulid>,
@@ -1661,6 +1659,7 @@ impl EnvironmentManagerDialogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.workspace_paths = workspace_paths;
         let active_environment_changed = self.active_environment_id != active_environment_id;
         self.active_environment_id = active_environment_id;
         let mut should_notify =
@@ -2565,6 +2564,7 @@ impl BeamView {
 
     fn open_environment_variables_sheet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let beam_view = cx.entity();
+        let workspace_paths = self.current_workspace_paths.clone();
         let selected_option = self
             .selected_environment_id_for_view()
             .and_then(|selected_id| {
@@ -2583,6 +2583,7 @@ impl BeamView {
         let sheet_view = cx.new(|cx| {
             EnvironmentManagerDialogView::new_for_sheet(
                 beam_view.clone(),
+                workspace_paths.clone(),
                 selected_option.clone(),
                 window,
                 cx,
@@ -2732,9 +2733,11 @@ impl BeamView {
         let fallback_id = options.first().map(|(environment_id, _)| *environment_id);
         let selected = self.selected_environment_id_for_view().or(fallback_id);
         let active_environment_id = self.selected_environment_id_for_view();
+        let workspace_paths = self.current_workspace_paths.clone();
         let manager_view = cx.new(|cx| {
             EnvironmentManagerDialogView::new(
                 beam_view.clone(),
+                workspace_paths.clone(),
                 options.clone(),
                 environment_file_names.clone(),
                 selected,
@@ -2774,8 +2777,10 @@ impl BeamView {
         let options = self.environment_manager_options();
         let environment_file_names = self.environment_manager_file_names();
         let active_environment_id = self.selected_environment_id_for_view();
+        let workspace_paths = self.current_workspace_paths.clone();
         dialog_view.update(cx, |dialog, cx| {
             dialog.refresh_from_snapshot(
+                workspace_paths,
                 options,
                 environment_file_names,
                 active_environment_id,
@@ -2796,12 +2801,7 @@ impl BeamView {
             .environments
             .iter()
             .find(|environment| environment.environment_id == environment_id)?;
-        let file_name = environment.file_name.trim();
-        if file_name.is_empty() {
-            return None;
-        }
-        let paths = BeamPaths::default_user_config();
-        Some(paths.environments_dir.join(file_name))
+        environment_file_path_for_workspace(&self.current_workspace_paths, &environment.file_name)
     }
 
     fn hydrate_request_from_selection(request: &mut RequestAuthoringState, shell: &AppShellState) {
@@ -9867,6 +9867,17 @@ fn response_summary_for_selected_request(
     )
 }
 
+fn environment_file_path_for_workspace(
+    workspace_paths: &BeamPaths,
+    file_name: &str,
+) -> Option<PathBuf> {
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(workspace_paths.environments_dir.join(trimmed))
+}
+
 fn send_button_state_for_selected_request(
     selected_request_id: Option<Ulid>,
     execution_states: &HashMap<Ulid, RequestExecutionState>,
@@ -10308,7 +10319,7 @@ fn http_method_to_reqwest(method: HttpMethod) -> Method {
         HttpMethod::Options => Method::OPTIONS,
         // TODO: switch to Method::QUERY once the `http` crate releases it
         HttpMethod::Query => {
-          Method::from_bytes(b"QUERY").expect("QUERY is a valid HTTP method token")
+            Method::from_bytes(b"QUERY").expect("QUERY is a valid HTTP method token")
         }
     }
 }
@@ -10388,18 +10399,20 @@ impl Render for BeamView {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     use ulid::Ulid;
 
     use super::{
         EnvironmentManagerDialogView, RequestExecutionState, RequestExecutionStatus,
         RequestViewHistory, apply_request_run_completion_status,
-        completion_updates_selected_request_ui, request_run_completion_is_current,
-        response_summary_for_selected_request, send_button_state_for_selected_request,
-        trailing_tree_drop_slot_target, tree_row_shows_after_drop_slot,
-        tree_row_shows_before_drop_slot,
+        completion_updates_selected_request_ui, environment_file_path_for_workspace,
+        request_run_completion_is_current, response_summary_for_selected_request,
+        send_button_state_for_selected_request, trailing_tree_drop_slot_target,
+        tree_row_shows_after_drop_slot, tree_row_shows_before_drop_slot,
     };
     use crate::app_shell::{TreeNodeKind, TreeRow};
+    use crate::paths::BeamPaths;
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
 
     fn ready_request() -> RequestAuthoringState {
@@ -10681,6 +10694,25 @@ updated_at = "2026-05-27T08:30:00.000000Z"
             .expect_err("environment files with nested schema_version should be rejected");
 
         assert!(error.contains("Failed to parse environment file"));
+    }
+
+    #[::core::prelude::v1::test]
+    fn environment_file_path_uses_selected_workspace_directory() {
+        let workspace_paths =
+            BeamPaths::from_root(PathBuf::from("/tmp/beam-tests/other-workspace"));
+
+        assert_eq!(
+            environment_file_path_for_workspace(&workspace_paths, "prod.env.toml"),
+            Some(
+                PathBuf::from("/tmp/beam-tests/other-workspace")
+                    .join("environments")
+                    .join("prod.env.toml")
+            )
+        );
+        assert_eq!(
+            environment_file_path_for_workspace(&workspace_paths, "   "),
+            None
+        );
     }
 
     #[::core::prelude::v1::test]
