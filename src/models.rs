@@ -16,6 +16,7 @@ pub enum HttpMethod {
     Patch,
     Head,
     Options,
+    Query,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
