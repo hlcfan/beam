@@ -2381,6 +2381,21 @@ impl Render for WorkspaceDeleteDialogView {
     }
 }
 
+/// Append a context-menu item to a [`NativeMenu`], preferring an icon variant.
+///
+/// `icon_path` is the asset-source relative path (e.g. `"icons/cut.svg"`).
+/// The icon is resolved via the registered [`AssetSource`]; the item is
+/// added with `menu_with_icon_disabled` (preserving the `disabled` state).
+fn append_with_image_or_plain(
+    menu: NativeMenu,
+    label: &str,
+    icon_path: &str,
+    disabled: bool,
+    action: Box<dyn gpui::Action>,
+) -> NativeMenu {
+    menu.menu_with_icon_disabled(label, Icon::default().path(icon_path), disabled, action)
+}
+
 enum BodyFormatHint<'a> {
     FromConfig(&'a BodyConfig),
     FromContentType(Option<&'a str>),
@@ -8091,11 +8106,35 @@ impl BeamView {
         has_selection: bool,
         _muted_color: Hsla,
     ) -> NativeMenu {
-        menu.menu_with_disabled("Cut", !has_selection, Box::new(input::Cut))
-            .menu_with_disabled("Copy", !has_selection, Box::new(input::Copy))
-            .menu("Paste", Box::new(input::Paste))
-            .separator()
-            .menu("Select All", Box::new(input::SelectAll))
+        let menu = append_with_image_or_plain(
+            menu,
+            "Cut",
+            "icons/cut.svg",
+            !has_selection,
+            Box::new(input::Cut),
+        );
+        let menu = append_with_image_or_plain(
+            menu,
+            "Copy",
+            "icons/copy.svg",
+            !has_selection,
+            Box::new(input::Copy),
+        );
+        let menu = append_with_image_or_plain(
+            menu,
+            "Paste",
+            "icons/clipboard-paste.svg",
+            false,
+            Box::new(input::Paste),
+        );
+        let menu = menu.separator();
+        append_with_image_or_plain(
+            menu,
+            "Select All",
+            "icons/square-dashed-text.svg",
+            false,
+            Box::new(input::SelectAll),
+        )
     }
 
     fn build_text_edit_context_menu_with_find(
@@ -8103,7 +8142,14 @@ impl BeamView {
         has_selection: bool,
         muted_color: Hsla,
     ) -> NativeMenu {
-        let menu = menu.menu("Find", Box::new(input::Search)).separator();
+        let menu = append_with_image_or_plain(
+            menu,
+            "Find",
+            "icons/search.svg",
+            false,
+            Box::new(input::Search),
+        )
+        .separator();
         Self::build_text_edit_context_menu(menu, has_selection, muted_color)
     }
 
@@ -8170,7 +8216,11 @@ impl BeamView {
                                 .context_menu(move |menu, _window, cx| {
                                     let muted_foreground = cx.theme().muted_foreground;
                                     let menu = menu
-                                        .menu("Format", Box::new(FormatRequestBody))
+                                        .menu_with_icon(
+                                            "Format",
+                                            Icon::default().path("icons/indent.svg"),
+                                            Box::new(FormatRequestBody),
+                                        )
                                         .separator();
                                     Self::build_text_edit_context_menu_with_find(
                                         menu,
@@ -9344,7 +9394,11 @@ impl BeamView {
                     .context_menu(move |menu, _window, cx| {
                         let muted_foreground = cx.theme().muted_foreground;
                         let menu = menu
-                            .menu("Format", Box::new(FormatResponseBody))
+                            .menu_with_icon(
+                                "Format",
+                                Icon::default().path("icons/indent.svg"),
+                                Box::new(FormatResponseBody),
+                            )
                             .separator();
                         Self::build_text_edit_context_menu(
                             menu,
