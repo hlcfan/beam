@@ -101,7 +101,9 @@ struct ContainerRef {
 /// Builds the full flat list of render items for the visible workspace tree.
 ///
 /// The traversal emits, for every container (root or expanded folder):
-/// 1. a container-start slot,
+/// 1. a container-start slot (skipped for an empty folder — the folder body
+///    is the drop target there; the root container always emits one so an
+///    empty tree still has a single drop target),
 /// 2. each child row followed by its after-slot (recursing into expanded
 ///    folders between the row and its after-slot).
 ///
@@ -126,15 +128,21 @@ fn build_container_render_items(
         None => tree.roots().to_vec(),
     };
 
-    let first_child = children.first().copied();
-    out.push(TreeRenderItem::Slot(TreeDropSlot {
-        depth,
-        target_id: first_child,
-        target_kind: first_child.and_then(|id| tree.node(id).map(|node| node.kind)),
-        placement: TreeDropPlacement::Before,
-        container_id: container.id,
-        visual_role: SlotVisualRole::ContainerStart,
-    }));
+    // Skip the container-start slot for an empty folder — the folder body is
+    // the drop target. An empty root container still emits one so an empty
+    // tree has a single drop target.
+    let is_empty_folder = container.id.is_some() && children.is_empty();
+    if !is_empty_folder {
+        let first_child = children.first().copied();
+        out.push(TreeRenderItem::Slot(TreeDropSlot {
+            depth,
+            target_id: first_child,
+            target_kind: first_child.and_then(|id| tree.node(id).map(|node| node.kind)),
+            placement: TreeDropPlacement::Before,
+            container_id: container.id,
+            visual_role: SlotVisualRole::ContainerStart,
+        }));
+    }
 
     let last_index = match children.len() {
         0 => 0,

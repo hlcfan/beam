@@ -5208,7 +5208,7 @@ expanded_item_ids = ["{folder_id}"]
     }
 
     #[test]
-    fn render_items_empty_folder_start_slot_targets_no_child() {
+    fn render_items_empty_folder_omits_child_container_start_slot() {
         let folder_id = Ulid::new();
         let tree = tree_with(
             vec![folder_id],
@@ -5218,22 +5218,16 @@ expanded_item_ids = ["{folder_id}"]
 
         let items = build_tree_render_items(&tree);
 
-        // Root start slot targets the folder; folder start slot targets none.
-        match &items[0] {
-            TreeRenderItem::Slot(slot) => {
-                assert_eq!(slot.target_id, Some(folder_id));
-                assert_eq!(slot.container_id, None);
-            }
-            _ => panic!("expected root start slot"),
-        }
-        match &items[2] {
-            TreeRenderItem::Slot(slot) => {
-                assert_eq!(slot.target_id, None);
-                assert_eq!(slot.target_kind, None);
-                assert_eq!(slot.container_id, Some(folder_id));
-                assert_eq!(slot.visual_role, SlotVisualRole::ContainerStart);
-            }
-            _ => panic!("expected empty folder start slot"),
-        }
+        // An empty expanded folder emits no child-container start slot — the
+        // folder body is the drop target. Only the root container-start slot
+        // (before the folder row) and the folder's after-slot remain.
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(folder_id)), // root top
+                (0, "row", Some(folder_id)),  // empty folder row
+                (0, "slot", Some(folder_id)), // after folder in root
+            ]
+        );
     }
 }
