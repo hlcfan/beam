@@ -6893,6 +6893,7 @@ impl BeamView {
         };
         let row_id = row.id;
         let row_kind = row.kind;
+        let body_view = cx.entity();
         let drag_hover = self.tree_drag_hover;
         let drag_slot_hover = self.tree_drag_slot_hover;
         let mut body = div()
@@ -6937,6 +6938,19 @@ impl BeamView {
             );
         if Self::tree_row_body_drop_placement(row_kind).is_some() {
             body = body
+                .can_drop(move |dragged_value, _window, app| {
+                    body_view.update(app, |this, _| {
+                        if this.tree_drag_slot_hover.is_some() {
+                            return false;
+                        }
+                        let Some(placement) = Self::tree_row_body_drop_placement(row_kind) else {
+                            return false;
+                        };
+                        this.can_accept_tree_drop(dragged_value, row_id, placement)
+                    })
+                })
+                .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
+                .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
                 .on_drag_move(cx.listener(
                     move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
                         let dragged = drag.drag(cx).clone();
