@@ -22,6 +22,14 @@ pub const SLOT_HIT_HEIGHT_PX: f32 = SLOT_BAR_HEIGHT_PX;
 pub const SLOT_RIGHT_PAD_PX: f32 = 6.0;
 /// Extra vertical gap between consecutive slots whose depths differ.
 pub const SLOT_DEPTH_GAP_PX: f32 = 2.0;
+/// Proximity threshold (in pixels) above and below a slot bar within which the
+/// slot is considered "active" during a tree drag. The slot's layout box stays
+/// [`SLOT_BAR_HEIGHT_PX`] tall (so the tree never shifts), but while a drag is
+/// in progress, `on_drag_move` on each slot checks whether the cursor is
+/// within this many pixels of the bar's top or bottom edge. If so, the slot is
+/// marked active in view state and its bar is highlighted. This gives a
+/// `(2 + 2 * PROXIMITY)` px effective hit zone without any layout change.
+pub const SLOT_DRAG_PROXIMITY_PX: f32 = 4.0;
 
 /// Left inset (in pixels) shared by rows and slots at `depth`.
 pub fn tree_depth_inset(depth: usize) -> f32 {

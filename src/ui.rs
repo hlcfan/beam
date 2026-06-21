@@ -58,8 +58,9 @@ use crate::storage::{
     RenameRequestInput, RequestParentRef,
 };
 use crate::tree_dnd::{
-    SLOT_DEPTH_GAP_PX, SLOT_HIT_HEIGHT_PX, SLOT_RIGHT_PAD_PX, TreeDropPlacement, TreeDropSlot,
-    TreeRenderItem, TreeRowViewModel, build_tree_render_items, tree_depth_inset,
+    SLOT_BAR_HEIGHT_PX, SLOT_DEPTH_GAP_PX, SLOT_DRAG_PROXIMITY_PX, SLOT_HIT_HEIGHT_PX,
+    SLOT_RIGHT_PAD_PX, TreeDropPlacement, TreeDropSlot, TreeRenderItem, TreeRowViewModel,
+    build_tree_render_items, tree_depth_inset,
 };
 
 actions!(
@@ -491,6 +492,7 @@ struct BeamView {
     collection_scroll_handle: ScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
     tree_drag_hover: Option<(Ulid, TreeDropPlacement)>,
+    tree_drag_slot_hover: Option<TreeDropSlot>,
     env_var_hover: Option<EnvVarHoverInfo>,
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
@@ -4319,16 +4321,6 @@ impl BeamView {
         }
     }
 
-    fn can_accept_tree_row_body_drop(
-        &self,
-        dragged_value: &dyn Any,
-        target_id: Ulid,
-        target_kind: TreeNodeKind,
-    ) -> bool {
-        Self::tree_row_body_drop_placement(target_kind)
-            .is_some_and(|placement| self.can_accept_tree_drop(dragged_value, target_id, placement))
-    }
-
     fn update_tree_drag_hover(
         &mut self,
         bounds: Bounds<Pixels>,
@@ -4344,12 +4336,12 @@ impl BeamView {
         }
 
         let Some(placement) = Self::tree_row_body_drop_placement(target_kind) else {
-            self.clear_tree_drag_hover(cx);
+            self.clear_tree_drag_row_hover(cx);
             return;
         };
 
         if !self.can_accept_tree_drop(dragged, target_id, placement) {
-            self.clear_tree_drag_hover(cx);
+            self.clear_tree_drag_row_hover(cx);
             return;
         }
 
@@ -4360,9 +4352,39 @@ impl BeamView {
         }
     }
 
-    fn clear_tree_drag_hover(&mut self, cx: &mut Context<Self>) {
+    /// Sets the active drag slot, clearing any row-body hover so the slot takes
+    /// visual priority. The row-body hover will be re-asserted by the row's own
+    /// `on_drag_move` handler if the cursor is still over a folder body; the
+    /// slot still wins because rendering checks `tree_drag_slot_hover` first.
+    fn set_tree_drag_slot_hover(&mut self, slot: TreeDropSlot, cx: &mut Context<Self>) {
+        if self.tree_drag_slot_hover != Some(slot) || self.tree_drag_hover.is_some() {
+            self.tree_drag_slot_hover = Some(slot);
+            self.tree_drag_hover = None;
+            cx.notify();
+        }
+    }
+
+    /// Clears only the slot hover, leaving row-body hover untouched.
+    fn clear_tree_drag_slot_hover(&mut self, cx: &mut Context<Self>) {
+        if self.tree_drag_slot_hover.is_some() {
+            self.tree_drag_slot_hover = None;
+            cx.notify();
+        }
+    }
+
+    /// Clears only the row-body hover, leaving slot hover untouched.
+    fn clear_tree_drag_row_hover(&mut self, cx: &mut Context<Self>) {
         if self.tree_drag_hover.is_some() {
             self.tree_drag_hover = None;
+            cx.notify();
+        }
+    }
+
+    /// Clears both slot and row-body hover. Called on drop or drag end.
+    fn clear_tree_drag_hover(&mut self, cx: &mut Context<Self>) {
+        if self.tree_drag_hover.is_some() || self.tree_drag_slot_hover.is_some() {
+            self.tree_drag_hover = None;
+            self.tree_drag_slot_hover = None;
             cx.notify();
         }
     }
@@ -4572,43 +4594,63 @@ impl BeamView {
     }
 
     fn render_tree_drop_slot(&self, slot: &TreeDropSlot, cx: &mut Context<Self>) -> AnyElement {
-        let view = cx.entity();
         let depth_inset = tree_depth_inset(slot.depth);
         let slot_copy = *slot;
+        let is_active_slot = self.tree_drag_slot_hover == Some(slot_copy);
+        let highlight = cx.theme().drag_border;
 
         div()
             .h(px(SLOT_HIT_HEIGHT_PX))
             .ml(px(depth_inset))
             .mr(px(SLOT_RIGHT_PAD_PX))
-            .rounded(px(SLOT_HIT_HEIGHT_PX / 2.0))
-            .can_drop(move |dragged_value, _window, app| {
-                view.update(app, |this, _| {
-                    this.can_accept_tree_drop_slot(dragged_value, &slot_copy)
-                })
-            })
-            .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().drag_border))
-            .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().drag_border))
             .on_drag_move(
-                cx.listener(move |this, _: &DragMoveEvent<DraggedRequest>, _, cx| {
-                    this.clear_tree_drag_hover(cx);
+                cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
+                    let bounds = drag.bounds;
+                    let position = drag.event.position;
+                    let in_x = position.x >= bounds.origin.x
+                        && position.x <= bounds.origin.x + bounds.size.width;
+                    let proximity = px(SLOT_DRAG_PROXIMITY_PX);
+                    let in_y = position.y >= bounds.origin.y - proximity
+                        && position.y <= bounds.origin.y + bounds.size.height + proximity;
+                    if in_x && in_y {
+                        let dragged = drag.drag(cx).clone();
+                        if this.can_accept_tree_drop_slot(&dragged, &slot_copy) {
+                            this.set_tree_drag_slot_hover(slot_copy, cx);
+                        } else if this.tree_drag_slot_hover == Some(slot_copy) {
+                            this.clear_tree_drag_slot_hover(cx);
+                        }
+                    } else if this.tree_drag_slot_hover == Some(slot_copy) {
+                        this.clear_tree_drag_slot_hover(cx);
+                    }
                 }),
             )
             .on_drag_move(
-                cx.listener(move |this, _: &DragMoveEvent<DraggedFolder>, _, cx| {
-                    this.clear_tree_drag_hover(cx);
+                cx.listener(move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
+                    let bounds = drag.bounds;
+                    let position = drag.event.position;
+                    let in_x = position.x >= bounds.origin.x
+                        && position.x <= bounds.origin.x + bounds.size.width;
+                    let proximity = px(SLOT_DRAG_PROXIMITY_PX);
+                    let in_y = position.y >= bounds.origin.y - proximity
+                        && position.y <= bounds.origin.y + bounds.size.height + proximity;
+                    if in_x && in_y {
+                        let dragged = drag.drag(cx).clone();
+                        if this.can_accept_tree_drop_slot(&dragged, &slot_copy) {
+                            this.set_tree_drag_slot_hover(slot_copy, cx);
+                        } else if this.tree_drag_slot_hover == Some(slot_copy) {
+                            this.clear_tree_drag_slot_hover(cx);
+                        }
+                    } else if this.tree_drag_slot_hover == Some(slot_copy) {
+                        this.clear_tree_drag_slot_hover(cx);
+                    }
                 }),
             )
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
-                    this.handle_request_tree_drop_slot(dragged.request_id, &slot_copy, window, cx);
-                    this.clear_tree_drag_hover(cx);
-                }),
-            )
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
-                    this.handle_folder_tree_drop_slot(dragged.folder_id, &slot_copy, window, cx);
-                    this.clear_tree_drag_hover(cx);
-                }),
+            .child(
+                div()
+                    .h(px(SLOT_BAR_HEIGHT_PX))
+                    .w_full()
+                    .rounded(px(SLOT_BAR_HEIGHT_PX / 2.0))
+                    .when(is_active_slot, |this| this.bg(highlight)),
             )
             .into_any_element()
     }
@@ -5924,6 +5966,7 @@ impl BeamView {
             collection_scroll_handle: ScrollHandle::new(),
             collection_context_menu_row: None,
             tree_drag_hover: None,
+            tree_drag_slot_hover: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
             request_view_history: RequestViewHistory::default(),
@@ -6850,9 +6893,8 @@ impl BeamView {
         };
         let row_id = row.id;
         let row_kind = row.kind;
-        let body_drop_placement = Self::tree_row_body_drop_placement(row_kind);
-        let body_view = cx.entity();
         let drag_hover = self.tree_drag_hover;
+        let drag_slot_hover = self.tree_drag_slot_hover;
         let mut body = div()
             .id(format!("tree-row-body-{}", row_id))
             .cursor_pointer()
@@ -6866,7 +6908,8 @@ impl BeamView {
                     .selected(row.selected)
                     .when(
                         drag_hover
-                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into),
+                            .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into)
+                            && drag_slot_hover.is_none(),
                         |this| this.bg(cx.theme().drop_target),
                     )
                     .child(row_content)
@@ -6892,15 +6935,8 @@ impl BeamView {
                     cx.notify();
                 }),
             );
-        if let Some(placement) = body_drop_placement {
+        if Self::tree_row_body_drop_placement(row_kind).is_some() {
             body = body
-                .can_drop(move |dragged_value, _window, app| {
-                    body_view.update(app, |this, _| {
-                        this.can_accept_tree_row_body_drop(dragged_value, row_id, row_kind)
-                    })
-                })
-                .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
-                .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
                 .on_drag_move(cx.listener(
                     move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
                         let dragged = drag.drag(cx).clone();
@@ -6926,41 +6962,17 @@ impl BeamView {
                             cx,
                         );
                     },
-                ))
-                .on_drop(
-                    cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
-                        this.handle_request_tree_drop(
-                            dragged.request_id,
-                            row_id,
-                            placement,
-                            window,
-                            cx,
-                        );
-                        this.clear_tree_drag_hover(cx);
-                    }),
-                )
-                .on_drop(
-                    cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
-                        this.handle_folder_tree_drop(
-                            dragged.folder_id,
-                            row_id,
-                            placement,
-                            window,
-                            cx,
-                        );
-                        this.clear_tree_drag_hover(cx);
-                    }),
-                );
+                ));
         } else {
             body = body
                 .on_drag_move(
                     cx.listener(move |this, _: &DragMoveEvent<DraggedRequest>, _, cx| {
-                        this.clear_tree_drag_hover(cx);
+                        this.clear_tree_drag_row_hover(cx);
                     }),
                 )
                 .on_drag_move(
                     cx.listener(move |this, _: &DragMoveEvent<DraggedFolder>, _, cx| {
-                        this.clear_tree_drag_hover(cx);
+                        this.clear_tree_drag_row_hover(cx);
                     }),
                 );
         }
@@ -7587,6 +7599,7 @@ impl BeamView {
         let is_empty = self.shell.workspace_tree.roots().is_empty();
         if is_empty {
             let view = cx.entity();
+            let empty_view = view.clone();
             let root_slot = TreeDropSlot {
                 depth: 0,
                 target_id: None,
@@ -7599,6 +7612,35 @@ impl BeamView {
                 div()
                     .flex_1()
                     .min_h_0()
+                    .can_drop(move |_dragged_value, _window, app| {
+                        empty_view.update(app, |this, _| this.tree_drag_slot_hover.is_some())
+                    })
+                    .on_drop(
+                        cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
+                            if let Some(slot) = this.tree_drag_slot_hover {
+                                this.handle_request_tree_drop_slot(
+                                    dragged.request_id,
+                                    &slot,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            this.clear_tree_drag_hover(cx);
+                        }),
+                    )
+                    .on_drop(
+                        cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
+                            if let Some(slot) = this.tree_drag_slot_hover {
+                                this.handle_folder_tree_drop_slot(
+                                    dragged.folder_id,
+                                    &slot,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            this.clear_tree_drag_hover(cx);
+                        }),
+                    )
                     .context_menu(move |menu, window, cx| {
                         view.update(cx, |this, cx| {
                             this.build_empty_space_context_menu(menu, window, cx)
@@ -7621,6 +7663,7 @@ impl BeamView {
         } else {
             let view = cx.entity();
             let menu_view = view.clone();
+            let scroll_view = view.clone();
             let mut elements: Vec<AnyElement> = Vec::with_capacity(items.len());
             let mut prev_slot_depth: Option<usize> = None;
             for item in &items {
@@ -7657,6 +7700,58 @@ impl BeamView {
                             .size_full()
                             .overflow_y_scroll()
                             .track_scroll(&self.collection_scroll_handle)
+                            .can_drop(move |_dragged_value, _window, app| {
+                                scroll_view.update(app, |this, _| {
+                                    this.tree_drag_slot_hover.is_some()
+                                        || this.tree_drag_hover.is_some()
+                                })
+                            })
+                            .on_drop(cx.listener(
+                                move |this, dragged: &DraggedRequest, window, cx| {
+                                    if let Some(slot) = this.tree_drag_slot_hover {
+                                        this.handle_request_tree_drop_slot(
+                                            dragged.request_id,
+                                            &slot,
+                                            window,
+                                            cx,
+                                        );
+                                    } else if let Some((target_id, TreeDropPlacement::Into)) =
+                                        this.tree_drag_hover
+                                    {
+                                        this.handle_request_tree_drop(
+                                            dragged.request_id,
+                                            target_id,
+                                            TreeDropPlacement::Into,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    this.clear_tree_drag_hover(cx);
+                                },
+                            ))
+                            .on_drop(cx.listener(
+                                move |this, dragged: &DraggedFolder, window, cx| {
+                                    if let Some(slot) = this.tree_drag_slot_hover {
+                                        this.handle_folder_tree_drop_slot(
+                                            dragged.folder_id,
+                                            &slot,
+                                            window,
+                                            cx,
+                                        );
+                                    } else if let Some((target_id, TreeDropPlacement::Into)) =
+                                        this.tree_drag_hover
+                                    {
+                                        this.handle_folder_tree_drop(
+                                            dragged.folder_id,
+                                            target_id,
+                                            TreeDropPlacement::Into,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    this.clear_tree_drag_hover(cx);
+                                },
+                            ))
                             .child(v_flex().w_full().children(elements)),
                     )
                     .vertical_scrollbar(&self.collection_scroll_handle)
