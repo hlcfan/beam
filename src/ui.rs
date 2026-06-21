@@ -4578,10 +4578,9 @@ impl BeamView {
         let slot_copy = *slot;
 
         div()
-            .w_full()
             .h(px(SLOT_HIT_HEIGHT_PX))
-            .pl(px(depth_inset))
-            .pr(px(SLOT_RIGHT_PAD_PX))
+            .ml(px(depth_inset))
+            .mr(px(SLOT_RIGHT_PAD_PX))
             .can_drop(move |dragged_value, _window, app| {
                 view.update(app, |this, _| {
                     this.can_accept_tree_drop_slot(dragged_value, &slot_copy)
