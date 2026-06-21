@@ -226,7 +226,9 @@ pub fn folder_dir_path(
     let folder = node_by_kind(store, folder_id, NodeKind::Folder)?;
     match folder.parent_id {
         None => Ok(paths.root.join(folder_dir_name(&folder.name))),
-        Some(parent_id) => Ok(node_dir_path(paths, store, parent_id)?.join(folder_dir_name(&folder.name))),
+        Some(parent_id) => {
+            Ok(node_dir_path(paths, store, parent_id)?.join(folder_dir_name(&folder.name)))
+        }
     }
 }
 
@@ -277,7 +279,11 @@ pub fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
         })
 }
 
-pub fn node_by_kind(store: &SharedStore, node_id: NodeId, expected_kind: NodeKind) -> Result<&Node> {
+pub fn node_by_kind(
+    store: &SharedStore,
+    node_id: NodeId,
+    expected_kind: NodeKind,
+) -> Result<&Node> {
     let node = node_by_id(store, node_id)?;
     if node.kind != expected_kind {
         return Err(BeamError::Validation {
@@ -293,10 +299,8 @@ pub fn node_by_kind(store: &SharedStore, node_id: NodeId, expected_kind: NodeKin
 #[cfg(test)]
 mod tests {
     use super::{
-        NameValidationError, Node, NodeKind, SharedStore,
-        assert_name_unique, find_unique_name, folder_dir_name,
-        request_file_name, request_file_path,
-        scope_key,
+        NameValidationError, Node, NodeKind, SharedStore, assert_name_unique, find_unique_name,
+        folder_dir_name, request_file_name, request_file_path, scope_key,
     };
     use std::collections::HashMap;
     use tempfile::tempdir;
@@ -445,9 +449,7 @@ mod tests {
         assert_eq!(folder_dir_name("Users"), "users");
         assert_eq!(
             request_file_path(&paths, &store, request_id).expect("request path"),
-            paths.root
-                .join("users")
-                .join(request_file_name("Get User"))
+            paths.root.join("users").join(request_file_name("Get User"))
         );
     }
 

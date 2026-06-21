@@ -136,7 +136,10 @@ pub enum RenameValidationError {
     EmptyName,
 }
 
-pub fn validate_rename(current_name: &str, candidate_name: &str) -> Result<String, RenameValidationError> {
+pub fn validate_rename(
+    current_name: &str,
+    candidate_name: &str,
+) -> Result<String, RenameValidationError> {
     let normalized = candidate_name.trim();
     if normalized.is_empty() {
         return Err(RenameValidationError::EmptyName);
