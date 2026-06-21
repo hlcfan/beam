@@ -15,12 +15,13 @@ pub const TREE_INDENT_PX: f32 = 14.0;
 pub const TREE_CONTENT_INSET_PX: f32 = 6.0;
 /// Height of the visible slot bar.
 pub const SLOT_BAR_HEIGHT_PX: f32 = 2.0;
-/// Height of the invisible slot hit area.
-pub const SLOT_HIT_HEIGHT_PX: f32 = 8.0;
+/// Height of the slot hit area. Matches the bar height so the hover highlight
+/// is a thin line rather than a thick band.
+pub const SLOT_HIT_HEIGHT_PX: f32 = SLOT_BAR_HEIGHT_PX;
 /// Right padding for slot hit areas.
 pub const SLOT_RIGHT_PAD_PX: f32 = 6.0;
 /// Extra vertical gap between consecutive slots whose depths differ.
-pub const SLOT_DEPTH_GAP_PX: f32 = 4.0;
+pub const SLOT_DEPTH_GAP_PX: f32 = 2.0;
 
 /// Left inset (in pixels) shared by rows and slots at `depth`.
 pub fn tree_depth_inset(depth: usize) -> f32 {

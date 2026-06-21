@@ -58,9 +58,8 @@ use crate::storage::{
     RenameRequestInput, RequestParentRef,
 };
 use crate::tree_dnd::{
-    SLOT_BAR_HEIGHT_PX, SLOT_DEPTH_GAP_PX, SLOT_HIT_HEIGHT_PX, SLOT_RIGHT_PAD_PX,
-    TreeDropPlacement, TreeDropSlot, TreeRenderItem, TreeRowViewModel, build_tree_render_items,
-    tree_depth_inset,
+    SLOT_DEPTH_GAP_PX, SLOT_HIT_HEIGHT_PX, SLOT_RIGHT_PAD_PX, TreeDropPlacement, TreeDropSlot,
+    TreeRenderItem, TreeRowViewModel, build_tree_render_items, tree_depth_inset,
 };
 
 actions!(
@@ -4581,6 +4580,7 @@ impl BeamView {
             .h(px(SLOT_HIT_HEIGHT_PX))
             .ml(px(depth_inset))
             .mr(px(SLOT_RIGHT_PAD_PX))
+            .rounded(px(SLOT_HIT_HEIGHT_PX / 2.0))
             .can_drop(move |dragged_value, _window, app| {
                 view.update(app, |this, _| {
                     this.can_accept_tree_drop_slot(dragged_value, &slot_copy)
@@ -4609,13 +4609,6 @@ impl BeamView {
                     this.handle_folder_tree_drop_slot(dragged.folder_id, &slot_copy, window, cx);
                     this.clear_tree_drag_hover(cx);
                 }),
-            )
-            .child(
-                div()
-                    .mt(px((SLOT_HIT_HEIGHT_PX - SLOT_BAR_HEIGHT_PX) / 2.0))
-                    .h(px(SLOT_BAR_HEIGHT_PX))
-                    .w_full()
-                    .rounded(px(SLOT_BAR_HEIGHT_PX / 2.0)),
             )
             .into_any_element()
     }
