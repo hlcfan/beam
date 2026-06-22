@@ -517,6 +517,7 @@ struct BeamView {
     request_file_index: HashMap<Ulid, PathBuf>,
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
+    key_bindings_dialog_view: Option<Entity<KeyBindingsDialogView>>,
     request_execution_states: HashMap<Ulid, RequestExecutionState>,
     next_request_run_id: u64,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
@@ -1090,6 +1091,107 @@ impl Render for SettingsDialogView {
                             .child(right_panel),
                     ),
             )
+            .into_any_element()
+    }
+}
+
+struct KeyBindingsDialogView;
+
+impl KeyBindingsDialogView {
+    fn key_bindings_list() -> Vec<(&'static str, &'static str)> {
+        if cfg!(target_os = "macos") {
+            vec![
+                ("Send Request", "cmd-enter"),
+                ("New Request", "cmd-n"),
+                ("Focus URL", "cmd-l"),
+                ("Open Settings", "cmd-,"),
+                ("Next Request in Tree", "cmd-alt-down"),
+                ("Previous Request in Tree", "cmd-alt-up"),
+                ("Next Request in History", "cmd-alt-right"),
+                ("Previous Request in History", "cmd-alt-left"),
+                ("Quit Beam", "cmd-q"),
+            ]
+        } else {
+            vec![
+                ("Send Request", "ctrl-enter"),
+                ("New Request", "ctrl-n"),
+                ("Focus URL", "ctrl-l"),
+                ("Open Settings", "ctrl-,"),
+                ("Next Request in Tree", "ctrl-alt-down"),
+                ("Previous Request in Tree", "ctrl-alt-up"),
+                ("Next Request in History", "ctrl-alt-right"),
+                ("Previous Request in History", "ctrl-alt-left"),
+                ("Quit Beam", "alt-f4"),
+            ]
+        }
+    }
+}
+
+fn key_binding_display_tokens(binding: &str) -> Vec<String> {
+    let is_mac = cfg!(target_os = "macos");
+    binding
+        .split('-')
+        .map(|part| match part {
+            "cmd" => if is_mac { "⌘" } else { "Cmd" }.to_string(),
+            "ctrl" => "Ctrl".to_string(),
+            "alt" => if is_mac { "⌥" } else { "Alt" }.to_string(),
+            "shift" => if is_mac { "⇧" } else { "Shift" }.to_string(),
+            "enter" => "Enter".to_string(),
+            "down" => "↓".to_string(),
+            "up" => "↑".to_string(),
+            "left" => "←".to_string(),
+            "right" => "→".to_string(),
+            "," => ",".to_string(),
+            s => s.to_uppercase(),
+        })
+        .collect()
+}
+
+fn render_key_binding_chip(token: &str, cx: &App) -> Div {
+    h_flex()
+        .items_center()
+        .justify_center()
+        .px_1p5()
+        .h(px(22.0))
+        .min_w(px(22.0))
+        .rounded(px(6.0))
+        .border_1()
+        .border_color(cx.theme().border)
+        .bg(cx.theme().secondary)
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(token.to_string())
+}
+
+impl Render for KeyBindingsDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let bindings = Self::key_bindings_list();
+        let mut list = v_flex().w_full().gap_2();
+        for (label, binding) in bindings {
+            let tokens = key_binding_display_tokens(binding);
+            let mut chips = h_flex().items_center().gap_1();
+            for token in tokens {
+                chips = chips.child(render_key_binding_chip(token.as_str(), cx));
+            }
+            list = list.child(
+                h_flex()
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .py_1()
+                    .text_sm()
+                    .child(
+                        div()
+                            .text_color(cx.theme().foreground)
+                            .child(label.to_string()),
+                    )
+                    .child(chips),
+            );
+        }
+        v_flex()
+            .w_full()
+            .p_3()
+            .child(list)
             .into_any_element()
     }
 }
@@ -2788,6 +2890,23 @@ impl BeamView {
                                 .w(px(920.0))
                                 .max_w(px(1200.0))
                                 .child(settings_view.clone())
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
+    }
+
+    fn open_key_bindings_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.new(|_cx| KeyBindingsDialogView);
+        self.key_bindings_dialog_view = Some(view.clone());
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    window.defer(cx, move |window, cx| {
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            dialog.title("Key Bindings").w(px(520.0)).child(view.clone())
                         });
                     });
                 });
@@ -6222,6 +6341,7 @@ impl BeamView {
             request_file_index,
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
+            key_bindings_dialog_view: None,
             request_execution_states: HashMap::new(),
             next_request_run_id: 1,
             current_workspace_paths: workspace_paths,
@@ -10044,6 +10164,7 @@ impl BeamView {
             .w_full()
             .h(px(28.0))
             .px_3()
+            .gap_2()
             .bg(cx.theme().secondary)
             .border_t_1()
             .border_color(cx.theme().border)
@@ -10071,6 +10192,31 @@ impl BeamView {
                                     .text_color(cx.theme().muted_foreground),
                             )
                             .child("Settings"),
+                    ),
+            )
+            .child(div().flex_1())
+            .child(
+                Button::new("status-bar-key-bindings-modal")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .h(px(22.0))
+                    .px_1()
+                    .rounded(px(6.0))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_key_bindings_dialog(window, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::default()
+                                    .path("icons/command.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child("Key bindings"),
                     ),
             )
     }
