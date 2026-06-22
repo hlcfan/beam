@@ -8,7 +8,7 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 
 - Native, local-first, no telemetry
 - Multi-workspace organization with folders and requests
-- HTTP request with common methods (GET, POST, PUT, DELETE, PATCH, HEAD, and OPTIONS)
+- HTTP request with common methods (GET, POST, PUT, DELETE, PATCH, HEAD, QUERY, and OPTIONS)
 - Authentication support for Bearer, Basic, and API Key (header or query)
 - Request body formats for JSON, XML, Text, GraphQL, Form URL-Encoded, and Multipart
 - Global environments with `{{variable}}` interpolation in URLs, params, headers, auth, and bodies
