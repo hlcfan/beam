@@ -6928,7 +6928,8 @@ impl BeamView {
         if let Some(method) = request_row_method {
             row_content = row_content.child(Self::render_method_badge(method, cx));
         }
-        row_content = row_content.child(label.clone());
+        row_content =
+            row_content.child(div().flex_1().min_w_0().truncate().child(label.clone()));
 
         let row_data = crate::app_shell::TreeRow {
             id: row.id,
