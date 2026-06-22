@@ -4876,4 +4876,404 @@ expanded_item_ids = ["{folder_id}"]
             "request should appear exactly once"
         );
     }
+
+    /// Pins the insertion-index contract for same-container reorders.
+    ///
+    /// Drop slots are computed against the destination container's sibling
+    /// list *before* the move, but `move_node_to_root` / `move_request_node`
+    /// remove the dragged item *before* inserting at `insertion_index`. When
+    /// the dragged item sits below the insertion point in the same container,
+    /// removal shifts the target down by one, so the raw slot index would land
+    /// one position too far. The UI compensates before building the move
+    /// input; this test proves the move helpers' remove-then-insert contract
+    /// so that compensation stays correct.
+    #[test]
+    fn move_node_to_root_same_container_reorder_requires_adjusted_index() {
+        let a = Ulid::new();
+        let b = Ulid::new();
+        let c = Ulid::new();
+        let tree = tree_with(
+            vec![a, b, c],
+            vec![
+                request_node(a, None),
+                request_node(b, None),
+                request_node(c, None),
+            ],
+            vec![],
+        );
+
+        // The "after B" slot maps to raw insertion_index = index(B) + 1 = 2.
+        let raw_index = tree.roots().iter().position(|id| *id == b).unwrap() + 1;
+        assert_eq!(raw_index, 2);
+
+        // Unadjusted (the bug): remove A -> [B, C], insert at 2 -> [B, C, A].
+        let mut buggy = tree.clone();
+        buggy.move_node_to_root(a, raw_index);
+        assert_eq!(buggy.roots(), &[b, c, a]);
+
+        // Adjusted: A is at index 0 < 2, so decrement to 1. Remove A -> [B, C],
+        // insert at 1 -> [B, A, C].
+        let adjusted_index = if tree.roots().iter().position(|id| *id == a).unwrap() < raw_index {
+            raw_index - 1
+        } else {
+            raw_index
+        };
+        let mut fixed = tree.clone();
+        fixed.move_node_to_root(a, adjusted_index);
+        assert_eq!(fixed.roots(), &[b, a, c]);
+    }
+
+    // --- Workspace tree drag-and-drop slot builder tests ---------------------
+
+    use crate::tree_dnd::{
+        SlotVisualRole, TreeDropPlacement, TreeDropSlot, TreeRenderItem, build_tree_render_items,
+    };
+
+    fn folder_node(id: Ulid, parent: Option<Ulid>, children: Vec<Ulid>) -> TreeNode {
+        TreeNode {
+            id,
+            name: format!("folder-{id}"),
+            kind: TreeNodeKind::Folder,
+            request_method: None,
+            request_url: None,
+            manifest_path: None,
+            parent_id: parent,
+            children,
+        }
+    }
+
+    fn request_node(id: Ulid, parent: Option<Ulid>) -> TreeNode {
+        TreeNode {
+            id,
+            name: format!("request-{id}"),
+            kind: TreeNodeKind::Request,
+            request_method: Some(HttpMethod::Get),
+            request_url: None,
+            manifest_path: None,
+            parent_id: parent,
+            children: Vec::new(),
+        }
+    }
+
+    fn tree_with(
+        roots: Vec<Ulid>,
+        nodes: Vec<TreeNode>,
+        expanded: Vec<Ulid>,
+    ) -> WorkspaceTreeState {
+        let mut tree = WorkspaceTreeState::default();
+        for node in nodes {
+            tree.nodes.insert(node.id, node);
+        }
+        tree.roots = roots;
+        tree.set_expanded(expanded);
+        tree
+    }
+
+    /// Reduces a render item to `(depth, kind, target_or_row_id)` for compact
+    /// sequence assertions. `kind` is `"slot"` or `"row"`.
+    fn item_summary(item: &TreeRenderItem) -> (usize, &'static str, Option<Ulid>) {
+        match item {
+            TreeRenderItem::Slot(slot) => (slot.depth, "slot", slot.target_id),
+            TreeRenderItem::Row(row) => (row.depth, "row", Some(row.id)),
+        }
+    }
+
+    #[test]
+    fn render_items_empty_tree_returns_single_root_slot() {
+        let tree = WorkspaceTreeState::default();
+        let items = build_tree_render_items(&tree);
+
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            TreeRenderItem::Slot(slot) => {
+                assert_eq!(slot.depth, 0);
+                assert_eq!(slot.target_id, None);
+                assert_eq!(slot.target_kind, None);
+                assert_eq!(slot.container_id, None);
+                assert_eq!(slot.visual_role, SlotVisualRole::ContainerStart);
+                assert_eq!(slot.placement, TreeDropPlacement::Before);
+            }
+            other => panic!("expected a slot, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn render_items_single_root_request_emits_top_slot_row_bottom_slot() {
+        let request_id = Ulid::new();
+        let tree = tree_with(
+            vec![request_id],
+            vec![request_node(request_id, None)],
+            vec![],
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(request_id)),
+                (0, "row", Some(request_id)),
+                (0, "slot", Some(request_id)),
+            ]
+        );
+    }
+
+    #[test]
+    fn render_items_expanded_folder_with_one_request_matches_section_10_1() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let tree = tree_with(
+            vec![folder_id],
+            vec![
+                folder_node(folder_id, None, vec![request_id]),
+                request_node(request_id, Some(folder_id)),
+            ],
+            vec![folder_id],
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(folder_id)),  // root top
+                (0, "row", Some(folder_id)),   // Folder A row
+                (1, "slot", Some(request_id)), // Folder A child top
+                (1, "row", Some(request_id)),  // Request 1 row
+                (1, "slot", Some(request_id)), // after Request 1 inside Folder A
+                (0, "slot", Some(folder_id)),  // after Folder A in root
+            ]
+        );
+    }
+
+    #[test]
+    fn render_items_expanded_folder_with_two_requests_matches_section_10_2() {
+        let folder_id = Ulid::new();
+        let request_a = Ulid::new();
+        let request_b = Ulid::new();
+        let tree = tree_with(
+            vec![folder_id],
+            vec![
+                folder_node(folder_id, None, vec![request_a, request_b]),
+                request_node(request_a, Some(folder_id)),
+                request_node(request_b, Some(folder_id)),
+            ],
+            vec![folder_id],
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(folder_id)), // root top
+                (0, "row", Some(folder_id)),  // Folder A row
+                (1, "slot", Some(request_a)), // Folder A child top
+                (1, "row", Some(request_a)),  // Request 1 row
+                (1, "slot", Some(request_a)), // after Request 1
+                (1, "row", Some(request_b)),  // Request 2 row
+                (1, "slot", Some(request_b)), // after Request 2
+                (0, "slot", Some(folder_id)), // after Folder A
+            ]
+        );
+    }
+
+    #[test]
+    fn render_items_nested_folders_matches_section_10_3() {
+        let folder_a = Ulid::new();
+        let folder_b = Ulid::new();
+        let request_id = Ulid::new();
+        let tree = tree_with(
+            vec![folder_a],
+            vec![
+                folder_node(folder_a, None, vec![folder_b]),
+                folder_node(folder_b, Some(folder_a), vec![request_id]),
+                request_node(request_id, Some(folder_b)),
+            ],
+            vec![folder_a, folder_b],
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(folder_a)),   // root top
+                (0, "row", Some(folder_a)),    // Folder A row
+                (1, "slot", Some(folder_b)),   // Folder A child top
+                (1, "row", Some(folder_b)),    // Folder B row
+                (2, "slot", Some(request_id)), // Folder B child top
+                (2, "row", Some(request_id)),  // Request 1 row
+                (2, "slot", Some(request_id)), // after Request 1 inside Folder B
+                (1, "slot", Some(folder_b)),   // after Folder B inside Folder A
+                (0, "slot", Some(folder_a)),   // after Folder A in root
+            ]
+        );
+    }
+
+    #[test]
+    fn render_items_collapsed_folder_omits_child_container_slots() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let tree = tree_with(
+            vec![folder_id],
+            vec![
+                folder_node(folder_id, None, vec![request_id]),
+                request_node(request_id, Some(folder_id)),
+            ],
+            vec![], // folder collapsed
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(folder_id)), // root top
+                (0, "row", Some(folder_id)),  // Folder row (collapsed)
+                (0, "slot", Some(folder_id)), // after folder in root
+            ]
+        );
+    }
+
+    #[test]
+    fn render_items_every_slot_depth_matches_its_container_depth() {
+        let folder_a = Ulid::new();
+        let folder_b = Ulid::new();
+        let request_id = Ulid::new();
+        let tree = tree_with(
+            vec![folder_a],
+            vec![
+                folder_node(folder_a, None, vec![folder_b]),
+                folder_node(folder_b, Some(folder_a), vec![request_id]),
+                request_node(request_id, Some(folder_b)),
+            ],
+            vec![folder_a, folder_b],
+        );
+
+        fn depth_of(tree: &WorkspaceTreeState, id: Ulid) -> usize {
+            let mut depth = 0;
+            let mut cursor = tree.node(id).and_then(|node| node.parent_id);
+            while let Some(parent_id) = cursor {
+                depth += 1;
+                cursor = tree.node(parent_id).and_then(|node| node.parent_id);
+            }
+            depth
+        }
+
+        for item in build_tree_render_items(&tree) {
+            match item {
+                TreeRenderItem::Slot(slot) => {
+                    // A slot's depth equals the depth at which its container's
+                    // children render: 0 for the root container, or
+                    // `depth_of(folder) + 1` for a folder's child container.
+                    match slot.container_id {
+                        None => assert_eq!(slot.depth, 0),
+                        Some(container_id) => {
+                            assert_eq!(slot.depth, depth_of(&tree, container_id) + 1);
+                        }
+                    }
+                }
+                TreeRenderItem::Row(row) => {
+                    let parent_depth = match tree.node(row.id).and_then(|n| n.parent_id) {
+                        Some(parent_id) => depth_of(&tree, parent_id) + 1,
+                        None => 0,
+                    };
+                    assert_eq!(row.depth, parent_depth);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn render_items_consecutive_slots_at_different_depths_keep_deeper_first_order() {
+        let folder_a = Ulid::new();
+        let folder_b = Ulid::new();
+        let request_id = Ulid::new();
+        let tree = tree_with(
+            vec![folder_a],
+            vec![
+                folder_node(folder_a, None, vec![folder_b]),
+                folder_node(folder_b, Some(folder_a), vec![request_id]),
+                request_node(request_id, Some(folder_b)),
+            ],
+            vec![folder_a, folder_b],
+        );
+
+        let items = build_tree_render_items(&tree);
+        let slot_depths: Vec<usize> = items
+            .iter()
+            .filter_map(|item| match item {
+                TreeRenderItem::Slot(slot) => Some(slot.depth),
+                _ => None,
+            })
+            .collect();
+
+        // The closing tail must be ordered deeper-first: 2, then 1, then 0.
+        let tail = &slot_depths[slot_depths.len().saturating_sub(3)..];
+        assert_eq!(tail, &[2usize, 1, 0]);
+    }
+
+    #[test]
+    fn render_items_container_end_role_labels_last_child_after_slot() {
+        let folder_id = Ulid::new();
+        let request_a = Ulid::new();
+        let request_b = Ulid::new();
+        let tree = tree_with(
+            vec![folder_id],
+            vec![
+                folder_node(folder_id, None, vec![request_a, request_b]),
+                request_node(request_a, Some(folder_id)),
+                request_node(request_b, Some(folder_id)),
+            ],
+            vec![folder_id],
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        let slots: Vec<&TreeDropSlot> = items
+            .iter()
+            .filter_map(|item| match item {
+                TreeRenderItem::Slot(slot) => Some(slot),
+                _ => None,
+            })
+            .collect();
+
+        // After Request 1 is an ItemAfter slot; after Request 2 is the
+        // ContainerEnd slot of Folder A; after Folder A is the ContainerEnd
+        // slot of the root container.
+        assert_eq!(slots[2].target_id, Some(request_a));
+        assert_eq!(slots[2].visual_role, SlotVisualRole::ItemAfter);
+        assert_eq!(slots[3].target_id, Some(request_b));
+        assert_eq!(slots[3].visual_role, SlotVisualRole::ContainerEnd);
+        assert_eq!(slots[4].target_id, Some(folder_id));
+        assert_eq!(slots[4].visual_role, SlotVisualRole::ContainerEnd);
+        // The root container-start slot is labelled ContainerStart.
+        assert_eq!(slots[0].visual_role, SlotVisualRole::ContainerStart);
+        assert_eq!(slots[1].visual_role, SlotVisualRole::ContainerStart);
+    }
+
+    #[test]
+    fn render_items_empty_folder_omits_child_container_start_slot() {
+        let folder_id = Ulid::new();
+        let tree = tree_with(
+            vec![folder_id],
+            vec![folder_node(folder_id, None, vec![])],
+            vec![folder_id],
+        );
+
+        let items = build_tree_render_items(&tree);
+
+        // An empty expanded folder emits no child-container start slot — the
+        // folder body is the drop target. Only the root container-start slot
+        // (before the folder row) and the folder's after-slot remain.
+        assert_eq!(
+            items.iter().map(item_summary).collect::<Vec<_>>(),
+            vec![
+                (0, "slot", Some(folder_id)), // root top
+                (0, "row", Some(folder_id)),  // empty folder row
+                (0, "slot", Some(folder_id)), // after folder in root
+            ]
+        );
+    }
 }
