@@ -6135,28 +6135,33 @@ impl BeamView {
             .text_color(cx.theme().foreground)
             .child(workspace_button)
             .child(
-                Button::new("title-bar-environment-sheet")
-                    .small()
-                    .ghost()
-                    .cursor_pointer()
-                    .h(px(22.0))
-                    .px_1()
-                    .rounded(px(6.0))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.open_environment_variables_sheet(window, cx);
-                    }))
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                Icon::default()
-                                    .path("icons/variable.svg")
-                                    .size(px(14.0))
-                                    .text_color(cx.theme().muted_foreground),
-                            )
-                            .child("Environment variables"),
-                    ),
+                div()
+                .flex()
+                .occlude()
+                .child(
+                    Button::new("title-bar-environment-sheet")
+                        .small()
+                        .ghost()
+                        .cursor_pointer()
+                        .h(px(22.0))
+                        .px_1()
+                        .rounded(px(6.0))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_environment_variables_sheet(window, cx);
+                        }))
+                        .child(
+                            h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Icon::default()
+                                        .path("icons/variable.svg")
+                                        .size(px(14.0))
+                                        .text_color(cx.theme().muted_foreground),
+                                )
+                                .child("Environment variables"),
+                        ),
+                )
             )
     }
 
