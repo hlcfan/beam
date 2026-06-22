@@ -24,6 +24,7 @@ use gpui_component::{
     switch::Switch,
     tag::Tag,
     text::{html, markdown},
+    tooltip::Tooltip,
     v_flex, v_virtual_list,
 };
 use reqwest::{Client, Method};
@@ -6928,8 +6929,16 @@ impl BeamView {
         if let Some(method) = request_row_method {
             row_content = row_content.child(Self::render_method_badge(method, cx));
         }
-        row_content =
-            row_content.child(div().flex_1().min_w_0().truncate().child(label.clone()));
+        let tooltip_label = label.clone();
+        row_content = row_content.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .id(format!("tree-row-label-{}", row.id))
+                .tooltip(move |window, cx| Tooltip::new(tooltip_label.clone()).build(window, cx))
+                .child(label.clone()),
+        );
 
         let row_data = crate::app_shell::TreeRow {
             id: row.id,
