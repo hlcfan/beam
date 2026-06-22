@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+use std::ops::Range;
 use std::{fs, path::PathBuf};
 
 use chrono::{Local, Utc};
@@ -59,8 +60,8 @@ use crate::storage::{
 };
 use crate::tree_dnd::{
     SLOT_BAR_HEIGHT_PX, SLOT_DEPTH_GAP_PX, SLOT_DRAG_PROXIMITY_PX, SLOT_HIT_HEIGHT_PX,
-    SLOT_RIGHT_PAD_PX, TreeDropPlacement, TreeDropSlot, TreeRenderItem, TreeRowViewModel,
-    build_tree_render_items, tree_depth_inset,
+    SLOT_RIGHT_PAD_PX, TREE_ROW_HEIGHT_PX, TreeDropPlacement, TreeDropSlot, TreeRenderItem,
+    TreeRowViewModel, build_tree_render_items, tree_depth_inset,
 };
 
 actions!(
@@ -489,7 +490,7 @@ struct BeamView {
     pending_request_placements: HashMap<String, PendingRequestPlacement>,
     pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     _subscriptions: Vec<Subscription>,
-    collection_scroll_handle: ScrollHandle,
+    collection_scroll_handle: VirtualListScrollHandle,
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
     tree_drag_hover: Option<(Ulid, TreeDropPlacement)>,
     tree_drag_slot_hover: Option<TreeDropSlot>,
@@ -5963,7 +5964,7 @@ impl BeamView {
             pending_request_placements: HashMap::new(),
             pending_folder_placements: HashMap::new(),
             _subscriptions,
-            collection_scroll_handle: ScrollHandle::new(),
+            collection_scroll_handle: VirtualListScrollHandle::new(),
             collection_context_menu_row: None,
             tree_drag_hover: None,
             tree_drag_slot_hover: None,
@@ -7587,7 +7588,7 @@ impl BeamView {
 
     fn render_workspace_panel(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut panel = v_flex()
@@ -7678,96 +7679,138 @@ impl BeamView {
             let view = cx.entity();
             let menu_view = view.clone();
             let scroll_view = view.clone();
-            let mut elements: Vec<AnyElement> = Vec::with_capacity(items.len());
-            let mut prev_slot_depth: Option<usize> = None;
-            for item in &items {
-                match item {
-                    TreeRenderItem::Slot(slot) => {
-                        let needs_depth_gap =
-                            prev_slot_depth.is_some_and(|prev| prev != slot.depth);
-                        let slot_el = self.render_tree_drop_slot(slot, cx);
-                        let el = if needs_depth_gap {
-                            div()
-                                .mt(px(SLOT_DEPTH_GAP_PX))
-                                .child(slot_el)
-                                .into_any_element()
-                        } else {
-                            slot_el
-                        };
-                        prev_slot_depth = Some(slot.depth);
-                        elements.push(el);
-                    }
-                    TreeRenderItem::Row(row) => {
-                        prev_slot_depth = None;
-                        elements.push(self.render_tree_row(row, window, cx));
-                    }
-                }
-            }
+            let list_view = view.clone();
+            // v_virtual_list lays items out at their declared heights, so we
+            // must publish a per-item height Vec that matches what the
+            // renderer will draw. Rows use the fixed TREE_ROW_HEIGHT_PX; slots
+            // are SLOT_HIT_HEIGHT_PX tall, with an extra SLOT_DEPTH_GAP_PX top
+            // margin when stacked after a slot at a different depth.
+            let item_sizes = Rc::new(
+                items
+                    .iter()
+                    .enumerate()
+                    .map(|(i, item)| match item {
+                        TreeRenderItem::Row(_) => {
+                            size(px(0.0), px(TREE_ROW_HEIGHT_PX))
+                        }
+                        TreeRenderItem::Slot(slot) => {
+                            let needs_depth_gap = i > 0
+                                && match &items[i - 1] {
+                                    TreeRenderItem::Slot(prev) => prev.depth != slot.depth,
+                                    TreeRenderItem::Row(_) => false,
+                                };
+                            size(
+                                px(0.0),
+                                px(SLOT_HIT_HEIGHT_PX
+                                    + if needs_depth_gap { SLOT_DEPTH_GAP_PX } else { 0.0 }),
+                            )
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            let items_for_list = Rc::new(items);
             panel.child(
                 div()
                     .relative()
                     .flex_1()
                     .min_h_0()
                     .child(
-                        div()
-                            .id("workspace-tree-scroll")
-                            .size_full()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.collection_scroll_handle)
-                            .can_drop(move |_dragged_value, _window, app| {
-                                scroll_view.update(app, |this, _| {
-                                    this.tree_drag_slot_hover.is_some()
-                                        || this.tree_drag_hover.is_some()
-                                })
-                            })
-                            .on_drop(cx.listener(
-                                move |this, dragged: &DraggedRequest, window, cx| {
-                                    if let Some(slot) = this.tree_drag_slot_hover {
-                                        this.handle_request_tree_drop_slot(
-                                            dragged.request_id,
-                                            &slot,
-                                            window,
-                                            cx,
-                                        );
-                                    } else if let Some((target_id, TreeDropPlacement::Into)) =
-                                        this.tree_drag_hover
-                                    {
-                                        this.handle_request_tree_drop(
-                                            dragged.request_id,
-                                            target_id,
-                                            TreeDropPlacement::Into,
-                                            window,
-                                            cx,
-                                        );
+                        v_virtual_list(
+                            list_view,
+                            "workspace-tree-list",
+                            item_sizes,
+                            move |this, range: Range<usize>, window, cx| {
+                                let mut rendered: Vec<AnyElement> =
+                                    Vec::with_capacity(range.end - range.start);
+                                let mut prev_slot_depth: Option<usize> = if range.start == 0 {
+                                    None
+                                } else {
+                                    match &items_for_list[range.start - 1] {
+                                        TreeRenderItem::Slot(prev) => Some(prev.depth),
+                                        TreeRenderItem::Row(_) => None,
                                     }
-                                    this.clear_tree_drag_hover(cx);
-                                },
-                            ))
-                            .on_drop(cx.listener(
-                                move |this, dragged: &DraggedFolder, window, cx| {
-                                    if let Some(slot) = this.tree_drag_slot_hover {
-                                        this.handle_folder_tree_drop_slot(
-                                            dragged.folder_id,
-                                            &slot,
-                                            window,
-                                            cx,
-                                        );
-                                    } else if let Some((target_id, TreeDropPlacement::Into)) =
-                                        this.tree_drag_hover
-                                    {
-                                        this.handle_folder_tree_drop(
-                                            dragged.folder_id,
-                                            target_id,
-                                            TreeDropPlacement::Into,
-                                            window,
-                                            cx,
-                                        );
+                                };
+                                for idx in range {
+                                    match &items_for_list[idx] {
+                                        TreeRenderItem::Slot(slot) => {
+                                            let needs_depth_gap = prev_slot_depth
+                                                .is_some_and(|prev| prev != slot.depth);
+                                            let slot_el = this.render_tree_drop_slot(slot, cx);
+                                            let el = if needs_depth_gap {
+                                                div()
+                                                    .mt(px(SLOT_DEPTH_GAP_PX))
+                                                    .child(slot_el)
+                                                    .into_any_element()
+                                            } else {
+                                                slot_el
+                                            };
+                                            prev_slot_depth = Some(slot.depth);
+                                            rendered.push(el);
+                                        }
+                                        TreeRenderItem::Row(row) => {
+                                            prev_slot_depth = None;
+                                            rendered.push(this.render_tree_row(row, window, cx));
+                                        }
                                     }
-                                    this.clear_tree_drag_hover(cx);
-                                },
-                            ))
-                            .child(v_flex().w_full().children(elements)),
+                                }
+                                rendered
+                            },
+                        )
+                        .size_full()
+                        .track_scroll(&self.collection_scroll_handle),
                     )
+                    .can_drop(move |_dragged_value, _window, app| {
+                        scroll_view.update(app, |this, _| {
+                            this.tree_drag_slot_hover.is_some()
+                                || this.tree_drag_hover.is_some()
+                        })
+                    })
+                    .on_drop(cx.listener(
+                        move |this, dragged: &DraggedRequest, window, cx| {
+                            if let Some(slot) = this.tree_drag_slot_hover {
+                                this.handle_request_tree_drop_slot(
+                                    dragged.request_id,
+                                    &slot,
+                                    window,
+                                    cx,
+                                );
+                            } else if let Some((target_id, TreeDropPlacement::Into)) =
+                                this.tree_drag_hover
+                            {
+                                this.handle_request_tree_drop(
+                                    dragged.request_id,
+                                    target_id,
+                                    TreeDropPlacement::Into,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            this.clear_tree_drag_hover(cx);
+                        },
+                    ))
+                    .on_drop(cx.listener(
+                        move |this, dragged: &DraggedFolder, window, cx| {
+                            if let Some(slot) = this.tree_drag_slot_hover {
+                                this.handle_folder_tree_drop_slot(
+                                    dragged.folder_id,
+                                    &slot,
+                                    window,
+                                    cx,
+                                );
+                            } else if let Some((target_id, TreeDropPlacement::Into)) =
+                                this.tree_drag_hover
+                            {
+                                this.handle_folder_tree_drop(
+                                    dragged.folder_id,
+                                    target_id,
+                                    TreeDropPlacement::Into,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            this.clear_tree_drag_hover(cx);
+                        },
+                    ))
                     .vertical_scrollbar(&self.collection_scroll_handle)
                     .context_menu({
                         let view = menu_view;

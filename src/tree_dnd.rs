@@ -13,6 +13,12 @@ use crate::app_shell::{TreeNodeKind, WorkspaceTreeState};
 pub const TREE_INDENT_PX: f32 = 14.0;
 /// Left content inset shared by rows and slots.
 pub const TREE_CONTENT_INSET_PX: f32 = 6.0;
+/// Declared height of a rendered tree row, used by the virtual list to lay
+/// out rows before they are measured. Set deliberately larger than the row's
+/// intrinsic content height (text-sm + `py_1` padding) so the leftover space
+/// shows up as visible spacing between adjacent rows. Tune here if rows ever
+/// appear clipped or too tight/too loose inside the virtualized tree.
+pub const TREE_ROW_HEIGHT_PX: f32 = 32.0;
 /// Height of the visible slot bar.
 pub const SLOT_BAR_HEIGHT_PX: f32 = 2.0;
 /// Height of the slot hit area. Matches the bar height so the hover highlight
