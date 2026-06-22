@@ -7818,7 +7818,9 @@ impl BeamView {
             .h_full()
             .w_full()
             .gap(px(2.0))
-            .p_2()
+            .pt_0()
+            .px_2()
+            .pb_2()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground);
 
