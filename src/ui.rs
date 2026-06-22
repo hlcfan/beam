@@ -17,7 +17,7 @@ use gpui_component::{
     hover_card::HoverCard,
     input::{self, Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
-    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem},
+    menu::{DropdownMenu as _, PopupMenuItem},
     native_menu::NativeMenu,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
@@ -89,6 +89,39 @@ struct SwitchTheme(pub SharedString);
 #[derive(Action, Clone, PartialEq)]
 #[action(namespace = beam, no_json)]
 struct SwitchThemeMode(pub ThemeMode);
+
+actions!(
+    beam,
+    [TreeMenuAddRequestAtRoot, TreeMenuAddFolderAtRoot]
+);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuSendRequest(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuCopyAsCurl(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuAddRequestInFolder(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuAddFolderInFolder(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuRename(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuDelete(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+struct TreeMenuDuplicateRequest(Ulid);
 
 #[cfg(target_os = "macos")]
 fn build_macos_theme_menu(cx: &App) -> MenuItem {
@@ -443,6 +476,7 @@ pub fn run_app(
 
 struct BeamView {
     shell: AppShellState,
+    focus_handle: FocusHandle,
     current_workspace_paths: BeamPaths,
     request: RequestAuthoringState,
     startup_messages: Vec<StartupMessage>,
@@ -2248,6 +2282,97 @@ impl Render for WorkspaceNameDialogView {
                                     window.close_dialog(cx);
                                 });
                             }),
+                    ),
+            )
+    }
+}
+
+struct TreeNodeDeleteDialogView {
+    target_view: Entity<BeamView>,
+    node_id: Ulid,
+    node_kind: TreeNodeKind,
+    node_name: String,
+}
+
+impl TreeNodeDeleteDialogView {
+    fn new(
+        target_view: Entity<BeamView>,
+        node_id: Ulid,
+        node_kind: TreeNodeKind,
+        node_name: String,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            target_view,
+            node_id,
+            node_kind,
+            node_name,
+        }
+    }
+
+    fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let node_id = self.node_id;
+        let node_kind = self.node_kind;
+        let _ = self.target_view.update(cx, |this, cx| {
+            match node_kind {
+                TreeNodeKind::Folder => this.delete_folder_from_tree_node(node_id, window, cx),
+                TreeNodeKind::Request => this.delete_request_from_tree_node(node_id, window, cx),
+            }
+            window.close_dialog(cx);
+        });
+    }
+}
+
+impl Render for TreeNodeDeleteDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let node_name = self.node_name.clone();
+        let (kind_label, warning) = match self.node_kind {
+            TreeNodeKind::Folder => (
+                "folder",
+                "This deletes the folder and all of its contents from disk.",
+            ),
+            TreeNodeKind::Request => ("request", "This deletes the request from disk."),
+        };
+
+        v_flex()
+            .w(px(460.0))
+            .p_3()
+            .gap_3()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(format!("Delete {kind_label} \"{node_name}\"?")),
+                    )
+                    .child(div().text_sm().font_semibold().child(warning)),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        Button::new("delete-tree-node-cancel")
+                            .small()
+                            .ghost()
+                            .cursor_pointer()
+                            .label("Cancel")
+                            .on_click(move |_, window, cx| {
+                                window.close_dialog(cx);
+                            }),
+                    )
+                    .child(
+                        Button::new("delete-tree-node-submit")
+                            .small()
+                            .danger()
+                            .cursor_pointer()
+                            .label("Delete")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit(window, cx);
+                            })),
                     ),
             )
     }
@@ -5631,6 +5756,101 @@ impl BeamView {
         self.format_response_body(window, cx);
     }
 
+    fn on_action_tree_menu_send_request(
+        &mut self,
+        action: &TreeMenuSendRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.send_request_from_tree_node(action.0, window, cx);
+    }
+
+    fn on_action_tree_menu_copy_as_curl(
+        &mut self,
+        action: &TreeMenuCopyAsCurl,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.copy_request_as_curl_from_tree_node(action.0, window, cx);
+    }
+
+    fn on_action_tree_menu_add_request_in_folder(
+        &mut self,
+        action: &TreeMenuAddRequestInFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_request_from_tree_node(action.0, window, cx);
+    }
+
+    fn on_action_tree_menu_add_folder_in_folder(
+        &mut self,
+        action: &TreeMenuAddFolderInFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_folder_from_tree_node(action.0, window, cx);
+    }
+
+    fn on_action_tree_menu_rename(
+        &mut self,
+        action: &TreeMenuRename,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let row_id = action.0;
+        let kind = self
+            .shell
+            .workspace_tree
+            .node(row_id)
+            .map(|n| n.kind)
+            .unwrap_or(TreeNodeKind::Request);
+        self.open_rename_dialog_for_tree_node(row_id, kind, window, cx);
+    }
+
+    fn on_action_tree_menu_delete(
+        &mut self,
+        action: &TreeMenuDelete,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let row_id = action.0;
+        let kind = self
+            .shell
+            .workspace_tree
+            .node(row_id)
+            .map(|n| n.kind)
+            .unwrap_or(TreeNodeKind::Request);
+        self.show_delete_tree_node_dialog(row_id, kind, cx);
+    }
+
+    fn on_action_tree_menu_duplicate_request(
+        &mut self,
+        action: &TreeMenuDuplicateRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.duplicate_request_from_tree_node(action.0, window, cx);
+    }
+
+    fn on_action_tree_menu_add_request_at_root(
+        &mut self,
+        _: &TreeMenuAddRequestAtRoot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_request_at_root(window, cx);
+    }
+
+    fn on_action_tree_menu_add_folder_at_root(
+        &mut self,
+        _: &TreeMenuAddFolderAtRoot,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_folder_at_root(window, cx);
+    }
+
     fn copy_request_as_curl_from_tree_node(
         &mut self,
         request_id: Ulid,
@@ -5959,8 +6179,10 @@ impl BeamView {
         ];
 
         let request_file_index = Self::build_request_file_index(&shell);
+        let focus_handle = cx.focus_handle();
         let mut view = Self {
             shell,
+            focus_handle,
             request,
             startup_messages,
             url_input,
@@ -7068,332 +7290,109 @@ impl BeamView {
     fn build_tree_row_context_menu(
         &self,
         row: crate::app_shell::TreeRow,
-        menu: PopupMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> PopupMenu {
+    ) -> NativeMenu {
         let row_id = row.id;
         let row_kind = row.kind;
-        let muted_foreground = cx.theme().muted_foreground;
-        let mut menu = menu.min_w(px(180.0));
+        let menu = NativeMenu::new();
         match row_kind {
             TreeNodeKind::Folder => {
-                let view = cx.entity();
-                menu = self.build_tree_create_context_menu_group(
+                let menu = self.build_tree_create_context_menu_group(menu, row_id);
+                let menu = menu.separator();
+                let menu = append_with_image_or_plain(
                     menu,
-                    row_id,
-                    muted_foreground,
-                    window,
-                    cx,
+                    "Rename",
+                    "icons/edit.svg",
+                    false,
+                    Box::new(TreeMenuRename(row_id)),
                 );
-                menu = menu.separator();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/edit.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Rename")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.open_rename_dialog_for_tree_node(
-                                row_id,
-                                TreeNodeKind::Folder,
-                                window,
-                                cx,
-                            );
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/trash.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Delete")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.delete_folder_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
+                append_with_image_or_plain(
+                    menu,
+                    "Delete",
+                    "icons/trash.svg",
+                    false,
+                    Box::new(TreeMenuDelete(row_id)),
+                )
             }
             TreeNodeKind::Request => {
-                let view = cx.entity();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/send.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Send Request")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.send_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/copy.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Copy as cURL")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.copy_request_as_curl_from_tree_node(row_id, window, cx);
-                        },
-                    )),
-                );
-                menu = menu.separator();
-                menu = self.build_tree_create_context_menu_group(
+                let menu = append_with_image_or_plain(
                     menu,
-                    row_id,
-                    muted_foreground,
-                    window,
-                    cx,
+                    "Send Request",
+                    "icons/send.svg",
+                    false,
+                    Box::new(TreeMenuSendRequest(row_id)),
                 );
-                menu = menu.separator();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/edit.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Rename")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.open_rename_dialog_for_tree_node(
-                                row_id,
-                                TreeNodeKind::Request,
-                                window,
-                                cx,
-                            );
-                        },
-                    )),
+                let menu = append_with_image_or_plain(
+                    menu,
+                    "Copy as cURL",
+                    "icons/copy.svg",
+                    false,
+                    Box::new(TreeMenuCopyAsCurl(row_id)),
                 );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/duplicate.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Duplicate")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.duplicate_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
+                let menu = menu.separator();
+                let menu = self.build_tree_create_context_menu_group(menu, row_id);
+                let menu = menu.separator();
+                let menu = append_with_image_or_plain(
+                    menu,
+                    "Rename",
+                    "icons/edit.svg",
+                    false,
+                    Box::new(TreeMenuRename(row_id)),
                 );
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        h_flex()
-                            .w_full()
-                            .cursor_pointer()
-                            .items_center()
-                            .gap_2()
-                            .px_2()
-                            .py_1()
-                            .child(
-                                Icon::default()
-                                    .path("icons/trash.svg")
-                                    .size(px(14.0))
-                                    .text_color(muted_foreground),
-                            )
-                            .child("Delete")
-                    })
-                    .on_click(window.listener_for(
-                        &view,
-                        move |this, _, window, cx| {
-                            this.delete_request_from_tree_node(row_id, window, cx);
-                        },
-                    )),
+                let menu = append_with_image_or_plain(
+                    menu,
+                    "Duplicate",
+                    "icons/duplicate.svg",
+                    false,
+                    Box::new(TreeMenuDuplicateRequest(row_id)),
                 );
+                append_with_image_or_plain(
+                    menu,
+                    "Delete",
+                    "icons/trash.svg",
+                    false,
+                    Box::new(TreeMenuDelete(row_id)),
+                )
             }
         }
-        menu
     }
 
     fn build_tree_create_context_menu_group(
         &self,
-        menu: PopupMenu,
+        menu: NativeMenu,
         row_id: Ulid,
-        muted_foreground: Hsla,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> PopupMenu {
-        let view = cx.entity();
-        let view2 = view.clone();
-        menu.item(
-            PopupMenuItem::element(move |_, _| {
-                h_flex()
-                    .w_full()
-                    .cursor_pointer()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .child(
-                        Icon::default()
-                            .path("icons/add.svg")
-                            .size(px(14.0))
-                            .text_color(muted_foreground),
-                    )
-                    .child("HTTP")
-            })
-            .on_click(window.listener_for(&view, move |this, _, window, cx| {
-                this.add_request_from_tree_node(row_id, window, cx);
-            })),
-        )
-        .item(
-            PopupMenuItem::element(move |_, _| {
-                h_flex()
-                    .w_full()
-                    .cursor_pointer()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .child(
-                        Icon::default()
-                            .path("icons/folder-add.svg")
-                            .size(px(14.0))
-                            .text_color(muted_foreground),
-                    )
-                    .child("Folder")
-            })
-            .on_click(window.listener_for(&view2, move |this, _, window, cx| {
-                this.add_folder_from_tree_node(row_id, window, cx);
-            })),
+    ) -> NativeMenu {
+        let menu = append_with_image_or_plain(
+            menu,
+            "HTTP",
+            "icons/add.svg",
+            false,
+            Box::new(TreeMenuAddRequestInFolder(row_id)),
+        );
+        append_with_image_or_plain(
+            menu,
+            "Folder",
+            "icons/folder-add.svg",
+            false,
+            Box::new(TreeMenuAddFolderInFolder(row_id)),
         )
     }
 
-    fn build_empty_space_context_menu(
-        &self,
-        menu: PopupMenu,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> PopupMenu {
-        let view = cx.entity();
-        let view2 = view.clone();
-        let muted_foreground = cx.theme().muted_foreground;
-        menu.min_w(px(180.0))
-            .item(
-                PopupMenuItem::element(move |_, _| {
-                    h_flex()
-                        .w_full()
-                        .cursor_pointer()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_1()
-                        .child(
-                            Icon::default()
-                                .path("icons/add.svg")
-                                .size(px(14.0))
-                                .text_color(muted_foreground),
-                        )
-                        .child("HTTP")
-                })
-                .on_click(window.listener_for(
-                    &view,
-                    move |this, _, window, cx| {
-                        this.add_request_at_root(window, cx);
-                    },
-                )),
-            )
-            .item(
-                PopupMenuItem::element(move |_, _| {
-                    h_flex()
-                        .w_full()
-                        .cursor_pointer()
-                        .items_center()
-                        .gap_2()
-                        .px_2()
-                        .py_1()
-                        .child(
-                            Icon::default()
-                                .path("icons/add.svg")
-                                .size(px(14.0))
-                                .text_color(muted_foreground),
-                        )
-                        .child("Folder")
-                })
-                .on_click(window.listener_for(
-                    &view2,
-                    move |this, _, window, cx| {
-                        this.add_folder_at_root(window, cx);
-                    },
-                )),
-            )
+    fn build_empty_space_context_menu(&self) -> NativeMenu {
+        let menu = NativeMenu::new();
+        let menu = append_with_image_or_plain(
+            menu,
+            "HTTP",
+            "icons/add.svg",
+            false,
+            Box::new(TreeMenuAddRequestAtRoot),
+        );
+        append_with_image_or_plain(
+            menu,
+            "Folder",
+            "icons/folder-add.svg",
+            false,
+            Box::new(TreeMenuAddFolderAtRoot),
+        )
     }
 
     fn render_workspace_picker(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
@@ -7554,6 +7553,56 @@ impl BeamView {
         self.open_workspace_name_dialog(WorkspaceDialogMode::Rename, current_name, cx);
     }
 
+    fn show_delete_tree_node_dialog(
+        &mut self,
+        node_id: Ulid,
+        node_kind: TreeNodeKind,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(node) = self.shell.workspace_tree.node(node_id) else {
+            return;
+        };
+        let node_name = node.name.clone();
+        let view = cx.entity();
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    let dialog_view = cx.new(|cx| {
+                        TreeNodeDeleteDialogView::new(
+                            view.clone(),
+                            node_id,
+                            node_kind,
+                            node_name.clone(),
+                            window,
+                            cx,
+                        )
+                    });
+                    let submit_dv = dialog_view.clone();
+                    window.defer(cx, move |window, cx| {
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            let submit_dv_for_ok = submit_dv.clone();
+                            let title = match node_kind {
+                                TreeNodeKind::Folder => "Delete Folder",
+                                TreeNodeKind::Request => "Delete Request",
+                            };
+                            dialog
+                                .title(title)
+                                .w(px(500.0))
+                                .child(dialog_view.clone())
+                                .on_ok(move |_, window, cx| {
+                                    let _ = submit_dv_for_ok.update(cx, |this, cx| {
+                                        this.submit(window, cx);
+                                    });
+                                    false
+                                })
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
+    }
+
     fn show_delete_workspace_dialog(&mut self, cx: &mut Context<Self>) {
         let Some(workspace_id) = self.shell.workspace.workspace_id else {
             return;
@@ -7710,11 +7759,20 @@ impl BeamView {
                             this.clear_tree_drag_hover(cx);
                         }),
                     )
-                    .context_menu(move |menu, window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.build_empty_space_context_menu(menu, window, cx)
-                        })
-                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        move |ev: &MouseDownEvent, window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.focus_handle.focus(window, cx);
+                                let menu = this.build_empty_space_context_menu();
+                                let position = Point {
+                                    x: ev.position.x + px(4.),
+                                    y: ev.position.y,
+                                };
+                                menu.show(position, window, cx);
+                            });
+                        },
+                    )
                     .child(
                         v_flex()
                             .size_full()
@@ -7866,18 +7924,28 @@ impl BeamView {
                         },
                     ))
                     .vertical_scrollbar(&self.collection_scroll_handle)
-                    .context_menu({
-                        let view = menu_view;
-                        move |menu, window, cx| {
-                            view.update(cx, |this, cx| {
-                                if let Some(row) = this.collection_context_menu_row.take() {
-                                    this.build_tree_row_context_menu(row, menu, window, cx)
-                                } else {
-                                    this.build_empty_space_context_menu(menu, window, cx)
-                                }
-                            })
-                        }
-                    }),
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        {
+                            let view = menu_view;
+                            move |ev: &MouseDownEvent, window, cx| {
+                                view.update(cx, |this, cx| {
+                                    this.focus_handle.focus(window, cx);
+                                    let position = Point {
+                                        x: ev.position.x + px(4.),
+                                        y: ev.position.y,
+                                    };
+                                    if let Some(row) = this.collection_context_menu_row.take() {
+                                        let menu = this.build_tree_row_context_menu(row);
+                                        menu.show(position, window, cx);
+                                    } else {
+                                        let menu = this.build_empty_space_context_menu();
+                                        menu.show(position, window, cx);
+                                    }
+                                });
+                            }
+                        },
+                    ),
             )
         }
     }
@@ -10594,18 +10662,34 @@ fn format_bytes(byte_count: usize) -> String {
     format!("{mib:.1} MiB")
 }
 
+impl Focusable for BeamView {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for BeamView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let left_size = 1280.0 * self.shell.layout.collections_workspace.ratio();
         let request_size = (1280.0 - left_size) * 0.5;
 
         v_flex()
+            .track_focus(&self.focus_handle)
             .size_full()
             .on_action(cx.listener(Self::on_action_send_active_request))
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .on_action(cx.listener(Self::on_action_format_request_body))
             .on_action(cx.listener(Self::on_action_format_response_body))
+            .on_action(cx.listener(Self::on_action_tree_menu_send_request))
+            .on_action(cx.listener(Self::on_action_tree_menu_copy_as_curl))
+            .on_action(cx.listener(Self::on_action_tree_menu_add_request_in_folder))
+            .on_action(cx.listener(Self::on_action_tree_menu_add_folder_in_folder))
+            .on_action(cx.listener(Self::on_action_tree_menu_rename))
+            .on_action(cx.listener(Self::on_action_tree_menu_delete))
+            .on_action(cx.listener(Self::on_action_tree_menu_duplicate_request))
+            .on_action(cx.listener(Self::on_action_tree_menu_add_request_at_root))
+            .on_action(cx.listener(Self::on_action_tree_menu_add_folder_at_root))
             .bg(cx.theme().background)
             .child(TitleBar::new().child(self.render_title_bar_content(window, cx)))
             .child(
