@@ -2255,23 +2255,13 @@ where
         load_workspace_tree(paths, &local_state);
     // TOCHECK: environments can be load with collection tree in parallel
     let environments = load_environments(paths, &mut warnings);
-    let mut messages: Vec<StartupMessage> = warnings
+    let messages: Vec<StartupMessage> = warnings
         .drain(..)
         .map(|text| StartupMessage {
             severity: StartupMessageSeverity::Warning,
             text,
         })
         .collect();
-
-    // TOCHECK: if no last open request id found, shall default to first request?
-    if workspace_tree.selected_request_id().is_none()
-        && local_state.local_state.last_opened_request_id.is_some()
-    {
-        messages.push(StartupMessage {
-            severity: StartupMessageSeverity::Warning,
-            text: "Last opened request no longer exists and could not be restored.".to_string(),
-        });
-    }
 
     StartupLoad::Ready {
         state: AppShellState {
@@ -2320,6 +2310,12 @@ fn load_workspace_tree(
     if let Some(request_id) = local_state.local_state.last_opened_request_id {
         if tree.request_exists(request_id) {
             tree.select_request(request_id);
+        }
+    }
+
+    if tree.selected_request_id().is_none() {
+        if let Some(&first_request_id) = tree.ordered_request_ids().first() {
+            tree.select_request(first_request_id);
         }
     }
 
@@ -3958,7 +3954,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_emits_warning_for_missing_last_request() {
+    fn startup_no_warning_for_missing_last_request_in_empty_workspace() {
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
@@ -3993,7 +3989,82 @@ mod tests {
         };
         assert_eq!(state.workspace_tree.selected_request_id(), None);
         assert!(
-            messages
+            !messages
+                .iter()
+                .any(|message| message.text.contains("Last opened request"))
+        );
+    }
+
+    #[test]
+    fn startup_falls_back_to_first_request_when_last_opened_missing() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage
+            .save_workspace(&WorkspaceFile::default())
+            .expect("save workspace");
+        storage
+            .save_local_state(&LocalStateFile::default())
+            .expect("save local state");
+
+        let first_request_id = Ulid::new();
+        let second_request_id = Ulid::new();
+        write_workspace_file(
+            &paths,
+            vec![
+                ManifestItemRef {
+                    item_id: first_request_id,
+                    item_type: ItemType::Request,
+                    name: "First".to_string(),
+                    order: 0,
+                },
+                ManifestItemRef {
+                    item_id: second_request_id,
+                    item_type: ItemType::Request,
+                    name: "Second".to_string(),
+                    order: 1,
+                },
+            ],
+        );
+        write_request_payload(
+            &paths.root,
+            first_request_id,
+            "First",
+            HttpMethod::Get,
+            "https://example.com/first",
+        );
+        write_request_payload(
+            &paths.root,
+            second_request_id,
+            "Second",
+            HttpMethod::Post,
+            "https://example.com/second",
+        );
+
+        let local_state = LocalStateFile {
+            schema_version: SCHEMA_VERSION_V1,
+            local_state: LocalState {
+                active_global_environment_id: None,
+                last_opened_request_id: Some(Ulid::new()),
+                updated_at: Utc::now(),
+            },
+            tree_state: TreeState::default(),
+        };
+        storage
+            .save_local_state(&local_state)
+            .expect("save local state");
+
+        let load = startup_preload(&storage, &paths, None, vec![]);
+        let StartupLoad::Ready { state, messages } = load else {
+            panic!("startup should be ready");
+        };
+        assert_eq!(
+            state.workspace_tree.selected_request_id(),
+            Some(first_request_id)
+        );
+        assert!(
+            !messages
                 .iter()
                 .any(|message| message.text.contains("Last opened request"))
         );
