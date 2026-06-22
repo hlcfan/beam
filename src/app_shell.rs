@@ -4877,6 +4877,52 @@ expanded_item_ids = ["{folder_id}"]
         );
     }
 
+    /// Pins the insertion-index contract for same-container reorders.
+    ///
+    /// Drop slots are computed against the destination container's sibling
+    /// list *before* the move, but `move_node_to_root` / `move_request_node`
+    /// remove the dragged item *before* inserting at `insertion_index`. When
+    /// the dragged item sits below the insertion point in the same container,
+    /// removal shifts the target down by one, so the raw slot index would land
+    /// one position too far. The UI compensates before building the move
+    /// input; this test proves the move helpers' remove-then-insert contract
+    /// so that compensation stays correct.
+    #[test]
+    fn move_node_to_root_same_container_reorder_requires_adjusted_index() {
+        let a = Ulid::new();
+        let b = Ulid::new();
+        let c = Ulid::new();
+        let tree = tree_with(
+            vec![a, b, c],
+            vec![
+                request_node(a, None),
+                request_node(b, None),
+                request_node(c, None),
+            ],
+            vec![],
+        );
+
+        // The "after B" slot maps to raw insertion_index = index(B) + 1 = 2.
+        let raw_index = tree.roots().iter().position(|id| *id == b).unwrap() + 1;
+        assert_eq!(raw_index, 2);
+
+        // Unadjusted (the bug): remove A -> [B, C], insert at 2 -> [B, C, A].
+        let mut buggy = tree.clone();
+        buggy.move_node_to_root(a, raw_index);
+        assert_eq!(buggy.roots(), &[b, c, a]);
+
+        // Adjusted: A is at index 0 < 2, so decrement to 1. Remove A -> [B, C],
+        // insert at 1 -> [B, A, C].
+        let adjusted_index = if tree.roots().iter().position(|id| *id == a).unwrap() < raw_index {
+            raw_index - 1
+        } else {
+            raw_index
+        };
+        let mut fixed = tree.clone();
+        fixed.move_node_to_root(a, adjusted_index);
+        assert_eq!(fixed.roots(), &[b, a, c]);
+    }
+
     // --- Workspace tree drag-and-drop slot builder tests ---------------------
 
     use crate::tree_dnd::{

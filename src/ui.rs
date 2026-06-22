@@ -4165,10 +4165,50 @@ impl BeamView {
         Some(TreeMoveAction::MoveRequest(MoveRequestInput {
             request_id,
             new_parent,
-            insertion_index,
+            insertion_index: self.adjust_insertion_index_for_same_container_move(
+                destination_parent_id,
+                insertion_index,
+                request_id,
+            ),
             known_request_path: request_node.manifest_path.clone(),
             known_target_manifest_path,
         }))
+    }
+
+    /// Adjusts `insertion_index` for an in-container move so the dragged item
+    /// lands at the intended position.
+    ///
+    /// Callers compute `insertion_index` against the destination container's
+    /// current sibling list (before the move). The move helpers remove the
+    /// dragged item from its old slot *before* inserting at `insertion_index`.
+    /// When the dragged item already lives in the destination container at an
+    /// index below the insertion point, that removal shifts every later item
+    /// down by one, so the raw index would land one position too far. We
+    /// compensate by decrementing here. Cross-container moves and moves where
+    /// the dragged item sits at or above the insertion point are unaffected.
+    fn adjust_insertion_index_for_same_container_move(
+        &self,
+        destination_parent_id: Option<Ulid>,
+        insertion_index: usize,
+        dragged_id: Ulid,
+    ) -> usize {
+        let siblings: Vec<Ulid> = if let Some(folder_id) = destination_parent_id {
+            self.shell
+                .workspace_tree
+                .node(folder_id)
+                .map(|node| node.children.clone())
+                .unwrap_or_default()
+        } else {
+            self.shell.workspace_tree.roots().to_vec()
+        };
+        let Some(dragged_idx) = siblings.iter().position(|id| *id == dragged_id) else {
+            return insertion_index;
+        };
+        if dragged_idx < insertion_index {
+            insertion_index.saturating_sub(1)
+        } else {
+            insertion_index
+        }
     }
 
     fn folder_move_action(
@@ -4227,7 +4267,11 @@ impl BeamView {
         Some(TreeMoveAction::MoveFolder(MoveFolderInput {
             folder_id,
             new_parent,
-            insertion_index,
+            insertion_index: self.adjust_insertion_index_for_same_container_move(
+                destination_parent_id,
+                insertion_index,
+                folder_id,
+            ),
             known_folder_manifest_path: folder_node.manifest_path.clone(),
             known_target_manifest_path,
         }))
