@@ -2845,11 +2845,6 @@ impl BeamView {
         self.request_body_editor.update(cx, |input, cx| {
             input.set_soft_wrap(wrap_body_editor, window, cx);
         });
-        for editor in self.request_body_editor_cache.values() {
-            editor.update(cx, |input, cx| {
-                input.set_soft_wrap(wrap_body_editor, window, cx);
-            });
-        }
         self.response_body_editor.update(cx, |input, cx| {
             input.set_soft_wrap(wrap_body_editor, window, cx);
         });
