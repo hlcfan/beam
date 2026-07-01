@@ -3063,7 +3063,6 @@ impl BeamView {
                 let cached_editor = cached_editor.clone();
                 self.request_body_editor = cached_editor.clone();
                 self.request_body_editor.update(cx, |input, cx| {
-                    input.set_highlighter(next_body_language, cx);
                     input.set_soft_wrap(self.shell.theme.wrap_body_editor, window, cx);
                 });
                 self.resubscribe_request_body_editor(window, cx);
