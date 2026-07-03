@@ -7,8 +7,8 @@ edition = "2024"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 dirs = "6.0"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["tree-sitter-javascript"], rev = "49f4b4fb57553daa89310370a97b37f7ff9d2323" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "49f4b4fb57553daa89310370a97b37f7ff9d2323" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["tree-sitter-javascript"], rev = "b7e63cc29018c27bb24788ddb212f4cbdd861334" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "b7e63cc29018c27bb24788ddb212f4cbdd861334" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -23,6 +23,10 @@ log = "0.4"
 
 [dev-dependencies]
 tempfile = "3.20"
+
+# [patch."https://github.com/longbridge/gpui-component"]
+# gpui-component = { path = "../gpui-component/crates/ui" }
+# gpui-component-assets = { path = "../gpui-component/crates/assets" }
 
 [package.metadata.bundle]
 name = "Beam"

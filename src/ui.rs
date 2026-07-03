@@ -1,9 +1,9 @@
 use std::any::Any;
 use std::collections::HashMap;
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
-use std::ops::Range;
 use std::{fs, path::PathBuf};
 
 use chrono::{Local, Utc};
@@ -90,10 +90,7 @@ struct SwitchTheme(pub SharedString);
 #[action(namespace = beam, no_json)]
 struct SwitchThemeMode(pub ThemeMode);
 
-actions!(
-    beam,
-    [TreeMenuAddRequestAtRoot, TreeMenuAddFolderAtRoot]
-);
+actions!(beam, [TreeMenuAddRequestAtRoot, TreeMenuAddFolderAtRoot]);
 
 #[derive(Action, Clone, PartialEq)]
 #[action(namespace = beam, no_json)]
@@ -536,7 +533,12 @@ struct BeamView {
     env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
     /// In-memory sequence of requests the user has selected. Cleared on workspace switch.
     request_view_history: RequestViewHistory,
+    request_body_editor_cache: HashMap<Ulid, Entity<InputState>>,
+    request_body_editor_cache_order: Vec<Ulid>,
+    request_body_editor_change_sub: Option<Subscription>,
 }
+
+const BODY_EDITOR_CACHE_CAP: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResponseTab {
@@ -1188,11 +1190,7 @@ impl Render for KeyBindingsDialogView {
                     .child(chips),
             );
         }
-        v_flex()
-            .w_full()
-            .p_3()
-            .child(list)
-            .into_any_element()
+        v_flex().w_full().p_3().child(list).into_any_element()
     }
 }
 
@@ -2906,7 +2904,10 @@ impl BeamView {
                 let _ = root_window.update(cx, |_, window, cx| {
                     window.defer(cx, move |window, cx| {
                         window.open_dialog(cx, move |dialog, _, _| {
-                            dialog.title("Key Bindings").w(px(520.0)).child(view.clone())
+                            dialog
+                                .title("Key Bindings")
+                                .w(px(520.0))
+                                .child(view.clone())
                         });
                     });
                 });
@@ -3047,16 +3048,44 @@ impl BeamView {
         self.rebuild_request_param_inputs(window, cx);
         self.rebuild_request_header_inputs(window, cx);
         let next_url = self.request.url.clone();
-        let next_body = Self::body_editor_text(&self.request.body);
         let next_script = self.request.post_script.clone().unwrap_or_default();
         self.url_input.update(cx, |input, cx| {
             input.set_value(next_url, window, cx);
         });
         let next_body_language = Self::body_editor_language(&self.request.body);
-        self.request_body_editor.update(cx, |input, cx| {
-            input.set_highlighter(next_body_language, cx);
-            input.set_value(next_body, window, cx);
-        });
+        if let Some(request_id) = self.shell.workspace_tree.selected_request_id() {
+            if let Some(cached_editor) = self.request_body_editor_cache.get(&request_id) {
+                let cached_editor = cached_editor.clone();
+                self.request_body_editor = cached_editor.clone();
+                self.request_body_editor.update(cx, |input, cx| {
+                    input.set_soft_wrap(self.shell.theme.wrap_body_editor, window, cx);
+                });
+                self.resubscribe_request_body_editor(window, cx);
+            } else {
+                let editor = Self::build_request_body_editor(
+                    &self.request,
+                    self.shell.theme.wrap_body_editor,
+                    window,
+                    cx,
+                );
+                self.request_body_editor = editor.clone();
+                self.request_body_editor_cache.insert(request_id, editor);
+                self.request_body_editor_cache_order.push(request_id);
+                if self.request_body_editor_cache.len() > BODY_EDITOR_CACHE_CAP
+                    && let Some(oldest) = self.request_body_editor_cache_order.first().copied()
+                {
+                    self.request_body_editor_cache.remove(&oldest);
+                    self.request_body_editor_cache_order.remove(0);
+                }
+                self.resubscribe_request_body_editor(window, cx);
+            }
+        } else {
+            self.request_body_editor.update(cx, |input, cx| {
+                input.set_highlighter(next_body_language, cx);
+                input.set_value(Self::body_editor_text(&self.request.body), window, cx);
+            });
+            self.resubscribe_request_body_editor(window, cx);
+        }
         self.post_script_editor.update(cx, |input, cx| {
             input.set_value(next_script, window, cx);
         });
@@ -5242,6 +5271,8 @@ impl BeamView {
             self.current_workspace_paths = data_root.workspace_paths(&entry.path);
         }
         self.active_request_cache = None;
+        self.request_body_editor_cache.clear();
+        self.request_body_editor_cache_order.clear();
         self.request_file_index = Self::build_request_file_index(&self.shell);
         self.prune_request_execution_states();
         self.sync_request_editor_from_selection(window, cx);
@@ -5326,6 +5357,9 @@ impl BeamView {
                     self.clear_request_execution_state(*request_id);
                     self.request_file_index.remove(request_id);
                     self.request_view_history.prune(*request_id);
+                    self.request_body_editor_cache.remove(request_id);
+                    self.request_body_editor_cache_order
+                        .retain(|id| id != request_id);
                     self.shell.apply_event(&event);
                     if deleted_selected {
                         should_sync_editor = true;
@@ -6135,10 +6169,7 @@ impl BeamView {
             .text_color(cx.theme().foreground)
             .child(workspace_button)
             .child(
-                div()
-                .flex()
-                .occlude()
-                .child(
+                div().flex().occlude().child(
                     Button::new("title-bar-environment-sheet")
                         .small()
                         .ghost()
@@ -6161,7 +6192,7 @@ impl BeamView {
                                 )
                                 .child("Environment variables"),
                         ),
-                )
+                ),
             )
     }
 
@@ -6195,24 +6226,11 @@ impl BeamView {
                 .placeholder("https://api.example.com/resource")
                 .default_value(request.url.clone())
         });
-        let request_body_text = Self::body_editor_text(&request.body);
-        let request_body_language = Self::body_editor_language(&request.body);
         let post_script_text = request.post_script.clone().unwrap_or_default();
         let wrap_body_editor = shell.theme.wrap_body_editor;
 
-        let request_body_editor = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor(request_body_language)
-                .line_number(true)
-                .tab_size(TabSize {
-                    tab_size: 2,
-                    hard_tabs: false,
-                })
-                .soft_wrap(wrap_body_editor)
-                .searchable(true)
-                .placeholder("Enter request body...")
-                .default_value(request_body_text)
-        });
+        let request_body_editor =
+            Self::build_request_body_editor(&request, wrap_body_editor, window, cx);
 
         let response_body_editor = cx.new(|cx| {
             InputState::new(window, cx)
@@ -6269,19 +6287,6 @@ impl BeamView {
                         cx.notify();
                     }
                     _ => {}
-                }
-            }),
-            cx.subscribe_in(&request_body_editor, window, {
-                let request_body_editor = request_body_editor.clone();
-                move |this, _, ev: &InputEvent, _, cx| {
-                    if !matches!(ev, InputEvent::Change) {
-                        return;
-                    }
-                    let next_body_text = request_body_editor.read(cx).value().to_string();
-                    this.request.body =
-                        Self::body_with_updated_text(&this.request.body, next_body_text);
-                    this.schedule_request_save(cx);
-                    cx.notify();
                 }
             }),
             cx.subscribe_in(&post_script_editor, window, {
@@ -6363,8 +6368,17 @@ impl BeamView {
             env_var_hover: None,
             env_var_resolved_cache: None,
             request_view_history: RequestViewHistory::default(),
+            request_body_editor_cache: HashMap::new(),
+            request_body_editor_cache_order: Vec::new(),
+            request_body_editor_change_sub: None,
         };
+        view.resubscribe_request_body_editor(window, cx);
         view.refresh_active_request_cache();
+        if let Some(request_id) = view.shell.workspace_tree.selected_request_id() {
+            view.request_body_editor_cache
+                .insert(request_id, view.request_body_editor.clone());
+            view.request_body_editor_cache_order.push(request_id);
+        }
         view.rebuild_request_param_inputs(window, cx);
         view.rebuild_request_header_inputs(window, cx);
         view.sync_request_auth_inputs(window, cx);
@@ -7212,7 +7226,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<InputState>,
     ) {
-        input.set_value(text, window, cx);
+        input.replace_all(text, window, cx);
         input.focus(window, cx);
     }
 
@@ -7223,6 +7237,46 @@ impl BeamView {
             BodyConfig::Graphql { .. } => "graphql",
             _ => "text",
         }
+    }
+
+    fn build_request_body_editor(
+        request: &RequestAuthoringState,
+        wrap_body_editor: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let body_text = Self::body_editor_text(&request.body);
+        let body_language = Self::body_editor_language(&request.body);
+        cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor(body_language)
+                .line_number(true)
+                .tab_size(TabSize {
+                    tab_size: 2,
+                    hard_tabs: false,
+                })
+                .soft_wrap(wrap_body_editor)
+                .searchable(true)
+                .placeholder("Enter request body...")
+                .default_value(body_text)
+        })
+    }
+
+    fn resubscribe_request_body_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.request_body_editor.clone();
+        self.request_body_editor_change_sub =
+            Some(
+                cx.subscribe_in(&editor, window, move |this, _, ev: &InputEvent, _, cx| {
+                    if !matches!(ev, InputEvent::Change) {
+                        return;
+                    }
+                    let next_body_text = this.request_body_editor.read(cx).value().to_string();
+                    this.request.body =
+                        Self::body_with_updated_text(&this.request.body, next_body_text);
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }),
+            );
     }
 
     fn render_tree_row(
@@ -7412,10 +7466,7 @@ impl BeamView {
         body.into_any_element()
     }
 
-    fn build_tree_row_context_menu(
-        &self,
-        row: crate::app_shell::TreeRow,
-    ) -> NativeMenu {
+    fn build_tree_row_context_menu(&self, row: crate::app_shell::TreeRow) -> NativeMenu {
         let row_id = row.id;
         let row_kind = row.kind;
         let menu = NativeMenu::new();
@@ -7481,11 +7532,7 @@ impl BeamView {
         }
     }
 
-    fn build_tree_create_context_menu_group(
-        &self,
-        menu: NativeMenu,
-        row_id: Ulid,
-    ) -> NativeMenu {
+    fn build_tree_create_context_menu_group(&self, menu: NativeMenu, row_id: Ulid) -> NativeMenu {
         let menu = append_with_image_or_plain(
             menu,
             "HTTP",
@@ -7929,9 +7976,7 @@ impl BeamView {
                     .iter()
                     .enumerate()
                     .map(|(i, item)| match item {
-                        TreeRenderItem::Row(_) => {
-                            size(px(0.0), px(TREE_ROW_HEIGHT_PX))
-                        }
+                        TreeRenderItem::Row(_) => size(px(0.0), px(TREE_ROW_HEIGHT_PX)),
                         TreeRenderItem::Slot(slot) => {
                             let needs_depth_gap = i > 0
                                 && match &items[i - 1] {
@@ -7941,7 +7986,11 @@ impl BeamView {
                             size(
                                 px(0.0),
                                 px(SLOT_HIT_HEIGHT_PX
-                                    + if needs_depth_gap { SLOT_DEPTH_GAP_PX } else { 0.0 }),
+                                    + if needs_depth_gap {
+                                        SLOT_DEPTH_GAP_PX
+                                    } else {
+                                        0.0
+                                    }),
                             )
                         }
                     })
@@ -8000,12 +8049,11 @@ impl BeamView {
                     )
                     .can_drop(move |_dragged_value, _window, app| {
                         scroll_view.update(app, |this, _| {
-                            this.tree_drag_slot_hover.is_some()
-                                || this.tree_drag_hover.is_some()
+                            this.tree_drag_slot_hover.is_some() || this.tree_drag_hover.is_some()
                         })
                     })
-                    .on_drop(cx.listener(
-                        move |this, dragged: &DraggedRequest, window, cx| {
+                    .on_drop(
+                        cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
                             if let Some(slot) = this.tree_drag_slot_hover {
                                 this.handle_request_tree_drop_slot(
                                     dragged.request_id,
@@ -8025,10 +8073,10 @@ impl BeamView {
                                 );
                             }
                             this.clear_tree_drag_hover(cx);
-                        },
-                    ))
-                    .on_drop(cx.listener(
-                        move |this, dragged: &DraggedFolder, window, cx| {
+                        }),
+                    )
+                    .on_drop(
+                        cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
                             if let Some(slot) = this.tree_drag_slot_hover {
                                 this.handle_folder_tree_drop_slot(
                                     dragged.folder_id,
@@ -8048,31 +8096,28 @@ impl BeamView {
                                 );
                             }
                             this.clear_tree_drag_hover(cx);
-                        },
-                    ))
+                        }),
+                    )
                     .vertical_scrollbar(&self.collection_scroll_handle)
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        {
-                            let view = menu_view;
-                            move |ev: &MouseDownEvent, window, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.focus_handle.focus(window, cx);
-                                    let position = Point {
-                                        x: ev.position.x + px(4.),
-                                        y: ev.position.y,
-                                    };
-                                    if let Some(row) = this.collection_context_menu_row.take() {
-                                        let menu = this.build_tree_row_context_menu(row);
-                                        menu.show(position, window, cx);
-                                    } else {
-                                        let menu = this.build_empty_space_context_menu();
-                                        menu.show(position, window, cx);
-                                    }
-                                });
-                            }
-                        },
-                    ),
+                    .on_mouse_down(MouseButton::Right, {
+                        let view = menu_view;
+                        move |ev: &MouseDownEvent, window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.focus_handle.focus(window, cx);
+                                let position = Point {
+                                    x: ev.position.x + px(4.),
+                                    y: ev.position.y,
+                                };
+                                if let Some(row) = this.collection_context_menu_row.take() {
+                                    let menu = this.build_tree_row_context_menu(row);
+                                    menu.show(position, window, cx);
+                                } else {
+                                    let menu = this.build_empty_space_context_menu();
+                                    menu.show(position, window, cx);
+                                }
+                            });
+                        }
+                    }),
             )
         }
     }
