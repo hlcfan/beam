@@ -7226,7 +7226,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<InputState>,
     ) {
-        input.set_value(text, window, cx);
+        input.replace_all(text, window, cx);
         input.focus(window, cx);
     }
 
