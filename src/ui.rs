@@ -237,6 +237,8 @@ pub fn run_app(
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-enter", SendActiveRequest, None),
             #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-r", SendActiveRequest, None),
+            #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-n", CreateRequestBelowActive, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-l", FocusUrlInput, None),
@@ -249,6 +251,8 @@ pub fn run_app(
             KeyBinding::new("alt-f4", QuitApp, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-enter", SendActiveRequest, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-r", SendActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-n", CreateRequestBelowActive, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -1150,9 +1154,10 @@ impl KeyBindingsDialogView {
         if cfg!(target_os = "macos") {
             vec![
                 ("Send Request", "cmd-enter"),
+                ("Send Request", "cmd-r"),
                 ("New Request", "cmd-n"),
                 ("Duplicate Request", "cmd-d"),
-                ("Rename Request", "cmd-r"),
+                ("Rename Request", "f2"),
                 ("Focus URL", "cmd-l"),
                 ("Open Settings", "cmd-,"),
                 ("Next Request in Tree", "cmd-alt-down"),
@@ -1164,9 +1169,10 @@ impl KeyBindingsDialogView {
         } else {
             vec![
                 ("Send Request", "ctrl-enter"),
+                ("Send Request", "ctrl-r"),
                 ("New Request", "ctrl-n"),
                 ("Duplicate Request", "ctrl-d"),
-                ("Rename Request", "ctrl-r"),
+                ("Rename Request", "f2"),
                 ("Focus URL", "ctrl-l"),
                 ("Open Settings", "ctrl-,"),
                 ("Next Request in Tree", "ctrl-alt-down"),
