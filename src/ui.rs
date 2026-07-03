@@ -244,8 +244,7 @@ pub fn run_app(
             KeyBinding::new("cmd-,", OpenSettings, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-d", DuplicateActiveRequest, None),
-            #[cfg(target_os = "macos")]
-            KeyBinding::new("cmd-r", RenameActiveRequest, None),
+            KeyBinding::new("f2", RenameActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -258,8 +257,6 @@ pub fn run_app(
             KeyBinding::new("ctrl-,", OpenSettings, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-d", DuplicateActiveRequest, None),
-            #[cfg(any(target_os = "windows", target_os = "linux"))]
-            KeyBinding::new("ctrl-r", RenameActiveRequest, None),
             KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
             KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
