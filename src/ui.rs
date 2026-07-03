@@ -78,7 +78,9 @@ actions!(
         SelectNextRequestInViewHistory,
         SelectPrevRequestInViewHistory,
         FormatRequestBody,
-        FormatResponseBody
+        FormatResponseBody,
+        DuplicateActiveRequest,
+        RenameActiveRequest
     ]
 );
 
@@ -166,6 +168,9 @@ fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
             items: vec![
                 MenuItem::action("New Request", CreateRequestBelowActive),
                 MenuItem::separator(),
+                MenuItem::action("Duplicate Request", DuplicateActiveRequest),
+                MenuItem::action("Rename Request", RenameActiveRequest),
+                MenuItem::separator(),
                 MenuItem::action("Focus URL", FocusUrlInput),
             ],
             disabled: false,
@@ -232,21 +237,30 @@ pub fn run_app(
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-enter", SendActiveRequest, None),
             #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-r", SendActiveRequest, None),
+            #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-n", CreateRequestBelowActive, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-l", FocusUrlInput, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-,", OpenSettings, None),
+            #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-d", DuplicateActiveRequest, None),
+            KeyBinding::new("f2", RenameActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-enter", SendActiveRequest, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-r", SendActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-n", CreateRequestBelowActive, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-l", FocusUrlInput, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-d", DuplicateActiveRequest, None),
             KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
             KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -294,6 +308,42 @@ pub fn run_app(
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
                                     beam_view.create_request_below_active(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &DuplicateActiveRequest, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.duplicate_active_request(window, cx);
+                                });
+                            });
+                        }
+                    }
+                }
+            });
+        });
+        cx.on_action(|_: &RenameActiveRequest, cx: &mut App| {
+            cx.defer(move |cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    if let Some(root) = window_handle
+                        .downcast::<Root>()
+                        .and_then(|h| h.read(cx).ok())
+                    {
+                        if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
+                            let _ = window_handle.update(cx, |_root_view, window, cx| {
+                                beam_view.update(cx, |beam_view, cx| {
+                                    beam_view.rename_active_request(window, cx);
                                 });
                             });
                         }
@@ -1104,7 +1154,10 @@ impl KeyBindingsDialogView {
         if cfg!(target_os = "macos") {
             vec![
                 ("Send Request", "cmd-enter"),
+                ("Send Request", "cmd-r"),
                 ("New Request", "cmd-n"),
+                ("Duplicate Request", "cmd-d"),
+                ("Rename Request", "f2"),
                 ("Focus URL", "cmd-l"),
                 ("Open Settings", "cmd-,"),
                 ("Next Request in Tree", "cmd-alt-down"),
@@ -1116,7 +1169,10 @@ impl KeyBindingsDialogView {
         } else {
             vec![
                 ("Send Request", "ctrl-enter"),
+                ("Send Request", "ctrl-r"),
                 ("New Request", "ctrl-n"),
+                ("Duplicate Request", "ctrl-d"),
+                ("Rename Request", "f2"),
                 ("Focus URL", "ctrl-l"),
                 ("Open Settings", "ctrl-,"),
                 ("Next Request in Tree", "ctrl-alt-down"),
@@ -5857,6 +5913,26 @@ impl BeamView {
         }
     }
 
+    fn duplicate_active_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
+            return;
+        };
+        self.duplicate_request_from_tree_node(active_request_id, window, cx);
+    }
+
+    fn rename_active_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
+            return;
+        };
+        let kind = self
+            .shell
+            .workspace_tree
+            .node(active_request_id)
+            .map(|n| n.kind)
+            .unwrap_or(TreeNodeKind::Request);
+        self.open_rename_dialog_for_tree_node(active_request_id, kind, window, cx);
+    }
+
     fn focus_url_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.url_input.update(cx, |input, cx| {
             input.focus(window, cx);
@@ -5871,6 +5947,24 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         self.create_request_below_active(window, cx);
+    }
+
+    fn on_action_duplicate_active_request(
+        &mut self,
+        _: &DuplicateActiveRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.duplicate_active_request(window, cx);
+    }
+
+    fn on_action_rename_active_request(
+        &mut self,
+        _: &RenameActiveRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rename_active_request(window, cx);
     }
 
     fn on_action_focus_url_input(
@@ -10876,6 +10970,8 @@ impl Render for BeamView {
             .size_full()
             .on_action(cx.listener(Self::on_action_send_active_request))
             .on_action(cx.listener(Self::on_action_create_request_below_active))
+            .on_action(cx.listener(Self::on_action_duplicate_active_request))
+            .on_action(cx.listener(Self::on_action_rename_active_request))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .on_action(cx.listener(Self::on_action_format_request_body))
             .on_action(cx.listener(Self::on_action_format_response_body))
