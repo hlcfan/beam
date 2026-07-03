@@ -2642,6 +2642,16 @@ enum BodyFormatHint<'a> {
     FromContentType(Option<&'a str>),
 }
 
+/// Supported body format kinds. Both config-driven and content-type-driven
+/// formatting funnel through `format_body_text_by_kind` so they support the
+/// same set of body types.
+enum BodyFormatKind {
+    Json,
+    Xml,
+    Graphql,
+    Form,
+}
+
 impl BeamView {
     fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
         let run_id = self.next_request_run_id;
@@ -7060,15 +7070,19 @@ impl BeamView {
         }
     }
 
-    fn format_body_text_from_config(body: &BodyConfig, text: &str) -> Result<String, String> {
-        match body {
-            BodyConfig::Json { .. } => {
+    /// Shared formatting core used by both config-driven and content-type-driven
+    /// formatting so they support the same body kinds (JSON, XML, GraphQL, form).
+    fn format_body_text_by_kind(text: &str, kind: BodyFormatKind) -> Result<String, String> {
+        match kind {
+            BodyFormatKind::Json => {
                 let value = serde_json::from_str::<serde_json::Value>(text)
                     .map_err(|err| format!("Unable to format JSON body: {err}"))?;
                 serde_json::to_string_pretty(&value)
                     .map_err(|err| format!("Unable to format JSON body: {err}"))
             }
-            BodyConfig::Graphql { .. } => {
+            BodyFormatKind::Xml => Self::format_xml_or_html(text)
+                .ok_or_else(|| "Unable to format XML/HTML body.".to_string()),
+            BodyFormatKind::Graphql => {
                 let (query, variables_json) = Self::parse_graphql_editor_text(text);
                 let query = query.trim().to_string();
                 let formatted_variables = if let Some(variables) = variables_json {
@@ -7094,7 +7108,7 @@ impl BeamView {
                     Ok(query)
                 }
             }
-            BodyConfig::FormUrlEncoded { .. } | BodyConfig::Multipart { .. } => {
+            BodyFormatKind::Form => {
                 let formatted = Self::parse_form_body_fields(text)
                     .into_iter()
                     .map(|field| format!("{}={}", field.name.trim(), field.value.trim()))
@@ -7102,8 +7116,24 @@ impl BeamView {
                     .join("\n");
                 Ok(formatted)
             }
-            _ => Err("Formatting is only supported for JSON, GraphQL, and form bodies.".into()),
         }
+    }
+
+    fn format_body_text_from_config(body: &BodyConfig, text: &str) -> Result<String, String> {
+        let kind = match body {
+            BodyConfig::Json { .. } => BodyFormatKind::Json,
+            BodyConfig::Xml { .. } => BodyFormatKind::Xml,
+            BodyConfig::Graphql { .. } => BodyFormatKind::Graphql,
+            BodyConfig::FormUrlEncoded { .. } | BodyConfig::Multipart { .. } => {
+                BodyFormatKind::Form
+            }
+            _ => {
+                return Err(
+                    "Formatting is only supported for JSON, XML, GraphQL, and form bodies.".into(),
+                );
+            }
+        };
+        Self::format_body_text_by_kind(text, kind)
     }
 
     fn format_body_text_from_content_type(
@@ -7117,19 +7147,27 @@ impl BeamView {
 
         let ct = content_type.unwrap_or("").to_lowercase();
 
-        if ct.contains("json") || trimmed.starts_with('{') || trimmed.starts_with('[') {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                if let Ok(pretty) = serde_json::to_string_pretty(&value) {
-                    return Ok(pretty);
-                }
+        let kind = if ct.contains("json")
+            || ct.contains("graphql")
+            || trimmed.starts_with('{')
+            || trimmed.starts_with('[')
+        {
+            if ct.contains("graphql") {
+                BodyFormatKind::Graphql
+            } else {
+                BodyFormatKind::Json
             }
         } else if ct.contains("xml") || ct.contains("html") {
-            if let Some(formatted) = Self::format_xml_or_html(trimmed) {
-                return Ok(formatted);
-            }
-        }
+            BodyFormatKind::Xml
+        } else if ct.contains("x-www-form-urlencoded") || ct.contains("multipart") {
+            BodyFormatKind::Form
+        } else if trimmed.starts_with("query:") {
+            BodyFormatKind::Graphql
+        } else {
+            return Err("Unable to format body for the detected content type.".into());
+        };
 
-        Err("Unable to format body for the detected content type.".into())
+        Self::format_body_text_by_kind(trimmed, kind)
     }
 
     fn format_request_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
