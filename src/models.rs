@@ -246,6 +246,14 @@ pub enum BodyConfig {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyFormatKind {
+    Json,
+    Xml,
+    Graphql,
+    Form,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ScriptConfig {
     pub post_response: Option<String>,

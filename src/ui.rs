@@ -39,8 +39,8 @@ use crate::app_shell::{
 };
 use crate::assets::{Assets, embedded_theme_contents};
 use crate::models::{
-    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable,
-    HttpMethod, LocalStateFile, RequestFile,
+    AppFontSize, AuthConfig, BodyConfig, BodyFormatKind, EnvironmentFile, EnvironmentScope,
+    EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
@@ -2640,16 +2640,6 @@ fn append_with_image_or_plain(
 enum BodyFormatHint<'a> {
     FromConfig(&'a BodyConfig),
     FromContentType(Option<&'a str>),
-}
-
-/// Supported body format kinds. Both config-driven and content-type-driven
-/// formatting funnel through `format_body_text_by_kind` so they support the
-/// same set of body types.
-enum BodyFormatKind {
-    Json,
-    Xml,
-    Graphql,
-    Form,
 }
 
 impl BeamView {
