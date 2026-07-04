@@ -7053,7 +7053,7 @@ impl BeamView {
 
     fn format_body_text(text: &str, hint: BodyFormatHint<'_>) -> Result<String, String> {
         match hint {
-            BodyFormatHint::FromConfig(body) => Self::format_body_text_from_config(body, text),
+            BodyFormatHint::FromConfig(body) => Self::format_body_text_from_config(text, body),
             BodyFormatHint::FromContentType(content_type) => {
                 Self::format_body_text_from_content_type(text, content_type)
             }
@@ -7109,8 +7109,8 @@ impl BeamView {
         }
     }
 
-    fn format_body_text_from_config(body: &BodyConfig, text: &str) -> Result<String, String> {
-        let kind = match body {
+    fn format_body_text_from_config(text: &str, body_config: &BodyConfig) -> Result<String, String> {
+        let kind = match body_config {
             BodyConfig::Json { .. } => BodyFormatKind::Json,
             BodyConfig::Xml { .. } => BodyFormatKind::Xml,
             BodyConfig::Graphql { .. } => BodyFormatKind::Graphql,
