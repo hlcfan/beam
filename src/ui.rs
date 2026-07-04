@@ -3415,14 +3415,11 @@ impl BeamView {
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
         self.response_content_type = content_type;
-        let needs_highlighter_change = self.response_body_language != language;
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
             cx,
             |input, window, cx| {
-                if needs_highlighter_change {
-                    input.set_highlighter(language, cx);
-                }
+                input.set_highlighter(language, cx);
                 input.set_value(formatted_body.clone(), window, cx);
             },
         );
@@ -6642,14 +6639,11 @@ impl BeamView {
                     this.response_status_code = response_status_code;
                     this.response_time = response_time;
                     this.response_size = response_size;
-                    let needs_highlighter_change = this.response_body_language != response_language;
                     this.update_response_body_editor_with_scroll_persistence_suppressed(
                         window,
                         cx,
                         |input, window, cx| {
-                            if needs_highlighter_change {
-                                input.set_highlighter(response_language, cx);
-                            }
+                            input.set_highlighter(response_language, cx);
                             input.set_value(response_body.clone(), window, cx);
                         },
                     );
