@@ -532,6 +532,7 @@ struct BeamView {
     response_body_editor: Entity<InputState>,
     response_headers_raw: String,
     response_content_type: Option<String>,
+    response_body_language: &'static str,
     response_history_entries: Vec<ResponseHistoryEntry>,
     post_script_editor: Entity<InputState>,
     active_response_tab: ResponseTab,
@@ -3407,19 +3408,25 @@ impl BeamView {
         let content_type = snapshot.content_type.clone();
         let formatted_body =
             self.response_body_for_display(&snapshot.body, content_type.as_deref());
+        let language = Self::response_body_editor_language(content_type.as_deref());
         self.response_status = snapshot.status.clone();
         self.response_status_code = snapshot.status_code;
         self.response_time = snapshot.time.clone();
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
         self.response_content_type = content_type;
+        let needs_highlighter_change = self.response_body_language != language;
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
             cx,
             |input, window, cx| {
+                if needs_highlighter_change {
+                    input.set_highlighter(language, cx);
+                }
                 input.set_value(formatted_body.clone(), window, cx);
             },
         );
+        self.response_body_language = language;
     }
 
     fn sync_response_pane_from_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6328,7 +6335,7 @@ impl BeamView {
 
         let response_body_editor = cx.new(|cx| {
             InputState::new(window, cx)
-                .code_editor("json")
+                .code_editor("text")
                 .replaceable(false)
                 .line_number(true)
                 .tab_size(TabSize {
@@ -6413,6 +6420,7 @@ impl BeamView {
             response_body_editor,
             response_headers_raw: String::new(),
             response_content_type: None,
+            response_body_language: "text",
             response_history_entries: Vec::new(),
             post_script_editor,
             active_response_tab: ResponseTab::Body,
@@ -6626,19 +6634,26 @@ impl BeamView {
                 let response_size = response.size.clone();
                 let response_body = this
                     .response_body_for_display(&response.body, response.content_type.as_deref());
+                let response_language =
+                    Self::response_body_editor_language(response.content_type.as_deref());
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
                     this.response_status_code = response_status_code;
                     this.response_time = response_time;
                     this.response_size = response_size;
+                    let needs_highlighter_change = this.response_body_language != response_language;
                     this.update_response_body_editor_with_scroll_persistence_suppressed(
                         window,
                         cx,
                         |input, window, cx| {
+                            if needs_highlighter_change {
+                                input.set_highlighter(response_language, cx);
+                            }
                             input.set_value(response_body.clone(), window, cx);
                         },
                     );
+                    this.response_body_language = response_language;
                     this.response_headers_raw = response_headers;
                     this.response_content_type = response.content_type.clone();
                     this.script_result = outcome.script_result.clone();
@@ -7352,12 +7367,25 @@ impl BeamView {
         input.focus(window, cx);
     }
 
-    fn body_editor_language(body: &BodyConfig) -> &'static str {
-        match body {
+    fn body_editor_language(body_config: &BodyConfig) -> &'static str {
+        match body_config {
             BodyConfig::Json { .. } => "json",
-            BodyConfig::Xml { .. } => "xml",
+            BodyConfig::Xml { .. } => "html",
             BodyConfig::Graphql { .. } => "graphql",
             _ => "text",
+        }
+    }
+
+    fn response_body_editor_language(content_type: Option<&str>) -> &'static str {
+        let ct = content_type.unwrap_or("").to_lowercase();
+        if ct.contains("graphql") {
+            "graphql"
+        } else if ct.contains("json") {
+            "json"
+        } else if ct.contains("xml") || ct.contains("html") {
+            "html"
+        } else {
+            "text"
         }
     }
 
