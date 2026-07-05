@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - "v*.*.*"
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -181,6 +183,34 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out Beam
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set release metadata
+        id: meta
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.ref_name }}" == *-* ]]; then
+              echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "is_tip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "is_tip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Force-push nightly tag
+        if: steps.meta.outputs.is_tip == 'true'
+        run: |
+          git tag -f nightly
+          git push -f origin nightly
+
       - name: Download packaged artifacts
         uses: actions/download-artifact@v8
         with:
@@ -191,6 +221,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.meta.outputs.release_tag }}
           files: dist/*
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}
