@@ -3114,7 +3114,6 @@ impl BeamView {
         if let Some(request_id) = selected_request_id {
             // Cache URL editor
             if let Some(cached_url) = self.request_url_editor_cache.get(&request_id) {
-                let cached_url = cached_url.clone();
                 self.url_input = cached_url.clone();
                 self.resubscribe_request_url_editor(window, cx);
             } else {
@@ -3161,7 +3160,6 @@ impl BeamView {
             self.url_input.update(cx, |input, cx| {
                 input.set_value(next_url, window, cx);
             });
-            self.resubscribe_request_url_editor(window, cx);
             self.request_body_editor.update(cx, |input, cx| {
                 input.set_highlighter(next_body_language, cx);
                 input.set_value(Self::body_editor_text(&self.request.body), window, cx);
@@ -6349,11 +6347,7 @@ impl BeamView {
         let mut request = RequestAuthoringState::default();
         Self::hydrate_request_from_selection(&mut request, &shell);
         request.ensure_trailing_empty_row();
-        let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("https://api.example.com/resource")
-                .default_value(request.url.clone())
-        });
+        let url_input = Self::build_request_url_editor(&request, window, cx);
         let post_script_text = request.post_script.clone().unwrap_or_default();
         let wrap_body_editor = shell.theme.wrap_body_editor;
 
