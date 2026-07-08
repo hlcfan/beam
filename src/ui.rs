@@ -587,9 +587,13 @@ struct BeamView {
     request_body_editor_cache: HashMap<Ulid, Entity<InputState>>,
     request_body_editor_cache_order: Vec<Ulid>,
     request_body_editor_change_sub: Option<Subscription>,
+    request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
+    request_url_editor_cache_order: Vec<Ulid>,
+    request_url_editor_change_sub: Option<Subscription>,
 }
 
 const BODY_EDITOR_CACHE_CAP: usize = 32;
+const URL_EDITOR_CACHE_CAP: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResponseTab {
@@ -3104,13 +3108,21 @@ impl BeamView {
         self.request.ensure_trailing_empty_row();
         self.rebuild_request_param_inputs(window, cx);
         self.rebuild_request_header_inputs(window, cx);
-        let next_url = self.request.url.clone();
         let next_script = self.request.post_script.clone().unwrap_or_default();
-        self.url_input.update(cx, |input, cx| {
-            input.set_value(next_url, window, cx);
-        });
         let next_body_language = Self::body_editor_language(&self.request.body);
-        if let Some(request_id) = self.shell.workspace_tree.selected_request_id() {
+        let selected_request_id = self.shell.workspace_tree.selected_request_id();
+        if let Some(request_id) = selected_request_id {
+            // Cache URL editor
+            if let Some(cached_url) = self.request_url_editor_cache.get(&request_id) {
+                self.url_input = cached_url.clone();
+                self.resubscribe_request_url_editor(window, cx);
+            } else {
+                let url = Self::build_request_url_editor(&self.request, window, cx);
+                self.url_input = url.clone();
+                self.cache_url_editor(request_id, url);
+                self.resubscribe_request_url_editor(window, cx);
+            }
+            // Cache body editor
             if let Some(cached_editor) = self.request_body_editor_cache.get(&request_id) {
                 let cached_editor = cached_editor.clone();
                 self.request_body_editor = cached_editor.clone();
@@ -3126,17 +3138,14 @@ impl BeamView {
                     cx,
                 );
                 self.request_body_editor = editor.clone();
-                self.request_body_editor_cache.insert(request_id, editor);
-                self.request_body_editor_cache_order.push(request_id);
-                if self.request_body_editor_cache.len() > BODY_EDITOR_CACHE_CAP
-                    && let Some(oldest) = self.request_body_editor_cache_order.first().copied()
-                {
-                    self.request_body_editor_cache.remove(&oldest);
-                    self.request_body_editor_cache_order.remove(0);
-                }
+                self.cache_body_editor(request_id, editor);
                 self.resubscribe_request_body_editor(window, cx);
             }
         } else {
+            let next_url = self.request.url.clone();
+            self.url_input.update(cx, |input, cx| {
+                input.set_value(next_url, window, cx);
+            });
             self.request_body_editor.update(cx, |input, cx| {
                 input.set_highlighter(next_body_language, cx);
                 input.set_value(Self::body_editor_text(&self.request.body), window, cx);
@@ -5333,6 +5342,8 @@ impl BeamView {
         self.active_request_cache = None;
         self.request_body_editor_cache.clear();
         self.request_body_editor_cache_order.clear();
+        self.request_url_editor_cache.clear();
+        self.request_url_editor_cache_order.clear();
         self.request_file_index = Self::build_request_file_index(&self.shell);
         self.prune_request_execution_states();
         self.sync_request_editor_from_selection(window, cx);
@@ -5419,6 +5430,9 @@ impl BeamView {
                     self.request_view_history.prune(*request_id);
                     self.request_body_editor_cache.remove(request_id);
                     self.request_body_editor_cache_order
+                        .retain(|id| id != request_id);
+                    self.request_url_editor_cache.remove(request_id);
+                    self.request_url_editor_cache_order
                         .retain(|id| id != request_id);
                     self.shell.apply_event(&event);
                     if deleted_selected {
@@ -6319,11 +6333,7 @@ impl BeamView {
         let mut request = RequestAuthoringState::default();
         Self::hydrate_request_from_selection(&mut request, &shell);
         request.ensure_trailing_empty_row();
-        let url_input = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("https://api.example.com/resource")
-                .default_value(request.url.clone())
-        });
+        let url_input = Self::build_request_url_editor(&request, window, cx);
         let post_script_text = request.post_script.clone().unwrap_or_default();
         let wrap_body_editor = shell.theme.wrap_body_editor;
 
@@ -6369,24 +6379,6 @@ impl BeamView {
             cx.new(|cx| InputState::new(window, cx).placeholder("API key value"));
 
         let _subscriptions = vec![
-            cx.subscribe_in(&url_input, window, {
-                let url_input = url_input.clone();
-                move |this, _, ev: &InputEvent, window, cx| match ev {
-                    InputEvent::Change => {
-                        this.request.url = url_input.read(cx).value().to_string();
-                        this.show_invalid_url_border = false;
-                        this.schedule_request_save(cx);
-                        cx.notify();
-                    }
-                    InputEvent::PressEnter { .. } => {
-                        this.request.url = url_input.read(cx).value().to_string();
-                        this.schedule_request_save(cx);
-                        this.handle_send_or_cancel_action(window, cx);
-                        cx.notify();
-                    }
-                    _ => {}
-                }
-            }),
             cx.subscribe_in(&post_script_editor, window, {
                 let post_script_editor = post_script_editor.clone();
                 move |this, _, ev: &InputEvent, _, cx| {
@@ -6470,13 +6462,16 @@ impl BeamView {
             request_body_editor_cache: HashMap::new(),
             request_body_editor_cache_order: Vec::new(),
             request_body_editor_change_sub: None,
+            request_url_editor_cache: HashMap::new(),
+            request_url_editor_cache_order: Vec::new(),
+            request_url_editor_change_sub: None,
         };
         view.resubscribe_request_body_editor(window, cx);
+        view.resubscribe_request_url_editor(window, cx);
         view.refresh_active_request_cache();
         if let Some(request_id) = view.shell.workspace_tree.selected_request_id() {
-            view.request_body_editor_cache
-                .insert(request_id, view.request_body_editor.clone());
-            view.request_body_editor_cache_order.push(request_id);
+            view.cache_body_editor(request_id, view.request_body_editor.clone());
+            view.cache_url_editor(request_id, view.url_input.clone());
         }
         view.rebuild_request_param_inputs(window, cx);
         view.rebuild_request_header_inputs(window, cx);
@@ -7421,6 +7416,77 @@ impl BeamView {
                     cx.notify();
                 }),
             );
+    }
+
+    fn build_request_url_editor(
+        request: &RequestAuthoringState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("https://api.example.com/resource")
+                .default_value(request.url.clone())
+        })
+    }
+
+    fn resubscribe_request_url_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.url_input.clone();
+        self.request_url_editor_change_sub =
+            Some(
+                cx.subscribe_in(&editor, window, move |this, _, ev: &InputEvent, window, cx| match ev {
+                    InputEvent::Change => {
+                        this.request.url = this.url_input.read(cx).value().to_string();
+                        this.show_invalid_url_border = false;
+                        this.schedule_request_save(cx);
+                        cx.notify();
+                    }
+                    InputEvent::PressEnter { .. } => {
+                        this.request.url = this.url_input.read(cx).value().to_string();
+                        this.schedule_request_save(cx);
+                        this.handle_send_or_cancel_action(window, cx);
+                        cx.notify();
+                    }
+                    _ => {}
+                }),
+            );
+    }
+
+    fn cache_url_editor(&mut self, request_id: Ulid, editor: Entity<InputState>) {
+        Self::insert_editor_cache_entry(
+            &mut self.request_url_editor_cache,
+            &mut self.request_url_editor_cache_order,
+            URL_EDITOR_CACHE_CAP,
+            request_id,
+            editor,
+        );
+    }
+
+    fn cache_body_editor(&mut self, request_id: Ulid, editor: Entity<InputState>) {
+        Self::insert_editor_cache_entry(
+            &mut self.request_body_editor_cache,
+            &mut self.request_body_editor_cache_order,
+            BODY_EDITOR_CACHE_CAP,
+            request_id,
+            editor,
+        );
+    }
+
+    fn insert_editor_cache_entry(
+        cache: &mut HashMap<Ulid, Entity<InputState>>,
+        order: &mut Vec<Ulid>,
+        cap: usize,
+        request_id: Ulid,
+        editor: Entity<InputState>,
+    ) {
+        cache.insert(request_id, editor);
+        order.push(request_id);
+        if cache.len() > cap
+            && let Some(oldest) = order.first().copied()
+        {
+            cache.remove(&oldest);
+            order.remove(0);
+        }
     }
 
     fn render_tree_row(
