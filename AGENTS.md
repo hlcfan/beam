@@ -12,7 +12,14 @@ The hierarchy is: **Workspace → Folders → Requests**. Collections have been 
 
 ## Supported Features
 
-// TODO
+- HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, QUERY
+- Auth: Bearer, Basic, API Key (header or query)
+- Body types: JSON, XML, Text, GraphQL, Form URL-Encoded, Multipart
+- Global environments with `{{variable}}` interpolation
+- Post-response JavaScript scripting
+- Multi-workspace organization with folders
+- Response history view (next to Headers in response pane)
+- Theme support (light/dark), font size settings, response auto-format
 
 ## Architecture
 
@@ -225,9 +232,9 @@ Key dependencies to be aware of:
 
 See `TODO.md` for planned features. Common enhancement areas:
 - Additional authentication methods
-- GraphQL support
+- GraphQL subscriptions
 - WebSocket support
-- Request history
+- Request history (currently only response history is stored)
 - Import/export functionality
 - Collaborative features
 - Cloud sync
