@@ -3119,14 +3119,7 @@ impl BeamView {
             } else {
                 let url = Self::build_request_url_editor(&self.request, window, cx);
                 self.url_input = url.clone();
-                self.request_url_editor_cache.insert(request_id, url);
-                self.request_url_editor_cache_order.push(request_id);
-                if self.request_url_editor_cache.len() > URL_EDITOR_CACHE_CAP
-                    && let Some(oldest) = self.request_url_editor_cache_order.first().copied()
-                {
-                    self.request_url_editor_cache.remove(&oldest);
-                    self.request_url_editor_cache_order.remove(0);
-                }
+                self.cache_url_editor(request_id, url);
                 self.resubscribe_request_url_editor(window, cx);
             }
             // Cache body editor
@@ -3145,14 +3138,7 @@ impl BeamView {
                     cx,
                 );
                 self.request_body_editor = editor.clone();
-                self.request_body_editor_cache.insert(request_id, editor);
-                self.request_body_editor_cache_order.push(request_id);
-                if self.request_body_editor_cache.len() > BODY_EDITOR_CACHE_CAP
-                    && let Some(oldest) = self.request_body_editor_cache_order.first().copied()
-                {
-                    self.request_body_editor_cache.remove(&oldest);
-                    self.request_body_editor_cache_order.remove(0);
-                }
+                self.cache_body_editor(request_id, editor);
                 self.resubscribe_request_body_editor(window, cx);
             }
         } else {
@@ -6484,12 +6470,8 @@ impl BeamView {
         view.resubscribe_request_url_editor(window, cx);
         view.refresh_active_request_cache();
         if let Some(request_id) = view.shell.workspace_tree.selected_request_id() {
-            view.request_body_editor_cache
-                .insert(request_id, view.request_body_editor.clone());
-            view.request_body_editor_cache_order.push(request_id);
-            view.request_url_editor_cache
-                .insert(request_id, view.url_input.clone());
-            view.request_url_editor_cache_order.push(request_id);
+            view.cache_body_editor(request_id, view.request_body_editor.clone());
+            view.cache_url_editor(request_id, view.url_input.clone());
         }
         view.rebuild_request_param_inputs(window, cx);
         view.rebuild_request_header_inputs(window, cx);
@@ -7468,6 +7450,43 @@ impl BeamView {
                     _ => {}
                 }),
             );
+    }
+
+    fn cache_url_editor(&mut self, request_id: Ulid, editor: Entity<InputState>) {
+        Self::insert_editor_cache_entry(
+            &mut self.request_url_editor_cache,
+            &mut self.request_url_editor_cache_order,
+            URL_EDITOR_CACHE_CAP,
+            request_id,
+            editor,
+        );
+    }
+
+    fn cache_body_editor(&mut self, request_id: Ulid, editor: Entity<InputState>) {
+        Self::insert_editor_cache_entry(
+            &mut self.request_body_editor_cache,
+            &mut self.request_body_editor_cache_order,
+            BODY_EDITOR_CACHE_CAP,
+            request_id,
+            editor,
+        );
+    }
+
+    fn insert_editor_cache_entry(
+        cache: &mut HashMap<Ulid, Entity<InputState>>,
+        order: &mut Vec<Ulid>,
+        cap: usize,
+        request_id: Ulid,
+        editor: Entity<InputState>,
+    ) {
+        cache.insert(request_id, editor);
+        order.push(request_id);
+        if cache.len() > cap
+            && let Some(oldest) = order.first().copied()
+        {
+            cache.remove(&oldest);
+            order.remove(0);
+        }
     }
 
     fn render_tree_row(
