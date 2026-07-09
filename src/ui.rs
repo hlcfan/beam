@@ -1787,7 +1787,6 @@ impl EnvironmentManagerDialogView {
             name: String::new(),
             value: String::new(),
             enabled: true,
-            secret: false,
             description: None,
         });
         self.rebuild_variable_inputs(window, cx);
@@ -4095,7 +4094,6 @@ impl BeamView {
                                 value: String::new(),
                                 enabled: true,
                                 description: None,
-                                secret: false,
                             });
                             this.rebuild_request_header_inputs(window, cx);
                             if let Some(input) = this.request_header_name_inputs.get(index).cloned()
@@ -4138,7 +4136,6 @@ impl BeamView {
                                 value: String::new(),
                                 enabled: true,
                                 description: None,
-                                secret: false,
                             });
                             this.rebuild_request_header_inputs(window, cx);
                             if let Some(input) =
@@ -6786,7 +6783,6 @@ impl BeamView {
                     name: key.clone(),
                     value: value.clone(),
                     enabled: true,
-                    secret: false,
                     description: None,
                 });
             }
@@ -7113,7 +7109,10 @@ impl BeamView {
         }
     }
 
-    fn format_body_text_from_config(text: &str, body_config: &BodyConfig) -> Result<String, String> {
+    fn format_body_text_from_config(
+        text: &str,
+        body_config: &BodyConfig,
+    ) -> Result<String, String> {
         let kind = match body_config {
             BodyConfig::Json { .. } => BodyFormatKind::Json,
             BodyConfig::Xml { .. } => BodyFormatKind::Xml,
@@ -7432,24 +7431,25 @@ impl BeamView {
 
     fn resubscribe_request_url_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.url_input.clone();
-        self.request_url_editor_change_sub =
-            Some(
-                cx.subscribe_in(&editor, window, move |this, _, ev: &InputEvent, window, cx| match ev {
-                    InputEvent::Change => {
-                        this.request.url = this.url_input.read(cx).value().to_string();
-                        this.show_invalid_url_border = false;
-                        this.schedule_request_save(cx);
-                        cx.notify();
-                    }
-                    InputEvent::PressEnter { .. } => {
-                        this.request.url = this.url_input.read(cx).value().to_string();
-                        this.schedule_request_save(cx);
-                        this.handle_send_or_cancel_action(window, cx);
-                        cx.notify();
-                    }
-                    _ => {}
-                }),
-            );
+        self.request_url_editor_change_sub = Some(cx.subscribe_in(
+            &editor,
+            window,
+            move |this, _, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Change => {
+                    this.request.url = this.url_input.read(cx).value().to_string();
+                    this.show_invalid_url_border = false;
+                    this.schedule_request_save(cx);
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => {
+                    this.request.url = this.url_input.read(cx).value().to_string();
+                    this.schedule_request_save(cx);
+                    this.handle_send_or_cancel_action(window, cx);
+                    cx.notify();
+                }
+                _ => {}
+            },
+        ));
     }
 
     fn cache_url_editor(&mut self, request_id: Ulid, editor: Entity<InputState>) {
@@ -11630,7 +11630,10 @@ updated_at = "2026-05-27T08:30:00.000000Z"
     #[test]
     fn format_body_text_json_array() {
         let input = r#"[{"id": 1}, {"id": 2}]"#;
-        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(Some("application/json")));
+        let result = BeamView::format_body_text(
+            input,
+            BodyFormatHint::FromContentType(Some("application/json")),
+        );
         assert!(result.is_ok());
         assert!(result.unwrap().contains("\"id\": 1"));
     }
@@ -11732,9 +11735,11 @@ updated_at = "2026-05-27T08:30:00.000000Z"
             }),
         );
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Unable to format GraphQL variables JSON"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Unable to format GraphQL variables JSON")
+        );
     }
 
     #[test]
@@ -11742,9 +11747,7 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         let input = "key1=value1\nkey2=value2";
         let result = BeamView::format_body_text(
             input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded {
-                fields: vec![],
-            }),
+            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
         );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
@@ -11755,9 +11758,7 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         let input = "  key1 = value1  \n  key2 = value2  ";
         let result = BeamView::format_body_text(
             input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded {
-                fields: vec![],
-            }),
+            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
         );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
@@ -11768,9 +11769,7 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         let input = "key1=value1\n\n\nkey2=value2";
         let result = BeamView::format_body_text(
             input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded {
-                fields: vec![],
-            }),
+            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
         );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
@@ -11781,9 +11780,7 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         let input = "key_without_value";
         let result = BeamView::format_body_text(
             input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded {
-                fields: vec![],
-            }),
+            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
         );
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "key_without_value=");
@@ -11805,9 +11802,11 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         let result =
             BeamView::format_body_text("some text", BodyFormatHint::FromConfig(&BodyConfig::None));
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Formatting is only supported for JSON, XML, GraphQL, and form bodies."));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Formatting is only supported for JSON, XML, GraphQL, and form bodies.")
+        );
     }
 
     #[test]
@@ -11820,34 +11819,41 @@ updated_at = "2026-05-27T08:30:00.000000Z"
             }),
         );
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Formatting is only supported for JSON, XML, GraphQL, and form bodies."));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Formatting is only supported for JSON, XML, GraphQL, and form bodies.")
+        );
     }
 
     #[test]
     fn format_body_text_from_content_type_empty_body() {
-        let result =
-            BeamView::format_body_text("  ", BodyFormatHint::FromContentType(Some("application/json")));
+        let result = BeamView::format_body_text(
+            "  ",
+            BodyFormatHint::FromContentType(Some("application/json")),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Body is empty"));
     }
 
     #[test]
     fn format_body_text_from_content_type_unrecognized() {
-        let result =
-            BeamView::format_body_text("some text", BodyFormatHint::FromContentType(Some("application/pdf")));
+        let result = BeamView::format_body_text(
+            "some text",
+            BodyFormatHint::FromContentType(Some("application/pdf")),
+        );
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("Unable to format body for the detected content type"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Unable to format body for the detected content type")
+        );
     }
 
     #[test]
     fn format_body_text_from_content_type_auto_detect_json_brace() {
         let input = r#"{"key": "value"}"#;
-        let result =
-            BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
+        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
         assert!(result.is_ok());
         let formatted = result.unwrap();
         assert!(formatted.contains("\"key\": \"value\""));
@@ -11856,8 +11862,7 @@ updated_at = "2026-05-27T08:30:00.000000Z"
     #[test]
     fn format_body_text_from_content_type_auto_detect_json_bracket() {
         let input = r#"[1, 2, 3]"#;
-        let result =
-            BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
+        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
         assert!(result.is_ok());
     }
 
@@ -11875,8 +11880,7 @@ updated_at = "2026-05-27T08:30:00.000000Z"
     #[test]
     fn format_body_text_from_content_type_graphql_query_prefix() {
         let input = "query:\nquery { user { name } }";
-        let result =
-            BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
+        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
         assert!(result.is_ok());
         assert!(result.unwrap().contains("query { user { name } }"));
     }
@@ -11884,10 +11888,8 @@ updated_at = "2026-05-27T08:30:00.000000Z"
     #[test]
     fn format_body_text_from_content_type_html() {
         let input = "<html><body><p>Hello</p></body></html>";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromContentType(Some("text/html")),
-        );
+        let result =
+            BeamView::format_body_text(input, BodyFormatHint::FromContentType(Some("text/html")));
         assert!(result.is_ok());
         let formatted = result.unwrap();
         assert!(formatted.starts_with("<html>"));
@@ -11929,10 +11931,8 @@ updated_at = "2026-05-27T08:30:00.000000Z"
     #[test]
     fn format_body_text_from_content_type_auto_xml() {
         let input = "<note><to>Tove</to></note>";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromContentType(Some("text/xml")),
-        );
+        let result =
+            BeamView::format_body_text(input, BodyFormatHint::FromContentType(Some("text/xml")));
         assert!(result.is_ok());
         let formatted = result.unwrap();
         assert!(formatted.starts_with("<note>"));

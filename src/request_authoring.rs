@@ -50,7 +50,6 @@ impl Default for RequestAuthoringState {
                 value: String::new(),
                 enabled: true,
                 description: None,
-                secret: false,
             }],
             query_params: vec![QueryParamField {
                 name: String::new(),
@@ -107,7 +106,6 @@ pub fn ensure_auto_append_header_row(headers: &mut Vec<HeaderField>) {
             value: String::new(),
             enabled: true,
             description: None,
-            secret: false,
         });
     }
 }
@@ -256,7 +254,6 @@ mod tests {
                 value: "application/json".to_string(),
                 enabled: true,
                 description: None,
-                secret: false,
             }],
             query_params: vec![QueryParamField {
                 name: "page".to_string(),

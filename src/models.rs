@@ -188,8 +188,6 @@ pub struct HeaderField {
     pub value: String,
     pub enabled: bool,
     pub description: Option<String>,
-    #[serde(default)]
-    pub secret: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,8 +284,6 @@ pub struct EnvironmentVariable {
     pub name: String,
     pub value: String,
     pub enabled: bool,
-    #[serde(default)]
-    pub secret: bool,
     pub description: Option<String>,
 }
 
