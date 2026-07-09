@@ -13,6 +13,7 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 - Request body formats for JSON, XML, Text, GraphQL, Form URL-Encoded, and Multipart
 - Global environments with `{{variable}}` interpolation in URLs, params, headers, auth, and bodies
 - Post-response JavaScript scripting with console output, tests, and environment updates
+- Response history view in the response pane
 - Persistent TOML-based storage for workspaces, requests, environments, local history, and script results on your machine
 - Theme support with light/dark mode and a clean desktop interface
 

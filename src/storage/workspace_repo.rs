@@ -1504,7 +1504,6 @@ fn default_request_file(name: &str, method: HttpMethod, url: String) -> RequestF
                 value: "BeamApp/0.1".to_string(),
                 enabled: true,
                 description: None,
-                secret: false,
             }],
             query_params: vec![QueryParamField {
                 name: String::new(),

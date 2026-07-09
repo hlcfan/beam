@@ -3294,7 +3294,6 @@ mod tests {
                     name: "api_base".to_string(),
                     value: "https://api.example.com".to_string(),
                     enabled: true,
-                    secret: false,
                     description: None,
                 }],
                 command_id: update_command_id.clone(),
