@@ -578,6 +578,7 @@ struct BeamView {
     collection_context_menu_row: Option<crate::app_shell::TreeRow>,
     tree_drag_hover: Option<(Ulid, TreeDropPlacement)>,
     tree_drag_slot_hover: Option<TreeDropSlot>,
+    tree_drag_scroll_task: Option<Task<()>>,
     env_var_hover: Option<EnvVarHoverInfo>,
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
@@ -594,6 +595,14 @@ struct BeamView {
 
 const BODY_EDITOR_CACHE_CAP: usize = 32;
 const URL_EDITOR_CACHE_CAP: usize = 32;
+
+/// Distance (px) from the top/bottom edge of the tree viewport within which a
+/// drag triggers auto-scroll. Closer to the edge scrolls faster.
+const TREE_DRAG_SCROLL_FAST_ZONE_PX: f32 = 16.0;
+const TREE_DRAG_SCROLL_SLOW_ZONE_PX: f32 = 48.0;
+const TREE_DRAG_SCROLL_FAST_STEP_PX: f32 = 14.0;
+const TREE_DRAG_SCROLL_SLOW_STEP_PX: f32 = 6.0;
+const TREE_DRAG_SCROLL_TICK: Duration = Duration::from_millis(16);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ResponseTab {
@@ -4767,11 +4776,64 @@ impl BeamView {
 
     /// Clears both slot and row-body hover. Called on drop or drag end.
     fn clear_tree_drag_hover(&mut self, cx: &mut Context<Self>) {
+        self.tree_drag_scroll_task.take();
         if self.tree_drag_hover.is_some() || self.tree_drag_slot_hover.is_some() {
             self.tree_drag_hover = None;
             self.tree_drag_slot_hover = None;
             cx.notify();
         }
+    }
+
+    /// Recomputes tree auto-scroll for a drag at `position` within a container whose viewport is
+    /// `bounds`. Called from the tree pane's `on_drag_move` handlers so that dragging a row or
+    /// folder near the top or bottom edge of the (possibly virtualized/clipped) tree scrolls it,
+    /// instead of requiring the user to scroll manually mid-drag.
+    fn update_tree_drag_autoscroll(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Dropping the old task cancels its loop; a new one is spawned below
+        // only if the cursor is still with an edge zone.
+        self.tree_drag_scroll_task.take();
+
+        if !bounds.contains(&position) {
+            return;
+        }
+
+        let distance_from_top = f32::from(position.y - bounds.origin.y);
+        let distance_from_bottom = f32::from(bounds.origin.y + bounds.size.height - position.y);
+        let delta = if distance_from_top <= TREE_DRAG_SCROLL_FAST_ZONE_PX {
+            TREE_DRAG_SCROLL_FAST_STEP_PX
+        } else if distance_from_top <= TREE_DRAG_SCROLL_SLOW_ZONE_PX {
+            TREE_DRAG_SCROLL_SLOW_STEP_PX
+        } else if distance_from_bottom <= TREE_DRAG_SCROLL_FAST_ZONE_PX {
+            -TREE_DRAG_SCROLL_FAST_STEP_PX
+        } else if distance_from_bottom <= TREE_DRAG_SCROLL_SLOW_ZONE_PX {
+            -TREE_DRAG_SCROLL_SLOW_STEP_PX
+        } else {
+            return;
+        };
+
+        let handle = self.collection_scroll_handle.clone();
+        self.tree_drag_scroll_task = Some(cx.spawn_in(window, async move |view, cx| {
+            loop {
+                let updated = view.update(cx, |_, cx| {
+                    let offset = handle.offset();
+                    let max_offset = handle.max_offset();
+                    let new_y = (offset.y + px(delta)).clamp(-max_offset.y, px(0.0));
+                    handle.set_offset(point(offset.x, new_y));
+                    cx.notify();
+                });
+
+                if updated.is_err() {
+                    return;
+                }
+                cx.background_executor().timer(TREE_DRAG_SCROLL_TICK).await;
+            }
+        }));
     }
 
     fn perform_tree_move_action(
@@ -6453,6 +6515,7 @@ impl BeamView {
             collection_context_menu_row: None,
             tree_drag_hover: None,
             tree_drag_slot_hover: None,
+            tree_drag_scroll_task: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
             request_view_history: RequestViewHistory::default(),
@@ -8257,6 +8320,26 @@ impl BeamView {
                         .size_full()
                         .track_scroll(&self.collection_scroll_handle),
                     )
+                    .on_drag_move(cx.listener(
+                        |this, drag: &DragMoveEvent<DraggedRequest>, window, cx| {
+                            this.update_tree_drag_autoscroll(
+                                drag.bounds,
+                                drag.event.position,
+                                window,
+                                cx,
+                            );
+                        },
+                    ))
+                    .on_drag_move(cx.listener(
+                        |this, drag: &DragMoveEvent<DraggedFolder>, window, cx| {
+                            this.update_tree_drag_autoscroll(
+                                drag.bounds,
+                                drag.event.position,
+                                window,
+                                cx,
+                            );
+                        },
+                    ))
                     .can_drop(move |_dragged_value, _window, app| {
                         scroll_view.update(app, |this, _| {
                             this.tree_drag_slot_hover.is_some() || this.tree_drag_hover.is_some()
