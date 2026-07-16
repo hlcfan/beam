@@ -27,7 +27,7 @@ use gpui_component::{
     tooltip::Tooltip,
     v_flex, v_virtual_list,
 };
-use reqwest::{Client, Method, multipart};
+use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
 use tokio::sync::oneshot;
 use ulid::Ulid;
