@@ -7431,7 +7431,9 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<InputState>,
     ) {
+        let scroll_offset = input.scroll_offset();
         input.replace_all(text, window, cx);
+        input.set_scroll_offset(scroll_offset, cx);
         input.focus(window, cx);
     }
 
