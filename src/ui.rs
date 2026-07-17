@@ -3350,20 +3350,37 @@ impl BeamView {
         self.commit_request_selection(window, cx);
     }
 
-    /// Persists all local-state side effects of a request selection change
-    /// (tree expansion, last opened request id) and notifies the framework.
-    /// Shared by `select_neighbor_request`, `navigate_request_view_history`,
-    /// and the tree row click handler.
+    /// Persists all local-state side effects of a request selection change (tree expansion, last
+    /// opened request id) , scrolls the tree so the selection is visible, and notifies the
+    /// framework. Shared by `select_neighbor_request`, `navigate_request_view_history`, and the
+    /// tree row click handler.
     fn commit_request_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.persist_tree_expansion_state() {
             window.push_notification(error, cx);
         }
-        if let Some(request_id) = self.shell.workspace_tree.selected_request_id()
-            && let Err(error) = self.persist_last_opened_request_id(request_id)
-        {
-            window.push_notification(error, cx);
+        if let Some(request_id) = self.shell.workspace_tree.selected_request_id() {
+            if let Err(error) = self.persist_last_opened_request_id(request_id) {
+                window.push_notification(error, cx);
+            }
+
+            self.scroll_selected_request_into_view(request_id);
         }
         cx.notify();
+    }
+
+    /// Scrolls the workspace tree just enough to bring `request_id`'s row into view, leaving the
+    /// scroll offset untouched if it's already visible. Needed because keyword-driven navigation
+    /// (cmd-alt-up/down/left/right) can select a request whose row is scrolled out of the
+    /// virtualized tree's viewport.
+    fn scroll_selected_request_into_view(&self, request_id: Ulid) {
+        let items = build_tree_render_items(&self.shell.workspace_tree);
+        if let Some(index) = items
+            .iter()
+            .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == request_id))
+        {
+            self.collection_scroll_handle
+                .scroll_to_item(index, ScrollStrategy::Top);
+        }
     }
 
     /// Initializes the request view history with whatever request the shell
