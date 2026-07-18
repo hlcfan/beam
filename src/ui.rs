@@ -7727,16 +7727,28 @@ impl BeamView {
                 ));
         } else {
             body = body
-                .on_drag_move(
-                    cx.listener(move |this, _: &DragMoveEvent<DraggedRequest>, _, cx| {
-                        this.clear_tree_drag_row_hover(cx);
-                    }),
-                )
-                .on_drag_move(
-                    cx.listener(move |this, _: &DragMoveEvent<DraggedFolder>, _, cx| {
-                        this.clear_tree_drag_row_hover(cx);
-                    }),
-                );
+                .on_drag_move(cx.listener(
+                    move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
+                        let bounds = drag.bounds;
+                        let position = drag.event.position;
+                        if position.y >= bounds.origin.y
+                            && position.y <= bounds.origin.y + bounds.size.height
+                        {
+                            this.clear_tree_drag_row_hover(cx);
+                        }
+                    },
+                ))
+                .on_drag_move(cx.listener(
+                    move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
+                        let bounds = drag.bounds;
+                        let position = drag.event.position;
+                        if position.y >= bounds.origin.y
+                            && position.y <= bounds.origin.y + bounds.size.height
+                        {
+                            this.clear_tree_drag_row_hover(cx);
+                        }
+                    },
+                ));
         }
         match row_kind {
             TreeNodeKind::Folder => body.interactivity().on_drag(
