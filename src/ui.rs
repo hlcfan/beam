@@ -4424,6 +4424,22 @@ impl BeamView {
             .any(|child| child.name.eq_ignore_ascii_case(name))
     }
 
+    /// Tells the user why a drop was rejected when the destination folder
+    /// already contains an item with the same name. Called instead of
+    /// silently no-op'ing the drop.
+    fn notify_tree_move_name_conflict(&self, moving_id: Ulid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(node) = self.shell.workspace_tree.node(moving_id) else {
+            return;
+        };
+        window.push_notification(
+            format!(
+                "Can't move \"{}\" here — an item with that name already exists in the destination.",
+                node.name
+            ),
+            cx,
+        );
+    }
+
     fn request_parent_input_for_parent_node(
         &self,
         parent_id: Option<Ulid>,
@@ -4483,33 +4499,68 @@ impl BeamView {
         Some((parent_id, insertion_index))
     }
 
+    /// Resolves the `(destination_parent_id, insertion_index)` a request drop
+    /// would target, without checking whether the move is actually allowed
+    /// (e.g. name conflicts). Shared by the real move-action builder and by
+    /// the name-conflict-only check used to decide hover/notification UX.
+    fn request_move_destination(
+        &self,
+        request_id: Ulid,
+        target_id: Ulid,
+        placement: TreeDropPlacement,
+    ) -> Option<(Option<Ulid>, usize)> {
+        let request_node = self.shell.workspace_tree.node(request_id)?;
+        if request_node.kind != TreeNodeKind::Request {
+            return None;
+        }
+
+        match placement {
+            TreeDropPlacement::Into => {
+                let target = self.shell.workspace_tree.node(target_id)?;
+                if target.kind != TreeNodeKind::Folder {
+                    return None;
+                }
+                Some((Some(target.id), target.children.len()))
+            }
+            TreeDropPlacement::Before | TreeDropPlacement::After => {
+                if target_id == request_id {
+                    return None;
+                }
+                self.sibling_destination_for_target(target_id, placement)
+            }
+        }
+    }
+
     fn request_move_action(
         &self,
         request_id: Ulid,
         target_id: Ulid,
         placement: TreeDropPlacement,
     ) -> Option<TreeMoveAction> {
-        let request_node = self.shell.workspace_tree.node(request_id)?;
-        if request_node.kind != TreeNodeKind::Request {
-            return None;
-        }
-
-        let (destination_parent_id, insertion_index): (Option<Ulid>, usize) = match placement {
-            TreeDropPlacement::Into => {
-                let target = self.shell.workspace_tree.node(target_id)?;
-                if target.kind != TreeNodeKind::Folder {
-                    return None;
-                }
-                (Some(target.id), target.children.len())
-            }
-            TreeDropPlacement::Before | TreeDropPlacement::After => {
-                if target_id == request_id {
-                    return None;
-                }
-                self.sibling_destination_for_target(target_id, placement)?
-            }
-        };
+        let (destination_parent_id, insertion_index) =
+            self.request_move_destination(request_id, target_id, placement)?;
         self.request_move_action_for_destination(request_id, destination_parent_id, insertion_index)
+    }
+
+    /// True when a request drop at `target_id`/`placement` would otherwise be
+    /// valid and is rejected solely because of a sibling name conflict at the
+    /// destination. Lets callers still highlight the target and explain the
+    /// rejection instead of behaving as if the drop were structurally invalid.
+    fn request_move_blocked_by_name_conflict(
+        &self,
+        request_id: Ulid,
+        target_id: Ulid,
+        placement: TreeDropPlacement,
+    ) -> bool {
+        let Some((destination_parent_id, insertion_index)) =
+            self.request_move_destination(request_id, target_id, placement)
+        else {
+            return false;
+        };
+        self.request_move_destination_viable(request_id, destination_parent_id, insertion_index)
+            && self
+                .request_move_action_for_destination(request_id, destination_parent_id, insertion_index)
+                .is_none()
     }
 
     fn request_move_action_for_destination(
@@ -4518,11 +4569,46 @@ impl BeamView {
         destination_parent_id: Option<Ulid>,
         insertion_index: usize,
     ) -> Option<TreeMoveAction> {
+        self.request_move_action_for_destination_impl(
+            request_id,
+            destination_parent_id,
+            insertion_index,
+            true,
+        )
+    }
+
+    /// Same as [`Self::request_move_action_for_destination`] but ignores
+    /// sibling name conflicts, so it reports whether the destination is
+    /// otherwise structurally valid.
+    fn request_move_destination_viable(
+        &self,
+        request_id: Ulid,
+        destination_parent_id: Option<Ulid>,
+        insertion_index: usize,
+    ) -> bool {
+        self.request_move_action_for_destination_impl(
+            request_id,
+            destination_parent_id,
+            insertion_index,
+            false,
+        )
+        .is_some()
+    }
+
+    fn request_move_action_for_destination_impl(
+        &self,
+        request_id: Ulid,
+        destination_parent_id: Option<Ulid>,
+        insertion_index: usize,
+        check_name_conflict: bool,
+    ) -> Option<TreeMoveAction> {
         let request_node = self.shell.workspace_tree.node(request_id)?;
         if request_node.kind != TreeNodeKind::Request {
             return None;
         }
-        if self.has_name_conflict_in_scope(destination_parent_id, request_id, &request_node.name) {
+        if check_name_conflict
+            && self.has_name_conflict_in_scope(destination_parent_id, request_id, &request_node.name)
+        {
             return None;
         }
 
@@ -4577,18 +4663,22 @@ impl BeamView {
         }
     }
 
-    fn folder_move_action(
+    /// Resolves the `(destination_parent_id, insertion_index)` a folder drop
+    /// would target, without checking whether the move is actually allowed
+    /// (e.g. name conflicts). Shared by the real move-action builder and by
+    /// the name-conflict-only check used to decide hover/notification UX.
+    fn folder_move_destination(
         &self,
         folder_id: Ulid,
         target_id: Ulid,
         placement: TreeDropPlacement,
-    ) -> Option<TreeMoveAction> {
+    ) -> Option<(Option<Ulid>, usize)> {
         let folder_node = self.shell.workspace_tree.node(folder_id)?;
         if folder_node.kind != TreeNodeKind::Folder {
             return None;
         }
 
-        let (destination_parent_id, insertion_index): (Option<Ulid>, usize) = match placement {
+        match placement {
             TreeDropPlacement::Into => {
                 if target_id == folder_id {
                     return None;
@@ -4597,16 +4687,47 @@ impl BeamView {
                 if target.kind != TreeNodeKind::Folder {
                     return None;
                 }
-                (Some(target.id), target.children.len())
+                Some((Some(target.id), target.children.len()))
             }
             TreeDropPlacement::Before | TreeDropPlacement::After => {
                 if target_id == folder_id {
                     return None;
                 }
-                self.sibling_destination_for_target(target_id, placement)?
+                self.sibling_destination_for_target(target_id, placement)
             }
-        };
+        }
+    }
+
+    fn folder_move_action(
+        &self,
+        folder_id: Ulid,
+        target_id: Ulid,
+        placement: TreeDropPlacement,
+    ) -> Option<TreeMoveAction> {
+        let (destination_parent_id, insertion_index) =
+            self.folder_move_destination(folder_id, target_id, placement)?;
         self.folder_move_action_for_destination(folder_id, destination_parent_id, insertion_index)
+    }
+
+    /// True when a folder drop at `target_id`/`placement` would otherwise be
+    /// valid and is rejected solely because of a sibling name conflict at the
+    /// destination. Lets callers still highlight the target and explain the
+    /// rejection instead of behaving as if the drop were structurally invalid.
+    fn folder_move_blocked_by_name_conflict(
+        &self,
+        folder_id: Ulid,
+        target_id: Ulid,
+        placement: TreeDropPlacement,
+    ) -> bool {
+        let Some((destination_parent_id, insertion_index)) =
+            self.folder_move_destination(folder_id, target_id, placement)
+        else {
+            return false;
+        };
+        self.folder_move_destination_viable(folder_id, destination_parent_id, insertion_index)
+            && self
+                .folder_move_action_for_destination(folder_id, destination_parent_id, insertion_index)
+                .is_none()
     }
 
     fn folder_move_action_for_destination(
@@ -4614,6 +4735,39 @@ impl BeamView {
         folder_id: Ulid,
         destination_parent_id: Option<Ulid>,
         insertion_index: usize,
+    ) -> Option<TreeMoveAction> {
+        self.folder_move_action_for_destination_impl(
+            folder_id,
+            destination_parent_id,
+            insertion_index,
+            true,
+        )
+    }
+
+    /// Same as [`Self::folder_move_action_for_destination`] but ignores
+    /// sibling name conflicts, so it reports whether the destination is
+    /// otherwise structurally valid.
+    fn folder_move_destination_viable(
+        &self,
+        folder_id: Ulid,
+        destination_parent_id: Option<Ulid>,
+        insertion_index: usize,
+    ) -> bool {
+        self.folder_move_action_for_destination_impl(
+            folder_id,
+            destination_parent_id,
+            insertion_index,
+            false,
+        )
+        .is_some()
+    }
+
+    fn folder_move_action_for_destination_impl(
+        &self,
+        folder_id: Ulid,
+        destination_parent_id: Option<Ulid>,
+        insertion_index: usize,
+        check_name_conflict: bool,
     ) -> Option<TreeMoveAction> {
         let folder_node = self.shell.workspace_tree.node(folder_id)?;
         if folder_node.kind != TreeNodeKind::Folder {
@@ -4624,7 +4778,9 @@ impl BeamView {
         {
             return None;
         }
-        if self.has_name_conflict_in_scope(destination_parent_id, folder_id, &folder_node.name) {
+        if check_name_conflict
+            && self.has_name_conflict_in_scope(destination_parent_id, folder_id, &folder_node.name)
+        {
             return None;
         }
 
@@ -4650,15 +4806,16 @@ impl BeamView {
         placement: TreeDropPlacement,
     ) -> bool {
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedRequest>() {
-            let accepted = self
+            return self
                 .request_move_action(dragged.request_id, target_id, placement)
-                .is_some();
-            return accepted;
+                .is_some()
+                || self.request_move_blocked_by_name_conflict(dragged.request_id, target_id, placement);
         }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedFolder>() {
             return self
                 .folder_move_action(dragged.folder_id, target_id, placement)
-                .is_some();
+                .is_some()
+                || self.folder_move_blocked_by_name_conflict(dragged.folder_id, target_id, placement);
         }
         false
     }
@@ -4704,7 +4861,8 @@ impl BeamView {
                     destination_parent_id,
                     insertion_index,
                 )
-                .is_some();
+                .is_some()
+                || self.request_move_slot_blocked_by_name_conflict(dragged.request_id, slot);
         }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedFolder>() {
             if slot.target_id == Some(dragged.folder_id) {
@@ -4720,9 +4878,34 @@ impl BeamView {
                     destination_parent_id,
                     insertion_index,
                 )
-                .is_some();
+                .is_some()
+                || self.folder_move_slot_blocked_by_name_conflict(dragged.folder_id, slot);
         }
         false
+    }
+
+    /// Slot-based counterpart to [`Self::request_move_blocked_by_name_conflict`],
+    /// used when the drop lands on a between-items slot (e.g. an expanded
+    /// folder's "insert as first/last child" affordance) instead of a row body.
+    fn request_move_slot_blocked_by_name_conflict(&self, request_id: Ulid, slot: &TreeDropSlot) -> bool {
+        let Some((destination_parent_id, insertion_index)) = self.slot_to_destination(slot) else {
+            return false;
+        };
+        self.request_move_destination_viable(request_id, destination_parent_id, insertion_index)
+            && self
+                .request_move_action_for_destination(request_id, destination_parent_id, insertion_index)
+                .is_none()
+    }
+
+    /// Slot-based counterpart to [`Self::folder_move_blocked_by_name_conflict`].
+    fn folder_move_slot_blocked_by_name_conflict(&self, folder_id: Ulid, slot: &TreeDropSlot) -> bool {
+        let Some((destination_parent_id, insertion_index)) = self.slot_to_destination(slot) else {
+            return false;
+        };
+        self.folder_move_destination_viable(folder_id, destination_parent_id, insertion_index)
+            && self
+                .folder_move_action_for_destination(folder_id, destination_parent_id, insertion_index)
+                .is_none()
     }
 
     fn tree_row_body_drop_placement(target_kind: TreeNodeKind) -> Option<TreeDropPlacement> {
@@ -4988,6 +5171,9 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let Some(action) = self.request_move_action(request_id, target_id, placement) else {
+            if self.request_move_blocked_by_name_conflict(request_id, target_id, placement) {
+                self.notify_tree_move_name_conflict(request_id, window, cx);
+            }
             return;
         };
         let expand_target_id = (placement == TreeDropPlacement::Into).then_some(target_id);
@@ -5003,6 +5189,9 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let Some(action) = self.folder_move_action(folder_id, target_id, placement) else {
+            if self.folder_move_blocked_by_name_conflict(folder_id, target_id, placement) {
+                self.notify_tree_move_name_conflict(folder_id, window, cx);
+            }
             return;
         };
         let preferred_selected_request_id = self.shell.workspace_tree.selected_request_id();
@@ -5031,6 +5220,9 @@ impl BeamView {
             destination_parent_id,
             insertion_index,
         ) else {
+            if self.request_move_slot_blocked_by_name_conflict(request_id, slot) {
+                self.notify_tree_move_name_conflict(request_id, window, cx);
+            }
             return;
         };
         self.perform_tree_move_action(action, Some(request_id), None, window, cx);
@@ -5051,11 +5243,15 @@ impl BeamView {
             destination_parent_id,
             insertion_index,
         ) else {
+            if self.folder_move_slot_blocked_by_name_conflict(folder_id, slot) {
+                self.notify_tree_move_name_conflict(folder_id, window, cx);
+            }
             return;
         };
         let preferred_selected_request_id = self.shell.workspace_tree.selected_request_id();
         self.perform_tree_move_action(action, preferred_selected_request_id, None, window, cx);
     }
+
 
     fn render_tree_drop_slot(&self, slot: &TreeDropSlot, cx: &mut Context<Self>) -> AnyElement {
         let depth_inset = tree_depth_inset(slot.depth);
