@@ -297,10 +297,12 @@ pub fn parse_for_workspace(content: &str, workspace_id: &str) -> Result<ImportPl
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let parent_is_folder = folder_rows
-            .iter()
-            .any(|f| f.as_object().and_then(|o| o.get("_id")).and_then(|v| v.as_str())
-                == Some(parent_id.as_str()));
+        let parent_is_folder = folder_rows.iter().any(|f| {
+            f.as_object()
+                .and_then(|o| o.get("_id"))
+                .and_then(|v| v.as_str())
+                == Some(parent_id.as_str())
+        });
         if parent_is_folder {
             let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("");
             plan.warnings.push(format!(
@@ -316,7 +318,8 @@ pub fn parse_for_workspace(content: &str, workspace_id: &str) -> Result<ImportPl
             .unwrap_or(&plan.workspace_name)
             .to_string();
         let variables = parse_environment_data(obj.get("data"));
-        plan.environments.push(PlannedEnvironment { name, variables });
+        plan.environments
+            .push(PlannedEnvironment { name, variables });
     }
 
     Ok(plan)
@@ -560,11 +563,7 @@ fn parse_authentication(
     }
 }
 
-fn parse_body(
-    body: Option<&Value>,
-    request_name: &str,
-    warnings: &mut Vec<String>,
-) -> BodyConfig {
+fn parse_body(body: Option<&Value>, request_name: &str, warnings: &mut Vec<String>) -> BodyConfig {
     let Some(body) = body else {
         return BodyConfig::None;
     };

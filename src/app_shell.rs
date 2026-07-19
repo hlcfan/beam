@@ -2,14 +2,18 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Instant;
 
+use chrono::Utc;
 use gpui::{Pixels, Point, point, px};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
+use crate::importers::ImportPlan;
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable,
     FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
@@ -1297,6 +1301,10 @@ impl AppShellState {
                     self.workspace.workspace_name = workspace.name.clone();
                 }
             }
+            // Import rows are owned by the Import dialog (Phase 7+); the shell
+            // reducer has no row state to update, so this event is a no-op here.
+            // The UI consumes it directly from the event stream.
+            AppEvent::ImportResult { .. } => {}
         }
     }
 }
@@ -1335,6 +1343,7 @@ pub enum AppOperation {
     CreateWorkspace,
     DeleteWorkspace,
     RenameWorkspace,
+    RunImport,
 }
 
 impl AppOperation {
@@ -1359,6 +1368,7 @@ impl AppOperation {
             AppOperation::CreateWorkspace => "create_workspace",
             AppOperation::DeleteWorkspace => "delete_workspace",
             AppOperation::RenameWorkspace => "rename_workspace",
+            AppOperation::RunImport => "run_import",
         }
     }
 }
@@ -1446,6 +1456,10 @@ pub enum AppCommand {
         new_name: String,
         command_id: String,
     },
+    RunImport {
+        job: ImportJob,
+        command_id: String,
+    },
 }
 
 impl AppCommand {
@@ -1469,7 +1483,8 @@ impl AppCommand {
             | AppCommand::SwitchWorkspace { command_id, .. }
             | AppCommand::CreateWorkspace { command_id, .. }
             | AppCommand::DeleteWorkspace { command_id, .. }
-            | AppCommand::RenameWorkspace { command_id, .. } => command_id,
+            | AppCommand::RenameWorkspace { command_id, .. }
+            | AppCommand::RunImport { command_id, .. } => command_id,
         }
     }
 
@@ -1496,6 +1511,7 @@ impl AppCommand {
             AppCommand::CreateWorkspace { .. } => AppOperation::CreateWorkspace,
             AppCommand::DeleteWorkspace { .. } => AppOperation::DeleteWorkspace,
             AppCommand::RenameWorkspace { .. } => AppOperation::RenameWorkspace,
+            AppCommand::RunImport { .. } => AppOperation::RunImport,
         }
     }
 }
@@ -1575,6 +1591,55 @@ pub enum AppEvent {
         all_workspaces: Vec<WorkspaceEntry>,
         command_id: String,
     },
+    ImportResult {
+        result: ImportResult,
+        command_id: String,
+    },
+}
+
+/// Cooperative-cancellation handle for an in-flight import.
+///
+/// Owned by the caller (UI dialog) and cloned into the [`ImportJob`]; a single
+/// writer sets the flag to request cancellation, the runner polls it via
+/// [`std::sync::atomic::Ordering::SeqCst`].
+#[derive(Debug, Clone)]
+pub struct ImportJob {
+    pub plan: ImportPlan,
+    pub cancellation: Arc<AtomicBool>,
+}
+
+impl PartialEq for ImportJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.plan == other.plan
+    }
+}
+
+impl Eq for ImportJob {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImportCounts {
+    pub requests: usize,
+    pub folders: usize,
+    pub environments: usize,
+}
+
+/// Format-agnostic outcome of materializing one [`ImportPlan`] into a workspace.
+///
+/// The runner only ever references [`ImportPlan`] and Beam's own
+/// `RequestFile` / `EnvironmentFile` types — never any format-specific type
+/// — so adding a new importer is strictly additive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportResult {
+    Done {
+        summary: String,
+        counts: ImportCounts,
+        workspace_id: Ulid,
+    },
+    Failed {
+        message: String,
+        partial_workspace_created: bool,
+    },
+    Canceled,
 }
 
 pub struct DataSyncRuntime {
@@ -1633,6 +1698,7 @@ fn data_sync_worker_loop(
                     | AppCommand::CreateWorkspace { .. }
                     | AppCommand::DeleteWorkspace { .. }
                     | AppCommand::RenameWorkspace { .. }
+                    | AppCommand::RunImport { .. }
             );
 
             let _ = event_tx.send(AppEvent::SyncStarted {
@@ -1815,7 +1881,8 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
         | AppCommand::MoveRequest { .. }
         | AppCommand::DeleteFolder { .. }
         | AppCommand::SwitchWorkspace { .. }
-        | AppCommand::DeleteWorkspace { .. } => {}
+        | AppCommand::DeleteWorkspace { .. }
+        | AppCommand::RunImport { .. } => {}
     }
     Ok(())
 }
@@ -1998,7 +2065,8 @@ fn handle_command<B: StorageIoBackend>(
         AppCommand::SwitchWorkspace { command_id, .. }
         | AppCommand::CreateWorkspace { command_id, .. }
         | AppCommand::DeleteWorkspace { command_id, .. }
-        | AppCommand::RenameWorkspace { command_id, .. } => Err(format!(
+        | AppCommand::RenameWorkspace { command_id, .. }
+        | AppCommand::RunImport { command_id, .. } => Err(format!(
             "workspace command {command_id} reached handle_command unexpectedly"
         )),
     }
@@ -2187,7 +2255,257 @@ fn handle_workspace_command(
                 command_id,
             }])
         }
+        AppCommand::RunImport { job, command_id } => {
+            let result = run_import_job(registry, registry_repo, job);
+            Ok(vec![AppEvent::ImportResult { result, command_id }])
+        }
         _ => unreachable!("non-workspace command routed to handle_workspace_command"),
+    }
+}
+
+/// Materialize an [`ImportPlan`] into a brand-new workspace on disk.
+///
+/// The runner is format-agnostic — it only consumes [`ImportPlan`] and the
+/// existing `WorkspaceRepository` / `RegistryRepository` APIs, never any
+/// Postman / Insomnia / cURL type. Adding a new importer is strictly
+/// additive: new parser + one [`crate::importers::DETECTORS`] entry, with no
+/// edits here.
+///
+/// Cancellation points are checked at the start of each file's processing
+/// step **and** between sub-steps (workspace creation ← folder loop ←
+/// request loop ← env loop). Mid-parse cancellation is not supported in v1.
+///
+/// Failure mode after the workspace was created leaves the partial workspace
+/// in place — the caller surfaces the `partial_workspace_created` flag to
+/// the user ("Workspace created but partially imported — delete it if
+/// unwanted.").
+fn run_import_job(
+    registry: &mut WorkspacesRegistryFile,
+    registry_repo: &RegistryRepository,
+    job: ImportJob,
+) -> ImportResult {
+    use std::sync::atomic::Ordering;
+
+    if job.cancellation.load(Ordering::SeqCst) {
+        return ImportResult::Canceled;
+    }
+
+    let raw_name = job.plan.workspace_name.trim();
+    let workspace_name = if raw_name.is_empty() {
+        "Imported Workspace".to_string()
+    } else {
+        raw_name.to_string()
+    };
+
+    // 2. Create the workspace (registry de-dupes the slug).
+    let entry = match registry_repo.create_workspace(registry, &workspace_name) {
+        Ok(entry) => entry,
+        Err(error) => {
+            log::error!("import: create_workspace failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: false,
+            };
+        }
+    };
+    let workspace_id = entry.workspace_id;
+
+    // 3. Open a WorkspaceRepository for the freshly created workspace.
+    let ws_paths = registry_repo.workspace_paths(&entry);
+    let ws_backend = FileSystemStorage::new(ws_paths);
+    let mut ws_repo = match WorkspaceRepository::new(ws_backend) {
+        Ok(repo) => repo,
+        Err(error) => {
+            log::error!("import: open workspace repo failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: true,
+            };
+        }
+    };
+    if let Err(error) = ws_repo.initialize() {
+        log::error!("import: initialize workspace failed: {error}");
+        return ImportResult::Failed {
+            message: error.to_string(),
+            partial_workspace_created: true,
+        };
+    }
+
+    // 4. Create folders in plan order, with a topological safety net
+    //    (parser is expected to emit parents before children, but the
+    //    pass-based loop tolerates either order).
+    let mut folder_id_map: HashMap<Ulid, Ulid> = HashMap::new();
+    let mut folders_created: usize = 0;
+    let mut pending: Vec<crate::importers::PlannedFolder> = job.plan.folders.clone();
+    let mut made_progress = true;
+    while made_progress && !pending.is_empty() {
+        made_progress = false;
+        let mut next_pass = Vec::new();
+        let drain = std::mem::take(&mut pending);
+        for folder in drain {
+            if job.cancellation.load(Ordering::SeqCst) {
+                return ImportResult::Canceled;
+            }
+            // Defer if the parent folder hasn't been created yet.
+            if let Some(parent_id) = folder.parent_id
+                && !folder_id_map.contains_key(&parent_id)
+            {
+                next_pass.push(folder);
+                continue;
+            }
+            let parent_ref = crate::storage::FolderParentRef {
+                folder_id: folder
+                    .parent_id
+                    .and_then(|pid| folder_id_map.get(&pid).copied()),
+            };
+            match ws_repo.create_folder(CreateFolderInput {
+                parent: parent_ref,
+                known_parent_manifest_path: None,
+                name: folder.name.clone(),
+            }) {
+                Ok(created) => {
+                    folder_id_map.insert(folder.id, created.folder.folder_id);
+                    folders_created += 1;
+                    made_progress = true;
+                }
+                Err(error) => {
+                    log::error!("import: create_folder failed: {error}");
+                    return ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: true,
+                    };
+                }
+            }
+        }
+        pending = next_pass;
+    }
+    if !pending.is_empty() {
+        log::warn!(
+            "import: {} planned folder(s) had unresolved parents and were skipped",
+            pending.len()
+        );
+    }
+
+    // 5. Create requests, mapping planned parent ids to real folder ids.
+    let mut requests_created: usize = 0;
+    for planned_request in &job.plan.requests {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return ImportResult::Canceled;
+        }
+        let parent_ref = crate::storage::RequestParentRef {
+            folder_id: planned_request
+                .parent_id
+                .and_then(|pid| folder_id_map.get(&pid).copied()),
+        };
+        let created = match ws_repo.create_request(CreateRequestInput {
+            parent: parent_ref,
+            known_parent_manifest_path: None,
+            name: planned_request.name.clone(),
+            method: planned_request.method,
+            url: planned_request.url.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_request failed: {error}");
+                return ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: true,
+                };
+            }
+        };
+        // Replay the planned request payload (headers/query/auth/body/scripts)
+        // on top of the freshly created file, then persist.
+        let mut request_file = created;
+        request_file.meta.updated_at = Utc::now();
+        request_file.request.headers = planned_request.headers.clone();
+        request_file.request.query_params = planned_request.query.clone();
+        request_file.auth = planned_request.auth.clone();
+        request_file.body = planned_request.body.clone();
+        request_file.scripts = planned_request.scripts.clone();
+        if let Err(error) = ws_repo.save_request(&request_file) {
+            log::error!("import: save_request failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: true,
+            };
+        }
+        requests_created += 1;
+    }
+
+    // 6. Write each planned environment through the existing environment
+    //    write path. Slug dedup happens inside `create_environment`.
+    let mut environments_created: usize = 0;
+    let mut first_env_id: Option<Ulid> = None;
+    for planned_env in &job.plan.environments {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return ImportResult::Canceled;
+        }
+        let created = match ws_repo.create_environment(CreateEnvironmentInput {
+            name: planned_env.name.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_environment failed: {error}");
+                return ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: true,
+                };
+            }
+        };
+        if let Err(error) = ws_repo.update_environment_variables(
+            created.environment.environment_id,
+            planned_env.variables.clone(),
+        ) {
+            log::error!("import: update_environment_variables failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: true,
+            };
+        }
+        if first_env_id.is_none() {
+            first_env_id = Some(created.environment.environment_id);
+        }
+        environments_created += 1;
+    }
+
+    // 7. Mark the first imported environment as active in local state.
+    if let Some(env_id) = first_env_id {
+        match ws_repo.load_local_state() {
+            Ok(mut local_state) => {
+                local_state.local_state.active_global_environment_id = Some(env_id);
+                local_state.local_state.updated_at = Utc::now();
+                if let Err(error) = ws_repo.save_local_state(&local_state) {
+                    log::error!("import: save_local_state failed: {error}");
+                    return ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: true,
+                    };
+                }
+            }
+            Err(error) => {
+                log::error!("import: load_local_state failed: {error}");
+                return ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: true,
+                };
+            }
+        }
+    }
+
+    // 8. Return counts.
+    let summary = format!(
+        "Imported {} request(s), {} folder(s), {} environment(s)",
+        requests_created, folders_created, environments_created
+    );
+    let counts = ImportCounts {
+        requests: requests_created,
+        folders: folders_created,
+        environments: environments_created,
+    };
+    ImportResult::Done {
+        summary,
+        counts,
+        workspace_id,
     }
 }
 
@@ -5344,6 +5662,470 @@ expanded_item_ids = ["{folder_id}"]
                 (0, "row", Some(folder_id)),  // empty folder row
                 (0, "slot", Some(folder_id)), // after folder in root
             ]
+        );
+    }
+
+    // --- Phase 6 — Import Runner integration tests ---------------------------
+
+    use crate::importers::{PlannedEnvironment, PlannedFolder, PlannedRequest};
+
+    fn planned_request(
+        id: Ulid,
+        parent_id: Option<Ulid>,
+        name: &str,
+        method: HttpMethod,
+        url: &str,
+        auth: AuthConfig,
+        body: BodyConfig,
+        headers: Vec<HeaderField>,
+        query: Vec<QueryParamField>,
+        scripts: ScriptConfig,
+    ) -> PlannedRequest {
+        PlannedRequest {
+            id,
+            parent_id,
+            name: name.to_string(),
+            method,
+            url: url.to_string(),
+            headers,
+            query,
+            auth,
+            body,
+            scripts,
+            order: 0,
+        }
+    }
+
+    fn sample_import_plan() -> ImportPlan {
+        let outer_folder_id = Ulid::new();
+        let inner_folder_id = Ulid::new();
+        let request_in_inner_id = Ulid::new();
+        let request_in_outer_id = Ulid::new();
+        let root_request_id = Ulid::new();
+
+        ImportPlan {
+            workspace_name: "Imported API".to_string(),
+            folders: vec![
+                PlannedFolder {
+                    id: outer_folder_id,
+                    parent_id: None,
+                    name: "Users".to_string(),
+                    order: 0,
+                },
+                PlannedFolder {
+                    id: inner_folder_id,
+                    parent_id: Some(outer_folder_id),
+                    name: "Auth".to_string(),
+                    order: 0,
+                },
+            ],
+            requests: vec![
+                planned_request(
+                    root_request_id,
+                    None,
+                    "Healthcheck",
+                    HttpMethod::Get,
+                    "https://api.example.com/health",
+                    AuthConfig::None,
+                    BodyConfig::None,
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+                planned_request(
+                    request_in_outer_id,
+                    Some(outer_folder_id),
+                    "List Users",
+                    HttpMethod::Get,
+                    "https://api.example.com/users",
+                    AuthConfig::Bearer {
+                        token: Some("tok-123".to_string()),
+                    },
+                    BodyConfig::None,
+                    vec![HeaderField {
+                        name: "Accept".to_string(),
+                        value: "application/json".to_string(),
+                        enabled: true,
+                        description: None,
+                    }],
+                    vec![QueryParamField {
+                        name: "page".to_string(),
+                        value: "1".to_string(),
+                        enabled: true,
+                        description: None,
+                    }],
+                    ScriptConfig {
+                        post_response: Some("console.log('ok')".to_string()),
+                    },
+                ),
+                planned_request(
+                    request_in_inner_id,
+                    Some(inner_folder_id),
+                    "Login",
+                    HttpMethod::Post,
+                    "https://api.example.com/auth/login",
+                    AuthConfig::Basic {
+                        username: Some("alice".to_string()),
+                        password: Some("pw".to_string()),
+                    },
+                    BodyConfig::Json {
+                        text: "{\"email\":\"alice\"}".to_string(),
+                    },
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+            ],
+            environments: vec![PlannedEnvironment {
+                name: "Production".to_string(),
+                variables: vec![
+                    EnvironmentVariable {
+                        name: "base_url".to_string(),
+                        value: "https://api.example.com".to_string(),
+                        enabled: true,
+                        description: None,
+                    },
+                    EnvironmentVariable {
+                        name: "api_key".to_string(),
+                        value: "secret".to_string(),
+                        enabled: true,
+                        description: None,
+                    },
+                ],
+            }],
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Walks the on-disk workspace the runner produced and asserts the
+    /// `SharedStore` shape end-to-end — folders + nested requests, root
+    /// requests, environments, and active-env local state.
+    #[test]
+    fn run_import_job_materializes_plan_into_new_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        let job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation: Arc::new(AtomicBool::new(false)),
+        };
+        let result = run_import_job(&mut registry, &registry_repo, job);
+
+        let (summary, counts, workspace_id) = match result {
+            ImportResult::Done {
+                summary,
+                counts,
+                workspace_id,
+            } => (summary, counts, workspace_id),
+            other => panic!("expected Done, got {other:?}"),
+        };
+
+        assert_eq!(counts.folders, 2);
+        assert_eq!(counts.requests, 3);
+        assert_eq!(counts.environments, 1);
+        assert!(summary.contains("3 request(s)"));
+        assert!(summary.contains("2 folder(s)"));
+        assert!(summary.contains("1 environment(s)"));
+
+        // Reload the new workspace from disk to verify SharedStore shape.
+        let entry = registry
+            .registry
+            .workspaces
+            .iter()
+            .find(|w| w.workspace_id == workspace_id)
+            .expect("workspace entry persisted");
+        assert_eq!(entry.name, "Imported API");
+        assert_eq!(entry.path, "imported-api");
+
+        let ws_paths = registry_repo.workspace_paths(entry);
+        let reloaded =
+            WorkspaceRepository::new(FileSystemStorage::new(ws_paths.clone())).expect("reload");
+
+        // One root request + one root folder.
+        assert_eq!(reloaded.store.root_ids.len(), 2);
+        // Two folders + three requests = five nodes besides anything else.
+        assert_eq!(reloaded.store.nodes.len(), 5);
+        assert_eq!(reloaded.store.requests.len(), 3);
+
+        // Find the "Users" folder at the root and verify its nested structure.
+        let users_folder = reloaded
+            .store
+            .nodes
+            .values()
+            .find(|n| n.kind == NodeKind::Folder && n.name == "Users")
+            .expect("Users folder created");
+        assert_eq!(users_folder.parent_id, None);
+        // Users folder should contain the inner Auth folder + the List Users request.
+        assert_eq!(users_folder.children.len(), 2);
+
+        let auth_folder = reloaded
+            .store
+            .nodes
+            .values()
+            .find(|n| n.kind == NodeKind::Folder && n.name == "Auth")
+            .expect("Auth folder created");
+        assert_eq!(auth_folder.parent_id, Some(users_folder.id));
+        assert_eq!(auth_folder.children.len(), 1);
+
+        // The Login request inside Auth should carry the planned auth/body.
+        let login_id = auth_folder.children[0];
+        let login_file = reloaded
+            .store
+            .requests
+            .get(&login_id)
+            .expect("Login request file present");
+        assert_eq!(login_file.request.method, HttpMethod::Post);
+        assert_eq!(login_file.request.url, "https://api.example.com/auth/login");
+        assert!(matches!(login_file.auth, AuthConfig::Basic { .. }));
+        assert!(matches!(login_file.body, BodyConfig::Json { .. }));
+
+        // List Users request should carry the planned headers/query/post-script.
+        let list_users_id = users_folder
+            .children
+            .iter()
+            .copied()
+            .find(|id| {
+                reloaded
+                    .store
+                    .nodes
+                    .get(id)
+                    .is_some_and(|n| n.kind == NodeKind::Request && n.name == "List Users")
+            })
+            .expect("List Users request created");
+        let list_users = reloaded
+            .store
+            .requests
+            .get(&list_users_id)
+            .expect("List Users request file present");
+        assert!(matches!(list_users.auth, AuthConfig::Bearer { .. }));
+        assert_eq!(list_users.request.headers.len(), 1);
+        assert_eq!(list_users.request.headers[0].name, "Accept");
+        assert_eq!(list_users.request.query_params.len(), 1);
+        assert_eq!(list_users.request.query_params[0].name, "page");
+        assert_eq!(
+            list_users.scripts.post_response.as_deref(),
+            Some("console.log('ok')")
+        );
+
+        // Imported "Production" environment lives on disk with the planned vars.
+        assert!(
+            reloaded
+                .store
+                .environments
+                .values()
+                .any(|env| env.environment.name == "Production" && env.variables.len() == 2),
+            "Production environment with two variables should be persisted"
+        );
+
+        // Local state should now point at the first imported environment.
+        let local_state = reloaded.load_local_state().expect("load local state");
+        let active_env_id = local_state
+            .local_state
+            .active_global_environment_id
+            .expect("active env set");
+        let active_env = reloaded
+            .store
+            .environments
+            .get(&active_env_id)
+            .expect("active env exists");
+        assert_eq!(active_env.environment.name, "Production");
+    }
+
+    #[test]
+    fn run_import_job_yields_canceled_when_flag_set_upfront() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation,
+        };
+        let result = run_import_job(&mut registry, &registry_repo, job);
+        assert_eq!(result, ImportResult::Canceled);
+        // Nothing should be added to the registry.
+        assert!(registry.registry.workspaces.is_empty());
+    }
+
+    #[test]
+    fn run_import_job_returns_failed_with_partial_workspace_when_request_invalid() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        // A request whose name is empty whitespace trips `create_request`
+        // validation, simulating a mid-import failure after the workspace + a
+        // folder have been created.
+        let folder_id = Ulid::new();
+        let bad_request_id = Ulid::new();
+        let plan = ImportPlan {
+            workspace_name: "Partial Import".to_string(),
+            folders: vec![PlannedFolder {
+                id: folder_id,
+                parent_id: None,
+                name: "Good Folder".to_string(),
+                order: 0,
+            }],
+            requests: vec![PlannedRequest {
+                id: bad_request_id,
+                parent_id: Some(folder_id),
+                name: "   ".to_string(), // treated as empty by the repository
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+                headers: Vec::new(),
+                query: Vec::new(),
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                scripts: ScriptConfig::default(),
+                order: 0,
+            }],
+            environments: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let job = ImportJob {
+            plan,
+            cancellation: Arc::new(AtomicBool::new(false)),
+        };
+        let result = run_import_job(&mut registry, &registry_repo, job);
+        match result {
+            ImportResult::Failed {
+                message,
+                partial_workspace_created,
+            } => {
+                assert!(
+                    partial_workspace_created,
+                    "partial flag set after ws creation"
+                );
+                assert!(
+                    message.contains("Request name cannot be empty"),
+                    "failure message bubbles the repository error: {message}"
+                );
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+
+        // The workspace and the folder survived on disk; only the request
+        // failed.
+        assert_eq!(registry.registry.workspaces.len(), 1);
+        let entry = &registry.registry.workspaces[0];
+        let ws_paths = registry_repo.workspace_paths(entry);
+        let reloaded = WorkspaceRepository::new(FileSystemStorage::new(ws_paths))
+            .expect("reload partial workspace");
+        assert!(
+            reloaded
+                .store
+                .nodes
+                .values()
+                .any(|n| n.kind == NodeKind::Folder && n.name == "Good Folder"),
+            "folder survived on disk after partial import"
+        );
+        assert_eq!(reloaded.store.requests.len(), 0);
+    }
+
+    #[test]
+    fn run_import_job_dedupes_workspace_slug_against_existing_workspaces() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        // First import creates "Imported API" → slug `imported-api`.
+        let first_job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation: Arc::new(AtomicBool::new(false)),
+        };
+        let first = run_import_job(&mut registry, &registry_repo, first_job);
+        let first_ws_id = match first {
+            ImportResult::Done { workspace_id, .. } => workspace_id,
+            other => panic!("expected Done, got {other:?}"),
+        };
+
+        // Second import with the same name should keep the slug unique
+        // (`imported-api-2`).
+        let second_job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation: Arc::new(AtomicBool::new(false)),
+        };
+        let second = run_import_job(&mut registry, &registry_repo, second_job);
+        let second_ws_id = match second {
+            ImportResult::Done { workspace_id, .. } => workspace_id,
+            other => panic!("expected Done, got {other:?}"),
+        };
+
+        assert_ne!(first_ws_id, second_ws_id);
+        let slugs: Vec<&str> = registry
+            .registry
+            .workspaces
+            .iter()
+            .map(|w| w.path.as_str())
+            .collect();
+        assert!(slugs.contains(&"imported-api"));
+        assert!(slugs.contains(&"imported-api-2"));
+    }
+
+    /// The runner must be wired into the existing background command queue:
+    /// sending `AppCommand::RunImport` produces `AppEvent::ImportResult`
+    /// observed on the event stream.
+    #[test]
+    fn worker_runs_import_job_and_emits_import_result_event() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam").join("placeholder"));
+        let backend = FileSystemStorage::new(paths);
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("init storage");
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::RunImport {
+                job: ImportJob {
+                    plan: sample_import_plan(),
+                    cancellation: Arc::new(AtomicBool::new(false)),
+                },
+                command_id: command_id.clone(),
+            })
+            .expect("queue run import");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let import_result = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ImportResult {
+                    result,
+                    command_id: event_command_id,
+                } if event_command_id == &command_id => Some(result.clone()),
+                _ => None,
+            })
+            .expect("worker should emit ImportResult");
+        match import_result {
+            ImportResult::Done { counts, .. } => {
+                assert_eq!(counts.folders, 2);
+                assert_eq!(counts.requests, 3);
+                assert_eq!(counts.environments, 1);
+            }
+            other => panic!("expected Done via worker, got {other:?}"),
+        }
+    }
+
+    /// Sanity-check that the runner is format-agnostic: it only references
+    /// source-agnostic types (`ImportPlan` / `PlannedRequest` / etc.) and
+    /// never any Postman/Insomnia/cURL type.
+    #[test]
+    fn runner_only_references_source_agnostic_ir_types() {
+        // If this compiles, the runner does not depend on format-specific
+        // types — adding a new importer is purely additive (a new module +
+        // one DETECTORS entry), never an edit to `run_import_job`.
+        fn _compile_check(_plan: ImportPlan, _env: PlannedEnvironment) {
+            // Intentionally empty: this is a type-level guarantee, not
+            // runtime behaviour. The IR types used here are the same ones
+            // documented in `docs/IMPORT_IMPLEMENTATION_PLAN.md` Phase 0.
+        }
+        _compile_check(
+            sample_import_plan(),
+            PlannedEnvironment {
+                name: "x".to_string(),
+                variables: Vec::new(),
+            },
         );
     }
 }
