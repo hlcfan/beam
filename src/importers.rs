@@ -62,8 +62,11 @@ pub trait Parser {
     fn parse(&self, content: &str) -> Result<ImportPlan, BeamError>;
 }
 
+pub mod curl;
 pub mod insomnia;
 pub mod postman;
+
+pub use curl::{CurlPlan, is_curl, parse as parse_curl};
 
 pub const DETECTORS: &[(&str, &'static dyn Detector, &str)] = &[
     ("postman", &postman::PostmanDetector, "Postman"),
