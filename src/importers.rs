@@ -82,7 +82,7 @@ pub fn detect(content: &str, ext_hint: Option<&str>) -> DetectedSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect, DetectedSource};
+    use super::{DetectedSource, detect};
 
     #[test]
     fn detect_dispatches_postman_collection() {

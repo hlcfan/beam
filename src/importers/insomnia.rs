@@ -52,13 +52,19 @@ mod tests {
             "__export_source": "insomnia.desktop.app",
             "resources": []
         }"#;
-        assert_eq!(InsomniaDetector.detect(content, None), DetectedSource::Insomnia);
+        assert_eq!(
+            InsomniaDetector.detect(content, None),
+            DetectedSource::Insomnia
+        );
     }
 
     #[test]
     fn detects_insomnia_export_format_3() {
         let content = r#"{ "__export_format": 3 }"#;
-        assert_eq!(InsomniaDetector.detect(content, None), DetectedSource::Insomnia);
+        assert_eq!(
+            InsomniaDetector.detect(content, None),
+            DetectedSource::Insomnia
+        );
     }
 
     #[test]
@@ -76,13 +82,19 @@ mod tests {
             "_type": "export",
             "__export_format": 4
         }"#;
-        assert_eq!(InsomniaDetector.detect(content, None), DetectedSource::Insomnia);
+        assert_eq!(
+            InsomniaDetector.detect(content, None),
+            DetectedSource::Insomnia
+        );
     }
 
     #[test]
     fn detects_insomnia_type_export_alone() {
         let content = r#"{ "_type": "export" }"#;
-        assert_eq!(InsomniaDetector.detect(content, None), DetectedSource::Insomnia);
+        assert_eq!(
+            InsomniaDetector.detect(content, None),
+            DetectedSource::Insomnia
+        );
     }
 
     #[test]
