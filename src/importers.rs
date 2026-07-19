@@ -65,6 +65,7 @@ pub trait Parser {
 pub mod curl;
 pub mod insomnia;
 pub mod postman;
+pub mod scanner;
 
 pub use curl::{CurlPlan, is_curl, parse as parse_curl};
 
