@@ -1166,7 +1166,12 @@ impl ImportDialogView {
         }
     }
 
-    fn render_file_row(&self, row: &FileRow, cx: &Context<Self>) -> impl IntoElement {
+    fn render_file_row(
+        &self,
+        row: &FileRow,
+        has_postman_env_imported: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let file_name = row
             .path
             .file_name()
@@ -1238,21 +1243,42 @@ impl ImportDialogView {
                     )
             }
         };
-        h_flex()
+        let show_env_warning = has_postman_env_imported
+            && matches!(&row.detected, DetectedSource::PostmanCollection { .. })
+            && matches!(row.state, FileState::Done { .. });
+        v_flex()
             .w_full()
-            .items_center()
-            .justify_between()
-            .py_1()
-            .px_2()
-            .rounded(px(4.0))
+            .gap_0()
             .child(
                 h_flex()
+                    .w_full()
                     .items_center()
-                    .gap_2()
-                    .flex_1()
-                    .child(div().text_sm().truncate().child(label)),
+                    .justify_between()
+                    .py_1()
+                    .px_2()
+                    .rounded(px(4.0))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .flex_1()
+                            .child(div().text_sm().truncate().child(label)),
+                    )
+                    .child(h_flex().items_center().gap_2().child(tag).child(status)),
             )
-            .child(h_flex().items_center().gap_2().child(tag).child(status))
+            .when(show_env_warning, |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .pb_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Imported 1 environment separately — copy it into this workspace to resolve {{variables}}."),
+                        ),
+                )
+            })
     }
 }
 
@@ -1445,16 +1471,48 @@ impl Render for ImportDialogView {
                 )
             })
             .when(has_files, |this| {
+                let all_failed = self
+                    .files
+                    .iter()
+                    .all(|f| matches!(f.state, FileState::Failed { .. }));
+                let has_postman_env_imported = self.files.iter().any(|f| {
+                    matches!(&f.detected, DetectedSource::PostmanEnvironment)
+                        && matches!(f.state, FileState::Done { .. })
+                }) && self.files.iter().any(|f| {
+                    matches!(&f.detected, DetectedSource::PostmanCollection { .. })
+                        && matches!(f.state, FileState::Done { .. })
+                });
                 this.child(
                     v_flex()
                         .w_full()
                         .max_h(px(320.0))
                         .overflow_y_scrollbar()
                         .gap_0()
+                        .when(all_failed, |this| {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .px_2()
+                                    .py_1()
+                                    .mb_1()
+                                    .rounded(px(4.0))
+                                    .bg(cx.theme().danger.opacity(0.08))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().danger_foreground)
+                                            .child(
+                                                "No files could be imported. See details below.",
+                                            ),
+                                    ),
+                            )
+                        })
                         .children({
                             let mut children = Vec::new();
                             for row in &self.files {
-                                children.push(self.render_file_row(row, cx));
+                                children.push(
+                                    self.render_file_row(row, has_postman_env_imported, cx),
+                                );
                             }
                             children
                         }),
