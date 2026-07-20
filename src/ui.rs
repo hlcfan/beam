@@ -36,8 +36,8 @@ use ulid::Ulid;
 
 use crate::app_shell::next_command_id;
 use crate::app_shell::{
-    AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupMessage,
-    TreeNodeKind,
+    AppCommand, AppEvent, AppShellState, DataSyncRuntime, ImportJob, RequestPaneData,
+    StartupMessage, TreeNodeKind,
 };
 use crate::assets::{Assets, embedded_theme_contents};
 use crate::importers::{parser_for, scanner, tag_label, DetectedSource, ImportPlan};
@@ -902,6 +902,7 @@ struct FileRow {
     detected: DetectedSource,
     state: FileState,
     plan: Option<ImportPlan>,
+    command_id: Option<String>,
 }
 
 struct ImportDialogView {
@@ -910,16 +911,23 @@ struct ImportDialogView {
     importing: bool,
     any_success: bool,
     cancellation: Arc<AtomicBool>,
+    app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
 }
 
 impl ImportDialogView {
-    fn new(beam_view: Entity<BeamView>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    fn new(
+        beam_view: Entity<BeamView>,
+        app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             beam_view,
             files: Vec::new(),
             importing: false,
             any_success: false,
             cancellation: Arc::new(AtomicBool::new(false)),
+            app_command_tx,
         }
     }
 
@@ -981,6 +989,7 @@ impl ImportDialogView {
                                         message: "Unknown format".to_string(),
                                     },
                                     plan: None,
+                                    command_id: None,
                                 });
                                 cx.notify();
                             })
@@ -1014,6 +1023,7 @@ impl ImportDialogView {
                                         detected: detection,
                                         state: FileState::Waiting,
                                         plan: Some(plan),
+                                        command_id: None,
                                     });
                                     cx.notify();
                                 })
@@ -1030,6 +1040,7 @@ impl ImportDialogView {
                                             message: err.to_string(),
                                         },
                                         plan: None,
+                                        command_id: None,
                                     });
                                     cx.notify();
                                 })
@@ -1048,6 +1059,7 @@ impl ImportDialogView {
                                     message: "Could not read file".to_string(),
                                 },
                                 plan: None,
+                                command_id: None,
                             });
                             cx.notify();
                         })
@@ -1103,6 +1115,7 @@ impl ImportDialogView {
                                     message: format!("Folder scan error: {err:?}"),
                                 },
                                 plan: None,
+                                command_id: None,
                             });
                             cx.notify();
                         })
@@ -1359,6 +1372,7 @@ impl Render for ImportDialogView {
                                                                     ),
                                                                 },
                                                                 plan: None,
+                                                                command_id: None,
                                                             });
                                                             cx.notify();
                                                         })
@@ -1427,16 +1441,21 @@ impl Render for ImportDialogView {
                     .w_full()
                     .justify_between()
                     .pt_2()
-                    .child(
-                        Button::new("import-dialog-cancel")
+                    .child({
+                        let mut cancel_btn = Button::new("import-dialog-cancel")
                             .ghost()
                             .small()
                             .cursor_pointer()
-                            .label("Cancel")
-                            .on_click(cx.listener(|_, _: &ClickEvent, window, cx| {
+                            .label("Cancel");
+                        if self.importing {
+                            cancel_btn = cancel_btn.tooltip("Import in progress");
+                        }
+                        cancel_btn.on_click(
+                            cx.listener(|_, _: &ClickEvent, window, cx| {
                                 window.close_dialog(cx);
-                            })),
-                    )
+                            }),
+                        )
+                    })
                     .child(
                         Button::new("import-dialog-submit")
                             .primary()
@@ -1444,8 +1463,38 @@ impl Render for ImportDialogView {
                             .cursor_pointer()
                             .label(if self.importing { "Importing..." } else { "Import" })
                             .disabled(self.files.is_empty() || self.importing)
-                            .on_click(cx.listener(move |_, _: &ClickEvent, _window, _cx| {
-                                // Phase 8 will wire the actual import.
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                                if this.importing {
+                                    return;
+                                }
+                                let has_waiting = this.files.iter().any(|f| {
+                                    f.plan.is_some()
+                                        && matches!(f.state, FileState::Waiting)
+                                });
+                                if !has_waiting {
+                                    return;
+                                }
+                                for row in &mut this.files {
+                                    if let Some(plan) = &row.plan {
+                                        if matches!(row.state, FileState::Waiting) {
+                                            let command_id = next_command_id();
+                                            let job = ImportJob {
+                                                plan: plan.clone(),
+                                                cancellation: this.cancellation.clone(),
+                                            };
+                                            let _ = this
+                                                .app_command_tx
+                                                .send(AppCommand::RunImport {
+                                                    job,
+                                                    command_id: command_id.clone(),
+                                                });
+                                            row.state = FileState::Importing;
+                                            row.command_id = Some(command_id);
+                                        }
+                                    }
+                                }
+                                this.importing = true;
+                                cx.notify();
                             })),
                     ),
             )
@@ -3534,7 +3583,9 @@ impl BeamView {
 
     fn open_import_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let beam_view = cx.entity();
-        let import_view = cx.new(|cx| ImportDialogView::new(beam_view.clone(), _window, cx));
+        let import_view = cx.new(|cx| {
+            ImportDialogView::new(beam_view.clone(), self.app_command_tx.clone(), _window, cx)
+        });
         self.import_dialog_view = Some(import_view.clone());
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
