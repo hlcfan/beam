@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
@@ -38,6 +40,7 @@ use crate::app_shell::{
     TreeNodeKind,
 };
 use crate::assets::{Assets, embedded_theme_contents};
+use crate::importers::{parser_for, scanner, tag_label, DetectedSource, ImportPlan};
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, BodyFormatKind, EnvironmentFile, EnvironmentScope,
     EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
@@ -566,6 +569,7 @@ struct BeamView {
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
     key_bindings_dialog_view: Option<Entity<KeyBindingsDialogView>>,
+    import_dialog_view: Option<Entity<ImportDialogView>>,
     request_execution_states: HashMap<Ulid, RequestExecutionState>,
     next_request_run_id: u64,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
@@ -883,6 +887,569 @@ struct EnvironmentManagerDialogView {
     loaded_environment_name: Option<String>,
     pending_new_environment_command_id: Option<String>,
     error: Option<String>,
+}
+
+enum FileState {
+    Waiting,
+    Importing,
+    Done { summary: String },
+    Failed { message: String },
+}
+
+struct FileRow {
+    path: PathBuf,
+    relative_label: Option<String>,
+    detected: DetectedSource,
+    state: FileState,
+    plan: Option<ImportPlan>,
+}
+
+struct ImportDialogView {
+    beam_view: Entity<BeamView>,
+    files: Vec<FileRow>,
+    importing: bool,
+    any_success: bool,
+    cancellation: Arc<AtomicBool>,
+}
+
+impl ImportDialogView {
+    fn new(beam_view: Entity<BeamView>, _window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        Self {
+            beam_view,
+            files: Vec::new(),
+            importing: false,
+            any_success: false,
+            cancellation: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn is_duplicate(&self, path: &PathBuf) -> bool {
+        self.files.iter().any(|f| &f.path == path)
+    }
+
+    fn clear_files(&mut self, cx: &mut Context<Self>) {
+        self.files.clear();
+        self.any_success = false;
+        cx.notify();
+    }
+
+    fn process_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        folder_root: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = cx.entity();
+        cx.spawn_in(window, async move |_, cx| {
+            for path in paths {
+                let relative = folder_root.as_ref().and_then(|root| {
+                    path.strip_prefix(root).ok().map(|p| p.to_path_buf())
+                });
+                let read_result = cx
+                    .background_executor()
+                    .spawn({
+                        let path = path.clone();
+                        async move { std::fs::read_to_string(&path).ok() }
+                    })
+                    .await;
+                match read_result {
+                    Some(content) => {
+                        let ext_hint = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_string());
+                        let detection = cx
+                            .background_executor()
+                            .spawn({
+                                let content = content.clone();
+                                let ext_hint = ext_hint.clone();
+                                async move {
+                                    crate::importers::detect(&content, ext_hint.as_deref())
+                                }
+                            })
+                            .await;
+                        if detection == DetectedSource::Unknown {
+                            view.update_in(cx, |this, _, cx| {
+                                this.files.push(FileRow {
+                                    path: path.clone(),
+                                    relative_label: relative.map(|p| {
+                                        p.to_string_lossy().to_string()
+                                    }),
+                                    detected: detection,
+                                    state: FileState::Failed {
+                                        message: "Unknown format".to_string(),
+                                    },
+                                    plan: None,
+                                });
+                                cx.notify();
+                            })
+                            .ok();
+                            continue;
+                        }
+                        let _parser = parser_for(&detection);
+                        let plan_result = cx
+                            .background_executor()
+                            .spawn({
+                                let content = content.clone();
+                                let detection = detection.clone();
+                                async move {
+                                    if let Some(parser) = parser_for(&detection) {
+                                        parser.parse(&content)
+                                    } else {
+                                        Err(crate::error::BeamError::Validation {
+                                            message: "Uknown format".to_string(),
+                                        })
+                                    }
+                                }
+                            })
+                            .await;
+                        match plan_result {
+                            Ok(plan) => {
+                                view.update_in(cx, |this, _, cx| {
+                                    this.files.push(FileRow {
+                                        path: path.clone(),
+                                        relative_label: relative
+                                            .map(|p| p.to_string_lossy().to_string()),
+                                        detected: detection,
+                                        state: FileState::Waiting,
+                                        plan: Some(plan),
+                                    });
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                            Err(err) => {
+                                view.update_in(cx, |this, _, cx| {
+                                    this.files.push(FileRow {
+                                        path: path.clone(),
+                                        relative_label: relative
+                                            .map(|p| p.to_string_lossy().to_string()),
+                                        detected: detection,
+                                        state: FileState::Failed {
+                                            message: err.to_string(),
+                                        },
+                                        plan: None,
+                                    });
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                        }
+                    }
+                    None => {
+                        view.update_in(cx, |this, _, cx| {
+                            this.files.push(FileRow {
+                                path: path.clone(),
+                                relative_label: relative
+                                    .map(|p| p.to_string_lossy().to_string()),
+                                detected: DetectedSource::Unknown,
+                                state: FileState::Failed {
+                                    message: "Could not read file".to_string(),
+                                },
+                                plan: None,
+                            });
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_drop_paths(
+        &mut self,
+        paths: ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut file_paths: Vec<PathBuf> = Vec::new();
+        let mut folder_paths: Vec<PathBuf> = Vec::new();
+        for p in paths.0.iter() {
+            if p.is_dir() {
+                folder_paths.push(p.clone());
+            } else if p.is_file() {
+                file_paths.push(p.clone());
+            }
+        }
+        if !file_paths.is_empty() {
+            self.process_paths(file_paths, None, window, cx);
+        }
+        for folder in folder_paths {
+            let view = cx.entity();
+            let root = folder.clone();
+            let root_for_scan = root.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                let scan_result = cx
+                    .background_executor()
+                    .spawn(async move { scanner::scan_folder(&root_for_scan) })
+                    .await;
+                match scan_result {
+                    Ok(scanned_paths) => {
+                        view.update_in(cx, |this, window, cx| {
+                            this.process_paths(scanned_paths, Some(root.clone()), window, cx);
+                        })
+                        .ok();
+                    }
+                    Err(err) => {
+                        view.update_in(cx, |this, _, cx| {
+                            this.files.push(FileRow {
+                                path: root.clone(),
+                                relative_label: None,
+                                detected: DetectedSource::Unknown,
+                                state: FileState::Failed {
+                                    message: format!("Folder scan error: {err:?}"),
+                                },
+                                plan: None,
+                            });
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn render_file_row(&self, row: &FileRow, cx: &Context<Self>) -> impl IntoElement {
+        let file_name = row
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let label = if let Some(ref rel) = row.relative_label {
+            format!("{} (from folder)", rel)
+        } else {
+            file_name.to_string()
+        };
+        let tag_text = tag_label(&row.detected);
+        let tag = Tag::secondary().small().outline().child(tag_text);
+        let status = match &row.state {
+            FileState::Waiting => {
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .size(px(6.0))
+                            .rounded_full()
+                            .bg(cx.theme().muted_foreground),
+                    )
+                    .child("Waiting")
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+            }
+            FileState::Importing => div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Importing..."),
+            FileState::Done { summary } => {
+                let summary = summary.clone();
+                h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    Icon::default()
+                        .path("icons/check.svg")
+                        .size(px(14.0))
+                        .text_color(cx.theme().success),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().success)
+                        .child(summary),
+                )
+            }
+            FileState::Failed { message } => {
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        Icon::default()
+                            .path("icons/info.svg")
+                            .size(px(14.0))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(message.clone()),
+                    )
+            }
+        };
+        h_flex()
+            .w_full()
+            .items_center()
+            .justify_between()
+            .py_1()
+            .px_2()
+            .rounded(px(4.0))
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .flex_1()
+                    .child(div().text_sm().truncate().child(label)),
+            )
+            .child(
+                h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(tag)
+                    .child(status),
+            )
+    }
+}
+
+impl Render for ImportDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_files = !self.files.is_empty();
+        let view = cx.entity();
+
+        v_flex()
+            .w(px(640.0))
+            .p_4()
+            .gap_4()
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Drag in files or a folder, or click to pick. Supports Postman \
+                         Collection/Environment (.json, .postman_environment.json) and \
+                         Insomnia export (.json).",
+                    ),
+            )
+            .child({
+                let _drop_view = view.clone();
+                div()
+                    .w_full()
+                    .h(px(160.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
+                    .cursor_pointer()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .on_mouse_down(MouseButton::Left, cx.listener(
+                        move |_this, _: &MouseDownEvent, window, cx| {
+                            let rx = cx.prompt_for_paths(PathPromptOptions {
+                                files: true,
+                                directories: false,
+                                multiple: true,
+                                prompt: None,
+                            });
+                            let entity = cx.entity();
+                            cx.spawn_in(window, async move |_, cx| {
+                                let picked = match rx.await {
+                                    Ok(Ok(Some(p))) => p,
+                                    _ => return,
+                                };
+                                entity
+                                    .update_in(cx, move |this, window, cx| {
+                                        this.process_paths(picked, None, window, cx);
+                                    })
+                                    .ok();
+                            })
+                            .detach();
+                        },
+                    ))
+                    .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                        style
+                            .bg(cx.theme().accent.opacity(0.08))
+                            .border_color(cx.theme().accent)
+                    })
+                    .on_drop(cx.listener(
+                        move |this, paths: &ExternalPaths, window, cx| {
+                            this.handle_drop_paths(paths.clone(), window, cx);
+                        },
+                    ))
+                    .child(
+                        Icon::default()
+                            .path("icons/upload.svg")
+                            .size(px(28.0))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Drag files or folder here, or click to choose files."),
+                    )
+            })
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .child({
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .cursor_pointer()
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        Icon::default()
+                                            .path("icons/folder.svg")
+                                            .size(px(14.0))
+                                            .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .child("Pick folder..."),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
+                                    let rx = cx.prompt_for_paths(PathPromptOptions {
+                                        files: false,
+                                        directories: true,
+                                        multiple: false,
+                                        prompt: None,
+                                    });
+                                    let entity = cx.entity();
+                                    cx.spawn_in(window, async move |_, cx| {
+                                        let picked = match rx.await {
+                                            Ok(Ok(Some(p))) => p,
+                                            _ => return,
+                                        };
+                                        if let Some(folder) = picked.into_iter().next() {
+                                            let scan_result = cx
+                                                .background_executor()
+                                                .spawn({
+                                                    let folder = folder.clone();
+                                                    async move {
+                                                        scanner::scan_folder(&folder)
+                                                    }
+                                                })
+                                                .await;
+                                            match scan_result {
+                                                Ok(scanned_paths) => {
+                                                    entity
+                                                        .update_in(cx, |this, window, cx| {
+                                                            this.process_paths(
+                                                                scanned_paths,
+                                                                Some(folder),
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .ok();
+                                                }
+                                                Err(err) => {
+                                                    entity
+                                                        .update_in(cx, |this, _, cx| {
+                                                            this.files.push(FileRow {
+                                                                path: folder,
+                                                                relative_label: None,
+                                                                detected: DetectedSource::Unknown,
+                                                                state: FileState::Failed {
+                                                                    message: format!(
+                                                                        "Folder scan error: {err:?}"
+                                                                    ),
+                                                                },
+                                                                plan: None,
+                                                            });
+                                                            cx.notify();
+                                                        })
+                                                        .ok();
+                                                }
+                                            }
+                                        }
+                                    })
+                                    .detach();
+                                }),
+                            )
+                    }),
+            )
+            .when(has_files, |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("{} files", self.files.len())),
+                        )
+                        .child({
+                            h_flex()
+                                .text_xs()
+                                .cursor_pointer()
+                                .text_color(cx.theme().muted_foreground)
+                                .when(self.importing, |this| {
+                                    this.opacity(0.4).cursor_default()
+                                })
+                                .child("Clear")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(
+                                        move |this, _: &MouseDownEvent, _window, cx| {
+                                            if !this.importing {
+                                                this.clear_files(cx);
+                                            }
+                                        },
+                                    ),
+                                )
+                        }),
+                )
+            })
+            .when(has_files, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .max_h(px(320.0))
+                        .overflow_y_scrollbar()
+                        .gap_0()
+                        .children({
+                            let mut children = Vec::new();
+                            for row in &self.files {
+                                children.push(self.render_file_row(row, cx));
+                            }
+                            children
+                        }),
+                )
+            })
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .pt_2()
+                    .child(
+                        Button::new("import-dialog-cancel")
+                            .ghost()
+                            .small()
+                            .cursor_pointer()
+                            .label("Cancel")
+                            .on_click(cx.listener(|_, _: &ClickEvent, window, cx| {
+                                window.close_dialog(cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("import-dialog-submit")
+                            .primary()
+                            .small()
+                            .cursor_pointer()
+                            .label(if self.importing { "Importing..." } else { "Import" })
+                            .disabled(self.files.is_empty() || self.importing)
+                            .on_click(cx.listener(move |_, _: &ClickEvent, _window, _cx| {
+                                // Phase 8 will wire the actual import.
+                            })),
+                    ),
+            )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2957,6 +3524,27 @@ impl BeamView {
                                 .w(px(920.0))
                                 .max_w(px(1200.0))
                                 .child(settings_view.clone())
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
+    }
+
+    fn open_import_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let beam_view = cx.entity();
+        let import_view = cx.new(|cx| ImportDialogView::new(beam_view.clone(), _window, cx));
+        self.import_dialog_view = Some(import_view.clone());
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    window.defer(cx, move |window, cx| {
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            dialog
+                                .title("Import requests")
+                                .w(px(640.0))
+                                .child(import_view.clone())
                         });
                     });
                 });
@@ -6755,6 +7343,7 @@ impl BeamView {
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
             key_bindings_dialog_view: None,
+            import_dialog_view: None,
             request_execution_states: HashMap::new(),
             next_request_run_id: 1,
             current_workspace_paths: workspace_paths,

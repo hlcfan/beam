@@ -84,6 +84,24 @@ pub fn detect(content: &str, ext_hint: Option<&str>) -> DetectedSource {
     DetectedSource::Unknown
 }
 
+pub fn parser_for(source: &DetectedSource) -> Option<&'static dyn Parser> {
+    match source {
+        DetectedSource::PostmanCollection { .. } => Some(&postman::PostmanCollectionParser),
+        DetectedSource::PostmanEnvironment => Some(&postman::PostmanEnvironmentParser),
+        DetectedSource::Insomnia => Some(&insomnia::InsomniaParser),
+        DetectedSource::Unknown => None,
+    }
+}
+
+pub fn tag_label(source: &DetectedSource) -> &'static str {
+    match source {
+        DetectedSource::PostmanCollection { .. } => "Postman",
+        DetectedSource::PostmanEnvironment => "Postman",
+        DetectedSource::Insomnia => "Insomnia",
+        DetectedSource::Unknown => "Unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DetectedSource, detect};
