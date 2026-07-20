@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
@@ -915,6 +915,8 @@ struct ImportDialogView {
     enqueued_count: usize,
     completed_count: usize,
     cancellation: Arc<AtomicBool>,
+    show_cancel_confirm: bool,
+    was_cancelled: bool,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
 }
 
@@ -934,6 +936,8 @@ impl ImportDialogView {
             enqueued_count: 0,
             completed_count: 0,
             cancellation: Arc::new(AtomicBool::new(false)),
+            show_cancel_confirm: false,
+            was_cancelled: false,
             app_command_tx,
         }
     }
@@ -948,6 +952,8 @@ impl ImportDialogView {
         self.all_done = false;
         self.enqueued_count = 0;
         self.completed_count = 0;
+        self.show_cancel_confirm = false;
+        self.was_cancelled = false;
         cx.notify();
     }
 
@@ -987,14 +993,19 @@ impl ImportDialogView {
                     row.state = FileState::Failed { message: msg };
                 }
                 ImportResult::Canceled => {
-                    // Handled in Phase 9 (Cancellation).
+                    if matches!(row.state, FileState::Importing) {
+                        row.state = FileState::Failed {
+                            message: "Canceled by user".to_string(),
+                        };
+                    }
                 }
             }
 
             if self.completed_count >= self.enqueued_count {
                 self.importing = false;
                 self.all_done = true;
-                if self.any_success {
+                self.show_cancel_confirm = false;
+                if self.any_success && !self.was_cancelled {
                     if let Some(first_done) = self
                         .files
                         .iter()
@@ -1555,80 +1566,177 @@ impl Render for ImportDialogView {
                         }),
                 )
             })
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .pt_2()
-                    .child({
-                        let mut cancel_btn = Button::new("import-dialog-cancel")
-                            .ghost()
-                            .small()
-                            .cursor_pointer()
-                            .label("Cancel");
-                        if self.importing {
-                            cancel_btn = cancel_btn.tooltip("Import in progress");
-                        }
-                        cancel_btn.on_click(cx.listener(|_, _: &ClickEvent, window, cx| {
-                            window.close_dialog(cx);
-                        }))
-                    })
-                    .child(
-                        Button::new("import-dialog-submit")
-                            .primary()
-                            .small()
-                            .cursor_pointer()
-                            .label(if self.all_done {
-                                "Done"
-                            } else if self.importing {
-                                "Importing..."
-                            } else {
-                                "Import"
-                            })
-                            .disabled(self.files.is_empty() || self.importing)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                                if this.all_done {
-                                    _window.close_dialog(cx);
-                                    return;
-                                }
-                                if this.importing {
-                                    return;
-                                }
-                                let has_waiting = this.files.iter().any(|f| {
-                                    f.plan.is_some() && matches!(f.state, FileState::Waiting)
-                                });
-                                if !has_waiting {
-                                    return;
-                                }
-                                for row in &mut this.files {
-                                    if let Some(plan) = &row.plan {
-                                        if matches!(row.state, FileState::Waiting) {
-                                            let command_id = next_command_id();
-                                            let job = ImportJob {
-                                                plan: plan.clone(),
-                                                cancellation: this.cancellation.clone(),
-                                            };
-                                            let _ =
-                                                this.app_command_tx.send(AppCommand::RunImport {
-                                                    job,
-                                                    command_id: command_id.clone(),
-                                                });
-                                            row.state = FileState::Importing;
-                                            row.command_id = Some(command_id);
-                                        }
+            .child({
+                if self.show_cancel_confirm && self.importing {
+                    v_flex()
+                        .w_full()
+                        .gap_3()
+                        .pt_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    "An import is in progress. Canceling will stop the \
+                                     current import. Are you sure?",
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child({
+                                    let keep_btn = Button::new(
+                                        "import-dialog-keep-importing",
+                                    )
+                                    .ghost()
+                                    .small()
+                                    .cursor_pointer()
+                                    .label("Keep importing");
+                                    keep_btn.on_click(
+                                        cx.listener(|this, _: &ClickEvent, _window, cx| {
+                                            this.show_cancel_confirm = false;
+                                            cx.notify();
+                                        }),
+                                    )
+                                })
+                                .child(
+                                    Button::new("import-dialog-cancel-import")
+                                        .primary()
+                                        .small()
+                                        .cursor_pointer()
+                                        .label("Cancel import")
+                                        .on_click(cx.listener(
+                                            |this, _: &ClickEvent, _window, cx| {
+                                                this.cancellation
+                                                    .store(true, Ordering::SeqCst);
+                                                this.was_cancelled = true;
+                                                for row in &mut this.files {
+                                                    match row.state {
+                                                        FileState::Importing => {
+                                                            row.state =
+                                                                FileState::Failed {
+                                                                    message:
+                                                                        "Canceled by user"
+                                                                            .to_string(),
+                                                                };
+                                                        }
+                                                        FileState::Waiting => {
+                                                            row.state =
+                                                                FileState::Failed {
+                                                                    message:
+                                                                        "Canceled before import"
+                                                                            .to_string(),
+                                                                };
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                this.show_cancel_confirm = false;
+                                                cx.notify();
+                                            },
+                                        )),
+                                ),
+                        )
+                        .into_any_element()
+                } else {
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .pt_2()
+                        .child({
+                            let mut cancel_btn = Button::new("import-dialog-cancel")
+                                .ghost()
+                                .small()
+                                .cursor_pointer()
+                                .label("Cancel");
+                            if self.importing {
+                                cancel_btn = cancel_btn.tooltip("Import in progress");
+                            }
+                            cancel_btn.on_click(cx.listener(
+                                |this, _: &ClickEvent, window, cx| {
+                                    if this.importing {
+                                        this.show_cancel_confirm = true;
+                                        cx.notify();
+                                    } else {
+                                        window.close_dialog(cx);
                                     }
-                                }
-                                this.enqueued_count = this
-                                    .files
-                                    .iter()
-                                    .filter(|f| matches!(f.state, FileState::Importing))
-                                    .count();
-                                this.completed_count = 0;
-                                this.importing = true;
-                                cx.notify();
-                            })),
-                    ),
-            )
+                                },
+                            ))
+                        })
+                        .child(
+                            Button::new("import-dialog-submit")
+                                .primary()
+                                .small()
+                                .cursor_pointer()
+                                .label(if self.all_done {
+                                    "Done"
+                                } else if self.importing {
+                                    "Importing..."
+                                } else {
+                                    "Import"
+                                })
+                                .disabled(self.files.is_empty() || self.importing)
+                                .on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _window, cx| {
+                                        if this.all_done {
+                                            _window.close_dialog(cx);
+                                            return;
+                                        }
+                                        if this.importing {
+                                            return;
+                                        }
+                                        let has_waiting = this.files.iter().any(|f| {
+                                            f.plan.is_some()
+                                                && matches!(f.state, FileState::Waiting)
+                                        });
+                                        if !has_waiting {
+                                            return;
+                                        }
+                                        this.cancellation = Arc::new(
+                                            AtomicBool::new(false),
+                                        );
+                                        this.was_cancelled = false;
+                                        this.show_cancel_confirm = false;
+                                        for row in &mut this.files {
+                                            if let Some(plan) = &row.plan {
+                                                if matches!(row.state, FileState::Waiting)
+                                                {
+                                                    let command_id = next_command_id();
+                                                    let job = ImportJob {
+                                                        plan: plan.clone(),
+                                                        cancellation: this
+                                                            .cancellation
+                                                            .clone(),
+                                                    };
+                                                    let _ = this.app_command_tx.send(
+                                                        AppCommand::RunImport {
+                                                            job,
+                                                            command_id: command_id
+                                                                .clone(),
+                                                        },
+                                                    );
+                                                    row.state = FileState::Importing;
+                                                    row.command_id = Some(command_id);
+                                                }
+                                            }
+                                        }
+                                        this.enqueued_count = this
+                                            .files
+                                            .iter()
+                                            .filter(|f| {
+                                                matches!(f.state, FileState::Importing)
+                                            })
+                                            .count();
+                                        this.completed_count = 0;
+                                        this.importing = true;
+                                        cx.notify();
+                                    },
+                                )),
+                        )
+                        .into_any_element()
+                }
+            })
     }
 }
 
