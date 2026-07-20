@@ -10770,8 +10770,9 @@ impl BeamView {
             .h_full()
             .w_full()
             .gap_0()
-            .rounded(px(8.0))
-            .border_1()
+                    .rounded(px(8.0))
+                    .border_dashed()
+                    .border_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
             .child(
