@@ -1335,7 +1335,7 @@ impl Render for ImportDialogView {
         let view = cx.entity();
 
         v_flex()
-            .w(px(640.0))
+            .w_full()
             .p_4()
             .gap_4()
             .child(
