@@ -11693,6 +11693,35 @@ impl BeamView {
                             .child("Settings"),
                     ),
             )
+            .child({
+                let is_importing = self
+                    .import_dialog_view
+                    .as_ref()
+                    .map_or(false, |v| v.read(cx).importing);
+                Button::new("status-bar-import-modal")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .h(px(22.0))
+                    .px_1()
+                    .rounded(px(6.0))
+                    .disabled(is_importing)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_import_dialog(window, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::default()
+                                    .path("icons/import.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child("Import"),
+                    )
+            })
             .child(div().flex_1())
             .child(
                 Button::new("status-bar-key-bindings-modal")
