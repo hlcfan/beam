@@ -2,9 +2,9 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
@@ -36,11 +36,11 @@ use ulid::Ulid;
 
 use crate::app_shell::next_command_id;
 use crate::app_shell::{
-    AppCommand, AppEvent, AppShellState, DataSyncRuntime, ImportJob, RequestPaneData,
+    AppCommand, AppEvent, AppShellState, DataSyncRuntime, ImportJob, ImportResult, RequestPaneData,
     StartupMessage, TreeNodeKind,
 };
 use crate::assets::{Assets, embedded_theme_contents};
-use crate::importers::{parser_for, scanner, tag_label, DetectedSource, ImportPlan};
+use crate::importers::{DetectedSource, ImportPlan, parser_for, scanner, tag_label};
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, BodyFormatKind, EnvironmentFile, EnvironmentScope,
     EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
@@ -941,6 +941,47 @@ impl ImportDialogView {
         cx.notify();
     }
 
+    fn handle_import_result(
+        &mut self,
+        result: ImportResult,
+        command_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(row) = self
+            .files
+            .iter_mut()
+            .find(|f| f.command_id.as_deref() == Some(&command_id))
+        {
+            match result {
+                ImportResult::Done {
+                    summary,
+                    counts: _,
+                    workspace_id: _,
+                } => {
+                    self.any_success = true;
+                    row.state = FileState::Done { summary };
+                }
+                ImportResult::Failed {
+                    message,
+                    partial_workspace_created,
+                } => {
+                    log::error!("import failed: {message}");
+                    let mut msg = message;
+                    if partial_workspace_created {
+                        msg.push_str(
+                            "\nWorkspace created but partially imported — delete it if unwanted.",
+                        );
+                    }
+                    row.state = FileState::Failed { message: msg };
+                }
+                ImportResult::Canceled => {
+                    // Handled in Phase 9 (Cancellation).
+                }
+            }
+            cx.notify();
+        }
+    }
+
     fn process_paths(
         &mut self,
         paths: Vec<PathBuf>,
@@ -951,9 +992,9 @@ impl ImportDialogView {
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
             for path in paths {
-                let relative = folder_root.as_ref().and_then(|root| {
-                    path.strip_prefix(root).ok().map(|p| p.to_path_buf())
-                });
+                let relative = folder_root
+                    .as_ref()
+                    .and_then(|root| path.strip_prefix(root).ok().map(|p| p.to_path_buf()));
                 let read_result = cx
                     .background_executor()
                     .spawn({
@@ -967,23 +1008,22 @@ impl ImportDialogView {
                             .extension()
                             .and_then(|e| e.to_str())
                             .map(|s| s.to_string());
-                        let detection = cx
-                            .background_executor()
-                            .spawn({
-                                let content = content.clone();
-                                let ext_hint = ext_hint.clone();
-                                async move {
-                                    crate::importers::detect(&content, ext_hint.as_deref())
-                                }
-                            })
-                            .await;
+                        let detection =
+                            cx.background_executor()
+                                .spawn({
+                                    let content = content.clone();
+                                    let ext_hint = ext_hint.clone();
+                                    async move {
+                                        crate::importers::detect(&content, ext_hint.as_deref())
+                                    }
+                                })
+                                .await;
                         if detection == DetectedSource::Unknown {
                             view.update_in(cx, |this, _, cx| {
                                 this.files.push(FileRow {
                                     path: path.clone(),
-                                    relative_label: relative.map(|p| {
-                                        p.to_string_lossy().to_string()
-                                    }),
+                                    relative_label: relative
+                                        .map(|p| p.to_string_lossy().to_string()),
                                     detected: detection,
                                     state: FileState::Failed {
                                         message: "Unknown format".to_string(),
@@ -1052,8 +1092,7 @@ impl ImportDialogView {
                         view.update_in(cx, |this, _, cx| {
                             this.files.push(FileRow {
                                 path: path.clone(),
-                                relative_label: relative
-                                    .map(|p| p.to_string_lossy().to_string()),
+                                relative_label: relative.map(|p| p.to_string_lossy().to_string()),
                                 detected: DetectedSource::Unknown,
                                 state: FileState::Failed {
                                     message: "Could not read file".to_string(),
@@ -1141,20 +1180,18 @@ impl ImportDialogView {
         let tag_text = tag_label(&row.detected);
         let tag = Tag::secondary().small().outline().child(tag_text);
         let status = match &row.state {
-            FileState::Waiting => {
-                h_flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div()
-                            .size(px(6.0))
-                            .rounded_full()
-                            .bg(cx.theme().muted_foreground),
-                    )
-                    .child("Waiting")
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-            }
+            FileState::Waiting => h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(cx.theme().muted_foreground),
+                )
+                .child("Waiting")
+                .text_xs()
+                .text_color(cx.theme().muted_foreground),
             FileState::Importing => div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
@@ -1162,30 +1199,36 @@ impl ImportDialogView {
             FileState::Done { summary } => {
                 let summary = summary.clone();
                 h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    Icon::default()
-                        .path("icons/check.svg")
-                        .size(px(14.0))
-                        .text_color(cx.theme().success),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().success)
-                        .child(summary),
-                )
-            }
-            FileState::Failed { message } => {
-                h_flex()
                     .items_center()
                     .gap_1()
                     .child(
                         Icon::default()
-                            .path("icons/info.svg")
+                            .path("icons/check.svg")
                             .size(px(14.0))
-                            .text_color(cx.theme().muted_foreground),
+                            .text_color(cx.theme().success),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().success)
+                            .child(summary),
+                    )
+            }
+            FileState::Failed { message } => {
+                let msg = message.clone();
+                h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .id("import-fail-icon")
+                            .tooltip(move |window, cx| Tooltip::new(msg.clone()).build(window, cx))
+                            .child(
+                                Icon::default()
+                                    .path("icons/info.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
                     )
                     .child(
                         div()
@@ -1209,13 +1252,7 @@ impl ImportDialogView {
                     .flex_1()
                     .child(div().text_sm().truncate().child(label)),
             )
-            .child(
-                h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(tag)
-                    .child(status),
-            )
+            .child(h_flex().items_center().gap_2().child(tag).child(status))
     }
 }
 
@@ -1253,8 +1290,9 @@ impl Render for ImportDialogView {
                     .items_center()
                     .justify_center()
                     .gap_3()
-                    .on_mouse_down(MouseButton::Left, cx.listener(
-                        move |_this, _: &MouseDownEvent, window, cx| {
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
                             let rx = cx.prompt_for_paths(PathPromptOptions {
                                 files: true,
                                 directories: false,
@@ -1274,18 +1312,16 @@ impl Render for ImportDialogView {
                                     .ok();
                             })
                             .detach();
-                        },
-                    ))
+                        }),
+                    )
                     .drag_over::<ExternalPaths>(|style, _, _, cx| {
                         style
                             .bg(cx.theme().accent.opacity(0.08))
                             .border_color(cx.theme().accent)
                     })
-                    .on_drop(cx.listener(
-                        move |this, paths: &ExternalPaths, window, cx| {
-                            this.handle_drop_paths(paths.clone(), window, cx);
-                        },
-                    ))
+                    .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                        this.handle_drop_paths(paths.clone(), window, cx);
+                    }))
                     .child(
                         Icon::default()
                             .path("icons/upload.svg")
@@ -1299,93 +1335,85 @@ impl Render for ImportDialogView {
                             .child("Drag files or folder here, or click to choose files."),
                     )
             })
-            .child(
+            .child(div().w_full().flex().justify_center().child({
                 div()
-                    .w_full()
-                    .flex()
-                    .justify_center()
-                    .child({
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .cursor_pointer()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .cursor_pointer()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_1()
                             .child(
-                                h_flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        Icon::default()
-                                            .path("icons/folder.svg")
-                                            .size(px(14.0))
-                                            .text_color(cx.theme().muted_foreground),
-                                    )
-                                    .child("Pick folder..."),
+                                Icon::default()
+                                    .path("icons/folder.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
                             )
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
-                                    let rx = cx.prompt_for_paths(PathPromptOptions {
-                                        files: false,
-                                        directories: true,
-                                        multiple: false,
-                                        prompt: None,
-                                    });
-                                    let entity = cx.entity();
-                                    cx.spawn_in(window, async move |_, cx| {
-                                        let picked = match rx.await {
-                                            Ok(Ok(Some(p))) => p,
-                                            _ => return,
-                                        };
-                                        if let Some(folder) = picked.into_iter().next() {
-                                            let scan_result = cx
-                                                .background_executor()
-                                                .spawn({
-                                                    let folder = folder.clone();
-                                                    async move {
-                                                        scanner::scan_folder(&folder)
-                                                    }
+                            .child("Pick folder..."),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
+                            let rx = cx.prompt_for_paths(PathPromptOptions {
+                                files: false,
+                                directories: true,
+                                multiple: false,
+                                prompt: None,
+                            });
+                            let entity = cx.entity();
+                            cx.spawn_in(window, async move |_, cx| {
+                                let picked = match rx.await {
+                                    Ok(Ok(Some(p))) => p,
+                                    _ => return,
+                                };
+                                if let Some(folder) = picked.into_iter().next() {
+                                    let scan_result = cx
+                                        .background_executor()
+                                        .spawn({
+                                            let folder = folder.clone();
+                                            async move { scanner::scan_folder(&folder) }
+                                        })
+                                        .await;
+                                    match scan_result {
+                                        Ok(scanned_paths) => {
+                                            entity
+                                                .update_in(cx, |this, window, cx| {
+                                                    this.process_paths(
+                                                        scanned_paths,
+                                                        Some(folder),
+                                                        window,
+                                                        cx,
+                                                    );
                                                 })
-                                                .await;
-                                            match scan_result {
-                                                Ok(scanned_paths) => {
-                                                    entity
-                                                        .update_in(cx, |this, window, cx| {
-                                                            this.process_paths(
-                                                                scanned_paths,
-                                                                Some(folder),
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        })
-                                                        .ok();
-                                                }
-                                                Err(err) => {
-                                                    entity
-                                                        .update_in(cx, |this, _, cx| {
-                                                            this.files.push(FileRow {
-                                                                path: folder,
-                                                                relative_label: None,
-                                                                detected: DetectedSource::Unknown,
-                                                                state: FileState::Failed {
-                                                                    message: format!(
-                                                                        "Folder scan error: {err:?}"
-                                                                    ),
-                                                                },
-                                                                plan: None,
-                                                                command_id: None,
-                                                            });
-                                                            cx.notify();
-                                                        })
-                                                        .ok();
-                                                }
-                                            }
+                                                .ok();
                                         }
-                                    })
-                                    .detach();
-                                }),
-                            )
-                    }),
-            )
+                                        Err(err) => {
+                                            entity
+                                                .update_in(cx, |this, _, cx| {
+                                                    this.files.push(FileRow {
+                                                        path: folder,
+                                                        relative_label: None,
+                                                        detected: DetectedSource::Unknown,
+                                                        state: FileState::Failed {
+                                                            message: format!(
+                                                                "Folder scan error: {err:?}"
+                                                            ),
+                                                        },
+                                                        plan: None,
+                                                        command_id: None,
+                                                    });
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                        }
+                                    }
+                                }
+                            })
+                            .detach();
+                        }),
+                    )
+            }))
             .when(has_files, |this| {
                 this.child(
                     h_flex()
@@ -1403,19 +1431,15 @@ impl Render for ImportDialogView {
                                 .text_xs()
                                 .cursor_pointer()
                                 .text_color(cx.theme().muted_foreground)
-                                .when(self.importing, |this| {
-                                    this.opacity(0.4).cursor_default()
-                                })
+                                .when(self.importing, |this| this.opacity(0.4).cursor_default())
                                 .child("Clear")
                                 .on_mouse_down(
                                     MouseButton::Left,
-                                    cx.listener(
-                                        move |this, _: &MouseDownEvent, _window, cx| {
-                                            if !this.importing {
-                                                this.clear_files(cx);
-                                            }
-                                        },
-                                    ),
+                                    cx.listener(move |this, _: &MouseDownEvent, _window, cx| {
+                                        if !this.importing {
+                                            this.clear_files(cx);
+                                        }
+                                    }),
                                 )
                         }),
                 )
@@ -1450,26 +1474,27 @@ impl Render for ImportDialogView {
                         if self.importing {
                             cancel_btn = cancel_btn.tooltip("Import in progress");
                         }
-                        cancel_btn.on_click(
-                            cx.listener(|_, _: &ClickEvent, window, cx| {
-                                window.close_dialog(cx);
-                            }),
-                        )
+                        cancel_btn.on_click(cx.listener(|_, _: &ClickEvent, window, cx| {
+                            window.close_dialog(cx);
+                        }))
                     })
                     .child(
                         Button::new("import-dialog-submit")
                             .primary()
                             .small()
                             .cursor_pointer()
-                            .label(if self.importing { "Importing..." } else { "Import" })
+                            .label(if self.importing {
+                                "Importing..."
+                            } else {
+                                "Import"
+                            })
                             .disabled(self.files.is_empty() || self.importing)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                                 if this.importing {
                                     return;
                                 }
                                 let has_waiting = this.files.iter().any(|f| {
-                                    f.plan.is_some()
-                                        && matches!(f.state, FileState::Waiting)
+                                    f.plan.is_some() && matches!(f.state, FileState::Waiting)
                                 });
                                 if !has_waiting {
                                     return;
@@ -1482,9 +1507,8 @@ impl Render for ImportDialogView {
                                                 plan: plan.clone(),
                                                 cancellation: this.cancellation.clone(),
                                             };
-                                            let _ = this
-                                                .app_command_tx
-                                                .send(AppCommand::RunImport {
+                                            let _ =
+                                                this.app_command_tx.send(AppCommand::RunImport {
                                                     job,
                                                     command_id: command_id.clone(),
                                                 });
@@ -6515,6 +6539,13 @@ impl BeamView {
                         );
                     }
                 }
+                AppEvent::ImportResult { result, command_id } => {
+                    if let Some(ref import_dialog) = self.import_dialog_view {
+                        import_dialog.update(cx, |dialog, cx| {
+                            dialog.handle_import_result(result.clone(), command_id.clone(), cx);
+                        });
+                    }
+                }
                 _ => self.shell.apply_event(&event),
             }
         }
@@ -10821,9 +10852,9 @@ impl BeamView {
             .h_full()
             .w_full()
             .gap_0()
-                    .rounded(px(8.0))
-                    .border_dashed()
-                    .border_1()
+            .rounded(px(8.0))
+            .border_dashed()
+            .border_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
             .child(
