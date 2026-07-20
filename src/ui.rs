@@ -903,6 +903,7 @@ struct FileRow {
     state: FileState,
     plan: Option<ImportPlan>,
     command_id: Option<String>,
+    imported_workspace_id: Option<Ulid>,
 }
 
 struct ImportDialogView {
@@ -910,6 +911,9 @@ struct ImportDialogView {
     files: Vec<FileRow>,
     importing: bool,
     any_success: bool,
+    all_done: bool,
+    enqueued_count: usize,
+    completed_count: usize,
     cancellation: Arc<AtomicBool>,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
 }
@@ -926,6 +930,9 @@ impl ImportDialogView {
             files: Vec::new(),
             importing: false,
             any_success: false,
+            all_done: false,
+            enqueued_count: 0,
+            completed_count: 0,
             cancellation: Arc::new(AtomicBool::new(false)),
             app_command_tx,
         }
@@ -938,6 +945,9 @@ impl ImportDialogView {
     fn clear_files(&mut self, cx: &mut Context<Self>) {
         self.files.clear();
         self.any_success = false;
+        self.all_done = false;
+        self.enqueued_count = 0;
+        self.completed_count = 0;
         cx.notify();
     }
 
@@ -952,13 +962,15 @@ impl ImportDialogView {
             .iter_mut()
             .find(|f| f.command_id.as_deref() == Some(&command_id))
         {
+            self.completed_count += 1;
             match result {
                 ImportResult::Done {
                     summary,
                     counts: _,
-                    workspace_id: _,
+                    workspace_id,
                 } => {
                     self.any_success = true;
+                    row.imported_workspace_id = Some(workspace_id);
                     row.state = FileState::Done { summary };
                 }
                 ImportResult::Failed {
@@ -976,6 +988,25 @@ impl ImportDialogView {
                 }
                 ImportResult::Canceled => {
                     // Handled in Phase 9 (Cancellation).
+                }
+            }
+
+            if self.completed_count >= self.enqueued_count {
+                self.importing = false;
+                self.all_done = true;
+                if self.any_success {
+                    if let Some(first_done) = self
+                        .files
+                        .iter()
+                        .find(|f| matches!(f.state, FileState::Done { .. }))
+                    {
+                        if let Some(workspace_id) = first_done.imported_workspace_id {
+                            let _ = self.app_command_tx.send(AppCommand::SwitchWorkspace {
+                                workspace_id,
+                                command_id: next_command_id(),
+                            });
+                        }
+                    }
                 }
             }
             cx.notify();
@@ -1020,17 +1051,18 @@ impl ImportDialogView {
                                 .await;
                         if detection == DetectedSource::Unknown {
                             view.update_in(cx, |this, _, cx| {
-                                this.files.push(FileRow {
-                                    path: path.clone(),
-                                    relative_label: relative
-                                        .map(|p| p.to_string_lossy().to_string()),
-                                    detected: detection,
-                                    state: FileState::Failed {
-                                        message: "Unknown format".to_string(),
-                                    },
-                                    plan: None,
-                                    command_id: None,
-                                });
+                                 this.files.push(FileRow {
+                                        path: path.clone(),
+                                        relative_label: relative
+                                            .map(|p| p.to_string_lossy().to_string()),
+                                        detected: detection,
+                                        state: FileState::Failed {
+                                            message: "Unknown format".to_string(),
+                                        },
+                                        plan: None,
+                                        command_id: None,
+                                        imported_workspace_id: None,
+                                    });
                                 cx.notify();
                             })
                             .ok();
@@ -1064,6 +1096,7 @@ impl ImportDialogView {
                                         state: FileState::Waiting,
                                         plan: Some(plan),
                                         command_id: None,
+                                        imported_workspace_id: None,
                                     });
                                     cx.notify();
                                 })
@@ -1081,6 +1114,7 @@ impl ImportDialogView {
                                         },
                                         plan: None,
                                         command_id: None,
+                                        imported_workspace_id: None,
                                     });
                                     cx.notify();
                                 })
@@ -1099,6 +1133,7 @@ impl ImportDialogView {
                                 },
                                 plan: None,
                                 command_id: None,
+                                imported_workspace_id: None,
                             });
                             cx.notify();
                         })
@@ -1155,6 +1190,7 @@ impl ImportDialogView {
                                 },
                                 plan: None,
                                 command_id: None,
+                                imported_workspace_id: None,
                             });
                             cx.notify();
                         })
@@ -1428,6 +1464,7 @@ impl Render for ImportDialogView {
                                                         },
                                                         plan: None,
                                                         command_id: None,
+                                                        imported_workspace_id: None,
                                                     });
                                                     cx.notify();
                                                 })
@@ -1541,13 +1578,19 @@ impl Render for ImportDialogView {
                             .primary()
                             .small()
                             .cursor_pointer()
-                            .label(if self.importing {
+                            .label(if self.all_done {
+                                "Done"
+                            } else if self.importing {
                                 "Importing..."
                             } else {
                                 "Import"
                             })
                             .disabled(self.files.is_empty() || self.importing)
                             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                                if this.all_done {
+                                    _window.close_dialog(cx);
+                                    return;
+                                }
                                 if this.importing {
                                     return;
                                 }
@@ -1575,6 +1618,12 @@ impl Render for ImportDialogView {
                                         }
                                     }
                                 }
+                                this.enqueued_count = this
+                                    .files
+                                    .iter()
+                                    .filter(|f| matches!(f.state, FileState::Importing))
+                                    .count();
+                                this.completed_count = 0;
                                 this.importing = true;
                                 cx.notify();
                             })),
