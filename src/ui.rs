@@ -3756,6 +3756,8 @@ impl BeamView {
                                 .title("Import requests")
                                 .w(px(640.0))
                                 .child(import_view.clone())
+                                .keyboard(false)
+                                .overlay_closable(false)
                         });
                     });
                 });
