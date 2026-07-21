@@ -1343,9 +1343,7 @@ impl Render for ImportDialogView {
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
-                        "Drag in files or a folder, or click to pick. Supports Postman \
-                         Collection/Environment (.json, .postman_environment.json) and \
-                         Insomnia export (.json).",
+                        "Supports Postman Collection/Environment (.json, .postman_environment.json) and  Insomnia export (.json).",
                     ),
             )
             .child({
