@@ -186,6 +186,9 @@ fn normalize_name(name: &str) -> String {
     }
 }
 
+const MAX_SLUG_LEN: usize = 80;
+const SLUG_HASH_SUFFIX_LEN: usize = 8;
+
 fn slugify_name(input: &str) -> String {
     let normalized = normalize_name(input);
     let mut out = String::with_capacity(normalized.len());
@@ -200,12 +203,42 @@ fn slugify_name(input: &str) -> String {
             prev_dash = true;
         }
     }
-    let normalized = out.trim_matches('-').to_string();
-    if normalized.is_empty() {
+    let slug = out.trim_matches('-').to_string();
+    let slug = if slug.is_empty() {
         "untitled".to_string()
     } else {
-        normalized
+        slug
+    };
+
+    if slug.len() <= MAX_SLUG_LEN {
+        slug
+    } else {
+        // File systems cap file-name length (NAME_MAX is 255 bytes on most
+        // platforms, and we still need room for extensions like `.request.toml.tmp`).
+        // Shorten the slug and append a stable short hash of the full slug so
+        // distinct long names keep producing distinct on-disk names.
+        let hash = fnv1a_hex(&slug, SLUG_HASH_SUFFIX_LEN);
+        let stem_budget = MAX_SLUG_LEN - SLUG_HASH_SUFFIX_LEN - 1; // 1 for '-' separator
+        let mut stem: String = slug.chars().take(stem_budget).collect();
+        // Drop any trailing '-' so we don't end up with `...--<hash>`.
+        while stem.ends_with('-') {
+            stem.pop();
+        }
+        if stem.is_empty() {
+            format!("u-{}", hash)
+        } else {
+            format!("{}-{}", stem, hash)
+        }
     }
+}
+
+fn fnv1a_hex(input: &str, hex_len: usize) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in input.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", h).chars().take(hex_len).collect()
 }
 
 pub fn folder_dir_name(name: &str) -> String {
@@ -299,8 +332,9 @@ pub fn node_by_kind(
 #[cfg(test)]
 mod tests {
     use super::{
-        NameValidationError, Node, NodeKind, SharedStore, assert_name_unique, find_unique_name,
-        folder_dir_name, request_file_name, request_file_path, scope_key,
+        MAX_SLUG_LEN, NameValidationError, Node, NodeKind, SLUG_HASH_SUFFIX_LEN, SharedStore,
+        assert_name_unique, find_unique_name, folder_dir_name, request_file_name,
+        request_file_path, scope_key,
     };
     use std::collections::HashMap;
     use tempfile::tempdir;
@@ -451,6 +485,28 @@ mod tests {
             request_file_path(&paths, &store, request_id).expect("request path"),
             paths.root.join("users").join(request_file_name("Get User"))
         );
+    }
+
+    #[test]
+    fn slugify_name_truncates_long_names_with_stable_hash_suffix() {
+        let long_input = "a".repeat(500);
+        let slug = folder_dir_name(&long_input);
+        assert!(slug.len() <= MAX_SLUG_LEN);
+        assert!(slug.len() > SLUG_HASH_SUFFIX_LEN);
+        let parts: Vec<&str> = slug.rsplitn(2, '-').collect();
+        assert_eq!(parts[0].len(), SLUG_HASH_SUFFIX_LEN);
+        // Same input produces the same slug (stable across reloads).
+        assert_eq!(slug, folder_dir_name(&long_input));
+        // Distinct long inputs produce distinct shortened slugs.
+        let other = "b".repeat(500);
+        assert_ne!(slug, folder_dir_name(&other));
+    }
+
+    #[test]
+    fn request_file_name_stays_under_filesystem_limit_for_long_names() {
+        let long_input = "x".repeat(1000);
+        let file_name = request_file_name(&long_input);
+        assert!(file_name.len() <= MAX_SLUG_LEN + ".request.toml".len());
     }
 
     #[test]
