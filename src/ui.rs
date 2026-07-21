@@ -1338,74 +1338,76 @@ impl Render for ImportDialogView {
             .w_full()
             .p_4()
             .gap_4()
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(
-                        "Supports Postman Collection/Environment (.json, .postman_environment.json) and  Insomnia export (.json).",
-                    ),
-            )
-            .child({
-                let _drop_view = view.clone();
-                div()
-                    .w_full()
-                    .h(px(160.0))
-                    .rounded(px(8.0))
-                    .border_dashed()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().background)
-                    .cursor_pointer()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
-                            let rx = cx.prompt_for_paths(PathPromptOptions {
-                                files: true,
-                                directories: false,
-                                multiple: true,
-                                prompt: None,
-                            });
-                            let entity = cx.entity();
-                            cx.spawn_in(window, async move |_, cx| {
-                                let picked = match rx.await {
-                                    Ok(Ok(Some(p))) => p,
-                                    _ => return,
-                                };
-                                entity
-                                    .update_in(cx, move |this, window, cx| {
-                                        this.process_paths(picked, None, window, cx);
-                                    })
-                                    .ok();
-                            })
-                            .detach();
-                        }),
-                    )
-                    .drag_over::<ExternalPaths>(|style, _, _, cx| {
-                        style
-                            .bg(cx.theme().accent.opacity(0.08))
-                            .border_color(cx.theme().accent)
-                    })
-                    .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
-                        this.handle_drop_paths(paths.clone(), window, cx);
-                    }))
-                    .child(
-                        Icon::default()
-                            .path("icons/upload.svg")
-                            .size(px(28.0))
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Drag files or folder here, or click to choose files."),
-                    )
+            .when(!has_files, |this| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            "Supports Postman Collection/Environment (.json, .postman_environment.json) and  Insomnia export (.json).",
+                        ),
+                )
+                .child({
+                    let _drop_view = view.clone();
+                    div()
+                        .w_full()
+                        .h(px(160.0))
+                        .rounded(px(8.0))
+                        .border_dashed()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .cursor_pointer()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
+                                let rx = cx.prompt_for_paths(PathPromptOptions {
+                                    files: true,
+                                    directories: false,
+                                    multiple: true,
+                                    prompt: None,
+                                });
+                                let entity = cx.entity();
+                                cx.spawn_in(window, async move |_, cx| {
+                                    let picked = match rx.await {
+                                        Ok(Ok(Some(p))) => p,
+                                        _ => return,
+                                    };
+                                    entity
+                                        .update_in(cx, move |this, window, cx| {
+                                            this.process_paths(picked, None, window, cx);
+                                        })
+                                        .ok();
+                                })
+                                .detach();
+                            }),
+                        )
+                        .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                            style
+                                .bg(cx.theme().accent.opacity(0.08))
+                                .border_color(cx.theme().accent)
+                        })
+                        .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                            this.handle_drop_paths(paths.clone(), window, cx);
+                        }))
+                        .child(
+                            Icon::default()
+                                .path("icons/upload.svg")
+                                .size(px(28.0))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Drag files or folder here, or click to choose files."),
+                        )
+                })
             })
             .when(has_files, |this| {
                 this.child(
