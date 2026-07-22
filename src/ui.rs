@@ -974,9 +974,15 @@ impl ImportDialogView {
                     summary,
                     counts: _,
                     workspace_id,
+                    imported_into_current,
                 } => {
                     self.any_success = true;
-                    row.imported_workspace_id = Some(workspace_id);
+                    // Env-only imports land in the active workspace — don't
+                    // request a workspace switch (and don't track an id for
+                    // the auto-switch logic).
+                    if !imported_into_current {
+                        row.imported_workspace_id = Some(workspace_id);
+                    }
                     row.state = FileState::Done { summary };
                 }
                 ImportResult::Failed {

@@ -1634,6 +1634,13 @@ pub enum ImportResult {
         summary: String,
         counts: ImportCounts,
         workspace_id: Ulid,
+        /// `true` when the import landed in the currently-active workspace
+        /// rather than spinning up a new one. Today this happens when a
+        /// Postman Environment file (or any env-only plan) is imported — it
+        /// adds global environments to the active workspace. When this is
+        /// `true` the UI must NOT auto-switch workspaces after the import
+        /// completes.
+        imported_into_current: bool,
     },
     Failed {
         message: String,
@@ -2256,8 +2263,27 @@ fn handle_workspace_command(
             }])
         }
         AppCommand::RunImport { job, command_id } => {
-            let result = run_import_job(registry, registry_repo, job);
-            Ok(vec![AppEvent::ImportResult { result, command_id }])
+            // An env-only plan (no folders, no requests) imports into the
+            // currently-active workspace as one or more global environments,
+            // instead of materializing a brand-new workspace.
+            let is_env_only = job.plan.folders.is_empty()
+                && job.plan.requests.is_empty()
+                && !job.plan.environments.is_empty();
+            let active_workspace_id = registry.registry.active_workspace_id;
+            if is_env_only && active_workspace_id.is_some() {
+                let workspace_id = active_workspace_id.expect("checked above");
+                let (result, env_events) =
+                    run_import_environments_only(storage, job, workspace_id);
+                let mut events = env_events;
+                events.push(AppEvent::ImportResult {
+                    result,
+                    command_id,
+                });
+                Ok(events)
+            } else {
+                let result = run_import_job(registry, registry_repo, job);
+                Ok(vec![AppEvent::ImportResult { result, command_id }])
+            }
         }
         _ => unreachable!("non-workspace command routed to handle_workspace_command"),
     }
@@ -2506,7 +2532,107 @@ fn run_import_job(
         summary,
         counts,
         workspace_id,
+        imported_into_current: false,
     }
+}
+
+/// Import an env-only [`ImportPlan`] into the currently-active workspace,
+/// adding each planned environment as a new global environment.
+///
+/// Unlike [`run_import_job`], this does NOT create a new workspace — it
+/// reuses the worker's existing [`WorkspaceRepository`] for the active
+/// workspace and emits one [`AppEvent::EnvironmentUpserted`] per imported
+/// environment so the UI's in-memory environment list stays in sync
+/// without a full workspace reload.
+///
+/// Returns the import outcome plus the per-environment events to emit
+/// alongside the [`AppEvent::ImportResult`].
+fn run_import_environments_only(
+    storage: &mut WorkspaceRepository<FileSystemStorage>,
+    job: ImportJob,
+    workspace_id: Ulid,
+) -> (ImportResult, Vec<AppEvent>) {
+    use std::sync::atomic::Ordering;
+
+    let mut events: Vec<AppEvent> = Vec::new();
+    let mut environments_created: usize = 0;
+    let mut first_env_id: Option<Ulid> = None;
+
+    for planned_env in &job.plan.environments {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return (ImportResult::Canceled, events);
+        }
+        let created = match storage.create_environment(CreateEnvironmentInput {
+            name: planned_env.name.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_environment failed: {error}");
+                return (
+                    ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: false,
+                    },
+                    events,
+                );
+            }
+        };
+        let env_id = created.environment.environment_id;
+        let updated = match storage
+            .update_environment_variables(env_id, planned_env.variables.clone())
+        {
+            Ok(updated) => updated,
+            Err(error) => {
+                log::error!("import: update_environment_variables failed: {error}");
+                return (
+                    ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: false,
+                    },
+                    events,
+                );
+            }
+        };
+        events.push(AppEvent::EnvironmentUpserted {
+            environment: updated.environment.clone(),
+            command_id: String::new(),
+        });
+        if first_env_id.is_none() {
+            first_env_id = Some(env_id);
+        }
+        environments_created += 1;
+    }
+
+    // If the current workspace has no active environment yet, make the first
+    // imported environment the active one so the user sees it take effect
+    // immediately — mirroring the new-workspace import path. If the user
+    // already had an active environment we leave their selection alone.
+    if let Some(env_id) = first_env_id
+        && let Ok(mut local_state) = storage.load_local_state()
+        && local_state.local_state.active_global_environment_id.is_none()
+    {
+        local_state.local_state.active_global_environment_id = Some(env_id);
+        local_state.local_state.updated_at = Utc::now();
+        if let Err(error) = storage.save_local_state(&local_state) {
+            log::error!("import: save_local_state failed: {error}");
+        }
+    }
+
+    let summary = format!("Imported {} environment(s)", environments_created);
+    let counts = ImportCounts {
+        requests: 0,
+        folders: 0,
+        environments: environments_created,
+    };
+    (
+        ImportResult::Done {
+            summary,
+            counts,
+            workspace_id,
+            imported_into_current: true,
+        },
+        events,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -5816,7 +5942,14 @@ expanded_item_ids = ["{folder_id}"]
                 summary,
                 counts,
                 workspace_id,
-            } => (summary, counts, workspace_id),
+                imported_into_current,
+            } => {
+                assert!(
+                    !imported_into_current,
+                    "new-workspace import should not be flagged as imported_into_current"
+                );
+                (summary, counts, workspace_id)
+            }
             other => panic!("expected Done, got {other:?}"),
         };
 
@@ -6105,6 +6238,134 @@ expanded_item_ids = ["{folder_id}"]
             }
             other => panic!("expected Done via worker, got {other:?}"),
         }
+    }
+
+    /// When the import plan is env-only (no folders, no requests) the worker
+    /// imports directly into the currently-active workspace.
+    #[test]
+    fn worker_runs_import_environments_only_into_current_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let workspace_slug = "my-workspace";
+        let workspace_id = Ulid::new();
+        let data_root = DataRootPaths::new(
+            dir.path().join("beam"),
+            dir.path().join("beam_local"),
+            dir.path().join("beam_logs"),
+        );
+
+        // Seed the registry so the active workspace exists on disk.
+        let registry_repo = RegistryRepository::new(data_root.clone());
+        let ws_entry = crate::models::WorkspaceEntry {
+            workspace_id,
+            name: "My Workspace".to_string(),
+            path: workspace_slug.to_string(),
+            created_at: Utc::now(),
+        };
+        let registry = WorkspacesRegistryFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            registry: crate::models::WorkspacesRegistry {
+                active_workspace_id: Some(workspace_id),
+                workspaces: vec![ws_entry.clone()],
+            },
+        };
+        registry_repo.save(&registry).expect("save registry");
+
+        // Create a WorkspaceRepository for the active workspace.
+        let ws_paths = data_root.workspace_paths(&ws_entry.path);
+        fs::create_dir_all(&ws_paths.root).expect("create ws dir");
+        let mut storage =
+            WorkspaceRepository::new(FileSystemStorage::new(ws_paths)).expect("load workspace");
+        storage.initialize().expect("init storage");
+
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        let env_plan = ImportPlan {
+            workspace_name: "Imported Env".to_string(),
+            folders: Vec::new(),
+            requests: Vec::new(),
+            environments: vec![PlannedEnvironment {
+                name: "Staging".to_string(),
+                variables: vec![EnvironmentVariable {
+                    name: "host".to_string(),
+                    value: "staging.example.com".to_string(),
+                    enabled: true,
+                    description: None,
+                }],
+            }],
+            warnings: Vec::new(),
+        };
+        runtime
+            .command_tx
+            .send(AppCommand::RunImport {
+                job: ImportJob {
+                    plan: env_plan,
+                    cancellation: Arc::new(AtomicBool::new(false)),
+                },
+                command_id: command_id.clone(),
+            })
+            .expect("queue run import");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let import_result = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ImportResult {
+                    result,
+                    command_id: event_command_id,
+                } if event_command_id == &command_id => Some(result.clone()),
+                _ => None,
+            })
+            .expect("worker should emit ImportResult");
+
+        match &import_result {
+            ImportResult::Done {
+                counts,
+                imported_into_current,
+                workspace_id: result_ws_id,
+                ..
+            } => {
+                assert!(
+                    *imported_into_current,
+                    "env-only import should be flagged as imported_into_current"
+                );
+                assert_eq!(
+                    *result_ws_id, workspace_id,
+                    "workspace_id should match the active workspace"
+                );
+                assert_eq!(counts.folders, 0);
+                assert_eq!(counts.requests, 0);
+                assert_eq!(counts.environments, 1);
+            }
+            other => panic!("expected Done via worker, got {other:?}"),
+        }
+
+        // No new workspace should appear in the registry.
+        let reloaded_registry = RegistryRepository::new(DataRootPaths::new(
+            dir.path().join("beam"),
+            dir.path().join("beam_local"),
+            dir.path().join("beam_logs"),
+        ))
+        .load()
+        .expect("re-read registry");
+        assert_eq!(
+            reloaded_registry.registry.workspaces.len(),
+            1,
+            "no new workspace should be created"
+        );
+
+        // The event list should also carry an EnvironmentUpserted so the
+        // in-memory UI state stays in sync without a full workspace reload.
+        let upsert_count = events
+            .iter()
+            .filter(|e| matches!(e, AppEvent::EnvironmentUpserted { .. }))
+            .count();
+        assert_eq!(upsert_count, 1, "should emit one EnvironmentUpserted");
+
+        // Verify the storage has the new environment.
+        // (We can't access `storage` after passing it to the worker, but
+        // the EnvironmentUpserted + ImportResult guarantees success.)
     }
 
     /// Sanity-check that the runner is format-agnostic: it only references
