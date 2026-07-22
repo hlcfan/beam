@@ -180,6 +180,7 @@ pub fn parse_for_workspace(content: &str, workspace_id: &str) -> Result<ImportPl
         requests: Vec::new(),
         environments: Vec::new(),
         warnings: Vec::new(),
+        needs_new_workspace: true,
     };
 
     // First pass — collect folder+request+env resources belonging to this

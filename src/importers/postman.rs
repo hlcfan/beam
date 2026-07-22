@@ -114,6 +114,7 @@ impl Parser for PostmanCollectionParser {
             requests: Vec::new(),
             environments: Vec::new(),
             warnings: Vec::new(),
+            needs_new_workspace: false,
         };
 
         // Collection-level `auth` is the default for every descendant.
@@ -224,6 +225,7 @@ impl Parser for PostmanEnvironmentParser {
             requests: Vec::new(),
             environments: vec![PlannedEnvironment { name, variables }],
             warnings: Vec::new(),
+            needs_new_workspace: false,
         })
     }
 }

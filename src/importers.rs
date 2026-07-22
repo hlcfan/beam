@@ -15,6 +15,7 @@ pub struct ImportPlan {
     pub requests: Vec<PlannedRequest>,
     pub environments: Vec<PlannedEnvironment>,
     pub warnings: Vec<String>,
+    pub needs_new_workspace: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
