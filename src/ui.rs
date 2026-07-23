@@ -1106,7 +1106,9 @@ impl ImportDialogView {
                             .await;
                         match plan_result {
                             Ok(plan) => {
-                                let needs_new_workspace = crate::importers::content_has_workspace(&content);
+                                let needs_new_workspace =
+                                    crate::importers::content_has_workspace(&content);
+                                log::info!("needs_nwe_workspace: {:?}", needs_new_workspace);
                                 view.update_in(cx, |this, _, cx| {
                                     this.files.push(FileRow {
                                         path: path.clone(),

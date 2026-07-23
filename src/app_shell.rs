@@ -2273,15 +2273,12 @@ fn handle_workspace_command(
                     && job.plan.requests.is_empty()
                     && !job.plan.environments.is_empty();
                 let (result, item_events) = if is_env_only {
-                    run_import_environments_only(storage, job, workspace_id)
+                    run_import_environments_only(registry_repo, registry, job, workspace_id)
                 } else {
-                    run_import_into_current(storage, job, workspace_id)
+                    run_import_into_current(registry_repo, registry, job, workspace_id)
                 };
                 let mut events = item_events;
-                events.push(AppEvent::ImportResult {
-                    result,
-                    command_id,
-                });
+                events.push(AppEvent::ImportResult { result, command_id });
                 Ok(events)
             } else {
                 let result = run_import_job(registry, registry_repo, job);
@@ -2551,11 +2548,44 @@ fn run_import_job(
 /// Returns the import outcome plus the per-environment events to emit
 /// alongside the [`AppEvent::ImportResult`].
 fn run_import_environments_only(
-    storage: &mut WorkspaceRepository<FileSystemStorage>,
+    registry_repo: &RegistryRepository,
+    registry: &WorkspacesRegistryFile,
     job: ImportJob,
     workspace_id: Ulid,
 ) -> (ImportResult, Vec<AppEvent>) {
     use std::sync::atomic::Ordering;
+    log::info!("===workspaceId: {:?}", workspace_id);
+    let entry = registry
+        .registry
+        .workspaces
+        .iter()
+        .find(|e| e.workspace_id == workspace_id)
+        .expect("workspace for env-only import must exist");
+    let ws_paths = registry_repo.workspace_paths(entry);
+    let backend = FileSystemStorage::new(ws_paths);
+    let mut storage = match WorkspaceRepository::new(backend) {
+        Ok(repo) => repo,
+        Err(error) => {
+            log::error!("import: open workspace repo failed: {error}");
+            return (
+                ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: false,
+                },
+                Vec::new(),
+            );
+        }
+    };
+    if let Err(error) = storage.initialize() {
+        log::error!("import: initialize workspace failed: {error}");
+        return (
+            ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: false,
+            },
+            Vec::new(),
+        );
+    }
 
     let mut events: Vec<AppEvent> = Vec::new();
     let mut environments_created: usize = 0;
@@ -2581,21 +2611,20 @@ fn run_import_environments_only(
             }
         };
         let env_id = created.environment.environment_id;
-        let updated = match storage
-            .update_environment_variables(env_id, planned_env.variables.clone())
-        {
-            Ok(updated) => updated,
-            Err(error) => {
-                log::error!("import: update_environment_variables failed: {error}");
-                return (
-                    ImportResult::Failed {
-                        message: error.to_string(),
-                        partial_workspace_created: false,
-                    },
-                    events,
-                );
-            }
-        };
+        let updated =
+            match storage.update_environment_variables(env_id, planned_env.variables.clone()) {
+                Ok(updated) => updated,
+                Err(error) => {
+                    log::error!("import: update_environment_variables failed: {error}");
+                    return (
+                        ImportResult::Failed {
+                            message: error.to_string(),
+                            partial_workspace_created: false,
+                        },
+                        events,
+                    );
+                }
+            };
         events.push(AppEvent::EnvironmentUpserted {
             environment: updated.environment.clone(),
             command_id: String::new(),
@@ -2612,7 +2641,10 @@ fn run_import_environments_only(
     // already had an active environment we leave their selection alone.
     if let Some(env_id) = first_env_id
         && let Ok(mut local_state) = storage.load_local_state()
-        && local_state.local_state.active_global_environment_id.is_none()
+        && local_state
+            .local_state
+            .active_global_environment_id
+            .is_none()
     {
         local_state.local_state.active_global_environment_id = Some(env_id);
         local_state.local_state.updated_at = Utc::now();
@@ -2646,11 +2678,44 @@ fn run_import_environments_only(
 /// a full workspace reload. Deduplication happens automatically through
 /// `find_unique_name` in the repository's create methods.
 fn run_import_into_current(
-    storage: &mut WorkspaceRepository<FileSystemStorage>,
+    registry_repo: &RegistryRepository,
+    registry: &WorkspacesRegistryFile,
     job: ImportJob,
     workspace_id: Ulid,
 ) -> (ImportResult, Vec<AppEvent>) {
     use std::sync::atomic::Ordering;
+
+    let entry = registry
+        .registry
+        .workspaces
+        .iter()
+        .find(|e| e.workspace_id == workspace_id)
+        .expect("workspace for import must exist");
+    let ws_paths = registry_repo.workspace_paths(entry);
+    let backend = FileSystemStorage::new(ws_paths);
+    let mut storage = match WorkspaceRepository::new(backend) {
+        Ok(repo) => repo,
+        Err(error) => {
+            log::error!("import: open workspace repo failed: {error}");
+            return (
+                ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: false,
+                },
+                Vec::new(),
+            );
+        }
+    };
+    if let Err(error) = storage.initialize() {
+        log::error!("import: initialize workspace failed: {error}");
+        return (
+            ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: false,
+            },
+            Vec::new(),
+        );
+    }
 
     let mut events: Vec<AppEvent> = Vec::new();
 
@@ -2791,21 +2856,20 @@ fn run_import_into_current(
             }
         };
         let env_id = created.environment.environment_id;
-        let updated = match storage
-            .update_environment_variables(env_id, planned_env.variables.clone())
-        {
-            Ok(updated) => updated,
-            Err(error) => {
-                log::error!("import: update_environment_variables failed: {error}");
-                return (
-                    ImportResult::Failed {
-                        message: error.to_string(),
-                        partial_workspace_created: false,
-                    },
-                    events,
-                );
-            }
-        };
+        let updated =
+            match storage.update_environment_variables(env_id, planned_env.variables.clone()) {
+                Ok(updated) => updated,
+                Err(error) => {
+                    log::error!("import: update_environment_variables failed: {error}");
+                    return (
+                        ImportResult::Failed {
+                            message: error.to_string(),
+                            partial_workspace_created: false,
+                        },
+                        events,
+                    );
+                }
+            };
         events.push(AppEvent::EnvironmentUpserted {
             environment: updated.environment.clone(),
             command_id: String::new(),
@@ -2819,7 +2883,10 @@ fn run_import_into_current(
     // 4. Activate the first imported environment if none is active yet.
     if let Some(env_id) = first_env_id
         && let Ok(mut local_state) = storage.load_local_state()
-        && local_state.local_state.active_global_environment_id.is_none()
+        && local_state
+            .local_state
+            .active_global_environment_id
+            .is_none()
     {
         local_state.local_state.active_global_environment_id = Some(env_id);
         local_state.local_state.updated_at = Utc::now();

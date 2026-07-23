@@ -137,7 +137,49 @@ pub fn tag_label(source: &DetectedSource) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{DetectedSource, detect};
+    use super::{DetectedSource, content_has_workspace, detect};
+
+    #[test]
+    fn content_has_workspace_false_for_postman_environment() {
+        let content = r#"{
+            "name": "My Env",
+            "_postman_variable_scope": "environment",
+            "values": [{ "key": "k", "value": "v" }]
+        }"#;
+        assert!(!content_has_workspace(content));
+    }
+
+    #[test]
+    fn content_has_workspace_false_for_postman_collection() {
+        let content = r#"{
+            "info": { "name": "API", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+            "item": []
+        }"#;
+        assert!(!content_has_workspace(content));
+    }
+
+    #[test]
+    fn content_has_workspace_true_for_insomnia_workspace_export() {
+        let content = r#"{
+            "__export_format": 4,
+            "_type": "export",
+            "resources": [
+                { "_id": "ws_1", "_type": "workspace", "name": "My WS" }
+            ]
+        }"#;
+        assert!(content_has_workspace(content));
+    }
+
+    #[test]
+    fn content_has_workspace_false_for_non_json() {
+        assert!(!content_has_workspace("not json"));
+    }
+
+    #[test]
+    fn content_has_workspace_false_for_json_without_resources() {
+        let content = r#"{ "foo": "bar" }"#;
+        assert!(!content_has_workspace(content));
+    }
 
     #[test]
     fn detect_dispatches_postman_collection() {

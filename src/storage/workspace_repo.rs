@@ -47,6 +47,7 @@ pub struct WorkspaceRepository<B: StorageIoBackend> {
 
 impl<B: StorageIoBackend> WorkspaceRepository<B> {
     pub fn new(backend: B) -> Result<Self> {
+        // load_full_shared_store should be lazily loaded, move to initialize func
         let store = load_full_shared_store(&backend)?;
         Ok(Self { backend, store })
     }
