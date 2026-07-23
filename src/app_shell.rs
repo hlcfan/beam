@@ -1013,21 +1013,44 @@ impl AppShellState {
                     self.environment_selection.active_global_environment_id = None;
                 }
             }
-            AppEvent::RequestUpserted { request, .. } => {
+            AppEvent::RequestUpserted {
+                request, parent_id, ..
+            } => {
                 let response_scroll_offset = self
                     .request_pane_data
                     .get(&request.meta.request_id)
                     .map(|pane_data| pane_data.response_scroll_offset)
                     .unwrap_or(point(px(0.), px(0.)));
-                self.shared_store
-                    .requests
-                    .insert(request.meta.request_id, request.clone());
-                if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
+                let request_id = request.meta.request_id;
+                let is_new = !self.workspace_tree.nodes.contains_key(&request_id);
+
+                if is_new {
+                    if let Some(parent_id) = parent_id {
+                        self.insert_request_into_shared_store(*parent_id, None, request);
+                        self.workspace_tree.insert_request_child(
+                            *parent_id,
+                            request_id,
+                            request.meta.name.clone(),
+                            request.request.method,
+                            request.request.url.clone(),
+                            request.file_path.clone(),
+                        );
+                    } else {
+                        self.insert_request_at_root(None, request);
+                    }
+                } else {
+                    self.shared_store
+                        .requests
+                        .insert(request_id, request.clone());
+                }
+                if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
                     node.name = request.meta.name.clone();
+                    node.description = request.meta.description.clone();
+                    node.updated_at = Some(request.meta.updated_at);
                 }
                 let _ = self.shared_store.rebuild_name_index();
                 self.request_pane_data.insert(
-                    request.meta.request_id,
+                    request_id,
                     RequestPaneData {
                         method: request.request.method,
                         url: request.request.url.clone(),
@@ -1040,8 +1063,8 @@ impl AppShellState {
                     },
                 );
                 let _ = self.workspace_tree.upsert_request_node(
-                    request.meta.request_id,
-                    None,
+                    request_id,
+                    *parent_id,
                     request.meta.name.clone(),
                     request.request.method,
                     request.request.url.clone(),
@@ -1532,6 +1555,9 @@ pub enum AppEvent {
     },
     RequestUpserted {
         request: RequestFile,
+        /// Parent for newly-created request nodes. `None` means workspace root.
+        /// Existing nodes keep their current placement when this is `None`.
+        parent_id: Option<Ulid>,
         command_id: String,
     },
     RequestDeleted {
@@ -1956,11 +1982,13 @@ fn handle_command<B: StorageIoBackend>(
             }])
         }
         AppCommand::CreateRequest { input, command_id } => {
+            let parent_id = input.parent.folder_id;
             let created = storage
                 .create_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: created,
+                parent_id,
                 command_id,
             }])
         }
@@ -1969,20 +1997,24 @@ fn handle_command<B: StorageIoBackend>(
             source_request_id,
             command_id,
         } => {
+            let parent_id = input.parent.folder_id;
             let created = storage
                 .create_request_after(input, source_request_id)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: created,
+                parent_id,
                 command_id,
             }])
         }
         AppCommand::DuplicateRequest { input, command_id } => {
+            let parent_id = input.parent.folder_id;
             let duplicated = storage
                 .duplicate_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: duplicated,
+                parent_id,
                 command_id,
             }])
         }
@@ -1992,6 +2024,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: renamed,
+                parent_id: None,
                 command_id,
             }])
         }
@@ -2008,6 +2041,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: request_file,
+                parent_id: None,
                 command_id,
             }])
         }
@@ -2829,6 +2863,7 @@ fn run_import_into_current(
         requests_created += 1;
         events.push(AppEvent::RequestUpserted {
             request: request_file,
+            parent_id: parent_ref.folder_id,
             command_id: String::new(),
         });
     }
@@ -4092,6 +4127,7 @@ mod tests {
                 AppEvent::RequestUpserted {
                     request,
                     command_id,
+                    ..
                 } if command_id == &create_command_id => Some(request.clone()),
                 _ => None,
             })
@@ -4119,6 +4155,7 @@ mod tests {
                 AppEvent::RequestUpserted {
                     request,
                     command_id,
+                    ..
                 } if command_id == &duplicate_command_id => Some(request.clone()),
                 _ => None,
             })
@@ -4141,7 +4178,8 @@ mod tests {
             event,
             AppEvent::RequestUpserted {
                 request,
-                command_id
+                command_id,
+                ..
             } if command_id == &save_command_id
                 && request.meta.request_id == saved_request.meta.request_id
                 && request.request.method == HttpMethod::Post
@@ -4167,7 +4205,8 @@ mod tests {
             event,
             AppEvent::RequestUpserted {
                 request,
-                command_id
+                command_id,
+                ..
             } if command_id == &rename_command_id
                 && request.meta.request_id == saved_request.meta.request_id
                 && request.meta.name == "Phase4 Request Saved"
@@ -4239,6 +4278,7 @@ mod tests {
         );
         state.apply_event(&AppEvent::RequestUpserted {
             request: updated,
+            parent_id: None,
             command_id: Ulid::new().to_string(),
         });
 
@@ -4560,6 +4600,7 @@ mod tests {
                 HttpMethod::Post,
                 "https://example.com/optimistic",
             ),
+            parent_id: None,
             command_id: command_id.clone(),
         });
         state.apply_event(&AppEvent::SyncFailed {
@@ -6524,6 +6565,129 @@ expanded_item_ids = ["{folder_id}"]
             }
             other => panic!("expected Done via worker, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn import_into_current_updates_tree_with_nested_and_root_requests() {
+        let dir = tempdir().expect("tempdir");
+        let workspace_id = Ulid::new();
+        let data_root = DataRootPaths::new(
+            dir.path().join("beam"),
+            dir.path().join("beam_local"),
+            dir.path().join("beam_logs"),
+        );
+        let registry_repo = RegistryRepository::new(data_root.clone());
+        let workspace = crate::models::WorkspaceEntry {
+            workspace_id,
+            name: "My Workspace".to_string(),
+            path: "my-workspace".to_string(),
+            created_at: Utc::now(),
+        };
+        let registry = WorkspacesRegistryFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            registry: crate::models::WorkspacesRegistry {
+                active_workspace_id: Some(workspace_id),
+                workspaces: vec![workspace.clone()],
+            },
+        };
+        registry_repo.save(&registry).expect("save registry");
+
+        let ws_paths = data_root.workspace_paths(&workspace.path);
+        fs::create_dir_all(&ws_paths.root).expect("create workspace dir");
+        let mut storage =
+            WorkspaceRepository::new(FileSystemStorage::new(ws_paths)).expect("load workspace");
+        storage.initialize().expect("initialize workspace");
+
+        let folder_plan_id = Ulid::new();
+        let nested_plan_id = Ulid::new();
+        let root_plan_id = Ulid::new();
+        let plan = ImportPlan {
+            workspace_name: "Postman Import".to_string(),
+            folders: vec![PlannedFolder {
+                id: folder_plan_id,
+                parent_id: None,
+                name: "Users".to_string(),
+                order: 0,
+            }],
+            requests: vec![
+                planned_request(
+                    nested_plan_id,
+                    Some(folder_plan_id),
+                    "List Users",
+                    HttpMethod::Get,
+                    "https://example.com/users",
+                    AuthConfig::None,
+                    BodyConfig::None,
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+                planned_request(
+                    root_plan_id,
+                    None,
+                    "Healthcheck",
+                    HttpMethod::Get,
+                    "https://example.com/health",
+                    AuthConfig::None,
+                    BodyConfig::None,
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+            ],
+            environments: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let (result, events) = run_import_into_current(
+            &registry_repo,
+            &registry,
+            ImportJob {
+                plan,
+                cancellation: Arc::new(AtomicBool::new(false)),
+                needs_new_workspace: false,
+            },
+            workspace_id,
+        );
+        assert!(matches!(
+            result,
+            ImportResult::Done {
+                counts: ImportCounts {
+                    requests: 2,
+                    folders: 1,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let mut state = AppShellState::default();
+        for event in events {
+            state.apply_event(&event);
+        }
+
+        let folder = state
+            .workspace_tree
+            .nodes
+            .values()
+            .find(|node| node.kind == TreeNodeKind::Folder && node.name == "Users")
+            .expect("imported folder should be in the live tree");
+        let nested = folder
+            .children
+            .iter()
+            .filter_map(|id| state.workspace_tree.node(*id))
+            .find(|node| node.name == "List Users")
+            .expect("nested request should be under its imported folder");
+        assert_eq!(nested.parent_id, Some(folder.id));
+        assert!(
+            state
+                .workspace_tree
+                .roots
+                .iter()
+                .filter_map(|id| state.workspace_tree.node(*id))
+                .any(|node| { node.kind == TreeNodeKind::Request && node.name == "Healthcheck" }),
+            "root request should be in the live tree"
+        );
     }
 
     /// When the import plan is env-only (no folders, no requests) the worker

@@ -6472,6 +6472,7 @@ impl BeamView {
                 AppEvent::RequestUpserted {
                     request,
                     command_id,
+                    ..
                 } => {
                     if let Some(path) = request.file_path.clone() {
                         self.request_file_index
