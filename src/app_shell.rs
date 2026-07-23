@@ -1606,6 +1606,7 @@ pub enum AppEvent {
 pub struct ImportJob {
     pub plan: ImportPlan,
     pub cancellation: Arc<AtomicBool>,
+    pub needs_new_workspace: bool,
 }
 
 impl PartialEq for ImportJob {
@@ -2264,7 +2265,7 @@ fn handle_workspace_command(
         }
         AppCommand::RunImport { job, command_id } => {
             let active_workspace_id = registry.registry.active_workspace_id;
-            if job.plan.needs_new_workspace {
+            if job.needs_new_workspace {
                 let result = run_import_job(registry, registry_repo, job);
                 Ok(vec![AppEvent::ImportResult { result, command_id }])
             } else if let Some(workspace_id) = active_workspace_id {
@@ -6132,7 +6133,6 @@ expanded_item_ids = ["{folder_id}"]
                 ],
             }],
             warnings: Vec::new(),
-            needs_new_workspace: true,
         }
     }
 
@@ -6147,6 +6147,7 @@ expanded_item_ids = ["{folder_id}"]
         let job = ImportJob {
             plan: sample_import_plan(),
             cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
         };
         let result = run_import_job(&mut registry, &registry_repo, job);
 
@@ -6286,6 +6287,7 @@ expanded_item_ids = ["{folder_id}"]
         let job = ImportJob {
             plan: sample_import_plan(),
             cancellation,
+            needs_new_workspace: true,
         };
         let result = run_import_job(&mut registry, &registry_repo, job);
         assert_eq!(result, ImportResult::Canceled);
@@ -6326,11 +6328,11 @@ expanded_item_ids = ["{folder_id}"]
             }],
             environments: Vec::new(),
             warnings: Vec::new(),
-            needs_new_workspace: true,
         };
         let job = ImportJob {
             plan,
             cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
         };
         let result = run_import_job(&mut registry, &registry_repo, job);
         match result {
@@ -6377,6 +6379,7 @@ expanded_item_ids = ["{folder_id}"]
         let first_job = ImportJob {
             plan: sample_import_plan(),
             cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
         };
         let first = run_import_job(&mut registry, &registry_repo, first_job);
         let first_ws_id = match first {
@@ -6389,6 +6392,7 @@ expanded_item_ids = ["{folder_id}"]
         let second_job = ImportJob {
             plan: sample_import_plan(),
             cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
         };
         let second = run_import_job(&mut registry, &registry_repo, second_job);
         let second_ws_id = match second {
@@ -6428,6 +6432,7 @@ expanded_item_ids = ["{folder_id}"]
                 job: ImportJob {
                     plan: sample_import_plan(),
                     cancellation: Arc::new(AtomicBool::new(false)),
+                    needs_new_workspace: true,
                 },
                 command_id: command_id.clone(),
             })
@@ -6509,7 +6514,6 @@ expanded_item_ids = ["{folder_id}"]
                 }],
             }],
             warnings: Vec::new(),
-            needs_new_workspace: false,
         };
         runtime
             .command_tx
@@ -6517,6 +6521,7 @@ expanded_item_ids = ["{folder_id}"]
                 job: ImportJob {
                     plan: env_plan,
                     cancellation: Arc::new(AtomicBool::new(false)),
+                    needs_new_workspace: false,
                 },
                 command_id: command_id.clone(),
             })

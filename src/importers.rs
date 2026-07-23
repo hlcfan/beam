@@ -15,7 +15,6 @@ pub struct ImportPlan {
     pub requests: Vec<PlannedRequest>,
     pub environments: Vec<PlannedEnvironment>,
     pub warnings: Vec<String>,
-    pub needs_new_workspace: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +91,39 @@ pub fn parser_for(source: &DetectedSource) -> Option<&'static dyn Parser> {
         DetectedSource::Insomnia => Some(&insomnia::InsomniaParser),
         DetectedSource::Unknown => None,
     }
+}
+
+/// Check if the given file content represents a workspace-level export
+/// (rather than a single collection or environment that should be imported
+/// into the current workspace).
+///
+/// The check is format-agnostic — it examines the JSON structure for
+/// workspace-level indicators without dispatching on the detected source.
+pub fn content_has_workspace(content: &str) -> bool {
+    let trimmed = content.trim();
+    if !trimmed.starts_with('{') {
+        return false;
+    }
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return false;
+    };
+    let Some(obj) = root.as_object() else {
+        return false;
+    };
+    // Insomnia exports carry a `resources[]` array containing items with
+    // `_type: "workspace"`. Other formats either lack this structure or
+    // have no workspace concept.
+    if let Some(resources) = obj.get("resources").and_then(|r| r.as_array()) {
+        if resources.iter().any(|r| {
+            r.as_object()
+                .and_then(|o| o.get("_type"))
+                .and_then(|t| t.as_str())
+                == Some("workspace")
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 pub fn tag_label(source: &DetectedSource) -> &'static str {

@@ -904,6 +904,7 @@ struct FileRow {
     plan: Option<ImportPlan>,
     command_id: Option<String>,
     imported_workspace_id: Option<Ulid>,
+    needs_new_workspace: bool,
 }
 
 struct ImportDialogView {
@@ -1079,6 +1080,7 @@ impl ImportDialogView {
                                     plan: None,
                                     command_id: None,
                                     imported_workspace_id: None,
+                                    needs_new_workspace: false,
                                 });
                                 cx.notify();
                             })
@@ -1104,6 +1106,7 @@ impl ImportDialogView {
                             .await;
                         match plan_result {
                             Ok(plan) => {
+                                let needs_new_workspace = crate::importers::content_has_workspace(&content);
                                 view.update_in(cx, |this, _, cx| {
                                     this.files.push(FileRow {
                                         path: path.clone(),
@@ -1114,6 +1117,7 @@ impl ImportDialogView {
                                         plan: Some(plan),
                                         command_id: None,
                                         imported_workspace_id: None,
+                                        needs_new_workspace,
                                     });
                                     cx.notify();
                                 })
@@ -1132,6 +1136,7 @@ impl ImportDialogView {
                                         plan: None,
                                         command_id: None,
                                         imported_workspace_id: None,
+                                        needs_new_workspace: false,
                                     });
                                     cx.notify();
                                 })
@@ -1151,6 +1156,7 @@ impl ImportDialogView {
                                 plan: None,
                                 command_id: None,
                                 imported_workspace_id: None,
+                                needs_new_workspace: false,
                             });
                             cx.notify();
                         })
@@ -1208,6 +1214,7 @@ impl ImportDialogView {
                                 plan: None,
                                 command_id: None,
                                 imported_workspace_id: None,
+                                needs_new_workspace: false,
                             });
                             cx.notify();
                         })
@@ -1621,6 +1628,7 @@ impl Render for ImportDialogView {
                                                 let job = ImportJob {
                                                     plan: plan.clone(),
                                                     cancellation: this.cancellation.clone(),
+                                                    needs_new_workspace: row.needs_new_workspace,
                                                 };
                                                 let _ = this.app_command_tx.send(
                                                     AppCommand::RunImport {
