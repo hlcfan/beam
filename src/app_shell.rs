@@ -2307,9 +2307,9 @@ fn handle_workspace_command(
                     && job.plan.requests.is_empty()
                     && !job.plan.environments.is_empty();
                 let (result, item_events) = if is_env_only {
-                    run_import_environments_only(registry_repo, registry, job, workspace_id)
+                    run_import_environments_only(storage, job, workspace_id)
                 } else {
-                    run_import_into_current(registry_repo, registry, job, workspace_id)
+                    run_import_into_current(storage, job, workspace_id)
                 };
                 let mut events = item_events;
                 events.push(AppEvent::ImportResult { result, command_id });
@@ -2582,44 +2582,11 @@ fn run_import_job(
 /// Returns the import outcome plus the per-environment events to emit
 /// alongside the [`AppEvent::ImportResult`].
 fn run_import_environments_only(
-    registry_repo: &RegistryRepository,
-    registry: &WorkspacesRegistryFile,
+    storage: &mut WorkspaceRepository<FileSystemStorage>,
     job: ImportJob,
     workspace_id: Ulid,
 ) -> (ImportResult, Vec<AppEvent>) {
     use std::sync::atomic::Ordering;
-    log::info!("===workspaceId: {:?}", workspace_id);
-    let entry = registry
-        .registry
-        .workspaces
-        .iter()
-        .find(|e| e.workspace_id == workspace_id)
-        .expect("workspace for env-only import must exist");
-    let ws_paths = registry_repo.workspace_paths(entry);
-    let backend = FileSystemStorage::new(ws_paths);
-    let mut storage = match WorkspaceRepository::new(backend) {
-        Ok(repo) => repo,
-        Err(error) => {
-            log::error!("import: open workspace repo failed: {error}");
-            return (
-                ImportResult::Failed {
-                    message: error.to_string(),
-                    partial_workspace_created: false,
-                },
-                Vec::new(),
-            );
-        }
-    };
-    if let Err(error) = storage.initialize() {
-        log::error!("import: initialize workspace failed: {error}");
-        return (
-            ImportResult::Failed {
-                message: error.to_string(),
-                partial_workspace_created: false,
-            },
-            Vec::new(),
-        );
-    }
 
     let mut events: Vec<AppEvent> = Vec::new();
     let mut environments_created: usize = 0;
@@ -2712,44 +2679,11 @@ fn run_import_environments_only(
 /// a full workspace reload. Deduplication happens automatically through
 /// `find_unique_name` in the repository's create methods.
 fn run_import_into_current(
-    registry_repo: &RegistryRepository,
-    registry: &WorkspacesRegistryFile,
+    storage: &mut WorkspaceRepository<FileSystemStorage>,
     job: ImportJob,
     workspace_id: Ulid,
 ) -> (ImportResult, Vec<AppEvent>) {
     use std::sync::atomic::Ordering;
-
-    let entry = registry
-        .registry
-        .workspaces
-        .iter()
-        .find(|e| e.workspace_id == workspace_id)
-        .expect("workspace for import must exist");
-    let ws_paths = registry_repo.workspace_paths(entry);
-    let backend = FileSystemStorage::new(ws_paths);
-    let mut storage = match WorkspaceRepository::new(backend) {
-        Ok(repo) => repo,
-        Err(error) => {
-            log::error!("import: open workspace repo failed: {error}");
-            return (
-                ImportResult::Failed {
-                    message: error.to_string(),
-                    partial_workspace_created: false,
-                },
-                Vec::new(),
-            );
-        }
-    };
-    if let Err(error) = storage.initialize() {
-        log::error!("import: initialize workspace failed: {error}");
-        return (
-            ImportResult::Failed {
-                message: error.to_string(),
-                partial_workspace_created: false,
-            },
-            Vec::new(),
-        );
-    }
 
     let mut events: Vec<AppEvent> = Vec::new();
 
@@ -6640,8 +6574,7 @@ expanded_item_ids = ["{folder_id}"]
         };
 
         let (result, events) = run_import_into_current(
-            &registry_repo,
-            &registry,
+            &mut storage,
             ImportJob {
                 plan,
                 cancellation: Arc::new(AtomicBool::new(false)),
@@ -6672,6 +6605,7 @@ expanded_item_ids = ["{folder_id}"]
             .values()
             .find(|node| node.kind == TreeNodeKind::Folder && node.name == "Users")
             .expect("imported folder should be in the live tree");
+        let folder_id = folder.id;
         let nested = folder
             .children
             .iter()
@@ -6679,15 +6613,25 @@ expanded_item_ids = ["{folder_id}"]
             .find(|node| node.name == "List Users")
             .expect("nested request should be under its imported folder");
         assert_eq!(nested.parent_id, Some(folder.id));
-        assert!(
-            state
-                .workspace_tree
-                .roots
-                .iter()
-                .filter_map(|id| state.workspace_tree.node(*id))
-                .any(|node| { node.kind == TreeNodeKind::Request && node.name == "Healthcheck" }),
-            "root request should be in the live tree"
-        );
+        let root_request_id = state
+            .workspace_tree
+            .roots
+            .iter()
+            .filter_map(|id| state.workspace_tree.node(*id))
+            .find(|node| node.kind == TreeNodeKind::Request && node.name == "Healthcheck")
+            .map(|node| node.id)
+            .expect("root request should be in the live tree");
+
+        storage
+            .delete_request(DeleteRequestInput {
+                request_id: root_request_id,
+                known_request_path: None,
+                known_parent_manifest_path: None,
+            })
+            .expect("imported root request should be deletable immediately");
+        storage
+            .delete_folder(folder_id)
+            .expect("imported folder should be deletable immediately");
     }
 
     /// When the import plan is env-only (no folders, no requests) the worker
