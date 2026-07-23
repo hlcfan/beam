@@ -964,10 +964,10 @@ impl ImportDialogView {
         command_id: String,
         cx: &mut Context<Self>,
     ) {
-        if let Some(row) = self
+        if self
             .files
-            .iter_mut()
-            .find(|f| f.command_id.as_deref() == Some(&command_id))
+            .iter()
+            .any(|f| f.command_id.as_deref() == Some(&command_id))
         {
             self.completed_count += 1;
             match result {
@@ -978,13 +978,18 @@ impl ImportDialogView {
                     imported_into_current,
                 } => {
                     self.any_success = true;
-                    // Env-only imports land in the active workspace — don't
-                    // request a workspace switch (and don't track an id for
-                    // the auto-switch logic).
-                    if !imported_into_current {
-                        row.imported_workspace_id = Some(workspace_id);
+                    for row in self
+                        .files
+                        .iter_mut()
+                        .filter(|f| f.command_id.as_deref() == Some(&command_id))
+                    {
+                        if !imported_into_current {
+                            row.imported_workspace_id = Some(workspace_id);
+                        }
+                        row.state = FileState::Done {
+                            summary: summary.clone(),
+                        };
                     }
-                    row.state = FileState::Done { summary };
                 }
                 ImportResult::Failed {
                     message,
@@ -997,13 +1002,27 @@ impl ImportDialogView {
                             "\nWorkspace created but partially imported — delete it if unwanted.",
                         );
                     }
-                    row.state = FileState::Failed { message: msg };
+                    for row in self
+                        .files
+                        .iter_mut()
+                        .filter(|f| f.command_id.as_deref() == Some(&command_id))
+                    {
+                        row.state = FileState::Failed {
+                            message: msg.clone(),
+                        };
+                    }
                 }
                 ImportResult::Canceled => {
-                    if matches!(row.state, FileState::Importing) {
-                        row.state = FileState::Failed {
-                            message: "Canceled by user".to_string(),
-                        };
+                    for row in self
+                        .files
+                        .iter_mut()
+                        .filter(|f| f.command_id.as_deref() == Some(&command_id))
+                    {
+                        if matches!(row.state, FileState::Importing) {
+                            row.state = FileState::Failed {
+                                message: "Canceled by user".to_string(),
+                            };
+                        }
                     }
                 }
             }
@@ -1623,31 +1642,78 @@ impl Render for ImportDialogView {
                                     this.cancellation = Arc::new(AtomicBool::new(false));
                                     this.was_cancelled = false;
                                     this.show_cancel_confirm = false;
-                                    for row in &mut this.files {
-                                        if let Some(plan) = &row.plan {
-                                            if matches!(row.state, FileState::Waiting) {
-                                                let command_id = next_command_id();
-                                                let job = ImportJob {
-                                                    plan: plan.clone(),
-                                                    cancellation: this.cancellation.clone(),
-                                                    needs_new_workspace: row.needs_new_workspace,
-                                                };
-                                                let _ = this.app_command_tx.send(
-                                                    AppCommand::RunImport {
-                                                        job,
-                                                        command_id: command_id.clone(),
-                                                    },
-                                                );
-                                                row.state = FileState::Importing;
-                                                row.command_id = Some(command_id);
-                                            }
-                                        }
-                                    }
-                                    this.enqueued_count = this
+                                    let workspace_count = this
                                         .files
                                         .iter()
-                                        .filter(|f| matches!(f.state, FileState::Importing))
+                                        .filter(|row| {
+                                            row.plan.is_some()
+                                                && matches!(row.state, FileState::Waiting)
+                                                && row.needs_new_workspace
+                                        })
                                         .count();
+                                    if workspace_count > 1 {
+                                        for row in &mut this.files {
+                                            if row.plan.is_some()
+                                                && matches!(row.state, FileState::Waiting)
+                                            {
+                                                row.state = FileState::Failed {
+                                                    message: "An import batch can contain only one workspace"
+                                                        .to_string(),
+                                                };
+                                            }
+                                        }
+                                        this.all_done = true;
+                                        cx.notify();
+                                        return;
+                                    }
+
+                                    let mut plans = this
+                                        .files
+                                        .iter()
+                                        .filter(|row| {
+                                            row.plan.is_some()
+                                                && matches!(row.state, FileState::Waiting)
+                                        })
+                                        .filter_map(|row| {
+                                            row.plan
+                                                .clone()
+                                                .map(|plan| (plan, row.needs_new_workspace))
+                                        });
+                                    let Some((mut batch_plan, first_has_workspace)) = plans.next()
+                                    else {
+                                        return;
+                                    };
+                                    let mut needs_new_workspace = first_has_workspace;
+                                    for (plan, has_workspace) in plans {
+                                        if has_workspace {
+                                            batch_plan.workspace_name = plan.workspace_name.clone();
+                                            needs_new_workspace = true;
+                                        }
+                                        batch_plan.folders.extend(plan.folders);
+                                        batch_plan.requests.extend(plan.requests);
+                                        batch_plan.environments.extend(plan.environments);
+                                        batch_plan.warnings.extend(plan.warnings);
+                                    }
+
+                                    let command_id = next_command_id();
+                                    let job = ImportJob {
+                                        plan: batch_plan,
+                                        cancellation: this.cancellation.clone(),
+                                        needs_new_workspace,
+                                    };
+                                    let _ = this.app_command_tx.send(AppCommand::RunImport {
+                                        job,
+                                        command_id: command_id.clone(),
+                                    });
+                                    for row in &mut this.files {
+                                        if row.plan.is_some()
+                                            && matches!(row.state, FileState::Waiting)
+                                        {
+                                            row.state = FileState::Importing;
+                                            row.command_id = Some(command_id.clone());
+                                        }
+                                    }
+                                    this.enqueued_count = 1;
                                     this.completed_count = 0;
                                     this.importing = true;
                                     cx.notify();
