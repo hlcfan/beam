@@ -1416,7 +1416,7 @@ impl Render for ImportDialogView {
                             cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
                                 let rx = cx.prompt_for_paths(PathPromptOptions {
                                     files: true,
-                                    directories: false,
+                                    directories: true,
                                     multiple: true,
                                     prompt: None,
                                 });
@@ -1428,7 +1428,11 @@ impl Render for ImportDialogView {
                                     };
                                     entity
                                         .update_in(cx, move |this, window, cx| {
-                                            this.process_paths(picked, None, window, cx);
+                                            this.handle_drop_paths(
+                                                ExternalPaths(picked.into()),
+                                                window,
+                                                cx,
+                                            );
                                         })
                                         .ok();
                                 })
@@ -1453,7 +1457,7 @@ impl Render for ImportDialogView {
                             div()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Drag files or folder here, or click to choose files."),
+                                .child("Drag files or folders here, or click to choose."),
                         )
                 })
             })
