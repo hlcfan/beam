@@ -3,8 +3,7 @@ use crate::models::{AuthConfig, BodyConfig, HeaderField, HttpMethod, QueryParamF
 
 /// Parsed cURL command in the request-authoring shape. This is a distinct
 /// intermediate representation — it imports into the **currently open request**
-/// in place (Phase 11) rather than into a new workspace, so it stays separate
-/// from `ImportPlan`.
+/// in place rather than into a new workspace, so it stays separate from `ImportPlan`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CurlPlan {
     pub method: HttpMethod,

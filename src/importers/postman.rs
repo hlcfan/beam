@@ -884,7 +884,7 @@ mod tests {
         ));
     }
 
-    // ---- Phase 2: parser tests ----
+    // parser tests
 
     fn find_folder<'a>(plan: &'a ImportPlan, name: &str) -> &'a PlannedFolder {
         plan.folders

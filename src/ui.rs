@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -897,7 +897,6 @@ enum FileState {
 }
 
 struct FileRow {
-    path: PathBuf,
     relative_label: Option<String>,
     detected: DetectedSource,
     state: FileState,
@@ -909,8 +908,7 @@ struct FileRow {
 
 struct ImportDialogView {
     beam_view: Entity<BeamView>,
-    files: Vec<FileRow>,
-    queued_paths: HashSet<PathBuf>,
+    files: HashMap<PathBuf, FileRow>,
     importing: bool,
     any_success: bool,
     all_done: bool,
@@ -931,8 +929,7 @@ impl ImportDialogView {
     ) -> Self {
         Self {
             beam_view,
-            files: Vec::new(),
-            queued_paths: HashSet::new(),
+            files: HashMap::new(),
             importing: false,
             any_success: false,
             all_done: false,
@@ -947,7 +944,6 @@ impl ImportDialogView {
 
     fn clear_files(&mut self, cx: &mut Context<Self>) {
         self.files.clear();
-        self.queued_paths.clear();
         self.any_success = false;
         self.all_done = false;
         self.enqueued_count = 0;
@@ -965,7 +961,7 @@ impl ImportDialogView {
     ) {
         if self
             .files
-            .iter()
+            .values()
             .any(|f| f.command_id.as_deref() == Some(&command_id))
         {
             self.completed_count += 1;
@@ -979,7 +975,7 @@ impl ImportDialogView {
                     self.any_success = true;
                     for row in self
                         .files
-                        .iter_mut()
+                        .values_mut()
                         .filter(|f| f.command_id.as_deref() == Some(&command_id))
                     {
                         if !imported_into_current {
@@ -1003,7 +999,7 @@ impl ImportDialogView {
                     }
                     for row in self
                         .files
-                        .iter_mut()
+                        .values_mut()
                         .filter(|f| f.command_id.as_deref() == Some(&command_id))
                     {
                         row.state = FileState::Failed {
@@ -1014,7 +1010,7 @@ impl ImportDialogView {
                 ImportResult::Canceled => {
                     for row in self
                         .files
-                        .iter_mut()
+                        .values_mut()
                         .filter(|f| f.command_id.as_deref() == Some(&command_id))
                     {
                         if matches!(row.state, FileState::Importing) {
@@ -1033,7 +1029,7 @@ impl ImportDialogView {
                 if self.any_success && !self.was_cancelled {
                     if let Some(first_done) = self
                         .files
-                        .iter()
+                        .values()
                         .find(|f| matches!(f.state, FileState::Done { .. }))
                     {
                         if let Some(workspace_id) = first_done.imported_workspace_id {
@@ -1058,7 +1054,28 @@ impl ImportDialogView {
     ) {
         let paths: Vec<PathBuf> = paths
             .into_iter()
-            .filter(|path| self.queued_paths.insert(path.clone()))
+            .filter(|path| {
+                if self.files.contains_key(path) {
+                    return false;
+                }
+                self.files.insert(
+                    path.clone(),
+                    FileRow {
+                        relative_label: folder_root.as_ref().and_then(|root| {
+                            path.strip_prefix(root)
+                                .ok()
+                                .map(|path| path.to_string_lossy().to_string())
+                        }),
+                        detected: DetectedSource::Unknown,
+                        state: FileState::Waiting,
+                        plan: None,
+                        command_id: None,
+                        imported_workspace_id: None,
+                        needs_new_workspace: false,
+                    },
+                );
+                true
+            })
             .collect();
         if paths.is_empty() {
             return;
@@ -1094,19 +1111,21 @@ impl ImportDialogView {
                                 .await;
                         if detection == DetectedSource::Unknown {
                             view.update_in(cx, |this, _, cx| {
-                                this.files.push(FileRow {
-                                    path: path.clone(),
-                                    relative_label: relative
-                                        .map(|p| p.to_string_lossy().to_string()),
-                                    detected: detection,
-                                    state: FileState::Failed {
-                                        message: "Unknown format".to_string(),
+                                this.files.insert(
+                                    path.clone(),
+                                    FileRow {
+                                        relative_label: relative
+                                            .map(|p| p.to_string_lossy().to_string()),
+                                        detected: detection,
+                                        state: FileState::Failed {
+                                            message: "Unknown format".to_string(),
+                                        },
+                                        plan: None,
+                                        command_id: None,
+                                        imported_workspace_id: None,
+                                        needs_new_workspace: false,
                                     },
-                                    plan: None,
-                                    command_id: None,
-                                    imported_workspace_id: None,
-                                    needs_new_workspace: false,
-                                });
+                                );
                                 cx.notify();
                             })
                             .ok();
@@ -1135,36 +1154,40 @@ impl ImportDialogView {
                                     crate::importers::content_has_workspace(&content);
                                 log::info!("needs_nwe_workspace: {:?}", needs_new_workspace);
                                 view.update_in(cx, |this, _, cx| {
-                                    this.files.push(FileRow {
-                                        path: path.clone(),
-                                        relative_label: relative
-                                            .map(|p| p.to_string_lossy().to_string()),
-                                        detected: detection,
-                                        state: FileState::Waiting,
-                                        plan: Some(plan),
-                                        command_id: None,
-                                        imported_workspace_id: None,
-                                        needs_new_workspace,
-                                    });
+                                    this.files.insert(
+                                        path.clone(),
+                                        FileRow {
+                                            relative_label: relative
+                                                .map(|p| p.to_string_lossy().to_string()),
+                                            detected: detection,
+                                            state: FileState::Waiting,
+                                            plan: Some(plan),
+                                            command_id: None,
+                                            imported_workspace_id: None,
+                                            needs_new_workspace,
+                                        },
+                                    );
                                     cx.notify();
                                 })
                                 .ok();
                             }
                             Err(err) => {
                                 view.update_in(cx, |this, _, cx| {
-                                    this.files.push(FileRow {
-                                        path: path.clone(),
-                                        relative_label: relative
-                                            .map(|p| p.to_string_lossy().to_string()),
-                                        detected: detection,
-                                        state: FileState::Failed {
-                                            message: err.to_string(),
+                                    this.files.insert(
+                                        path.clone(),
+                                        FileRow {
+                                            relative_label: relative
+                                                .map(|p| p.to_string_lossy().to_string()),
+                                            detected: detection,
+                                            state: FileState::Failed {
+                                                message: err.to_string(),
+                                            },
+                                            plan: None,
+                                            command_id: None,
+                                            imported_workspace_id: None,
+                                            needs_new_workspace: false,
                                         },
-                                        plan: None,
-                                        command_id: None,
-                                        imported_workspace_id: None,
-                                        needs_new_workspace: false,
-                                    });
+                                    );
                                     cx.notify();
                                 })
                                 .ok();
@@ -1173,18 +1196,21 @@ impl ImportDialogView {
                     }
                     None => {
                         view.update_in(cx, |this, _, cx| {
-                            this.files.push(FileRow {
-                                path: path.clone(),
-                                relative_label: relative.map(|p| p.to_string_lossy().to_string()),
-                                detected: DetectedSource::Unknown,
-                                state: FileState::Failed {
-                                    message: "Could not read file".to_string(),
+                            this.files.insert(
+                                path.clone(),
+                                FileRow {
+                                    relative_label: relative
+                                        .map(|p| p.to_string_lossy().to_string()),
+                                    detected: DetectedSource::Unknown,
+                                    state: FileState::Failed {
+                                        message: "Could not read file".to_string(),
+                                    },
+                                    plan: None,
+                                    command_id: None,
+                                    imported_workspace_id: None,
+                                    needs_new_workspace: false,
                                 },
-                                plan: None,
-                                command_id: None,
-                                imported_workspace_id: None,
-                                needs_new_workspace: false,
-                            });
+                            );
                             cx.notify();
                         })
                         .ok();
@@ -1231,18 +1257,20 @@ impl ImportDialogView {
                     }
                     Err(err) => {
                         view.update_in(cx, |this, _, cx| {
-                            this.files.push(FileRow {
-                                path: root.clone(),
-                                relative_label: None,
-                                detected: DetectedSource::Unknown,
-                                state: FileState::Failed {
-                                    message: format!("Folder scan error: {err:?}"),
+                            this.files.insert(
+                                root.clone(),
+                                FileRow {
+                                    relative_label: None,
+                                    detected: DetectedSource::Unknown,
+                                    state: FileState::Failed {
+                                        message: format!("Folder scan error: {err:?}"),
+                                    },
+                                    plan: None,
+                                    command_id: None,
+                                    imported_workspace_id: None,
+                                    needs_new_workspace: false,
                                 },
-                                plan: None,
-                                command_id: None,
-                                imported_workspace_id: None,
-                                needs_new_workspace: false,
-                            });
+                            );
                             cx.notify();
                         })
                         .ok();
@@ -1253,9 +1281,13 @@ impl ImportDialogView {
         }
     }
 
-    fn render_file_row(&self, row: &FileRow, cx: &Context<Self>) -> impl IntoElement {
-        let file_name = row
-            .path
+    fn render_file_row(
+        &self,
+        path: &PathBuf,
+        row: &FileRow,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
@@ -1458,7 +1490,7 @@ impl Render for ImportDialogView {
             .when(has_files, |this| {
                 let all_failed = self
                     .files
-                    .iter()
+                    .values()
                     .all(|f| matches!(f.state, FileState::Failed { .. }));
                 this.child(
                     v_flex()
@@ -1487,8 +1519,8 @@ impl Render for ImportDialogView {
                         })
                         .children({
                             let mut children = Vec::new();
-                            for row in &self.files {
-                                children.push(self.render_file_row(row, cx));
+                            for (path, row) in &self.files {
+                                children.push(self.render_file_row(path, row, cx));
                             }
                             children
                         }),
@@ -1536,7 +1568,7 @@ impl Render for ImportDialogView {
                                             |this, _: &ClickEvent, _window, cx| {
                                                 this.cancellation.store(true, Ordering::SeqCst);
                                                 this.was_cancelled = true;
-                                                for row in &mut this.files {
+                                                for row in this.files.values_mut() {
                                                     match row.state {
                                                         FileState::Importing => {
                                                             row.state = FileState::Failed {
@@ -1604,7 +1636,7 @@ impl Render for ImportDialogView {
                                     if this.importing {
                                         return;
                                     }
-                                    let has_waiting = this.files.iter().any(|f| {
+                                    let has_waiting = this.files.values().any(|f| {
                                         f.plan.is_some() && matches!(f.state, FileState::Waiting)
                                     });
                                     if !has_waiting {
@@ -1615,7 +1647,7 @@ impl Render for ImportDialogView {
                                     this.show_cancel_confirm = false;
                                     let workspace_count = this
                                         .files
-                                        .iter()
+                                        .values()
                                         .filter(|row| {
                                             row.plan.is_some()
                                                 && matches!(row.state, FileState::Waiting)
@@ -1623,7 +1655,7 @@ impl Render for ImportDialogView {
                                         })
                                         .count();
                                     if workspace_count > 1 {
-                                        for row in &mut this.files {
+                                        for row in this.files.values_mut() {
                                             if row.plan.is_some()
                                                 && matches!(row.state, FileState::Waiting)
                                             {
@@ -1640,7 +1672,7 @@ impl Render for ImportDialogView {
 
                                     let mut plans = this
                                         .files
-                                        .iter()
+                                        .values()
                                         .filter(|row| {
                                             row.plan.is_some()
                                                 && matches!(row.state, FileState::Waiting)
@@ -1676,7 +1708,7 @@ impl Render for ImportDialogView {
                                         job,
                                         command_id: command_id.clone(),
                                     });
-                                    for row in &mut this.files {
+                                    for row in this.files.values_mut() {
                                         if row.plan.is_some()
                                             && matches!(row.state, FileState::Waiting)
                                         {
@@ -7747,7 +7779,7 @@ impl BeamView {
                 let request_id = completion.request_id;
                 let run_id = completion.run_id;
                 let maybe_outcome = completion.outcome;
-                // Phase 2 assumption: only the latest run for this request is allowed to mutate
+                // only the latest run for this request is allowed to mutate
                 // request-local execution state, so stale completions are dropped by run-id check.
 
                 if !request_run_completion_is_current(

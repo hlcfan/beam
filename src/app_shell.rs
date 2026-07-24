@@ -1324,7 +1324,7 @@ impl AppShellState {
                     self.workspace.workspace_name = workspace.name.clone();
                 }
             }
-            // Import rows are owned by the Import dialog (Phase 7+); the shell
+            // Import rows are owned by the Import dialog; the shell
             // reducer has no row state to update, so this event is a no-op here.
             // The UI consumes it directly from the event stream.
             AppEvent::ImportResult { .. } => {}
@@ -6046,8 +6046,6 @@ expanded_item_ids = ["{folder_id}"]
         );
     }
 
-    // --- Phase 6 — Import Runner integration tests ---------------------------
-
     use crate::importers::{PlannedEnvironment, PlannedFolder, PlannedRequest};
 
     fn planned_request(
@@ -6773,8 +6771,7 @@ expanded_item_ids = ["{folder_id}"]
         // one DETECTORS entry), never an edit to `run_import_job`.
         fn _compile_check(_plan: ImportPlan, _env: PlannedEnvironment) {
             // Intentionally empty: this is a type-level guarantee, not
-            // runtime behaviour. The IR types used here are the same ones
-            // documented in `docs/IMPORT_IMPLEMENTATION_PLAN.md` Phase 0.
+            // runtime behaviour.
         }
         _compile_check(
             sample_import_plan(),

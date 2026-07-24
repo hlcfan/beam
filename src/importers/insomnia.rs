@@ -57,7 +57,7 @@ impl Detector for InsomniaDetector {
 /// Insomnia exports can carry multiple `workspace` resources. The plan calls
 /// for the parser to remain pure: `Parser::parse` handles the **first**
 /// workspace and appends a warning for any extra workspaces (their actual
-/// materialization is the runner's job in Phase 6). Two associated helpers —
+/// materialization is the runner's job). Two associated helpers —
 /// [`iter_workspaces`](Self::iter_workspaces) and
 /// [`parse_for_workspace`](Self::parse_for_workspace) — let the runner split a
 /// multi-workspace file on its own.
@@ -802,8 +802,6 @@ mod tests {
             DetectedSource::Unknown
         );
     }
-
-    // ---- Phase 3: parser tests ----
 
     const SINGLE_WORKSPACE_FIXTURE: &str = r#"{
         "_type": "export",
