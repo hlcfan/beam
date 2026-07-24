@@ -142,9 +142,12 @@ mod strip_query_tests {
 /// (rather than a single collection or environment that should be imported
 /// into the current workspace).
 ///
-/// The check is format-agnostic — it examines the JSON structure for
-/// workspace-level indicators without dispatching on the detected source.
+/// The check is format-agnostic and supports both JSON resources exports and
+/// Insomnia v5 YAML collections.
 pub fn content_has_workspace(content: &str) -> bool {
+    if insomnia::is_workspace_export(content) {
+        return true;
+    }
     let trimmed = content.trim();
     if !trimmed.starts_with('{') {
         return false;

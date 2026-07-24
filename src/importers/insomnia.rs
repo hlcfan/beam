@@ -13,7 +13,7 @@ use crate::models::{
     QueryParamField, ScriptConfig,
 };
 
-/// Detects Insomnia JSON exports.
+/// Detects Insomnia JSON exports and Insomnia v5 YAML collection exports.
 ///
 /// Insomnia exports are top-level JSON objects identified by either an
 /// integer `__export_format` >= 3 or a string `_type == "export"`.
@@ -22,8 +22,10 @@ pub struct InsomniaDetector;
 impl Detector for InsomniaDetector {
     fn detect(&self, content: &str, _ext_hint: Option<&str>) -> DetectedSource {
         let trimmed = content.trim();
-        if !trimmed.starts_with('{') {
-            return DetectedSource::Unknown;
+        if let Ok(root) = serde_yaml::from_str::<Value>(trimmed) {
+            if is_v5_collection(&root) {
+                return DetectedSource::Insomnia;
+            }
         }
 
         let root: Value = match serde_json::from_str(trimmed) {
@@ -106,9 +108,7 @@ impl InsomniaParser {
 /// Enumerates every `workspace` resource in the export as `(workspace_id, name)`.
 /// Preserves the order they appear in `resources[]`.
 pub fn iter_workspaces(content: &str) -> Result<Vec<(String, String)>, BeamError> {
-    let root: Value = serde_json::from_str(content).map_err(|e| BeamError::Validation {
-        message: format!("invalid Insomnia export JSON: {e}"),
-    })?;
+    let root = normalized_root(content)?;
     let resources = root
         .get("resources")
         .and_then(|v| v.as_array())
@@ -145,9 +145,7 @@ pub fn iter_workspaces(content: &str) -> Result<Vec<(String, String)>, BeamError
 /// Builds an [`ImportPlan`] containing only the resources that belong (directly
 /// or transitively through `parentId`) to the given workspace.
 pub fn parse_for_workspace(content: &str, workspace_id: &str) -> Result<ImportPlan, BeamError> {
-    let root: Value = serde_json::from_str(content).map_err(|e| BeamError::Validation {
-        message: format!("invalid Insomnia export JSON: {e}"),
-    })?;
+    let root = normalized_root(content)?;
     let resources = root
         .get("resources")
         .and_then(|v| v.as_array())
@@ -324,6 +322,131 @@ pub fn parse_for_workspace(content: &str, workspace_id: &str) -> Result<ImportPl
     }
 
     Ok(plan)
+}
+
+fn normalized_root(content: &str) -> Result<Value, BeamError> {
+    if let Ok(root) = serde_json::from_str::<Value>(content) {
+        return Ok(root);
+    }
+
+    let root = serde_yaml::from_str::<Value>(content).map_err(|e| BeamError::Validation {
+        message: format!("invalid Insomnia export: {e}"),
+    })?;
+    if !is_v5_collection(&root) {
+        return Err(BeamError::Validation {
+            message: "unsupported Insomnia YAML export".to_string(),
+        });
+    }
+    Ok(normalize_v5_collection(&root))
+}
+
+pub fn is_workspace_export(content: &str) -> bool {
+    normalized_root(content)
+        .ok()
+        .and_then(|root| root.get("resources").cloned())
+        .and_then(|resources| resources.as_array().cloned())
+        .is_some_and(|resources| {
+            resources
+                .iter()
+                .any(|resource| resource.get("_type").and_then(Value::as_str) == Some("workspace"))
+        })
+}
+
+fn is_v5_collection(root: &Value) -> bool {
+    root.get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.starts_with("collection.insomnia.rest/"))
+        && root.get("collection").is_some_and(Value::is_array)
+}
+
+fn normalize_v5_collection(root: &Value) -> Value {
+    let workspace_id = root
+        .pointer("/meta/id")
+        .and_then(Value::as_str)
+        .unwrap_or("insomnia_v5_workspace");
+    let workspace_name = root
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("Imported Insomnia Workspace");
+    let mut resources = vec![serde_json::json!({
+        "_id": workspace_id,
+        "_type": "workspace",
+        "name": workspace_name,
+    })];
+
+    if let Some(items) = root.get("collection").and_then(Value::as_array) {
+        normalize_v5_items(items, workspace_id, &mut resources);
+    }
+
+    if let Some(environment) = root.get("environments").and_then(Value::as_object) {
+        let name = environment
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Base Environment");
+        resources.push(serde_json::json!({
+            "_id": environment.get("meta").and_then(|meta| meta.get("id")).and_then(Value::as_str).unwrap_or("insomnia_v5_environment"),
+            "_type": "environment",
+            "parentId": workspace_id,
+            "name": name,
+            "data": environment.get("data").cloned().unwrap_or_else(|| serde_json::json!({})),
+        }));
+        if let Some(sub_environments) = environment.get("subEnvironments").and_then(Value::as_array)
+        {
+            for (index, sub_environment) in sub_environments.iter().enumerate() {
+                resources.push(serde_json::json!({
+                    "_id": sub_environment.pointer("/meta/id").and_then(Value::as_str)
+                        .map(str::to_string).unwrap_or_else(|| format!("insomnia_v5_sub_environment_{index}")),
+                    "_type": "environment",
+                    "parentId": workspace_id,
+                    "name": sub_environment.get("name").and_then(Value::as_str).unwrap_or("Environment"),
+                    "data": sub_environment.get("data").cloned().unwrap_or_else(|| serde_json::json!({})),
+                    "metaSortNum": sub_environment.pointer("/meta/sortKey").and_then(Value::as_i64).unwrap_or(index as i64),
+                }));
+            }
+        }
+    }
+
+    serde_json::json!({
+        "__export_format": 5,
+        "_type": "export",
+        "resources": resources,
+    })
+}
+
+fn normalize_v5_items(items: &[Value], parent_id: &str, resources: &mut Vec<Value>) {
+    for (index, item) in items.iter().enumerate() {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        let id = item
+            .pointer("/meta/id")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("{parent_id}_item_{index}"));
+        let sort_num = item
+            .pointer("/meta/sortKey")
+            .and_then(Value::as_i64)
+            .unwrap_or(index as i64);
+
+        if let Some(children) = obj.get("children").and_then(Value::as_array) {
+            resources.push(serde_json::json!({
+                "_id": id,
+                "_type": "folder",
+                "parentId": parent_id,
+                "name": obj.get("name").and_then(Value::as_str).unwrap_or("Unnamed"),
+                "metaSortNum": sort_num,
+            }));
+            normalize_v5_items(children, &id, resources);
+            continue;
+        }
+
+        let mut request = obj.clone();
+        request.insert("_id".to_string(), Value::String(id));
+        request.insert("_type".to_string(), Value::String("request".to_string()));
+        request.insert("parentId".to_string(), Value::String(parent_id.to_string()));
+        request.insert("metaSortNum".to_string(), Value::Number(sort_num.into()));
+        resources.push(Value::Object(request));
+    }
 }
 
 /// Recursively allocates Ulids for folders in parent-first order, sorting each
@@ -1224,5 +1347,50 @@ mod tests {
         assert_eq!(url, "https://example.com/items#results");
         assert_eq!(query.len(), 1);
         assert_eq!(query[0].name, "page");
+    }
+
+    #[test]
+    fn detects_and_parses_v5_yaml_collection() {
+        let content = r#"
+type: collection.insomnia.rest/5.0
+schema_version: "5.1"
+name: My Collection
+meta:
+  id: wrk_1
+collection:
+  - name: Pets
+    meta:
+      id: fld_1
+      sortKey: -2
+    children:
+      - url: https://example.com/pets
+        name: List Pets
+        meta:
+          id: req_1
+          sortKey: -1
+        method: GET
+environments:
+  name: Base Environment
+  meta:
+    id: env_1
+  data:
+    host: https://example.com
+"#;
+
+        assert_eq!(
+            InsomniaDetector.detect(content, None),
+            DetectedSource::Insomnia
+        );
+        assert!(super::is_workspace_export(content));
+
+        let plan = InsomniaParser.parse(content).unwrap();
+        assert_eq!(plan.workspace_name, "My Collection");
+        assert_eq!(plan.folders.len(), 1);
+        assert_eq!(plan.folders[0].name, "Pets");
+        assert_eq!(plan.requests.len(), 1);
+        assert_eq!(plan.requests[0].name, "List Pets");
+        assert_eq!(plan.requests[0].parent_id, Some(plan.folders[0].id));
+        assert_eq!(plan.environments.len(), 1);
+        assert_eq!(plan.environments[0].variables[0].name, "host");
     }
 }
