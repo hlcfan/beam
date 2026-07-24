@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -910,6 +910,7 @@ struct FileRow {
 struct ImportDialogView {
     beam_view: Entity<BeamView>,
     files: Vec<FileRow>,
+    queued_paths: HashSet<PathBuf>,
     importing: bool,
     any_success: bool,
     all_done: bool,
@@ -931,6 +932,7 @@ impl ImportDialogView {
         Self {
             beam_view,
             files: Vec::new(),
+            queued_paths: HashSet::new(),
             importing: false,
             any_success: false,
             all_done: false,
@@ -943,12 +945,9 @@ impl ImportDialogView {
         }
     }
 
-    fn is_duplicate(&self, path: &PathBuf) -> bool {
-        self.files.iter().any(|f| &f.path == path)
-    }
-
     fn clear_files(&mut self, cx: &mut Context<Self>) {
         self.files.clear();
+        self.queued_paths.clear();
         self.any_success = false;
         self.all_done = false;
         self.enqueued_count = 0;
@@ -1057,6 +1056,13 @@ impl ImportDialogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| self.queued_paths.insert(path.clone()))
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
             for path in paths {
