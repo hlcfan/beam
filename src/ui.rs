@@ -1514,7 +1514,7 @@ impl Render for ImportDialogView {
                                     .child(
                                         div()
                                             .text_xs()
-                                            .text_color(cx.theme().danger_foreground)
+                                            .text_color(cx.theme().danger)
                                             .child(
                                                 "No files could be imported. See details below.",
                                             ),
