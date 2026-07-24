@@ -1350,7 +1350,6 @@ impl ImportDialogView {
                 .items_center()
                 .justify_between()
                 .py_1()
-                .px_2()
                 .rounded(px(4.0))
                 .child(
                     h_flex()
@@ -1371,7 +1370,7 @@ impl Render for ImportDialogView {
 
         v_flex()
             .w_full()
-            .p_4()
+            .px_2()
             .gap_4()
             .when(!has_files, |this| {
                 this.child(
