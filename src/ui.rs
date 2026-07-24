@@ -1292,7 +1292,7 @@ impl ImportDialogView {
             .and_then(|n| n.to_str())
             .unwrap_or("unknown");
         let label = if let Some(ref rel) = row.relative_label {
-            format!("{} (from folder)", rel)
+            rel.to_string()
         } else {
             file_name.to_string()
         };
