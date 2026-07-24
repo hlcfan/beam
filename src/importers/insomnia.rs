@@ -472,11 +472,27 @@ fn parse_url(url_value: Option<&Value>) -> (String, Vec<QueryParamField>) {
                     });
                 }
             }
-            (text, query)
+            let url = if query.is_empty() {
+                text
+            } else {
+                strip_query(&text)
+            };
+            (url, query)
         }
         None => (String::new(), Vec::new()),
         _ => (String::new(), Vec::new()),
     }
+}
+
+fn strip_query(url: &str) -> String {
+    let Some(query_start) = url.find('?') else {
+        return url.to_string();
+    };
+    let fragment = url[query_start + 1..]
+        .find('#')
+        .map(|offset| &url[query_start + 1 + offset..])
+        .unwrap_or("");
+    format!("{}{}", &url[..query_start], fragment)
 }
 
 fn parse_headers(headers_value: Option<&Value>) -> Vec<HeaderField> {
@@ -1206,5 +1222,19 @@ mod tests {
                 .iter()
                 .any(|w| w.contains("Folder-scoped environment \"FolderEnv\""))
         );
+    }
+
+    #[test]
+    fn structured_query_is_removed_from_text_url_without_losing_fragment() {
+        let value = serde_json::json!({
+            "text": "https://example.com/items?page=1#results",
+            "parameters": [{ "name": "page", "value": "1" }]
+        });
+
+        let (url, query) = super::parse_url(Some(&value));
+
+        assert_eq!(url, "https://example.com/items#results");
+        assert_eq!(query.len(), 1);
+        assert_eq!(query[0].name, "page");
     }
 }
