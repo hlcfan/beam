@@ -1316,45 +1316,32 @@ impl ImportDialogView {
                 .text_color(cx.theme().muted_foreground)
                 .child("Importing..."),
             FileState::Done { summary } => {
-                let summary = summary.clone();
-                h_flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        Icon::default()
-                            .path("icons/check.svg")
-                            .size(px(14.0))
-                            .text_color(cx.theme().success),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().success)
-                            .child(summary),
-                    )
+                let msg = summary.clone();
+                h_flex().items_center().child(
+                    div()
+                        .id("import-done-icon")
+                        .tooltip(move |window, cx| Tooltip::new(msg.clone()).build(window, cx))
+                        .child(
+                            Icon::default()
+                                .path("icons/check.svg")
+                                .size(px(14.0))
+                                .text_color(cx.theme().success),
+                        ),
+                )
             }
             FileState::Failed { message } => {
                 let msg = message.clone();
-                h_flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div()
-                            .id("import-fail-icon")
-                            .tooltip(move |window, cx| Tooltip::new(msg.clone()).build(window, cx))
-                            .child(
-                                Icon::default()
-                                    .path("icons/info.svg")
-                                    .size(px(14.0))
-                                    .text_color(cx.theme().muted_foreground),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(message.clone()),
-                    )
+                h_flex().items_center().child(
+                    div()
+                        .id("import-fail-icon")
+                        .tooltip(move |window, cx| Tooltip::new(msg.clone()).build(window, cx))
+                        .child(
+                            Icon::default()
+                                .path("icons/info.svg")
+                                .size(px(14.0))
+                                .text_color(cx.theme().muted_foreground),
+                        ),
+                )
             }
         };
         v_flex().w_full().gap_0().child(
