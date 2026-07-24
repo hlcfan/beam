@@ -1136,6 +1136,10 @@ impl ImportDialogView {
                                 let detection = detection.clone();
                                 async move {
                                     if let Some(parser) = parser_for(&detection) {
+                                        // TODO: Insomnia "all data" exports may contain multiple
+                                        // workspace resources. `InsomniaParser::parse` returns
+                                        // only the first one, so split these exports with
+                                        // `list_workspaces`/`for_workspace` before enqueueing.
                                         parser.parse(&content)
                                     } else {
                                         Err(crate::error::BeamError::Validation {
