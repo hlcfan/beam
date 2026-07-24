@@ -1247,12 +1247,7 @@ impl ImportDialogView {
         }
     }
 
-    fn render_file_row(
-        &self,
-        row: &FileRow,
-        has_postman_env_imported: bool,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
+    fn render_file_row(&self, row: &FileRow, cx: &Context<Self>) -> impl IntoElement {
         let file_name = row
             .path
             .file_name()
@@ -1324,42 +1319,23 @@ impl ImportDialogView {
                     )
             }
         };
-        let show_env_warning = has_postman_env_imported
-            && matches!(&row.detected, DetectedSource::PostmanCollection { .. })
-            && matches!(row.state, FileState::Done { .. });
-        v_flex()
-            .w_full()
-            .gap_0()
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .py_1()
-                    .px_2()
-                    .rounded(px(4.0))
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .gap_2()
-                            .flex_1()
-                            .child(div().text_sm().truncate().child(label)),
-                    )
-                    .child(h_flex().items_center().gap_2().child(tag).child(status)),
-            )
-            .when(show_env_warning, |this| {
-                this.child(
-                    div()
-                        .px_2()
-                        .pb_1()
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Imported 1 environment separately — copy it into this workspace to resolve {{variables}}."),
-                        ),
+        v_flex().w_full().gap_0().child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .py_1()
+                .px_2()
+                .rounded(px(4.0))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_1()
+                        .child(div().text_sm().truncate().child(label)),
                 )
-            })
+                .child(h_flex().items_center().gap_2().child(tag).child(status)),
+        )
     }
 }
 
@@ -1378,7 +1354,7 @@ impl Render for ImportDialogView {
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(
-                            "Supports Postman Collection/Environment (.json, .postman_environment.json) and  Insomnia export (.json).",
+                            "Supports Postman collections and environments, and Insomnia exports. Files are imported as one batch: an included Insomnia workspace creates a new workspace; otherwise, everything goes into the active workspace.",
                         ),
                 )
                 .child({
@@ -1478,13 +1454,6 @@ impl Render for ImportDialogView {
                     .files
                     .iter()
                     .all(|f| matches!(f.state, FileState::Failed { .. }));
-                let has_postman_env_imported = self.files.iter().any(|f| {
-                    matches!(&f.detected, DetectedSource::PostmanEnvironment)
-                        && matches!(f.state, FileState::Done { .. })
-                }) && self.files.iter().any(|f| {
-                    matches!(&f.detected, DetectedSource::PostmanCollection { .. })
-                        && matches!(f.state, FileState::Done { .. })
-                });
                 this.child(
                     v_flex()
                         .w_full()
@@ -1513,11 +1482,7 @@ impl Render for ImportDialogView {
                         .children({
                             let mut children = Vec::new();
                             for row in &self.files {
-                                children.push(self.render_file_row(
-                                    row,
-                                    has_postman_env_imported,
-                                    cx,
-                                ));
+                                children.push(self.render_file_row(row, cx));
                             }
                             children
                         }),
