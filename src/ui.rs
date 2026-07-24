@@ -1645,13 +1645,21 @@ impl Render for ImportDialogView {
                                                 && row.needs_new_workspace
                                         })
                                         .count();
-                                    if workspace_count > 1 {
+                                    let has_separate_environment = this.files.values().any(|row| {
+                                        row.plan.is_some()
+                                            && matches!(row.state, FileState::Waiting)
+                                            && matches!(
+                                                row.detected,
+                                                DetectedSource::PostmanEnvironment
+                                            )
+                                    });
+                                    if workspace_count > 1 && has_separate_environment {
                                         for row in this.files.values_mut() {
                                             if row.plan.is_some()
                                                 && matches!(row.state, FileState::Waiting)
                                             {
                                                 row.state = FileState::Failed {
-                                                    message: "An import batch can contain only one workspace"
+                                                    message: "An import batch with multiple workspaces cannot include separate environment files"
                                                         .to_string(),
                                                 };
                                             }
