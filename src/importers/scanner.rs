@@ -140,8 +140,6 @@ fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) -> Result<(), ScanError>
             out.push(path);
             continue;
         }
-
-        // Devices, sockets, fifos, etc. — skip silently.
     }
 
     Ok(())

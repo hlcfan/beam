@@ -907,7 +907,6 @@ struct FileRow {
 }
 
 struct ImportDialogView {
-    beam_view: Entity<BeamView>,
     files: HashMap<PathBuf, FileRow>,
     importing: bool,
     any_success: bool,
@@ -922,13 +921,11 @@ struct ImportDialogView {
 
 impl ImportDialogView {
     fn new(
-        beam_view: Entity<BeamView>,
         app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            beam_view,
             files: HashMap::new(),
             importing: false,
             any_success: false,
@@ -3812,10 +3809,8 @@ impl BeamView {
     }
 
     fn open_import_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let beam_view = cx.entity();
-        let import_view = cx.new(|cx| {
-            ImportDialogView::new(beam_view.clone(), self.app_command_tx.clone(), _window, cx)
-        });
+        let import_view =
+            cx.new(|cx| ImportDialogView::new(self.app_command_tx.clone(), _window, cx));
         self.import_dialog_view = Some(import_view.clone());
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
