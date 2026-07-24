@@ -1669,33 +1669,38 @@ impl Render for ImportDialogView {
                                         return;
                                     }
 
-                                    let mut plans = this
+                                    let mut queued_plans = this
                                         .files
-                                        .values()
+                                        .iter()
                                         .filter(|row| {
-                                            row.plan.is_some()
-                                                && matches!(row.state, FileState::Waiting)
+                                            row.1.plan.is_some()
+                                                && matches!(row.1.state, FileState::Waiting)
                                         })
-                                        .filter_map(|row| {
+                                        .filter_map(|(path, row)| {
                                             row.plan
                                                 .clone()
-                                                .map(|plan| (plan, row.needs_new_workspace))
-                                        });
-                                    let Some((mut batch_plan, first_has_workspace)) = plans.next()
+                                                .map(|plan| {
+                                                    (
+                                                        path.clone(),
+                                                        plan,
+                                                        row.needs_new_workspace,
+                                                    )
+                                                })
+                                        })
+                                        .collect::<Vec<_>>();
+                                    queued_plans.sort_by(|a, b| a.0.cmp(&b.0));
+                                    let Some((batch_plan, needs_new_workspace)) =
+                                        crate::importers::merge_file_plans(
+                                            queued_plans
+                                                .into_iter()
+                                                .map(|(_, plan, needs_workspace)| {
+                                                    (plan, needs_workspace)
+                                                })
+                                                .collect(),
+                                        )
                                     else {
                                         return;
                                     };
-                                    let mut needs_new_workspace = first_has_workspace;
-                                    for (plan, has_workspace) in plans {
-                                        if has_workspace {
-                                            batch_plan.workspace_name = plan.workspace_name.clone();
-                                            needs_new_workspace = true;
-                                        }
-                                        batch_plan.folders.extend(plan.folders);
-                                        batch_plan.requests.extend(plan.requests);
-                                        batch_plan.environments.extend(plan.environments);
-                                        batch_plan.warnings.extend(plan.warnings);
-                                    }
 
                                     let command_id = next_command_id();
                                     let job = ImportJob {

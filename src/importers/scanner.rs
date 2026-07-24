@@ -240,9 +240,11 @@ mod tests {
                 "expected file at depth {d} to be scanned"
             );
         }
-        assert!(scanned
-            .iter()
-            .all(|p| !p.ends_with(format!("file_at_{}.json", MAX_SCAN_DEPTH + 1))));
+        assert!(
+            scanned
+                .iter()
+                .all(|p| !p.ends_with(format!("file_at_{}.json", MAX_SCAN_DEPTH + 1)))
+        );
     }
 
     #[test]
@@ -254,7 +256,12 @@ mod tests {
             touch(&root.join(format!("f{i:05}.json")), "{}");
         }
         let err = scan_folder(root).unwrap_err();
-        assert_eq!(err, ScanError::TooManyFiles { limit: MAX_FILES_PER_SCAN });
+        assert_eq!(
+            err,
+            ScanError::TooManyFiles {
+                limit: MAX_FILES_PER_SCAN
+            }
+        );
     }
 
     #[test]
@@ -272,11 +279,7 @@ mod tests {
         touch(&root.join("real.json"), "{}");
         #[cfg(unix)]
         {
-            std::os::unix::fs::symlink(
-                root.join("real.json"),
-                root.join("link.json"),
-            )
-            .unwrap();
+            std::os::unix::fs::symlink(root.join("real.json"), root.join("link.json")).unwrap();
         }
         let scanned = scan_folder(root).unwrap();
         let names = relative(root, &scanned);

@@ -46,6 +46,62 @@ pub struct PlannedEnvironment {
     pub variables: Vec<EnvironmentVariable>,
 }
 
+/// Combines file-level plans into one import while retaining the boundary
+/// between collections. When more than one plan contains tree items, each
+/// collection becomes a top-level folder instead of flattening all of its
+/// root requests into the workspace.
+pub fn merge_file_plans(plans: Vec<(ImportPlan, bool)>) -> Option<(ImportPlan, bool)> {
+    let tree_plan_count = plans
+        .iter()
+        .filter(|(plan, _)| !plan.folders.is_empty() || !plan.requests.is_empty())
+        .count();
+    let wrap_tree_plans = tree_plan_count > 1;
+    let mut plans = plans.into_iter();
+    let (mut merged, mut needs_new_workspace) = plans.next()?;
+
+    if wrap_tree_plans && (!merged.folders.is_empty() || !merged.requests.is_empty()) {
+        wrap_plan_tree(&mut merged);
+    }
+
+    for (mut plan, has_workspace) in plans {
+        if has_workspace {
+            needs_new_workspace = true;
+        }
+        if wrap_tree_plans && (!plan.folders.is_empty() || !plan.requests.is_empty()) {
+            wrap_plan_tree(&mut plan);
+        }
+        merged.folders.extend(plan.folders);
+        merged.requests.extend(plan.requests);
+        merged.environments.extend(plan.environments);
+        merged.warnings.extend(plan.warnings);
+    }
+
+    Some((merged, needs_new_workspace))
+}
+
+fn wrap_plan_tree(plan: &mut ImportPlan) {
+    let wrapper_id = Ulid::new();
+    for folder in &mut plan.folders {
+        if folder.parent_id.is_none() {
+            folder.parent_id = Some(wrapper_id);
+        }
+    }
+    for request in &mut plan.requests {
+        if request.parent_id.is_none() {
+            request.parent_id = Some(wrapper_id);
+        }
+    }
+    plan.folders.insert(
+        0,
+        PlannedFolder {
+            id: wrapper_id,
+            parent_id: None,
+            name: plan.workspace_name.clone(),
+            order: 0,
+        },
+    );
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DetectedSource {
     PostmanCollection { schema: String },
@@ -185,7 +241,54 @@ pub fn tag_label(source: &DetectedSource) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{DetectedSource, content_has_workspace, detect};
+    use super::{
+        DetectedSource, ImportPlan, PlannedRequest, content_has_workspace, detect, merge_file_plans,
+    };
+    use crate::models::{AuthConfig, BodyConfig, HttpMethod, ScriptConfig};
+    use ulid::Ulid;
+
+    fn request_plan(name: &str) -> ImportPlan {
+        ImportPlan {
+            workspace_name: name.to_string(),
+            folders: Vec::new(),
+            requests: vec![PlannedRequest {
+                id: Ulid::new(),
+                parent_id: None,
+                name: format!("{name} request"),
+                method: HttpMethod::Get,
+                url: String::new(),
+                headers: Vec::new(),
+                query: Vec::new(),
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                scripts: ScriptConfig::default(),
+                order: 0,
+            }],
+            environments: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn merging_multiple_collection_files_keeps_each_tree_in_a_folder() {
+        let (merged, needs_workspace) = merge_file_plans(vec![
+            (request_plan("Collection A"), true),
+            (request_plan("Collection B"), true),
+        ])
+        .unwrap();
+
+        assert!(needs_workspace);
+        assert_eq!(
+            merged
+                .folders
+                .iter()
+                .map(|folder| folder.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Collection A", "Collection B"]
+        );
+        assert_eq!(merged.requests[0].parent_id, Some(merged.folders[0].id));
+        assert_eq!(merged.requests[1].parent_id, Some(merged.folders[1].id));
+    }
 
     #[test]
     fn content_has_workspace_false_for_postman_environment() {
