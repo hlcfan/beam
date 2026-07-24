@@ -5,7 +5,8 @@ use ulid::Ulid;
 
 use crate::error::BeamError;
 use crate::importers::{
-    DetectedSource, Detector, ImportPlan, Parser, PlannedEnvironment, PlannedFolder, PlannedRequest,
+    DetectedSource, Detector, ImportPlan, Parser, PlannedEnvironment, PlannedFolder,
+    PlannedRequest, strip_query,
 };
 use crate::models::{
     ApiKeyLocation, AuthConfig, BodyConfig, EnvironmentVariable, HeaderField, HttpMethod,
@@ -482,17 +483,6 @@ fn parse_url(url_value: Option<&Value>) -> (String, Vec<QueryParamField>) {
         None => (String::new(), Vec::new()),
         _ => (String::new(), Vec::new()),
     }
-}
-
-fn strip_query(url: &str) -> String {
-    let Some(query_start) = url.find('?') else {
-        return url.to_string();
-    };
-    let fragment = url[query_start + 1..]
-        .find('#')
-        .map(|offset| &url[query_start + 1 + offset..])
-        .unwrap_or("");
-    format!("{}{}", &url[..query_start], fragment)
 }
 
 fn parse_headers(headers_value: Option<&Value>) -> Vec<HeaderField> {

@@ -69,6 +69,21 @@ pub mod scanner;
 
 pub use curl::{CurlPlan, is_curl, parse as parse_curl};
 
+fn strip_query(url: &str) -> String {
+    let (before_fragment, fragment) = match url.split_once('#') {
+        Some((before, fragment)) => (before, Some(fragment)),
+        None => (url, None),
+    };
+    let without_query = before_fragment
+        .split_once('?')
+        .map_or(before_fragment, |(base, _)| base);
+
+    match fragment {
+        Some(fragment) => format!("{without_query}#{fragment}"),
+        None => without_query.to_string(),
+    }
+}
+
 pub const DETECTORS: &[(&str, &'static dyn Detector, &str)] = &[
     ("postman", &postman::PostmanDetector, "Postman"),
     ("insomnia", &insomnia::InsomniaDetector, "Insomnia"),
@@ -90,6 +105,36 @@ pub fn parser_for(source: &DetectedSource) -> Option<&'static dyn Parser> {
         DetectedSource::PostmanEnvironment => Some(&postman::PostmanEnvironmentParser),
         DetectedSource::Insomnia => Some(&insomnia::InsomniaParser),
         DetectedSource::Unknown => None,
+    }
+}
+
+#[cfg(test)]
+mod strip_query_tests {
+    use super::strip_query;
+
+    #[test]
+    fn removes_query_and_preserves_fragment() {
+        assert_eq!(
+            strip_query("https://example.com/items?page=1#results"),
+            "https://example.com/items#results"
+        );
+    }
+
+    #[test]
+    fn does_not_treat_question_mark_in_fragment_as_query() {
+        assert_eq!(
+            strip_query("https://example.com/items#results?view=full"),
+            "https://example.com/items#results?view=full"
+        );
+    }
+
+    #[test]
+    fn supports_templated_and_relative_urls() {
+        assert_eq!(
+            strip_query("{{base_url}}/items?page=1"),
+            "{{base_url}}/items"
+        );
+        assert_eq!(strip_query("/items?page=1#results"), "/items#results");
     }
 }
 
