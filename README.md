@@ -13,9 +13,26 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 - Request body formats for JSON, XML, Text, GraphQL, Form URL-Encoded, and Multipart
 - Global environments with `{{variable}}` interpolation in URLs, params, headers, auth, and bodies
 - Post-response JavaScript scripting with console output, tests, and environment updates
+- Import Postman collections and environments, plus Insomnia JSON and v5 YAML exports
+- Paste cURL commands into the URL field to populate the current request
 - Response history view in the response pane
 - Persistent TOML-based storage for workspaces, requests, environments, local history, and script results on your machine
 - Theme support with light/dark mode and a clean desktop interface
+
+## Importing
+
+Open **Import** from the status bar, then select one or more files or a folder. Beam detects and imports:
+
+- Postman collections v2.0 and v2.1
+- Postman environments
+- Insomnia JSON exports
+- Insomnia v5 YAML collections
+
+Multiple files can be imported as one batch. When a batch contains multiple collections, Beam keeps each collection in its own top-level folder. Insomnia workspace exports create a new workspace; collections and environments import into the active workspace.
+
+Multiple workspace exports can be imported together, but they cannot be combined with separate Postman environment files because the target workspace would be ambiguous.
+
+You can also paste a cURL command directly into the request URL field to fill the current request's method, URL, headers, query parameters, authentication, and body.
 
 ## Privacy
 

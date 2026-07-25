@@ -18,6 +18,8 @@ The hierarchy is: **Workspace → Folders → Requests**. Collections have been 
 - Global environments with `{{variable}}` interpolation
 - Post-response JavaScript scripting
 - Multi-workspace organization with folders
+- Import Postman collections/environments and Insomnia JSON or v5 YAML exports
+- Paste cURL commands into the URL field to populate the current request
 - Response history view (next to Headers in response pane)
 - Theme support (light/dark), font size settings, response auto-format
 
@@ -42,6 +44,12 @@ src/
 ├── workspace_tree.rs        # Pure domain model — in-memory tree (SharedStore, Node, NodeKind, manifests)
 ├── models.rs                # Serializable DTOs — RequestFile, EnvironmentFile, WorkspaceFile, WorkspacesRegistryFile, LocalStateFile, etc.
 ├── request_authoring.rs     # Request authoring state — tabs, send-button logic, validation helpers
+├── importers.rs             # Format detection, shared ImportPlan IR, batch-plan merging
+├── importers/
+│   ├── curl.rs              # cURL parser — updates the currently open request in place
+│   ├── insomnia.rs          # Insomnia JSON and v5 YAML detection/parsing
+│   ├── postman.rs           # Postman collection v2.0/v2.1 and environment parsing
+│   └── scanner.rs           # Bounded recursive folder scanning for import batches
 ├── script.rs                # Post-request script execution — QuickJS runtime, console capture, test results
 ├── schema.rs                # Schema versioning — SCHEMA_VERSION_V1/V3, SchemaKind, version validation
 ├── paths.rs                 # File-system path definitions — DataRootPaths, BeamPaths, slugify
@@ -69,6 +77,7 @@ src/
 | `app_shell.rs` | **Application shell & orchestration**. Owns `AppShellState`, `DataSyncRuntime`, pane-split layout, startup preload logic, and the background command queue that feeds the repository. Manages workspace switching. |
 | `ui.rs` | **GPUI front-end**. All view rendering, event handling, context menus, modal dialogs, workspace picker, and user-interaction logic lives here. |
 | `request_authoring.rs` | **Request editor state**. Tab enums, send-button states, and validation helpers for the request authoring panel. |
+| `importers.rs` / `importers/` | **Import pipeline**. Detects Postman and Insomnia exports, parses them into the format-neutral `ImportPlan`, merges multi-file batches, and provides bounded folder scanning. The cURL parser uses a separate `CurlPlan` because it updates the open request instead of materializing a workspace tree. |
 | `script.rs` | **Script engine**. Executes post-request JavaScript via `rquickjs`, captures console output, and returns `ScriptExecutionResult`. |
 | `schema.rs` | **Schema compatibility**. Version constants (`SCHEMA_VERSION_V1` for workspace/request/environment/local-state, `SCHEMA_VERSION_V3` for workspaces registry) and per-entity schema validation. |
 | `paths.rs` | **Path conventions**. `DataRootPaths` points to `$HOME/beam/` and knows `workspaces.toml`. `BeamPaths` is per-workspace and derives all internal paths. `slugify` converts names to directory-safe slugs. |
@@ -106,6 +115,20 @@ This pattern ensures that a single corrupted file on disk never renders the enti
 #### Environment Variable Resolution
 Requests support variable substitution from active environment.
 // TODO
+
+#### Import Pipeline
+File imports are split into detection/parsing and materialization:
+
+- `src/importers.rs` owns the format-neutral `ImportPlan`, `PlannedFolder`, `PlannedRequest`, and `PlannedEnvironment` types.
+- Detectors and parsers in `src/importers/` convert Postman collections v2.0/v2.1, Postman environments, and Insomnia JSON or v5 YAML exports into an `ImportPlan`.
+- `merge_file_plans` combines a batch. If multiple files contain request trees, each tree is wrapped in a top-level folder so file boundaries remain visible.
+- A batch containing an Insomnia workspace creates a new workspace. Collection-only, environment-only, and other non-workspace batches import into the active workspace.
+- `AppCommand::RunImport` sends materialization to the data-sync worker. The runner in `app_shell.rs` is format-agnostic and emits `AppEvent::ImportResult`.
+- Cancellation is cooperative. A failure after creating a new workspace may leave a partial workspace on disk, which the UI reports to the user.
+- Folder scanning is bounded by `MAX_SCAN_DEPTH` and `MAX_FILES_PER_SCAN`, skips hidden/VCS/package directories, and never follows symlinks.
+- cURL is intentionally separate: `CurlPlan` populates the currently open request when a cURL command is pasted into the URL input.
+
+When adding a file format, add its detector/parser and register the detector in `DETECTORS`; keep source-specific types out of the materialization runner.
 
 #### Editor/Input Context Menu Enablement
 When adding a custom context menu for any editor (`Input`/`InputState`) in Beam, do not assume default enable/disable behavior is preserved. Reuse shared helper builders in `src/ui.rs` for all text editing menus instead of hand-rolled menu blocks.
@@ -197,6 +220,9 @@ $HOME/beam_local/
 | `BeamPaths` | `paths.rs` | Per-workspace paths: `root`, `workspace_file`, `environments_dir`, `local_dir`, `local_state_file` |
 | `RegistryRepository` | `storage/registry_repo.rs` | Loads/saves `workspaces.toml`; bootstraps default workspace on first run |
 | `WorkspaceRepository` | `storage/workspace_repo.rs` | All CRUD on a single workspace's `SharedStore` |
+| `ImportPlan` | `importers.rs` | Format-neutral batch of planned folders, requests, environments, and warnings |
+| `CurlPlan` | `importers/curl.rs` | Parsed cURL request applied directly to the active request editor |
+| `ImportJob` / `ImportResult` | `app_shell.rs` | Cancellable worker input and materialization outcome for file imports |
 
 ### Environment
 Environments are **global only** (no collection-scoped environments).
@@ -235,7 +261,7 @@ See `TODO.md` for planned features. Common enhancement areas:
 - GraphQL subscriptions
 - WebSocket support
 - Request history (currently only response history is stored)
-- Import/export functionality
+- Export functionality
 - Collaborative features
 - Cloud sync
 
