@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn request_view_history_clear_resets_state() {
+    fn request_view_history_clear_on_workspace_switch_resets_navigation_and_mru() {
         let r1 = Ulid::new();
         let r2 = Ulid::new();
         let mut history = RequestViewHistory::default();

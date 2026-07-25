@@ -3749,7 +3749,8 @@ mod tests {
     fn preorder_descriptors_include_collapsed_descendants_and_ancestor_paths() {
         let folder_id = Ulid::new();
         let nested_folder_id = Ulid::new();
-        let request_id = Ulid::new();
+        let nested_request_id = Ulid::new();
+        let root_request_id = Ulid::new();
         let mut tree = WorkspaceTreeState::default();
         tree.nodes.insert(
             folder_id,
@@ -3774,13 +3775,13 @@ mod tests {
                 request_url: None,
                 manifest_path: None,
                 parent_id: Some(folder_id),
-                children: vec![request_id],
+                children: vec![nested_request_id],
             },
         );
         tree.nodes.insert(
-            request_id,
+            nested_request_id,
             TreeNode {
-                id: request_id,
+                id: nested_request_id,
                 name: "Profile".to_string(),
                 kind: TreeNodeKind::Request,
                 request_method: Some(HttpMethod::Get),
@@ -3790,7 +3791,20 @@ mod tests {
                 children: Vec::new(),
             },
         );
-        tree.roots = vec![folder_id];
+        tree.nodes.insert(
+            root_request_id,
+            TreeNode {
+                id: root_request_id,
+                name: "Health".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.roots = vec![folder_id, root_request_id];
 
         let descriptors = tree.preorder_descriptors();
 
@@ -3799,7 +3813,12 @@ mod tests {
                 .iter()
                 .map(|descriptor| descriptor.id)
                 .collect::<Vec<_>>(),
-            vec![folder_id, nested_folder_id, request_id]
+            vec![
+                folder_id,
+                nested_folder_id,
+                nested_request_id,
+                root_request_id
+            ]
         );
         assert_eq!(descriptors[0].ancestor_path, Vec::<String>::new());
         assert_eq!(descriptors[1].ancestor_path, vec!["Users"]);
@@ -3807,6 +3826,7 @@ mod tests {
             descriptors[2].ancestor_path,
             vec!["Users", "Authentication"]
         );
+        assert_eq!(descriptors[3].ancestor_path, Vec::<String>::new());
     }
 
     #[test]
