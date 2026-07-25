@@ -1,6 +1,85 @@
 use super::super::*;
 
+pub(in crate::ui) const BODY_EDITOR_CACHE_CAP: usize = 32;
+pub(in crate::ui) const URL_EDITOR_CACHE_CAP: usize = 32;
+
 impl BeamView {
+    pub(in crate::ui) fn format_human_timestamp(timestamp: &str) -> String {
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|parsed| {
+                parsed
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| timestamp.to_string())
+    }
+
+    pub(in crate::ui) fn format_human_time(timestamp: &str) -> String {
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|parsed| parsed.with_timezone(&Local).format("%H:%M:%S").to_string())
+            .unwrap_or_else(|_| timestamp.to_string())
+    }
+
+    pub(in crate::ui) fn method_label(method: HttpMethod) -> &'static str {
+        match method {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Head => "HEAD",
+            HttpMethod::Options => "OPTIONS",
+            HttpMethod::Query => "QUERY",
+        }
+    }
+
+    pub(in crate::ui) fn supported_http_methods() -> [HttpMethod; 8] {
+        [
+            HttpMethod::Get,
+            HttpMethod::Post,
+            HttpMethod::Put,
+            HttpMethod::Delete,
+            HttpMethod::Patch,
+            HttpMethod::Head,
+            HttpMethod::Options,
+            HttpMethod::Query,
+        ]
+    }
+
+    fn method_badge_colors(method: HttpMethod, cx: &App) -> (Hsla, Hsla) {
+        match method {
+            HttpMethod::Get => (
+                cx.theme().success.opacity(1.0),
+                cx.theme().success_foreground,
+            ),
+            HttpMethod::Post => (
+                cx.theme().warning.opacity(1.0),
+                cx.theme().warning_foreground,
+            ),
+            HttpMethod::Put | HttpMethod::Patch | HttpMethod::Query => {
+                (cx.theme().info.opacity(1.0), cx.theme().info_foreground)
+            }
+            HttpMethod::Delete => (cx.theme().danger.opacity(1.0), cx.theme().danger_foreground),
+            HttpMethod::Head | HttpMethod::Options => {
+                (cx.theme().secondary, cx.theme().secondary_foreground)
+            }
+        }
+    }
+
+    pub(in crate::ui) fn render_method_badge(method: HttpMethod, cx: &App) -> Div {
+        let (badge_bg, badge_text) = Self::method_badge_colors(method, cx);
+        div()
+            .px_1()
+            .py(px(1.0))
+            .rounded(px(4.0))
+            .bg(badge_bg)
+            .text_xs()
+            .font_semibold()
+            .text_color(badge_text)
+            .child(format!("{method:?}").to_uppercase())
+    }
+
     pub(in crate::ui) fn set_request_body_format(
         &mut self,
         format: RequestBodyFormat,

@@ -184,3 +184,59 @@ impl BeamView {
         cx.write_to_clipboard(ClipboardItem::new_string(curl));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BeamView;
+    use crate::importers::parse_curl;
+    use crate::models::{AuthConfig, BodyConfig, HttpMethod};
+    use crate::request_authoring::RequestAuthoringState;
+
+    #[test]
+    fn apply_curl_plan_replaces_current_request_authoring_fields() {
+        let mut request = RequestAuthoringState {
+            method: HttpMethod::Delete,
+            url: "https://old.example.com".to_string(),
+            ..RequestAuthoringState::default()
+        };
+        let plan = parse_curl(
+            r#"curl -X POST -u user:pass -H 'X-Test: yes' -H 'Content-Type: application/json' -d '{"ok":true}' https://new.example.com/items"#,
+        )
+        .unwrap();
+
+        BeamView::apply_curl_plan(&mut request, plan);
+
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.url, "https://new.example.com/items");
+        assert_eq!(
+            request.auth,
+            AuthConfig::Basic {
+                username: Some("user".to_string()),
+                password: Some("pass".to_string()),
+            }
+        );
+        assert!(
+            request.headers.iter().any(|header| {
+                header.name == "X-Test" && header.value == "yes" && header.enabled
+            })
+        );
+        assert_eq!(
+            request.body,
+            BodyConfig::Json {
+                text: r#"{"ok":true}"#.to_string(),
+            }
+        );
+        assert!(
+            request
+                .headers
+                .last()
+                .is_some_and(|header| header.name.is_empty() && header.value.is_empty())
+        );
+        assert!(
+            request
+                .query_params
+                .last()
+                .is_some_and(|param| param.name.is_empty() && param.value.is_empty())
+        );
+    }
+}
