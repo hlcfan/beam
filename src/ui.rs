@@ -1,5 +1,6 @@
 mod actions;
 mod dialogs;
+mod request;
 mod text_edit_menu;
 mod theme;
 
@@ -9,6 +10,12 @@ use dialogs::{
     EnvironmentManagerDialogView, ImportDialogView, KeyBindingsDialogView, SettingsDialogView,
     TreeNodeDeleteDialogView, TreeRenameDialogView, WorkspaceDeleteDialogView, WorkspaceDialogMode,
     WorkspaceNameDialogView,
+};
+use request::body::{
+    BodyFormatHint, RequestBodyFormat, body_editor_language, body_editor_text,
+    body_format_from_config, body_format_label, body_from_format, body_tab_label,
+    body_with_updated_text, format_body_text, response_body_editor_language,
+    supported_body_formats,
 };
 use text_edit_menu::{
     append_with_image_or_plain, build_text_edit_context_menu,
@@ -62,8 +69,8 @@ use crate::importers::{
     CurlPlan, DetectedSource, ImportPlan, is_curl, parse_curl, parser_for, scanner, tag_label,
 };
 use crate::models::{
-    AppFontSize, AuthConfig, BodyConfig, BodyFormatKind, EnvironmentFile, EnvironmentScope,
-    EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
+    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable,
+    HttpMethod, LocalStateFile, RequestFile,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
@@ -678,17 +685,6 @@ struct RequestExecutionState {
     cancel_tx: Option<oneshot::Sender<()>>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RequestBodyFormat {
-    None,
-    Json,
-    Xml,
-    Graphql,
-    Text,
-    FormUrlEncoded,
-    Multipart,
-}
-
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
 const RESPONSE_BODY_TRUNCATED_NOTE: &str =
     "[Response body omitted from local history (truncated).]";
@@ -779,11 +775,6 @@ struct StoredResponseSnapshot {
     body: String,
     headers_raw: String,
     content_type: Option<String>,
-}
-
-enum BodyFormatHint<'a> {
-    FromConfig(&'a BodyConfig),
-    FromContentType(Option<&'a str>),
 }
 
 impl BeamView {
@@ -1181,7 +1172,7 @@ impl BeamView {
         self.rebuild_request_param_inputs(window, cx);
         self.rebuild_request_header_inputs(window, cx);
         let next_script = self.request.post_script.clone().unwrap_or_default();
-        let next_body_language = Self::body_editor_language(&self.request.body);
+        let next_body_language = body_editor_language(&self.request.body);
         let selected_request_id = self.shell.workspace_tree.selected_request_id();
         if let Some(request_id) = selected_request_id {
             // Cache URL editor
@@ -1220,7 +1211,7 @@ impl BeamView {
             });
             self.request_body_editor.update(cx, |input, cx| {
                 input.set_highlighter(next_body_language, cx);
-                input.set_value(Self::body_editor_text(&self.request.body), window, cx);
+                input.set_value(body_editor_text(&self.request.body), window, cx);
             });
             self.resubscribe_request_body_editor(window, cx);
         }
@@ -1506,7 +1497,7 @@ impl BeamView {
         let content_type = snapshot.content_type.clone();
         let formatted_body =
             self.response_body_for_display(&snapshot.body, content_type.as_deref());
-        let language = Self::response_body_editor_language(content_type.as_deref());
+        let language = response_body_editor_language(content_type.as_deref());
         self.response_status = snapshot.status.clone();
         self.response_status_code = snapshot.status_code;
         self.response_time = snapshot.time.clone();
@@ -4909,7 +4900,7 @@ impl BeamView {
                 let response_body = this
                     .response_body_for_display(&response.body, response.content_type.as_deref());
                 let response_language =
-                    Self::response_body_editor_language(response.content_type.as_deref());
+                    response_body_editor_language(response.content_type.as_deref());
                 let response_headers = response.headers.clone();
                 if should_update_visible_response {
                     this.response_status = response_status;
@@ -5164,156 +5155,6 @@ impl BeamView {
             .and_then(|value| value.trim().parse::<u64>().ok())
     }
 
-    fn body_editor_text(body: &BodyConfig) -> String {
-        match body {
-            BodyConfig::None => String::new(),
-            BodyConfig::Raw { text, .. } => text.clone(),
-            BodyConfig::Json { text } => text.clone(),
-            BodyConfig::Xml { text } => text.clone(),
-            BodyConfig::FormUrlEncoded { fields } | BodyConfig::Multipart { fields } => fields
-                .iter()
-                .map(|field| format!("{}={}", field.name, field.value))
-                .collect::<Vec<_>>()
-                .join("\n"),
-            BodyConfig::Graphql {
-                query,
-                variables_json,
-            } => match variables_json {
-                Some(variables) if !variables.is_empty() => {
-                    format!("query:\n{query}\n\nvariables:\n{variables}")
-                }
-                _ => query.clone(),
-            },
-        }
-    }
-
-    fn body_format_label(format: RequestBodyFormat) -> &'static str {
-        match format {
-            RequestBodyFormat::None => "None",
-            RequestBodyFormat::Json => "JSON",
-            RequestBodyFormat::Xml => "XML",
-            RequestBodyFormat::Graphql => "GraphQL",
-            RequestBodyFormat::Text => "Text",
-            RequestBodyFormat::FormUrlEncoded => "Form URL",
-            RequestBodyFormat::Multipart => "Multipart",
-        }
-    }
-
-    fn body_tab_label(format: RequestBodyFormat) -> &'static str {
-        match format {
-            RequestBodyFormat::None => "Body",
-            _ => Self::body_format_label(format),
-        }
-    }
-
-    fn supported_body_formats() -> [RequestBodyFormat; 7] {
-        [
-            RequestBodyFormat::None,
-            RequestBodyFormat::Json,
-            RequestBodyFormat::Xml,
-            RequestBodyFormat::Graphql,
-            RequestBodyFormat::Text,
-            RequestBodyFormat::FormUrlEncoded,
-            RequestBodyFormat::Multipart,
-        ]
-    }
-
-    fn body_format_from_config(body: &BodyConfig) -> RequestBodyFormat {
-        match body {
-            BodyConfig::None => RequestBodyFormat::None,
-            BodyConfig::Raw { .. } => RequestBodyFormat::Text,
-            BodyConfig::Json { .. } => RequestBodyFormat::Json,
-            BodyConfig::Xml { .. } => RequestBodyFormat::Xml,
-            BodyConfig::FormUrlEncoded { .. } => RequestBodyFormat::FormUrlEncoded,
-            BodyConfig::Multipart { .. } => RequestBodyFormat::Multipart,
-            BodyConfig::Graphql { .. } => RequestBodyFormat::Graphql,
-        }
-    }
-
-    fn parse_form_body_fields(text: &str) -> Vec<crate::models::QueryParamField> {
-        text.lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                let (name, value) = line
-                    .split_once('=')
-                    .map(|(name, value)| (name.trim().to_string(), value.to_string()))
-                    .unwrap_or_else(|| (line.to_string(), String::new()));
-                crate::models::QueryParamField {
-                    name,
-                    value,
-                    enabled: true,
-                    description: None,
-                }
-            })
-            .collect()
-    }
-
-    fn parse_graphql_editor_text(text: &str) -> (String, Option<String>) {
-        if let Some(rest) = text.strip_prefix("query:\n") {
-            if let Some((query, variables)) = rest.split_once("\n\nvariables:\n") {
-                let variables = variables.trim().to_string();
-                let variables_json = (!variables.is_empty()).then_some(variables);
-                return (query.to_string(), variables_json);
-            }
-            return (rest.to_string(), None);
-        }
-        (text.to_string(), None)
-    }
-
-    fn body_with_updated_text(current: &BodyConfig, text: String) -> BodyConfig {
-        match current {
-            BodyConfig::None => BodyConfig::Raw {
-                media_type: None,
-                text,
-            },
-            BodyConfig::Raw { media_type, .. } => BodyConfig::Raw {
-                media_type: media_type.clone(),
-                text,
-            },
-            BodyConfig::Json { .. } => BodyConfig::Json { text },
-            BodyConfig::Xml { .. } => BodyConfig::Xml { text },
-            BodyConfig::FormUrlEncoded { .. } => BodyConfig::FormUrlEncoded {
-                fields: Self::parse_form_body_fields(&text),
-            },
-            BodyConfig::Multipart { .. } => BodyConfig::Multipart {
-                fields: Self::parse_form_body_fields(&text),
-            },
-            BodyConfig::Graphql { .. } => {
-                let (query, variables_json) = Self::parse_graphql_editor_text(&text);
-                BodyConfig::Graphql {
-                    query,
-                    variables_json,
-                }
-            }
-        }
-    }
-
-    fn body_from_format(format: RequestBodyFormat, text: String) -> BodyConfig {
-        match format {
-            RequestBodyFormat::None => BodyConfig::None,
-            RequestBodyFormat::Json => BodyConfig::Json { text },
-            RequestBodyFormat::Xml => BodyConfig::Xml { text },
-            RequestBodyFormat::Graphql => {
-                let (query, variables_json) = Self::parse_graphql_editor_text(&text);
-                BodyConfig::Graphql {
-                    query,
-                    variables_json,
-                }
-            }
-            RequestBodyFormat::Text => BodyConfig::Raw {
-                media_type: Some("text/plain".to_string()),
-                text,
-            },
-            RequestBodyFormat::FormUrlEncoded => BodyConfig::FormUrlEncoded {
-                fields: Self::parse_form_body_fields(&text),
-            },
-            RequestBodyFormat::Multipart => BodyConfig::Multipart {
-                fields: Self::parse_form_body_fields(&text),
-            },
-        }
-    }
-
     fn set_request_body_format(
         &mut self,
         format: RequestBodyFormat,
@@ -5321,11 +5162,11 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let current_text = self.request_body_editor.read(cx).value().to_string();
-        self.request.body = Self::body_from_format(format, current_text);
+        self.request.body = body_from_format(format, current_text);
         self.request.active_tab = RequestTab::Body;
 
-        let editor_text = Self::body_editor_text(&self.request.body);
-        let language = Self::body_editor_language(&self.request.body);
+        let editor_text = body_editor_text(&self.request.body);
+        let language = body_editor_language(&self.request.body);
         self.request_body_editor.update(cx, |input, cx| {
             input.set_highlighter(language, cx);
             input.set_value(editor_text, window, cx);
@@ -5336,118 +5177,6 @@ impl BeamView {
         cx.notify();
     }
 
-    fn format_body_text(text: &str, hint: BodyFormatHint<'_>) -> Result<String, String> {
-        match hint {
-            BodyFormatHint::FromConfig(body) => Self::format_body_text_from_config(text, body),
-            BodyFormatHint::FromContentType(content_type) => {
-                Self::format_body_text_from_content_type(text, content_type)
-            }
-        }
-    }
-
-    /// Shared formatting core used by both config-driven and content-type-driven
-    /// formatting so they support the same body kinds (JSON, XML, GraphQL, form).
-    fn format_body_text_by_kind(text: &str, kind: BodyFormatKind) -> Result<String, String> {
-        match kind {
-            BodyFormatKind::Json => {
-                let value = serde_json::from_str::<serde_json::Value>(text)
-                    .map_err(|err| format!("Unable to format JSON body: {err}"))?;
-                serde_json::to_string_pretty(&value)
-                    .map_err(|err| format!("Unable to format JSON body: {err}"))
-            }
-            BodyFormatKind::Xml => Self::format_xml_or_html(text)
-                .ok_or_else(|| "Unable to format XML/HTML body.".to_string()),
-            BodyFormatKind::Graphql => {
-                let (query, variables_json) = Self::parse_graphql_editor_text(text);
-                let query = query.trim().to_string();
-                let formatted_variables = if let Some(variables) = variables_json {
-                    let trimmed = variables.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        let value =
-                            serde_json::from_str::<serde_json::Value>(trimmed).map_err(|err| {
-                                format!("Unable to format GraphQL variables JSON: {err}")
-                            })?;
-                        Some(serde_json::to_string_pretty(&value).map_err(|err| {
-                            format!("Unable to format GraphQL variables JSON: {err}")
-                        })?)
-                    }
-                } else {
-                    None
-                };
-
-                if let Some(variables) = formatted_variables {
-                    Ok(format!("query:\n{query}\n\nvariables:\n{variables}"))
-                } else {
-                    Ok(query)
-                }
-            }
-            BodyFormatKind::Form => {
-                let formatted = Self::parse_form_body_fields(text)
-                    .into_iter()
-                    .map(|field| format!("{}={}", field.name.trim(), field.value.trim()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                Ok(formatted)
-            }
-        }
-    }
-
-    fn format_body_text_from_config(
-        text: &str,
-        body_config: &BodyConfig,
-    ) -> Result<String, String> {
-        let kind = match body_config {
-            BodyConfig::Json { .. } => BodyFormatKind::Json,
-            BodyConfig::Xml { .. } => BodyFormatKind::Xml,
-            BodyConfig::Graphql { .. } => BodyFormatKind::Graphql,
-            BodyConfig::FormUrlEncoded { .. } | BodyConfig::Multipart { .. } => {
-                BodyFormatKind::Form
-            }
-            _ => {
-                return Err(
-                    "Formatting is only supported for JSON, XML, GraphQL, and form bodies.".into(),
-                );
-            }
-        };
-        Self::format_body_text_by_kind(text, kind)
-    }
-
-    fn format_body_text_from_content_type(
-        body: &str,
-        content_type: Option<&str>,
-    ) -> Result<String, String> {
-        let trimmed = body.trim();
-        if trimmed.is_empty() {
-            return Err("Body is empty.".into());
-        }
-
-        let ct = content_type.unwrap_or("").to_lowercase();
-
-        let kind = if ct.contains("json")
-            || ct.contains("graphql")
-            || trimmed.starts_with('{')
-            || trimmed.starts_with('[')
-        {
-            if ct.contains("graphql") {
-                BodyFormatKind::Graphql
-            } else {
-                BodyFormatKind::Json
-            }
-        } else if ct.contains("xml") || ct.contains("html") {
-            BodyFormatKind::Xml
-        } else if ct.contains("x-www-form-urlencoded") || ct.contains("multipart") {
-            BodyFormatKind::Form
-        } else if trimmed.starts_with("query:") {
-            BodyFormatKind::Graphql
-        } else {
-            return Err("Unable to format body for the detected content type.".into());
-        };
-
-        Self::format_body_text_by_kind(trimmed, kind)
-    }
-
     fn format_request_body(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity();
         let body = self.request.body.clone();
@@ -5455,12 +5184,12 @@ impl BeamView {
         let source_text = current_text.clone();
 
         cx.spawn_in(window, async move |_, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move {
-                    Self::format_body_text(&current_text, BodyFormatHint::FromConfig(&body))
-                })
-                .await;
+            let result =
+                cx.background_executor()
+                    .spawn(async move {
+                        format_body_text(&current_text, BodyFormatHint::FromConfig(&body))
+                    })
+                    .await;
 
             let _ = view.update_in(cx, |this, window, cx| {
                 let latest_text = this.request_body_editor.read(cx).value().to_string();
@@ -5497,8 +5226,7 @@ impl BeamView {
                     return;
                 }
 
-                this.request.body =
-                    Self::body_with_updated_text(&this.request.body, formatted.clone());
+                this.request.body = body_with_updated_text(&this.request.body, formatted.clone());
                 this.request.active_tab = RequestTab::Body;
                 this.request_body_editor.update(cx, |input, cx| {
                     Self::replace_editor_text(input, formatted, window, cx);
@@ -5510,97 +5238,11 @@ impl BeamView {
         .detach();
     }
 
-    fn format_xml_or_html(text: &str) -> Option<String> {
-        let mut result = String::with_capacity(text.len() * 2);
-        let mut depth = 0usize;
-        let mut i = 0usize;
-        let bytes = text.as_bytes();
-
-        while i < bytes.len() {
-            if bytes[i] == b'<' {
-                let mut j = i + 1;
-                while j < bytes.len() && bytes[j] != b'>' {
-                    j += 1;
-                }
-                if j >= bytes.len() {
-                    let remainder = text[i..].trim();
-                    if !remainder.is_empty() {
-                        if !result.is_empty() && !result.ends_with('\n') {
-                            result.push('\n');
-                            for _ in 0..depth {
-                                result.push_str("  ");
-                            }
-                        }
-                        result.push_str(remainder);
-                    }
-                    break;
-                }
-                let tag = text[i..=j].trim();
-                let is_closing = tag.starts_with("</");
-                let is_self_closing = tag.ends_with("/>");
-                let is_comment = tag.starts_with("<!--")
-                    || tag.starts_with("<?")
-                    || tag.starts_with("<!DOCTYPE")
-                    || tag.starts_with("<![CDATA[");
-
-                if is_closing {
-                    depth = depth.saturating_sub(1);
-                }
-
-                if !result.is_empty() {
-                    result.push('\n');
-                }
-                for _ in 0..depth {
-                    result.push_str("  ");
-                }
-                result.push_str(tag);
-
-                let mut k = j + 1;
-                while k < bytes.len() && bytes[k].is_ascii_whitespace() {
-                    k += 1;
-                }
-                let next_is_tag = k < bytes.len() && bytes[k] == b'<';
-                let next_is_closing = next_is_tag && k + 1 < bytes.len() && bytes[k + 1] == b'/';
-
-                if !is_closing && !is_self_closing && !is_comment {
-                    if !(next_is_tag && next_is_closing) {
-                        depth += 1;
-                    }
-                }
-
-                i = j + 1;
-            } else if !bytes[i].is_ascii_whitespace() {
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'<' {
-                    i += 1;
-                }
-                let text_content = text[start..i].trim();
-                if !text_content.is_empty() {
-                    if !result.is_empty() && !result.ends_with('\n') {
-                        result.push('\n');
-                        for _ in 0..depth {
-                            result.push_str("  ");
-                        }
-                    }
-                    result.push_str(text_content);
-                }
-            } else {
-                i += 1;
-            }
-        }
-
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
-    }
-
     fn response_body_for_display(&self, body: &str, content_type: Option<&str>) -> String {
         if !self.shell.theme.auto_format_response {
             return body.to_string();
         }
-        Self::format_body_text(body, BodyFormatHint::FromContentType(content_type))
+        format_body_text(body, BodyFormatHint::FromContentType(content_type))
             .unwrap_or_else(|_| body.to_string())
     }
 
@@ -5610,7 +5252,7 @@ impl BeamView {
             return;
         }
 
-        let formatted = Self::format_body_text(
+        let formatted = format_body_text(
             &current_text,
             BodyFormatHint::FromContentType(self.response_content_type.as_deref()),
         )
@@ -5642,36 +5284,14 @@ impl BeamView {
         input.focus(window, cx);
     }
 
-    fn body_editor_language(body_config: &BodyConfig) -> &'static str {
-        match body_config {
-            BodyConfig::Json { .. } => "json",
-            BodyConfig::Xml { .. } => "html",
-            BodyConfig::Graphql { .. } => "graphql",
-            _ => "text",
-        }
-    }
-
-    fn response_body_editor_language(content_type: Option<&str>) -> &'static str {
-        let ct = content_type.unwrap_or("").to_lowercase();
-        if ct.contains("graphql") {
-            "graphql"
-        } else if ct.contains("json") {
-            "json"
-        } else if ct.contains("xml") || ct.contains("html") {
-            "html"
-        } else {
-            "text"
-        }
-    }
-
     fn build_request_body_editor(
         request: &RequestAuthoringState,
         wrap_body_editor: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<InputState> {
-        let body_text = Self::body_editor_text(&request.body);
-        let body_language = Self::body_editor_language(&request.body);
+        let body_text = body_editor_text(&request.body);
+        let body_language = body_editor_language(&request.body);
         cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor(body_language)
@@ -5696,8 +5316,7 @@ impl BeamView {
                         return;
                     }
                     let next_body_text = this.request_body_editor.read(cx).value().to_string();
-                    this.request.body =
-                        Self::body_with_updated_text(&this.request.body, next_body_text);
+                    this.request.body = body_with_updated_text(&this.request.body, next_body_text);
                     this.schedule_request_save(cx);
                     cx.notify();
                 }),
@@ -5755,8 +5374,8 @@ impl BeamView {
             input.focus(window, cx);
         });
 
-        let body_language = Self::body_editor_language(&self.request.body);
-        let body_text = Self::body_editor_text(&self.request.body);
+        let body_language = body_editor_language(&self.request.body);
+        let body_text = body_editor_text(&self.request.body);
         self.request_body_editor.update(cx, |input, cx| {
             input.set_highlighter(body_language, cx);
             input.set_value(body_text, window, cx);
@@ -7029,8 +6648,8 @@ impl BeamView {
     fn render_request_tabs(&self, cx: &mut Context<Self>) -> Div {
         let mut tabs = h_flex().items_center().gap_1().w_full();
         let body_tab_view = cx.entity();
-        let current_body_format = Self::body_format_from_config(&self.request.body);
-        let body_tab_label = Self::body_tab_label(current_body_format);
+        let current_body_format = body_format_from_config(&self.request.body);
+        let body_tab_label = body_tab_label(current_body_format);
         let body_tab_button = Button::new("tab-Body")
             .small()
             .ghost()
@@ -7047,8 +6666,8 @@ impl BeamView {
         if self.request.active_tab == RequestTab::Body {
             tabs = tabs.child(body_tab_button.dropdown_menu(move |menu, window, _| {
                 let mut menu = menu.min_w(px(180.0));
-                for format in Self::supported_body_formats() {
-                    let item_label = Self::body_format_label(format);
+                for format in supported_body_formats() {
+                    let item_label = body_format_label(format);
                     let checked = format == current_body_format;
                     let format_view = body_tab_view.clone();
                     menu = menu.item(
@@ -9514,8 +9133,8 @@ mod tests {
     use ulid::Ulid;
 
     use super::{
-        BeamView, BodyFormatHint, EnvironmentManagerDialogView, RequestExecutionState,
-        RequestExecutionStatus, RequestViewHistory, apply_request_run_completion_status,
+        BeamView, EnvironmentManagerDialogView, RequestExecutionState, RequestExecutionStatus,
+        RequestViewHistory, apply_request_run_completion_status,
         completion_updates_selected_request_ui, environment_file_path_for_workspace,
         request_run_completion_is_current, response_summary_for_selected_request,
         send_button_state_for_selected_request,
@@ -10044,333 +9663,5 @@ updated_at = "2026-05-27T08:30:00.000000Z"
         assert!(history.entries.is_empty());
         assert_eq!(history.go_back(), None);
         assert_eq!(history.go_forward(), None);
-    }
-
-    #[test]
-    fn format_body_text_json() {
-        let input = r#"{"name": "John", "age": 30}"#;
-        let expected = "{\n  \"name\": \"John\",\n  \"age\": 30\n}";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Json {
-                text: String::new(),
-            }),
-        );
-        assert_eq!(result.unwrap(), expected);
-    }
-
-    #[test]
-    fn format_body_text_json_array() {
-        let input = r#"[{"id": 1}, {"id": 2}]"#;
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromContentType(Some("application/json")),
-        );
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("\"id\": 1"));
-    }
-
-    #[test]
-    fn format_body_text_json_invalid() {
-        let result = BeamView::format_body_text(
-            "not json",
-            BodyFormatHint::FromConfig(&BodyConfig::Json {
-                text: String::new(),
-            }),
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unable to format JSON body"));
-    }
-
-    #[test]
-    fn format_body_text_xml() {
-        let input = "<root><name>John</name></root>";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Xml {
-                text: String::new(),
-            }),
-        );
-        assert!(result.is_ok());
-        let formatted = result.unwrap();
-        assert!(formatted.starts_with("<root>"));
-        assert!(formatted.contains("  <name>"));
-        assert!(formatted.contains("    John"));
-        assert!(formatted.contains("  </name>"));
-        assert!(formatted.ends_with("</root>"));
-    }
-
-    #[test]
-    fn format_body_text_xml_non_xml_passes_through() {
-        let result = BeamView::format_body_text(
-            "not xml",
-            BodyFormatHint::FromConfig(&BodyConfig::Xml {
-                text: String::new(),
-            }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "not xml");
-    }
-
-    #[test]
-    fn format_body_text_graphql_query_only() {
-        let input = "query { user { name } }";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Graphql {
-                query: String::new(),
-                variables_json: None,
-            }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "query { user { name } }");
-    }
-
-    #[test]
-    fn format_body_text_graphql_with_variables() {
-        let input = "query:\nquery { user(id: $id) { name } }\n\nvariables:\n{\"id\": 1}";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Graphql {
-                query: String::new(),
-                variables_json: None,
-            }),
-        );
-        assert!(result.is_ok());
-        let formatted = result.unwrap();
-        assert!(formatted.contains("query { user(id: $id) { name } }"));
-        assert!(formatted.contains("\"id\": 1"));
-    }
-
-    #[test]
-    fn format_body_text_graphql_with_empty_variables() {
-        let input = "query:\nquery { user { name } }\n\nvariables:\n";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Graphql {
-                query: String::new(),
-                variables_json: None,
-            }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "query { user { name } }");
-    }
-
-    #[test]
-    fn format_body_text_graphql_invalid_variables_json() {
-        let input = "query:\nquery { user { name } }\n\nvariables:\n{invalid}";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Graphql {
-                query: String::new(),
-                variables_json: None,
-            }),
-        );
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Unable to format GraphQL variables JSON")
-        );
-    }
-
-    #[test]
-    fn format_body_text_form() {
-        let input = "key1=value1\nkey2=value2";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
-    }
-
-    #[test]
-    fn format_body_text_form_whitespace_trimming() {
-        let input = "  key1 = value1  \n  key2 = value2  ";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
-    }
-
-    #[test]
-    fn format_body_text_form_empty_lines_skipped() {
-        let input = "key1=value1\n\n\nkey2=value2";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
-    }
-
-    #[test]
-    fn format_body_text_form_no_equals_sign() {
-        let input = "key_without_value";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::FormUrlEncoded { fields: vec![] }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "key_without_value=");
-    }
-
-    #[test]
-    fn format_body_text_from_config_multipart() {
-        let input = "key1=value1\nkey2=value2";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Multipart { fields: vec![] }),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "key1=value1\nkey2=value2");
-    }
-
-    #[test]
-    fn format_body_text_from_config_unsupported_body_type() {
-        let result =
-            BeamView::format_body_text("some text", BodyFormatHint::FromConfig(&BodyConfig::None));
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Formatting is only supported for JSON, XML, GraphQL, and form bodies.")
-        );
-    }
-
-    #[test]
-    fn format_body_text_from_config_raw_body_type() {
-        let result = BeamView::format_body_text(
-            "some text",
-            BodyFormatHint::FromConfig(&BodyConfig::Raw {
-                media_type: None,
-                text: String::new(),
-            }),
-        );
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Formatting is only supported for JSON, XML, GraphQL, and form bodies.")
-        );
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_empty_body() {
-        let result = BeamView::format_body_text(
-            "  ",
-            BodyFormatHint::FromContentType(Some("application/json")),
-        );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Body is empty"));
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_unrecognized() {
-        let result = BeamView::format_body_text(
-            "some text",
-            BodyFormatHint::FromContentType(Some("application/pdf")),
-        );
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("Unable to format body for the detected content type")
-        );
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_auto_detect_json_brace() {
-        let input = r#"{"key": "value"}"#;
-        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
-        assert!(result.is_ok());
-        let formatted = result.unwrap();
-        assert!(formatted.contains("\"key\": \"value\""));
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_auto_detect_json_bracket() {
-        let input = r#"[1, 2, 3]"#;
-        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_graphql_content_type() {
-        let input = "query { user { name } }";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromContentType(Some("application/graphql")),
-        );
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "query { user { name } }");
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_graphql_query_prefix() {
-        let input = "query:\nquery { user { name } }";
-        let result = BeamView::format_body_text(input, BodyFormatHint::FromContentType(None));
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("query { user { name } }"));
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_html() {
-        let input = "<html><body><p>Hello</p></body></html>";
-        let result =
-            BeamView::format_body_text(input, BodyFormatHint::FromContentType(Some("text/html")));
-        assert!(result.is_ok());
-        let formatted = result.unwrap();
-        assert!(formatted.starts_with("<html>"));
-        assert!(formatted.contains("<p>"));
-        assert!(formatted.contains("Hello"));
-        assert!(formatted.contains("</p>"));
-        assert!(formatted.contains("</body>"));
-        assert!(formatted.contains("</html>"));
-    }
-
-    #[test]
-    fn format_body_text_json_preserves_insertion_order() {
-        let input = r#"{"z": 1, "a": 2, "m": 3}"#;
-        let expected = "{\n  \"z\": 1,\n  \"a\": 2,\n  \"m\": 3\n}";
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Json {
-                text: String::new(),
-            }),
-        );
-        assert_eq!(result.unwrap(), expected);
-    }
-
-    #[test]
-    fn format_body_text_json_nested() {
-        let input = r#"{"outer": {"inner": [1, 2, 3]}}"#;
-        let result = BeamView::format_body_text(
-            input,
-            BodyFormatHint::FromConfig(&BodyConfig::Json {
-                text: String::new(),
-            }),
-        );
-        assert!(result.is_ok());
-        let formatted = result.unwrap();
-        assert!(formatted.contains("\"outer\": {"));
-        assert!(formatted.contains("\"inner\": ["));
-    }
-
-    #[test]
-    fn format_body_text_from_content_type_auto_xml() {
-        let input = "<note><to>Tove</to></note>";
-        let result =
-            BeamView::format_body_text(input, BodyFormatHint::FromContentType(Some("text/xml")));
-        assert!(result.is_ok());
-        let formatted = result.unwrap();
-        assert!(formatted.starts_with("<note>"));
-        assert!(formatted.contains("  <to>"));
-        assert!(formatted.contains("    Tove"));
-        assert!(formatted.contains("  </to>"));
-        assert!(formatted.ends_with("</note>"));
     }
 }
