@@ -1,3 +1,4 @@
+mod command_palette;
 mod environment;
 mod import;
 mod key_bindings;
@@ -5,6 +6,10 @@ mod settings;
 mod tree;
 mod workspace;
 
+pub(super) use command_palette::{
+    CommandPaletteDialogView, ConfirmPaletteItem, DismissCommandPalette, SelectNextPaletteItem,
+    SelectPreviousPaletteItem,
+};
 pub(super) use environment::EnvironmentManagerDialogView;
 pub(super) use import::ImportDialogView;
 pub(super) use key_bindings::KeyBindingsDialogView;
@@ -17,6 +22,57 @@ pub(super) use workspace::{
 use super::*;
 
 impl BeamView {
+    pub(in crate::ui) fn open_command_palette(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.command_palette_dialog_view.is_some() {
+            return;
+        }
+        let entries = command_palette::build_command_palette_entries(
+            &self.shell.workspace_tree,
+            self.request_view_history.recent_request_ids(),
+        );
+        let beam_view = cx.entity();
+        let palette_view =
+            cx.new(|cx| CommandPaletteDialogView::new(beam_view.clone(), entries, window, cx));
+        self.command_palette_dialog_view = Some(palette_view.clone());
+        let beam_view_for_close = beam_view.clone();
+
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    window.defer(cx, move |window, cx| {
+                        let palette_view_for_focus = palette_view.clone();
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            dialog
+                                .w(px(640.0))
+                                .p_0()
+                                .child(palette_view.clone())
+                                .close_button(false)
+                                .on_close({
+                                    let beam_view = beam_view_for_close.clone();
+                                    move |_, _, cx| {
+                                        beam_view.update(cx, |beam_view, cx| {
+                                            beam_view.command_palette_dialog_view = None;
+                                            cx.notify();
+                                        });
+                                    }
+                                })
+                        });
+                        window.defer(cx, move |window, cx| {
+                            palette_view_for_focus.update(cx, |palette, cx| {
+                                palette.focus_search_input(window, cx);
+                            });
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
+    }
+
     pub(in crate::ui) fn open_settings_dialog(
         &mut self,
         window: &mut Window,

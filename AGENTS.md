@@ -189,6 +189,7 @@ Beam uses a tiered testing strategy:
 - Prefer explicit error handling over `.unwrap()`
 - Use logging (`log` crate) for debugging
 - Keep functions focused and modular
+- Follow top-down function ordering (the step-down rule): place public and higher-level functions before private helpers, and place called functions below the functions that call them.
 - For UI colors, always use theme tokens from `cx.theme()` and avoid hard-coded/custom color values (for example, avoid direct `rgb(...)`/`rgba(...)` color literals in UI styling).
 
 ## Key Data Structures

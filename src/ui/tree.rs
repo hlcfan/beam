@@ -11,6 +11,7 @@ const TREE_DRAG_SCROLL_SLOW_ZONE_PX: f32 = 48.0;
 const TREE_DRAG_SCROLL_FAST_STEP_PX: f32 = 14.0;
 const TREE_DRAG_SCROLL_SLOW_STEP_PX: f32 = 6.0;
 const TREE_DRAG_SCROLL_TICK: Duration = Duration::from_millis(16);
+const MAX_REQUEST_VIEW_HISTORY_ENTRIES: usize = 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TreeNeighborDirection {
@@ -29,15 +30,18 @@ pub(super) enum RequestViewHistoryDirection {
 pub(super) struct RequestViewHistory {
     entries: Vec<Ulid>,
     cursor: Option<usize>,
+    recent: Vec<Ulid>,
 }
 
 impl RequestViewHistory {
     pub(super) fn clear(&mut self) {
         self.entries.clear();
         self.cursor = None;
+        self.recent.clear();
     }
 
     pub(super) fn visit(&mut self, request_id: Ulid) {
+        self.touch_recent(request_id);
         if let Some(cursor) = self.cursor
             && self.entries.get(cursor) == Some(&request_id)
         {
@@ -49,23 +53,35 @@ impl RequestViewHistory {
             self.entries.truncate(cursor + 1);
         }
         self.entries.push(request_id);
+        if self.entries.len() > MAX_REQUEST_VIEW_HISTORY_ENTRIES {
+            let excess = self.entries.len() - MAX_REQUEST_VIEW_HISTORY_ENTRIES;
+            self.entries.drain(..excess);
+        }
         self.cursor = self.entries.len().checked_sub(1);
     }
 
     pub(super) fn prune(&mut self, request_id: Ulid) {
-        let Some(index) = self.entries.iter().position(|id| *id == request_id) else {
+        self.recent.retain(|id| *id != request_id);
+        let Some(cursor) = self.cursor else {
+            self.entries.retain(|id| *id != request_id);
             return;
         };
-        self.entries.remove(index);
+        let removed_before = self.entries[..cursor]
+            .iter()
+            .filter(|id| **id == request_id)
+            .count();
+        let current_was_removed = self.entries.get(cursor) == Some(&request_id);
+        self.entries.retain(|id| *id != request_id);
         if self.entries.is_empty() {
             self.cursor = None;
             return;
         }
         let new_tip = self.entries.len() - 1;
-        self.cursor = Some(match self.cursor {
-            Some(cursor) if cursor > index => cursor - 1,
-            Some(cursor) => cursor.min(new_tip),
-            None => new_tip,
+        let adjusted_cursor = cursor.saturating_sub(removed_before);
+        self.cursor = Some(if current_was_removed {
+            adjusted_cursor.min(new_tip)
+        } else {
+            adjusted_cursor
         });
     }
 
@@ -75,7 +91,9 @@ impl RequestViewHistory {
             return None;
         }
         self.cursor = Some(cursor - 1);
-        self.entries.get(cursor - 1).copied()
+        let request_id = self.entries.get(cursor - 1).copied()?;
+        self.touch_recent(request_id);
+        Some(request_id)
     }
 
     pub(super) fn go_forward(&mut self) -> Option<Ulid> {
@@ -83,7 +101,18 @@ impl RequestViewHistory {
         let next = cursor + 1;
         let id = self.entries.get(next).copied()?;
         self.cursor = Some(next);
+        self.touch_recent(id);
         Some(id)
+    }
+
+    pub(super) fn recent_request_ids(&self) -> &[Ulid] {
+        &self.recent
+    }
+
+    fn touch_recent(&mut self, request_id: Ulid) {
+        self.recent.retain(|id| *id != request_id);
+        self.recent.insert(0, request_id);
+        self.recent.truncate(MAX_REQUEST_VIEW_HISTORY_ENTRIES);
     }
 
     #[cfg(test)]
@@ -176,7 +205,7 @@ impl Render for TreeDragPreview {
 
 #[cfg(test)]
 mod tests {
-    use super::RequestViewHistory;
+    use super::{MAX_REQUEST_VIEW_HISTORY_ENTRIES, RequestViewHistory};
     use ulid::Ulid;
 
     #[test]
@@ -234,7 +263,7 @@ mod tests {
     }
 
     #[test]
-    fn request_view_history_clear_resets_state() {
+    fn request_view_history_clear_on_workspace_switch_resets_navigation_and_mru() {
         let r1 = Ulid::new();
         let r2 = Ulid::new();
         let mut history = RequestViewHistory::default();
@@ -245,6 +274,7 @@ mod tests {
         history.clear();
         assert_eq!(history.go_back(), None);
         assert_eq!(history.go_forward(), None);
+        assert!(history.recent_request_ids().is_empty());
     }
 
     #[test]
@@ -340,5 +370,94 @@ mod tests {
         assert!(history.is_empty());
         assert_eq!(history.go_back(), None);
         assert_eq!(history.go_forward(), None);
+    }
+
+    #[test]
+    fn request_view_history_tracks_deduplicated_mru_order() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+        history.visit(r1);
+
+        assert_eq!(history.recent_request_ids(), &[r1, r3, r2]);
+    }
+
+    #[test]
+    fn request_view_history_navigation_updates_mru_order() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+        assert_eq!(history.go_back(), Some(r2));
+        assert_eq!(history.recent_request_ids(), &[r2, r3, r1]);
+        assert_eq!(history.go_forward(), Some(r3));
+        assert_eq!(history.recent_request_ids(), &[r3, r2, r1]);
+    }
+
+    #[test]
+    fn request_view_history_prune_removes_all_mru_and_navigation_occurrences() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r1);
+        history.visit(r3);
+        history.prune(r1);
+
+        assert_eq!(history.recent_request_ids(), &[r3, r2]);
+        assert_eq!(history.go_back(), Some(r2));
+        assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), Some(r3));
+    }
+
+    #[test]
+    fn request_view_history_discards_oldest_entries_over_limit() {
+        let request_ids = (0..=MAX_REQUEST_VIEW_HISTORY_ENTRIES)
+            .map(|_| Ulid::new())
+            .collect::<Vec<_>>();
+        let mut history = RequestViewHistory::default();
+
+        for request_id in request_ids.iter().copied() {
+            history.visit(request_id);
+        }
+
+        for expected in request_ids[1..MAX_REQUEST_VIEW_HISTORY_ENTRIES]
+            .iter()
+            .rev()
+        {
+            assert_eq!(history.go_back(), Some(*expected));
+        }
+        assert_eq!(history.go_back(), None);
+    }
+
+    #[test]
+    fn request_view_history_limits_recent_requests() {
+        let request_ids = (0..=MAX_REQUEST_VIEW_HISTORY_ENTRIES)
+            .map(|_| Ulid::new())
+            .collect::<Vec<_>>();
+        let mut history = RequestViewHistory::default();
+
+        for request_id in request_ids.iter().copied() {
+            history.visit(request_id);
+        }
+
+        assert_eq!(
+            history.recent_request_ids().len(),
+            MAX_REQUEST_VIEW_HISTORY_ENTRIES
+        );
+        assert_eq!(history.recent_request_ids().first(), request_ids.last());
+        assert!(!history.recent_request_ids().contains(&request_ids[0]));
     }
 }
