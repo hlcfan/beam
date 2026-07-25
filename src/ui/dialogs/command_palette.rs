@@ -452,11 +452,7 @@ impl Render for CommandPaletteDialogView {
                 .px_3()
                 .rounded(cx.theme().radius)
                 .cursor_pointer()
-                .when(is_selected, |this| {
-                    this.bg(cx.theme().list_active)
-                        .border_1()
-                        .border_color(cx.theme().list_active_border)
-                })
+                .when(is_selected, |this| this.bg(cx.theme().list_active))
                 .when(!is_selected, |this| {
                     this.hover(|this| this.bg(cx.theme().list_hover))
                 })
