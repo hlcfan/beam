@@ -44,10 +44,11 @@ impl BeamView {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
                 let _ = root_window.update(cx, |_, window, cx| {
                     window.defer(cx, move |window, cx| {
+                        let palette_view_for_focus = palette_view.clone();
                         window.open_dialog(cx, move |dialog, _, _| {
                             dialog
-                                .title("Command Palette")
-                                .w(px(600.0))
+                                .w(px(640.0))
+                                .p_0()
                                 .child(palette_view.clone())
                                 .close_button(false)
                                 .on_close({
@@ -59,6 +60,11 @@ impl BeamView {
                                         });
                                     }
                                 })
+                        });
+                        window.defer(cx, move |window, cx| {
+                            palette_view_for_focus.update(cx, |palette, cx| {
+                                palette.focus_search_input(window, cx);
+                            });
                         });
                     });
                 });

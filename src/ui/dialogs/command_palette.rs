@@ -17,8 +17,9 @@ use super::super::{BeamView, OpenCommandPalette};
 use crate::app_shell::{TreeNodeKind, WorkspaceTreeDescriptor, WorkspaceTreeState};
 
 const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
-const RESULT_ROW_HEIGHT: f32 = 52.0;
-const MAX_RESULT_LIST_HEIGHT: f32 = 364.0;
+const RESULT_ROW_HEIGHT: f32 = 48.0;
+const RESULT_SECTION_HEIGHT: f32 = 28.0;
+const MAX_RESULT_LIST_HEIGHT: f32 = 380.0;
 
 actions!(
     command_palette,
@@ -207,8 +208,9 @@ impl CommandPaletteDialogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let search_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search requests and commands"));
+        let search_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Search requests, folders, and commands…")
+        });
         let filtered_entries = filter_command_palette_entries(&all_entries, "");
         let input_for_subscription = search_input.clone();
         let subscription = cx.subscribe_in(
@@ -229,11 +231,6 @@ impl CommandPaletteDialogView {
             },
         );
 
-        let input_to_focus = search_input.clone();
-        window.defer(cx, move |window, cx| {
-            input_to_focus.update(cx, |input, cx| input.focus(window, cx));
-        });
-
         Self {
             beam_view,
             search_input,
@@ -243,6 +240,11 @@ impl CommandPaletteDialogView {
             result_scroll_handle: ScrollHandle::new(),
             _subscriptions: vec![subscription],
         }
+    }
+
+    pub(super) fn focus_search_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_input
+            .update(cx, |input, cx| input.focus(window, cx));
     }
 
     fn select_next(&mut self, cx: &mut Context<Self>) {
@@ -367,14 +369,60 @@ impl CommandPaletteDialogView {
             }
         }
     }
+
+    fn section_label(
+        entry: &CommandPaletteEntry,
+        previous: Option<&CommandPaletteEntry>,
+        has_query: bool,
+    ) -> Option<&'static str> {
+        if has_query {
+            return previous.is_none().then_some("RESULTS");
+        }
+
+        match (&entry.kind, previous.map(|entry| &entry.kind)) {
+            (CommandPaletteEntryKind::Request { .. }, None) => Some("RECENT"),
+            (CommandPaletteEntryKind::Command(_), None)
+            | (
+                CommandPaletteEntryKind::Command(_),
+                Some(CommandPaletteEntryKind::Request { .. }),
+            ) => Some("COMMANDS"),
+            _ => None,
+        }
+    }
+
+    fn keycap(label: &'static str, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_1p5()
+            .py_0p5()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().muted)
+            .text_xs()
+            .text_color(cx.theme().muted_foreground)
+            .child(label)
+    }
 }
 
 impl Render for CommandPaletteDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _ = &self.beam_view;
-        let list_height =
-            px((self.filtered_entries.len() as f32 * RESULT_ROW_HEIGHT)
-                .min(MAX_RESULT_LIST_HEIGHT));
+        let query = self.search_input.read(cx).value().trim().to_string();
+        let has_query = !query.is_empty();
+        let section_count = if self.filtered_entries.is_empty() {
+            0
+        } else if has_query {
+            1
+        } else {
+            1 + usize::from(
+                self.filtered_entries
+                    .iter()
+                    .any(|entry| matches!(entry.kind, CommandPaletteEntryKind::Request { .. })),
+            )
+        };
+        let list_height = px(((self.filtered_entries.len() as f32 * RESULT_ROW_HEIGHT)
+            + section_count as f32 * RESULT_SECTION_HEIGHT)
+            .min(MAX_RESULT_LIST_HEIGHT));
         let mut results = v_flex()
             .id("command-palette-results")
             .w_full()
@@ -384,57 +432,107 @@ impl Render for CommandPaletteDialogView {
 
         for (index, entry) in self.filtered_entries.iter().cloned().enumerate() {
             let is_selected = index == self.selected_index;
+            let section_label = Self::section_label(
+                &entry,
+                index
+                    .checked_sub(1)
+                    .and_then(|index| self.filtered_entries.get(index)),
+                has_query,
+            );
             let icon_path = Self::icon_path(&entry);
             let title = entry.title;
             let subtitle = entry.subtitle;
-            results = results.child(
-                h_flex()
-                    .id(("command-palette-row", index))
-                    .w_full()
-                    .h(px(RESULT_ROW_HEIGHT))
-                    .flex_none()
-                    .items_center()
-                    .gap_3()
-                    .px_3()
-                    .rounded(cx.theme().radius)
-                    .cursor_pointer()
-                    .when(is_selected, |this| this.bg(cx.theme().list_active))
-                    .when(!is_selected, |this| {
-                        this.hover(|this| this.bg(cx.theme().list_hover))
-                    })
-                    .child(
-                        Icon::default()
-                            .path(icon_path)
-                            .small()
-                            .text_color(cx.theme().muted_foreground),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .flex_grow(1.0)
-                            .gap_0p5()
-                            .child(
+            let row = h_flex()
+                .id(("command-palette-row", index))
+                .w_full()
+                .h(px(RESULT_ROW_HEIGHT))
+                .flex_none()
+                .items_center()
+                .gap_3()
+                .px_3()
+                .rounded(cx.theme().radius)
+                .cursor_pointer()
+                .when(is_selected, |this| {
+                    this.bg(cx.theme().list_active)
+                        .border_1()
+                        .border_color(cx.theme().list_active_border)
+                })
+                .when(!is_selected, |this| {
+                    this.hover(|this| this.bg(cx.theme().list_hover))
+                })
+                .child(
+                    div()
+                        .size_7()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .rounded(cx.theme().radius)
+                        .bg(cx.theme().muted)
+                        .child(
+                            Icon::default()
+                                .path(icon_path)
+                                .small()
+                                .text_color(cx.theme().muted_foreground),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .min_w_0()
+                        .flex_grow(1.0)
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .w_full()
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .truncate()
+                                .child(title),
+                        )
+                        .when_some(subtitle, |this, subtitle| {
+                            this.child(
                                 div()
                                     .w_full()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
                                     .truncate()
-                                    .child(title),
+                                    .child(subtitle),
                             )
-                            .when_some(subtitle, |this, subtitle| {
-                                this.child(
-                                    div()
-                                        .w_full()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .truncate()
-                                        .child(subtitle),
-                                )
-                            }),
+                        }),
+                )
+                .when(is_selected, |this| {
+                    this.child(
+                        h_flex()
+                            .flex_none()
+                            .gap_1()
+                            .items_center()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(Self::keycap("↵", cx))
+                            .child("Open"),
                     )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.activate_index(index, window, cx);
-                    })),
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.activate_index(index, window, cx);
+                }));
+            results = results.child(
+                v_flex()
+                    .w_full()
+                    .flex_none()
+                    .when_some(section_label, |this, label| {
+                        this.child(
+                            div()
+                                .h(px(RESULT_SECTION_HEIGHT))
+                                .flex()
+                                .items_end()
+                                .px_3()
+                                .pb_1()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(label),
+                        )
+                    })
+                    .child(row),
             );
         }
 
@@ -446,42 +544,100 @@ impl Render for CommandPaletteDialogView {
             .on_action(cx.listener(Self::on_dismiss))
             .on_action(cx.listener(Self::on_open_palette))
             .w_full()
-            .p_2()
-            .gap_2()
             .child(
                 h_flex()
                     .w_full()
+                    .h_12()
                     .items_center()
-                    .gap_2()
-                    .rounded(cx.theme().radius)
-                    .border_1()
+                    .gap_3()
+                    .px_4()
+                    .border_b_1()
                     .border_color(cx.theme().border)
-                    .bg(cx.theme().background)
-                    .px_2()
                     .child(
                         Icon::default()
                             .path("icons/search.svg")
                             .small()
                             .text_color(cx.theme().muted_foreground),
                     )
-                    .child(Input::new(&self.search_input).w_full().appearance(false)),
+                    .child(
+                        Input::new(&self.search_input)
+                            .w_full()
+                            .appearance(false)
+                            .border_0()
+                            .focus_bordered(false),
+                    )
+                    .child(Self::keycap("Esc", cx)),
             )
             .when(self.filtered_entries.is_empty(), |this| {
                 this.child(
-                    div()
+                    v_flex()
                         .w_full()
-                        .h(px(96.0))
-                        .flex()
+                        .h(px(144.0))
                         .items_center()
                         .justify_center()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("No matching requests, folders, or commands"),
+                        .gap_2()
+                        .child(
+                            div()
+                                .size_9()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .bg(cx.theme().muted)
+                                .child(
+                                    Icon::default()
+                                        .path("icons/search.svg")
+                                        .small()
+                                        .text_color(cx.theme().muted_foreground),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().foreground)
+                                .child(format!("No results for “{query}”")),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Try a request, folder, or command name"),
+                        ),
                 )
             })
             .when(!self.filtered_entries.is_empty(), |this| {
-                this.child(results)
+                this.child(div().p_2().child(results))
             })
+            .child(
+                h_flex()
+                    .w_full()
+                    .h_10()
+                    .items_center()
+                    .justify_between()
+                    .px_4()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Self::keycap("↑", cx))
+                            .child(Self::keycap("↓", cx))
+                            .child("Navigate"),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1p5()
+                            .items_center()
+                            .child(Self::keycap("↵", cx))
+                            .child("Open")
+                            .child(div().w_2())
+                            .child(Self::keycap("Esc", cx))
+                            .child("Close"),
+                    ),
+            )
             .into_any_element()
     }
 }
