@@ -129,6 +129,8 @@ pub fn run_app(
         cx.bind_keys([
             KeyBinding::new("up", SelectPreviousPaletteItem, Some("CommandPalette")),
             KeyBinding::new("down", SelectNextPaletteItem, Some("CommandPalette")),
+            KeyBinding::new("ctrl-p", SelectPreviousPaletteItem, Some("CommandPalette")),
+            KeyBinding::new("ctrl-n", SelectNextPaletteItem, Some("CommandPalette")),
             KeyBinding::new("enter", ConfirmPaletteItem, Some("CommandPalette")),
             KeyBinding::new("escape", DismissCommandPalette, Some("CommandPalette")),
             #[cfg(target_os = "macos")]
