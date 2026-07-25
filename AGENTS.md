@@ -40,8 +40,25 @@ src/
 ├── main.rs                  # Application entry point — bootstraps storage, initializes workspace, launches UI
 ├── lib.rs                   # Crate root — declares all public modules
 ├── app_shell.rs             # App-level state management, data-sync worker, layout state, startup preload
-├── ui.rs                    # GPUI views and rendering — the main GUI layer (panels, editors, menus, etc.)
+├── ui.rs                    # UI module root — declares submodules and exposes run_app
+├── ui/
+│   ├── actions.rs           # GPUI actions, application menus, and action registration
+│   ├── app_events.rs        # Data-sync polling and application event handling
+│   ├── beam_view.rs         # BeamView state, initialization, focus, and top-level rendering
+│   ├── environment.rs       # Active environment selection, refresh, and interpolation hover UI
+│   ├── persistence.rs       # UI-state persistence not owned by request/response modules
+│   ├── text_edit_menu.rs    # Shared input and editor context-menu builders
+│   ├── theme.rs             # Theme registry and theme/font/format setting application
+│   ├── dialogs.rs           # Dialog module root and shared dialog helpers
+│   ├── dialogs/             # Import, environment, settings, key binding, tree, and workspace dialogs
+│   ├── request.rs           # Request UI module root and shared request behavior
+│   ├── request/             # Body, cURL, editor, execution, and request persistence
+│   ├── response.rs          # Response UI module root and shared response behavior
+│   ├── response/            # History, persistence, and response rendering
+│   ├── tree.rs              # Workspace tree UI module root and shared tree behavior
+│   └── tree/                # Tree actions, drag/drop, and rendering
 ├── workspace_tree.rs        # Pure domain model — in-memory tree (SharedStore, Node, NodeKind, manifests)
+├── tree_dnd.rs              # Pure tree drag/drop destination calculations
 ├── models.rs                # Serializable DTOs — RequestFile, EnvironmentFile, WorkspaceFile, WorkspacesRegistryFile, LocalStateFile, etc.
 ├── request_authoring.rs     # Request authoring state — tabs, send-button logic, validation helpers
 ├── importers.rs             # Format detection, shared ImportPlan IR, batch-plan merging
@@ -55,8 +72,8 @@ src/
 ├── paths.rs                 # File-system path definitions — DataRootPaths, BeamPaths, slugify
 ├── error.rs                 # Error types — BeamError enum and Result<T> alias
 ├── assets.rs                # Asset helpers — embedded theme contents, icon paths
+├── storage.rs               # Storage DTOs + WorkspaceStorage trait — CRUD input structs, BootstrapReport
 └── storage/
-    ├── mod.rs               # Storage DTOs + WorkspaceStorage trait — CRUD input structs, BootstrapReport
     ├── io_backend.rs        # StorageIoBackend trait — abstract I/O (read/write TOML, dirs, rename, remove)
     ├── workspace_repo.rs    # WorkspaceRepository — primary repository, all CRUD operations on SharedStore
     ├── registry_repo.rs     # RegistryRepository — loads/saves workspaces.toml, bootstraps default workspace
@@ -69,13 +86,14 @@ src/
 |---|---|
 | `workspace_tree.rs` | **Pure domain model**. Holds `SharedStore` (in-memory tree), `Node`/`NodeKind` (`Folder` \| `Request`), manifest structs, and tree-manipulation helpers (name scoping, uniqueness checks, move/reorder logic). No I/O. |
 | `models.rs` | **Serializable data structures**. Every TOML-backed entity (requests, environments, workspace, workspaces registry, local state) is defined here. Used by both the domain layer and the storage layer. |
-| `storage/mod.rs` | **Storage contracts & DTOs**. Defines the `WorkspaceStorage` trait and all input structs consumed by repository methods (`CreateRequestInput`, `MoveFolderInput`, etc.). Also holds `BootstrapReport`. Parent refs (`RequestParentRef`, `FolderParentRef`) use `folder_id: Option<Ulid>` — `None` means workspace root. |
+| `storage.rs` | **Storage contracts & DTOs**. Defines the `WorkspaceStorage` trait and all input structs consumed by repository methods (`CreateRequestInput`, `MoveFolderInput`, etc.). Also holds `BootstrapReport`. Parent refs (`RequestParentRef`, `FolderParentRef`) use `folder_id: Option<Ulid>` — `None` means workspace root. |
 | `storage/io_backend.rs` | **I/O abstraction**. The `StorageIoBackend` trait decouples repository logic from the file system so tests can swap in a fake backend. |
 | `storage/fs_backend.rs` | **Concrete file-system adapter**. `FileSystemStorage` implements `StorageIoBackend` using `std::fs`. Handles TOML serialization, atomic writes, and path-based operations. |
 | `storage/workspace_repo.rs` | **Primary repository**. `WorkspaceRepository<B: StorageIoBackend>` loads the full workspace into `SharedStore`, then performs all CRUD (create, rename, move, delete, duplicate, reorder) while keeping disk and in-memory state in sync. |
 | `storage/registry_repo.rs` | **Workspace registry**. `RegistryRepository` loads/saves `workspaces.toml`, bootstraps a default workspace on first run, and manages multi-workspace CRUD (create, delete, rename, switch). |
 | `app_shell.rs` | **Application shell & orchestration**. Owns `AppShellState`, `DataSyncRuntime`, pane-split layout, startup preload logic, and the background command queue that feeds the repository. Manages workspace switching. |
-| `ui.rs` | **GPUI front-end**. All view rendering, event handling, context menus, modal dialogs, workspace picker, and user-interaction logic lives here. |
+| `ui.rs` / `ui/` | **GPUI front-end**. `ui.rs` is the module root and public entry point. Cohesive submodules own `BeamView`, actions, application events, dialogs, environments, request authoring/execution/persistence, response history/rendering/persistence, themes, text-edit menus, and workspace-tree interactions. Keep new UI code in the narrowest owning module rather than growing `ui.rs`. |
+| `tree_dnd.rs` | **Pure tree drag/drop logic**. Calculates drop destinations independently of GPUI and `BeamView`; UI drag state and rendering remain under `ui/tree/`. |
 | `request_authoring.rs` | **Request editor state**. Tab enums, send-button states, and validation helpers for the request authoring panel. |
 | `importers.rs` / `importers/` | **Import pipeline**. Detects Postman and Insomnia exports, parses them into the format-neutral `ImportPlan`, merges multi-file batches, and provides bounded folder scanning. The cURL parser uses a separate `CurlPlan` because it updates the open request instead of materializing a workspace tree. |
 | `script.rs` | **Script engine**. Executes post-request JavaScript via `rquickjs`, captures console output, and returns `ScriptExecutionResult`. |
@@ -131,7 +149,7 @@ File imports are split into detection/parsing and materialization:
 When adding a file format, add its detector/parser and register the detector in `DETECTORS`; keep source-specific types out of the materialization runner.
 
 #### Editor/Input Context Menu Enablement
-When adding a custom context menu for any editor (`Input`/`InputState`) in Beam, do not assume default enable/disable behavior is preserved. Reuse shared helper builders in `src/ui.rs` for all text editing menus instead of hand-rolled menu blocks.
+When adding a custom context menu for any editor (`Input`/`InputState`) in Beam, do not assume default enable/disable behavior is preserved. Reuse shared helper builders in `src/ui/text_edit_menu.rs` for all text editing menus instead of hand-rolled menu blocks.
 
 - Explicitly gate `Cut` and `Copy` by selection state (`!selected_range().is_empty()`).
 - Disable `Cut`/`Copy` menu items when there is no selected text.
