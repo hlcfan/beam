@@ -100,7 +100,6 @@ impl RequestViewHistory {
         Some(id)
     }
 
-    #[allow(dead_code)] // Consumed when the Phase 2 palette view is wired.
     pub(super) fn recent_request_ids(&self) -> &[Ulid] {
         &self.recent
     }

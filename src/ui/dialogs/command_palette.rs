@@ -63,6 +63,28 @@ const COMMANDS: [(CommandPaletteCommand, &str); 3] = [
     ),
 ];
 
+fn reset_selection_index() -> usize {
+    0
+}
+
+fn next_selection_index(selected_index: usize, entry_count: usize) -> usize {
+    if entry_count == 0 {
+        return reset_selection_index();
+    }
+    selected_index.saturating_add(1) % entry_count
+}
+
+fn previous_selection_index(selected_index: usize, entry_count: usize) -> usize {
+    if entry_count == 0 {
+        return reset_selection_index();
+    }
+    if selected_index == 0 || selected_index >= entry_count {
+        entry_count - 1
+    } else {
+        selected_index - 1
+    }
+}
+
 pub(super) fn build_command_palette_entries(
     tree: &WorkspaceTreeState,
     recent_request_ids: &[Ulid],
@@ -198,9 +220,10 @@ impl CommandPaletteDialogView {
                 }
                 let query = input_for_subscription.read(cx).value().to_string();
                 this.filtered_entries = filter_command_palette_entries(&this.all_entries, &query);
-                this.selected_index = 0;
+                this.selected_index = reset_selection_index();
                 if !this.filtered_entries.is_empty() {
-                    this.result_scroll_handle.scroll_to_item(0);
+                    this.result_scroll_handle
+                        .scroll_to_item(this.selected_index);
                 }
                 cx.notify();
             },
@@ -216,7 +239,7 @@ impl CommandPaletteDialogView {
             search_input,
             all_entries,
             filtered_entries,
-            selected_index: 0,
+            selected_index: reset_selection_index(),
             result_scroll_handle: ScrollHandle::new(),
             _subscriptions: vec![subscription],
         }
@@ -226,7 +249,8 @@ impl CommandPaletteDialogView {
         if self.filtered_entries.is_empty() {
             return;
         }
-        self.selected_index = (self.selected_index + 1) % self.filtered_entries.len();
+        self.selected_index =
+            next_selection_index(self.selected_index, self.filtered_entries.len());
         self.result_scroll_handle
             .scroll_to_item(self.selected_index);
         cx.notify();
@@ -236,11 +260,8 @@ impl CommandPaletteDialogView {
         if self.filtered_entries.is_empty() {
             return;
         }
-        self.selected_index = if self.selected_index == 0 {
-            self.filtered_entries.len() - 1
-        } else {
-            self.selected_index - 1
-        };
+        self.selected_index =
+            previous_selection_index(self.selected_index, self.filtered_entries.len());
         self.result_scroll_handle
             .scroll_to_item(self.selected_index);
         cx.notify();
@@ -467,6 +488,8 @@ impl Render for CommandPaletteDialogView {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
 
     fn descriptor(
@@ -734,5 +757,70 @@ mod tests {
         )];
 
         assert!(filter_command_palette_entries(&entries, "missing").is_empty());
+    }
+
+    #[test]
+    fn selection_index_resets_after_filtering() {
+        let selected_index = 4;
+        let entries = vec![entry(
+            "Health",
+            CommandPaletteEntryKind::Request {
+                request_id: Ulid::new(),
+            },
+            None,
+        )];
+        let filtered = filter_command_palette_entries(&entries, "health");
+
+        assert_eq!(filtered.len(), 1);
+        assert_ne!(selected_index, reset_selection_index());
+        assert_eq!(reset_selection_index(), 0);
+    }
+
+    #[test]
+    fn selection_index_helpers_wrap_and_handle_empty_lists() {
+        assert_eq!(next_selection_index(0, 0), 0);
+        assert_eq!(previous_selection_index(0, 0), 0);
+        assert_eq!(next_selection_index(0, 1), 0);
+        assert_eq!(previous_selection_index(0, 1), 0);
+        assert_eq!(next_selection_index(2, 3), 0);
+        assert_eq!(previous_selection_index(0, 3), 2);
+        assert_eq!(next_selection_index(0, 3), 1);
+        assert_eq!(previous_selection_index(2, 3), 1);
+        assert_eq!(previous_selection_index(8, 3), 2);
+    }
+
+    #[test]
+    fn times_large_synthetic_entry_construction() {
+        const ENTRY_COUNT: usize = 25_000;
+        let recent_request_ids = (0..100).map(|_| Ulid::new()).collect::<Vec<_>>();
+        let descriptors = (0..ENTRY_COUNT)
+            .map(|index| {
+                let is_recent = index < recent_request_ids.len();
+                WorkspaceTreeDescriptor {
+                    id: if is_recent {
+                        recent_request_ids[index]
+                    } else {
+                        Ulid::new()
+                    },
+                    kind: if index % 10 == 0 {
+                        TreeNodeKind::Folder
+                    } else {
+                        TreeNodeKind::Request
+                    },
+                    name: format!("Entry {index}"),
+                    ancestor_path: vec!["Workspace".to_string(), format!("Group {}", index / 100)],
+                }
+            })
+            .collect();
+
+        let started = Instant::now();
+        let entries = build_entries_from_descriptors(descriptors, &recent_request_ids);
+        let elapsed = started.elapsed();
+
+        assert_eq!(entries.len(), ENTRY_COUNT + COMMANDS.len());
+        eprintln!(
+            "built {} command-palette entries in {elapsed:?}",
+            entries.len()
+        );
     }
 }
