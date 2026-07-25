@@ -65,33 +65,53 @@ const COMMANDS: [(CommandPaletteCommand, &str); 3] = [
     ),
 ];
 
-fn reset_selection_index() -> usize {
-    0
-}
-
-fn next_selection_index(selected_index: usize, entry_count: usize) -> usize {
-    if entry_count == 0 {
-        return reset_selection_index();
-    }
-    selected_index.saturating_add(1) % entry_count
-}
-
-fn previous_selection_index(selected_index: usize, entry_count: usize) -> usize {
-    if entry_count == 0 {
-        return reset_selection_index();
-    }
-    if selected_index == 0 || selected_index >= entry_count {
-        entry_count - 1
-    } else {
-        selected_index - 1
-    }
-}
-
 pub(super) fn build_command_palette_entries(
     tree: &WorkspaceTreeState,
     recent_request_ids: &[Ulid],
 ) -> Vec<CommandPaletteEntry> {
     build_entries_from_descriptors(tree.preorder_descriptors(), recent_request_ids)
+}
+
+pub(super) fn filter_command_palette_entries(
+    entries: &[CommandPaletteEntry],
+    query: &str,
+) -> Vec<CommandPaletteEntry> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        let mut recent = entries
+            .iter()
+            .filter(|entry| entry.request_recency_rank.is_some())
+            .cloned()
+            .collect::<Vec<_>>();
+        recent.sort_by_key(|entry| entry.request_recency_rank);
+        recent.truncate(MAX_RECENT_REQUESTS);
+        recent.extend(
+            entries
+                .iter()
+                .filter(|entry| matches!(entry.kind, CommandPaletteEntryKind::Command(_)))
+                .cloned(),
+        );
+        return recent;
+    }
+
+    let mut matches = entries
+        .iter()
+        .filter(|entry| entry.search_name.contains(&query))
+        .cloned()
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| {
+        match_tier(left, &query)
+            .cmp(&match_tier(right, &query))
+            .then_with(
+                || match (left.request_recency_rank, right.request_recency_rank) {
+                    (Some(left_rank), Some(right_rank)) => left_rank.cmp(&right_rank),
+                    (Some(_), None) => std::cmp::Ordering::Less,
+                    (None, Some(_)) => std::cmp::Ordering::Greater,
+                    (None, None) => std::cmp::Ordering::Equal,
+                },
+            )
+    });
+    matches
 }
 
 fn build_entries_from_descriptors(
@@ -141,48 +161,6 @@ fn build_entries_from_descriptors(
     entries
 }
 
-pub(super) fn filter_command_palette_entries(
-    entries: &[CommandPaletteEntry],
-    query: &str,
-) -> Vec<CommandPaletteEntry> {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        let mut recent = entries
-            .iter()
-            .filter(|entry| entry.request_recency_rank.is_some())
-            .cloned()
-            .collect::<Vec<_>>();
-        recent.sort_by_key(|entry| entry.request_recency_rank);
-        recent.truncate(MAX_RECENT_REQUESTS);
-        recent.extend(
-            entries
-                .iter()
-                .filter(|entry| matches!(entry.kind, CommandPaletteEntryKind::Command(_)))
-                .cloned(),
-        );
-        return recent;
-    }
-
-    let mut matches = entries
-        .iter()
-        .filter(|entry| entry.search_name.contains(&query))
-        .cloned()
-        .collect::<Vec<_>>();
-    matches.sort_by(|left, right| {
-        match_tier(left, &query)
-            .cmp(&match_tier(right, &query))
-            .then_with(
-                || match (left.request_recency_rank, right.request_recency_rank) {
-                    (Some(left_rank), Some(right_rank)) => left_rank.cmp(&right_rank),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
-                },
-            )
-    });
-    matches
-}
-
 fn match_tier(entry: &CommandPaletteEntry, query: &str) -> u8 {
     if entry.search_name == query {
         0
@@ -191,6 +169,28 @@ fn match_tier(entry: &CommandPaletteEntry, query: &str) -> u8 {
     } else {
         2
     }
+}
+
+fn next_selection_index(selected_index: usize, entry_count: usize) -> usize {
+    if entry_count == 0 {
+        return reset_selection_index();
+    }
+    selected_index.saturating_add(1) % entry_count
+}
+
+fn previous_selection_index(selected_index: usize, entry_count: usize) -> usize {
+    if entry_count == 0 {
+        return reset_selection_index();
+    }
+    if selected_index == 0 || selected_index >= entry_count {
+        entry_count - 1
+    } else {
+        selected_index - 1
+    }
+}
+
+fn reset_selection_index() -> usize {
+    0
 }
 
 pub(in crate::ui) struct CommandPaletteDialogView {
@@ -271,6 +271,10 @@ impl CommandPaletteDialogView {
         cx.notify();
     }
 
+    fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.activate_index(self.selected_index, window, cx);
+    }
+
     fn activate_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.filtered_entries.get(index).cloned() else {
             return;
@@ -307,10 +311,6 @@ impl CommandPaletteDialogView {
                 }
             }
         });
-    }
-
-    fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.activate_index(self.selected_index, window, cx);
     }
 
     fn on_select_next(
