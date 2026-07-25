@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -577,7 +577,7 @@ struct BeamView {
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
     app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
     app_event_poll_scheduled: bool,
-    pending_request_placements: HashMap<String, PendingRequestPlacement>,
+    pending_request_creations: HashSet<String>,
     pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     _subscriptions: Vec<Subscription>,
     collection_scroll_handle: VirtualListScrollHandle,
@@ -709,17 +709,6 @@ impl RequestViewHistory {
         self.cursor = Some(next);
         Some(id)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PendingRequestPlacement {
-    Append {
-        parent: RequestParentRef,
-    },
-    After {
-        parent: RequestParentRef,
-        after_request_id: Ulid,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -6559,49 +6548,7 @@ impl BeamView {
                         self.active_request_cache = Some(request.clone());
                     }
                     self.shell.apply_event(&event);
-                    if let Some(placement) = self.pending_request_placements.remove(command_id) {
-                        match placement {
-                            PendingRequestPlacement::Append { parent } => {
-                                if let Some(parent_id) = parent.folder_id {
-                                    self.shell
-                                        .insert_request_into_shared_store(parent_id, None, request);
-                                    self.shell.workspace_tree.insert_request_child(
-                                        parent_id,
-                                        request.meta.request_id,
-                                        request.meta.name.clone(),
-                                        request.request.method,
-                                        request.request.url.clone(),
-                                        request.file_path.clone(),
-                                    );
-                                } else {
-                                    self.shell.insert_request_at_root(None, request);
-                                }
-                            }
-                            PendingRequestPlacement::After {
-                                parent,
-                                after_request_id,
-                            } => {
-                                if let Some(parent_id) = parent.folder_id {
-                                    self.shell.insert_request_into_shared_store(
-                                        parent_id,
-                                        Some(after_request_id),
-                                        request,
-                                    );
-                                    self.shell.workspace_tree.insert_request_child_after(
-                                        parent_id,
-                                        after_request_id,
-                                        request.meta.request_id,
-                                        request.meta.name.clone(),
-                                        request.request.method,
-                                        request.request.url.clone(),
-                                        request.file_path.clone(),
-                                    );
-                                } else {
-                                    self.shell
-                                        .insert_request_at_root(Some(after_request_id), request);
-                                }
-                            }
-                        }
+                    if self.pending_request_creations.remove(command_id) {
                         self.select_request(request.meta.request_id, window, cx);
                         self.commit_request_selection(window, cx);
                         selected_request_to_persist = Some(request.meta.request_id);
@@ -6653,7 +6600,7 @@ impl BeamView {
                     operation,
                     error,
                 } => {
-                    self.pending_request_placements.remove(command_id);
+                    self.pending_request_creations.remove(command_id);
                     self.pending_folder_placements.remove(command_id);
                     self.shell.apply_event(&event);
                     log::error!(
@@ -6793,10 +6740,7 @@ impl BeamView {
         let command_id = next_command_id();
         let command = match node.kind {
             TreeNodeKind::Folder => {
-                self.pending_request_placements.insert(
-                    command_id.clone(),
-                    PendingRequestPlacement::Append { parent },
-                );
+                self.pending_request_creations.insert(command_id.clone());
                 AppCommand::CreateRequest {
                     input: CreateRequestInput {
                         parent,
@@ -6809,13 +6753,7 @@ impl BeamView {
                 }
             }
             TreeNodeKind::Request => {
-                self.pending_request_placements.insert(
-                    command_id.clone(),
-                    PendingRequestPlacement::After {
-                        parent,
-                        after_request_id: node_id,
-                    },
-                );
+                self.pending_request_creations.insert(command_id.clone());
                 AppCommand::CreateRequestAfter {
                     input: CreateRequestInput {
                         parent,
@@ -6884,10 +6822,7 @@ impl BeamView {
     fn add_request_at_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let parent = RequestParentRef { folder_id: None };
         let command_id = next_command_id();
-        self.pending_request_placements.insert(
-            command_id.clone(),
-            PendingRequestPlacement::Append { parent },
-        );
+        self.pending_request_creations.insert(command_id.clone());
         let command = AppCommand::CreateRequest {
             input: CreateRequestInput {
                 parent,
@@ -7100,13 +7035,7 @@ impl BeamView {
             return;
         };
         let command_id = next_command_id();
-        self.pending_request_placements.insert(
-            command_id.clone(),
-            PendingRequestPlacement::After {
-                parent,
-                after_request_id: active_request_id,
-            },
-        );
+        self.pending_request_creations.insert(command_id.clone());
         let command = AppCommand::CreateRequestAfter {
             input: CreateRequestInput {
                 parent,
@@ -7338,13 +7267,7 @@ impl BeamView {
             return;
         };
         let command_id = next_command_id();
-        self.pending_request_placements.insert(
-            command_id.clone(),
-            PendingRequestPlacement::After {
-                parent,
-                after_request_id: request_id,
-            },
-        );
+        self.pending_request_creations.insert(command_id.clone());
         let command = AppCommand::DuplicateRequest {
             input: DuplicateRequestInput {
                 request_id,
@@ -7642,7 +7565,7 @@ impl BeamView {
             app_command_tx: sync_runtime.command_tx,
             app_event_rx: sync_runtime.event_rx,
             app_event_poll_scheduled: false,
-            pending_request_placements: HashMap::new(),
+            pending_request_creations: HashSet::new(),
             pending_folder_placements: HashMap::new(),
             _subscriptions,
             collection_scroll_handle: VirtualListScrollHandle::new(),

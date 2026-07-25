@@ -1016,7 +1016,7 @@ impl AppShellState {
                 }
             }
             AppEvent::RequestUpserted {
-                request, parent_id, ..
+                request, placement, ..
             } => {
                 let response_scroll_offset = self
                     .request_pane_data
@@ -1024,26 +1024,50 @@ impl AppShellState {
                     .map(|pane_data| pane_data.response_scroll_offset)
                     .unwrap_or(point(px(0.), px(0.)));
                 let request_id = request.meta.request_id;
-                let is_new = !self.workspace_tree.nodes.contains_key(&request_id);
-
-                if is_new {
-                    if let Some(parent_id) = parent_id {
-                        self.insert_request_into_shared_store(*parent_id, None, request);
-                        self.workspace_tree.insert_request_child(
-                            *parent_id,
-                            request_id,
-                            request.meta.name.clone(),
-                            request.request.method,
-                            request.request.url.clone(),
-                            request.file_path.clone(),
-                        );
-                    } else {
-                        self.insert_request_at_root(None, request);
+                match placement {
+                    RequestEventPlacement::KeepCurrent => {
+                        self.shared_store
+                            .requests
+                            .insert(request_id, request.clone());
                     }
-                } else {
-                    self.shared_store
-                        .requests
-                        .insert(request_id, request.clone());
+                    RequestEventPlacement::Append { parent_id } => {
+                        if let Some(parent_id) = parent_id {
+                            self.insert_request_into_shared_store(*parent_id, None, request);
+                            self.workspace_tree.insert_request_child(
+                                *parent_id,
+                                request_id,
+                                request.meta.name.clone(),
+                                request.request.method,
+                                request.request.url.clone(),
+                                request.file_path.clone(),
+                            );
+                        } else {
+                            self.insert_request_at_root(None, request);
+                        }
+                    }
+                    RequestEventPlacement::After {
+                        parent_id,
+                        request_id: source_request_id,
+                    } => {
+                        if let Some(parent_id) = parent_id {
+                            self.insert_request_into_shared_store(
+                                *parent_id,
+                                Some(*source_request_id),
+                                request,
+                            );
+                            self.workspace_tree.insert_request_child_after(
+                                *parent_id,
+                                *source_request_id,
+                                request_id,
+                                request.meta.name.clone(),
+                                request.request.method,
+                                request.request.url.clone(),
+                                request.file_path.clone(),
+                            );
+                        } else {
+                            self.insert_request_at_root(Some(*source_request_id), request);
+                        }
+                    }
                 }
                 if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
                     node.name = request.meta.name.clone();
@@ -1064,9 +1088,13 @@ impl AppShellState {
                         response_scroll_offset,
                     },
                 );
+                let current_parent_id = self
+                    .workspace_tree
+                    .node(request_id)
+                    .and_then(|node| node.parent_id);
                 let _ = self.workspace_tree.upsert_request_node(
                     request_id,
-                    *parent_id,
+                    current_parent_id,
                     request.meta.name.clone(),
                     request.request.method,
                     request.request.url.clone(),
@@ -1557,9 +1585,7 @@ pub enum AppEvent {
     },
     RequestUpserted {
         request: RequestFile,
-        /// Parent for newly-created request nodes. `None` means workspace root.
-        /// Existing nodes keep their current placement when this is `None`.
-        parent_id: Option<Ulid>,
+        placement: RequestEventPlacement,
         command_id: String,
     },
     RequestDeleted {
@@ -1622,6 +1648,18 @@ pub enum AppEvent {
     ImportResult {
         result: ImportResult,
         command_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestEventPlacement {
+    KeepCurrent,
+    Append {
+        parent_id: Option<Ulid>,
+    },
+    After {
+        parent_id: Option<Ulid>,
+        request_id: Ulid,
     },
 }
 
@@ -1990,7 +2028,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: created,
-                parent_id,
+                placement: RequestEventPlacement::Append { parent_id },
                 command_id,
             }])
         }
@@ -2005,18 +2043,25 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: created,
-                parent_id,
+                placement: RequestEventPlacement::After {
+                    parent_id,
+                    request_id: source_request_id,
+                },
                 command_id,
             }])
         }
         AppCommand::DuplicateRequest { input, command_id } => {
             let parent_id = input.parent.folder_id;
+            let source_request_id = input.request_id;
             let duplicated = storage
                 .duplicate_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: duplicated,
-                parent_id,
+                placement: RequestEventPlacement::After {
+                    parent_id,
+                    request_id: source_request_id,
+                },
                 command_id,
             }])
         }
@@ -2026,7 +2071,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: renamed,
-                parent_id: None,
+                placement: RequestEventPlacement::KeepCurrent,
                 command_id,
             }])
         }
@@ -2043,7 +2088,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: request_file,
-                parent_id: None,
+                placement: RequestEventPlacement::KeepCurrent,
                 command_id,
             }])
         }
@@ -2799,7 +2844,9 @@ fn run_import_into_current(
         requests_created += 1;
         events.push(AppEvent::RequestUpserted {
             request: request_file,
-            parent_id: parent_ref.folder_id,
+            placement: RequestEventPlacement::Append {
+                parent_id: parent_ref.folder_id,
+            },
             command_id: String::new(),
         });
     }
@@ -4250,7 +4297,7 @@ mod tests {
         );
         state.apply_event(&AppEvent::RequestUpserted {
             request: updated,
-            parent_id: None,
+            placement: RequestEventPlacement::KeepCurrent,
             command_id: Ulid::new().to_string(),
         });
 
@@ -4572,7 +4619,7 @@ mod tests {
                 HttpMethod::Post,
                 "https://example.com/optimistic",
             ),
-            parent_id: None,
+            placement: RequestEventPlacement::KeepCurrent,
             command_id: command_id.clone(),
         });
         state.apply_event(&AppEvent::SyncFailed {
