@@ -577,6 +577,7 @@ impl Render for EnvironmentManagerDialogView {
                         Button::new("delete-selected-environment")
                             .small()
                             .ghost()
+                            .cursor_pointer()
                             .label("Delete")
                             .disabled(self.selected_id.is_none())
                             .on_click(cx.listener(|this, _, window, cx| {
@@ -722,6 +723,7 @@ impl Render for EnvironmentManagerDialogView {
             h_flex().w_full().justify_end().pt_2().child(
                 Button::new("add-environment-variable")
                     .small()
+                    .cursor_pointer()
                     .label("Add variable")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.add_variable(window, cx);
@@ -864,6 +866,7 @@ impl Render for EnvironmentManagerDialogView {
                                 Button::new("environment-manager-add-environment")
                                     .small()
                                     .w_full()
+                                    .cursor_pointer()
                                     .label("Add environment")
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.add_environment(window, cx);
