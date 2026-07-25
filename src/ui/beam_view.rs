@@ -567,6 +567,7 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_tree_menu_rename))
             .on_action(cx.listener(Self::on_action_tree_menu_delete))
             .on_action(cx.listener(Self::on_action_tree_menu_duplicate_request))
+            .on_action(cx.listener(Self::on_action_tree_menu_duplicate_folder))
             .on_action(cx.listener(Self::on_action_tree_menu_add_request_at_root))
             .on_action(cx.listener(Self::on_action_tree_menu_add_folder_at_root))
             .bg(cx.theme().background)

@@ -59,6 +59,10 @@ pub(super) struct TreeMenuDelete(pub Ulid);
 #[action(namespace = beam, no_json)]
 pub(super) struct TreeMenuDuplicateRequest(pub Ulid);
 
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+pub(super) struct TreeMenuDuplicateFolder(pub Ulid);
+
 #[cfg(target_os = "macos")]
 fn build_macos_theme_menu(cx: &App) -> MenuItem {
     let themes = ThemeRegistry::global(cx).sorted_themes();
