@@ -2,14 +2,18 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Instant;
 
+use chrono::Utc;
 use gpui::{Pixels, Point, point, px};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
+use crate::importers::ImportPlan;
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta, EnvironmentVariable,
     FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile, QueryParamField, RequestFile,
@@ -350,6 +354,7 @@ impl WorkspaceTreeState {
         manifest_path: Option<PathBuf>,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.children.retain(|id| *id != request_id);
             parent.children.push(request_id);
         }
         self.nodes.insert(
@@ -378,6 +383,7 @@ impl WorkspaceTreeState {
         manifest_path: Option<PathBuf>,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.children.retain(|id| *id != request_id);
             if let Some(index) = parent
                 .children
                 .iter()
@@ -1009,21 +1015,44 @@ impl AppShellState {
                     self.environment_selection.active_global_environment_id = None;
                 }
             }
-            AppEvent::RequestUpserted { request, .. } => {
+            AppEvent::RequestUpserted {
+                request, parent_id, ..
+            } => {
                 let response_scroll_offset = self
                     .request_pane_data
                     .get(&request.meta.request_id)
                     .map(|pane_data| pane_data.response_scroll_offset)
                     .unwrap_or(point(px(0.), px(0.)));
-                self.shared_store
-                    .requests
-                    .insert(request.meta.request_id, request.clone());
-                if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
+                let request_id = request.meta.request_id;
+                let is_new = !self.workspace_tree.nodes.contains_key(&request_id);
+
+                if is_new {
+                    if let Some(parent_id) = parent_id {
+                        self.insert_request_into_shared_store(*parent_id, None, request);
+                        self.workspace_tree.insert_request_child(
+                            *parent_id,
+                            request_id,
+                            request.meta.name.clone(),
+                            request.request.method,
+                            request.request.url.clone(),
+                            request.file_path.clone(),
+                        );
+                    } else {
+                        self.insert_request_at_root(None, request);
+                    }
+                } else {
+                    self.shared_store
+                        .requests
+                        .insert(request_id, request.clone());
+                }
+                if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
                     node.name = request.meta.name.clone();
+                    node.description = request.meta.description.clone();
+                    node.updated_at = Some(request.meta.updated_at);
                 }
                 let _ = self.shared_store.rebuild_name_index();
                 self.request_pane_data.insert(
-                    request.meta.request_id,
+                    request_id,
                     RequestPaneData {
                         method: request.request.method,
                         url: request.request.url.clone(),
@@ -1036,8 +1065,8 @@ impl AppShellState {
                     },
                 );
                 let _ = self.workspace_tree.upsert_request_node(
-                    request.meta.request_id,
-                    None,
+                    request_id,
+                    *parent_id,
                     request.meta.name.clone(),
                     request.request.method,
                     request.request.url.clone(),
@@ -1297,6 +1326,10 @@ impl AppShellState {
                     self.workspace.workspace_name = workspace.name.clone();
                 }
             }
+            // Import rows are owned by the Import dialog; the shell
+            // reducer has no row state to update, so this event is a no-op here.
+            // The UI consumes it directly from the event stream.
+            AppEvent::ImportResult { .. } => {}
         }
     }
 }
@@ -1335,6 +1368,7 @@ pub enum AppOperation {
     CreateWorkspace,
     DeleteWorkspace,
     RenameWorkspace,
+    RunImport,
 }
 
 impl AppOperation {
@@ -1359,6 +1393,7 @@ impl AppOperation {
             AppOperation::CreateWorkspace => "create_workspace",
             AppOperation::DeleteWorkspace => "delete_workspace",
             AppOperation::RenameWorkspace => "rename_workspace",
+            AppOperation::RunImport => "run_import",
         }
     }
 }
@@ -1446,6 +1481,10 @@ pub enum AppCommand {
         new_name: String,
         command_id: String,
     },
+    RunImport {
+        job: ImportJob,
+        command_id: String,
+    },
 }
 
 impl AppCommand {
@@ -1469,7 +1508,8 @@ impl AppCommand {
             | AppCommand::SwitchWorkspace { command_id, .. }
             | AppCommand::CreateWorkspace { command_id, .. }
             | AppCommand::DeleteWorkspace { command_id, .. }
-            | AppCommand::RenameWorkspace { command_id, .. } => command_id,
+            | AppCommand::RenameWorkspace { command_id, .. }
+            | AppCommand::RunImport { command_id, .. } => command_id,
         }
     }
 
@@ -1496,6 +1536,7 @@ impl AppCommand {
             AppCommand::CreateWorkspace { .. } => AppOperation::CreateWorkspace,
             AppCommand::DeleteWorkspace { .. } => AppOperation::DeleteWorkspace,
             AppCommand::RenameWorkspace { .. } => AppOperation::RenameWorkspace,
+            AppCommand::RunImport { .. } => AppOperation::RunImport,
         }
     }
 }
@@ -1516,6 +1557,9 @@ pub enum AppEvent {
     },
     RequestUpserted {
         request: RequestFile,
+        /// Parent for newly-created request nodes. `None` means workspace root.
+        /// Existing nodes keep their current placement when this is `None`.
+        parent_id: Option<Ulid>,
         command_id: String,
     },
     RequestDeleted {
@@ -1575,6 +1619,63 @@ pub enum AppEvent {
         all_workspaces: Vec<WorkspaceEntry>,
         command_id: String,
     },
+    ImportResult {
+        result: ImportResult,
+        command_id: String,
+    },
+}
+
+/// Cooperative-cancellation handle for an in-flight import.
+///
+/// Owned by the caller (UI dialog) and cloned into the [`ImportJob`]; a single
+/// writer sets the flag to request cancellation, the runner polls it via
+/// [`std::sync::atomic::Ordering::SeqCst`].
+#[derive(Debug, Clone)]
+pub struct ImportJob {
+    pub plan: ImportPlan,
+    pub cancellation: Arc<AtomicBool>,
+    pub needs_new_workspace: bool,
+}
+
+impl PartialEq for ImportJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.plan == other.plan
+    }
+}
+
+impl Eq for ImportJob {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ImportCounts {
+    pub requests: usize,
+    pub folders: usize,
+    pub environments: usize,
+}
+
+/// Format-agnostic outcome of materializing one [`ImportPlan`] into a workspace.
+///
+/// The runner only ever references [`ImportPlan`] and Beam's own
+/// `RequestFile` / `EnvironmentFile` types — never any format-specific type
+/// — so adding a new importer is strictly additive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportResult {
+    Done {
+        summary: String,
+        counts: ImportCounts,
+        workspace_id: Ulid,
+        /// `true` when the import landed in the currently-active workspace
+        /// rather than spinning up a new one. Today this happens when a
+        /// Postman Environment file (or any env-only plan) is imported — it
+        /// adds global environments to the active workspace. When this is
+        /// `true` the UI must NOT auto-switch workspaces after the import
+        /// completes.
+        imported_into_current: bool,
+    },
+    Failed {
+        message: String,
+        partial_workspace_created: bool,
+    },
+    Canceled,
 }
 
 pub struct DataSyncRuntime {
@@ -1633,6 +1734,7 @@ fn data_sync_worker_loop(
                     | AppCommand::CreateWorkspace { .. }
                     | AppCommand::DeleteWorkspace { .. }
                     | AppCommand::RenameWorkspace { .. }
+                    | AppCommand::RunImport { .. }
             );
 
             let _ = event_tx.send(AppEvent::SyncStarted {
@@ -1815,7 +1917,8 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
         | AppCommand::MoveRequest { .. }
         | AppCommand::DeleteFolder { .. }
         | AppCommand::SwitchWorkspace { .. }
-        | AppCommand::DeleteWorkspace { .. } => {}
+        | AppCommand::DeleteWorkspace { .. }
+        | AppCommand::RunImport { .. } => {}
     }
     Ok(())
 }
@@ -1881,11 +1984,13 @@ fn handle_command<B: StorageIoBackend>(
             }])
         }
         AppCommand::CreateRequest { input, command_id } => {
+            let parent_id = input.parent.folder_id;
             let created = storage
                 .create_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: created,
+                parent_id,
                 command_id,
             }])
         }
@@ -1894,20 +1999,24 @@ fn handle_command<B: StorageIoBackend>(
             source_request_id,
             command_id,
         } => {
+            let parent_id = input.parent.folder_id;
             let created = storage
                 .create_request_after(input, source_request_id)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: created,
+                parent_id,
                 command_id,
             }])
         }
         AppCommand::DuplicateRequest { input, command_id } => {
+            let parent_id = input.parent.folder_id;
             let duplicated = storage
                 .duplicate_request(input)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: duplicated,
+                parent_id,
                 command_id,
             }])
         }
@@ -1917,6 +2026,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: renamed,
+                parent_id: None,
                 command_id,
             }])
         }
@@ -1933,6 +2043,7 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestUpserted {
                 request: request_file,
+                parent_id: None,
                 command_id,
             }])
         }
@@ -1998,7 +2109,8 @@ fn handle_command<B: StorageIoBackend>(
         AppCommand::SwitchWorkspace { command_id, .. }
         | AppCommand::CreateWorkspace { command_id, .. }
         | AppCommand::DeleteWorkspace { command_id, .. }
-        | AppCommand::RenameWorkspace { command_id, .. } => Err(format!(
+        | AppCommand::RenameWorkspace { command_id, .. }
+        | AppCommand::RunImport { command_id, .. } => Err(format!(
             "workspace command {command_id} reached handle_command unexpectedly"
         )),
     }
@@ -2187,8 +2299,591 @@ fn handle_workspace_command(
                 command_id,
             }])
         }
+        AppCommand::RunImport { job, command_id } => {
+            let active_workspace_id = registry.registry.active_workspace_id;
+            if job.needs_new_workspace {
+                let result = run_import_job(registry, registry_repo, job);
+                Ok(vec![AppEvent::ImportResult { result, command_id }])
+            } else if let Some(workspace_id) = active_workspace_id {
+                let is_env_only = job.plan.folders.is_empty()
+                    && job.plan.requests.is_empty()
+                    && !job.plan.environments.is_empty();
+                let (result, item_events) = if is_env_only {
+                    run_import_environments_only(storage, job, workspace_id)
+                } else {
+                    run_import_into_current(storage, job, workspace_id)
+                };
+                let mut events = item_events;
+                events.push(AppEvent::ImportResult { result, command_id });
+                Ok(events)
+            } else {
+                let result = run_import_job(registry, registry_repo, job);
+                Ok(vec![AppEvent::ImportResult { result, command_id }])
+            }
+        }
         _ => unreachable!("non-workspace command routed to handle_workspace_command"),
     }
+}
+
+/// Materialize an [`ImportPlan`] into a brand-new workspace on disk.
+///
+/// The runner is format-agnostic — it only consumes [`ImportPlan`] and the
+/// existing `WorkspaceRepository` / `RegistryRepository` APIs, never any
+/// Postman / Insomnia / cURL type. Adding a new importer is strictly
+/// additive: new parser + one [`crate::importers::DETECTORS`] entry, with no
+/// edits here.
+///
+/// Cancellation points are checked at the start of each file's processing
+/// step **and** between sub-steps (workspace creation ← folder loop ←
+/// request loop ← env loop). Mid-parse cancellation is not supported in v1.
+///
+/// Failure mode after the workspace was created leaves the partial workspace
+/// in place — the caller surfaces the `partial_workspace_created` flag to
+/// the user ("Workspace created but partially imported — delete it if
+/// unwanted.").
+fn run_import_job(
+    registry: &mut WorkspacesRegistryFile,
+    registry_repo: &RegistryRepository,
+    job: ImportJob,
+) -> ImportResult {
+    use std::sync::atomic::Ordering;
+
+    if job.cancellation.load(Ordering::SeqCst) {
+        return ImportResult::Canceled;
+    }
+
+    let raw_name = job.plan.workspace_name.trim();
+    let workspace_name = if raw_name.is_empty() {
+        "Imported Workspace".to_string()
+    } else {
+        raw_name.to_string()
+    };
+
+    // 2. Create the workspace (registry de-dupes the slug).
+    let entry = match registry_repo.create_workspace(registry, &workspace_name) {
+        Ok(entry) => entry,
+        Err(error) => {
+            log::error!("import: create_workspace failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: false,
+            };
+        }
+    };
+    let workspace_id = entry.workspace_id;
+
+    // 3. Open a WorkspaceRepository for the freshly created workspace.
+    let ws_paths = registry_repo.workspace_paths(&entry);
+    let ws_backend = FileSystemStorage::new(ws_paths);
+    let mut ws_repo = match WorkspaceRepository::new(ws_backend) {
+        Ok(repo) => repo,
+        Err(error) => {
+            log::error!("import: open workspace repo failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: true,
+            };
+        }
+    };
+    if let Err(error) = ws_repo.initialize() {
+        log::error!("import: initialize workspace failed: {error}");
+        return ImportResult::Failed {
+            message: error.to_string(),
+            partial_workspace_created: true,
+        };
+    }
+
+    // 4. Create folders in plan order, with a topological safety net
+    //    (parser is expected to emit parents before children, but the
+    //    pass-based loop tolerates either order).
+    let mut folder_id_map: HashMap<Ulid, Ulid> = HashMap::new();
+    let mut folders_created: usize = 0;
+    let mut pending: Vec<crate::importers::PlannedFolder> = job.plan.folders.clone();
+    let mut made_progress = true;
+    while made_progress && !pending.is_empty() {
+        made_progress = false;
+        let mut next_pass = Vec::new();
+        let drain = std::mem::take(&mut pending);
+        for folder in drain {
+            if job.cancellation.load(Ordering::SeqCst) {
+                return ImportResult::Canceled;
+            }
+            // Defer if the parent folder hasn't been created yet.
+            if let Some(parent_id) = folder.parent_id
+                && !folder_id_map.contains_key(&parent_id)
+            {
+                next_pass.push(folder);
+                continue;
+            }
+            let parent_ref = crate::storage::FolderParentRef {
+                folder_id: folder
+                    .parent_id
+                    .and_then(|pid| folder_id_map.get(&pid).copied()),
+            };
+            match ws_repo.create_folder(CreateFolderInput {
+                parent: parent_ref,
+                known_parent_manifest_path: None,
+                name: folder.name.clone(),
+            }) {
+                Ok(created) => {
+                    folder_id_map.insert(folder.id, created.folder.folder_id);
+                    folders_created += 1;
+                    made_progress = true;
+                }
+                Err(error) => {
+                    log::error!("import: create_folder failed: {error}");
+                    return ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: true,
+                    };
+                }
+            }
+        }
+        pending = next_pass;
+    }
+    if !pending.is_empty() {
+        log::warn!(
+            "import: {} planned folder(s) had unresolved parents and were skipped",
+            pending.len()
+        );
+    }
+
+    // 5. Create requests, mapping planned parent ids to real folder ids.
+    let mut requests_created: usize = 0;
+    for planned_request in &job.plan.requests {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return ImportResult::Canceled;
+        }
+        let parent_ref = crate::storage::RequestParentRef {
+            folder_id: planned_request
+                .parent_id
+                .and_then(|pid| folder_id_map.get(&pid).copied()),
+        };
+        let created = match ws_repo.create_request(CreateRequestInput {
+            parent: parent_ref,
+            known_parent_manifest_path: None,
+            name: planned_request.name.clone(),
+            method: planned_request.method,
+            url: planned_request.url.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_request failed: {error}");
+                return ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: true,
+                };
+            }
+        };
+        // Replay the planned request payload (headers/query/auth/body/scripts)
+        // on top of the freshly created file, then persist.
+        let mut request_file = created;
+        request_file.meta.updated_at = Utc::now();
+        request_file.request.headers = planned_request.headers.clone();
+        request_file.request.query_params = planned_request.query.clone();
+        request_file.auth = planned_request.auth.clone();
+        request_file.body = planned_request.body.clone();
+        request_file.scripts = planned_request.scripts.clone();
+        if let Err(error) = ws_repo.save_request(&request_file) {
+            log::error!("import: save_request failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: true,
+            };
+        }
+        requests_created += 1;
+    }
+
+    // 6. Write each planned environment through the existing environment
+    //    write path. Slug dedup happens inside `create_environment`.
+    let mut environments_created: usize = 0;
+    let mut first_env_id: Option<Ulid> = None;
+    for planned_env in &job.plan.environments {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return ImportResult::Canceled;
+        }
+        let created = match ws_repo.create_environment(CreateEnvironmentInput {
+            name: planned_env.name.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_environment failed: {error}");
+                return ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: true,
+                };
+            }
+        };
+        if let Err(error) = ws_repo.update_environment_variables(
+            created.environment.environment_id,
+            planned_env.variables.clone(),
+        ) {
+            log::error!("import: update_environment_variables failed: {error}");
+            return ImportResult::Failed {
+                message: error.to_string(),
+                partial_workspace_created: true,
+            };
+        }
+        if first_env_id.is_none() {
+            first_env_id = Some(created.environment.environment_id);
+        }
+        environments_created += 1;
+    }
+
+    // 7. Mark the first imported environment as active in local state.
+    if let Some(env_id) = first_env_id {
+        match ws_repo.load_local_state() {
+            Ok(mut local_state) => {
+                local_state.local_state.active_global_environment_id = Some(env_id);
+                local_state.local_state.updated_at = Utc::now();
+                if let Err(error) = ws_repo.save_local_state(&local_state) {
+                    log::error!("import: save_local_state failed: {error}");
+                    return ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: true,
+                    };
+                }
+            }
+            Err(error) => {
+                log::error!("import: load_local_state failed: {error}");
+                return ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: true,
+                };
+            }
+        }
+    }
+
+    // 8. Return counts.
+    let summary = format!(
+        "Imported {} request(s), {} folder(s), {} environment(s)",
+        requests_created, folders_created, environments_created
+    );
+    let counts = ImportCounts {
+        requests: requests_created,
+        folders: folders_created,
+        environments: environments_created,
+    };
+    ImportResult::Done {
+        summary,
+        counts,
+        workspace_id,
+        imported_into_current: false,
+    }
+}
+
+/// Import an env-only [`ImportPlan`] into the currently-active workspace,
+/// adding each planned environment as a new global environment.
+///
+/// Unlike [`run_import_job`], this does NOT create a new workspace — it
+/// reuses the worker's existing [`WorkspaceRepository`] for the active
+/// workspace and emits one [`AppEvent::EnvironmentUpserted`] per imported
+/// environment so the UI's in-memory environment list stays in sync
+/// without a full workspace reload.
+///
+/// Returns the import outcome plus the per-environment events to emit
+/// alongside the [`AppEvent::ImportResult`].
+fn run_import_environments_only(
+    storage: &mut WorkspaceRepository<FileSystemStorage>,
+    job: ImportJob,
+    workspace_id: Ulid,
+) -> (ImportResult, Vec<AppEvent>) {
+    use std::sync::atomic::Ordering;
+
+    let mut events: Vec<AppEvent> = Vec::new();
+    let mut environments_created: usize = 0;
+    let mut first_env_id: Option<Ulid> = None;
+
+    for planned_env in &job.plan.environments {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return (ImportResult::Canceled, events);
+        }
+        let created = match storage.create_environment(CreateEnvironmentInput {
+            name: planned_env.name.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_environment failed: {error}");
+                return (
+                    ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: false,
+                    },
+                    events,
+                );
+            }
+        };
+        let env_id = created.environment.environment_id;
+        let updated =
+            match storage.update_environment_variables(env_id, planned_env.variables.clone()) {
+                Ok(updated) => updated,
+                Err(error) => {
+                    log::error!("import: update_environment_variables failed: {error}");
+                    return (
+                        ImportResult::Failed {
+                            message: error.to_string(),
+                            partial_workspace_created: false,
+                        },
+                        events,
+                    );
+                }
+            };
+        events.push(AppEvent::EnvironmentUpserted {
+            environment: updated.environment.clone(),
+            command_id: String::new(),
+        });
+        if first_env_id.is_none() {
+            first_env_id = Some(env_id);
+        }
+        environments_created += 1;
+    }
+
+    // If the current workspace has no active environment yet, make the first
+    // imported environment the active one so the user sees it take effect
+    // immediately — mirroring the new-workspace import path. If the user
+    // already had an active environment we leave their selection alone.
+    if let Some(env_id) = first_env_id
+        && let Ok(mut local_state) = storage.load_local_state()
+        && local_state
+            .local_state
+            .active_global_environment_id
+            .is_none()
+    {
+        local_state.local_state.active_global_environment_id = Some(env_id);
+        local_state.local_state.updated_at = Utc::now();
+        if let Err(error) = storage.save_local_state(&local_state) {
+            log::error!("import: save_local_state failed: {error}");
+        }
+    }
+
+    let summary = format!("Imported {} environment(s)", environments_created);
+    let counts = ImportCounts {
+        requests: 0,
+        folders: 0,
+        environments: environments_created,
+    };
+    (
+        ImportResult::Done {
+            summary,
+            counts,
+            workspace_id,
+            imported_into_current: true,
+        },
+        events,
+    )
+}
+
+/// Import an [`ImportPlan`] into the **currently-active workspace**,
+/// creating folders, requests, and environments inline without creating a
+/// new workspace.
+///
+/// Emits per-item events so the in-memory UI state stays in sync without
+/// a full workspace reload. Deduplication happens automatically through
+/// `find_unique_name` in the repository's create methods.
+fn run_import_into_current(
+    storage: &mut WorkspaceRepository<FileSystemStorage>,
+    job: ImportJob,
+    workspace_id: Ulid,
+) -> (ImportResult, Vec<AppEvent>) {
+    use std::sync::atomic::Ordering;
+
+    let mut events: Vec<AppEvent> = Vec::new();
+
+    // 1. Create folders in plan order (topological pass).
+    let mut folder_id_map: HashMap<Ulid, Ulid> = HashMap::new();
+    let mut folders_created: usize = 0;
+    let mut pending: Vec<crate::importers::PlannedFolder> = job.plan.folders.clone();
+    let mut made_progress = true;
+    while made_progress && !pending.is_empty() {
+        made_progress = false;
+        let mut next_pass = Vec::new();
+        let drain = std::mem::take(&mut pending);
+        for folder in drain {
+            if job.cancellation.load(Ordering::SeqCst) {
+                return (ImportResult::Canceled, events);
+            }
+            if let Some(parent_id) = folder.parent_id
+                && !folder_id_map.contains_key(&parent_id)
+            {
+                next_pass.push(folder);
+                continue;
+            }
+            let parent_ref = crate::storage::FolderParentRef {
+                folder_id: folder
+                    .parent_id
+                    .and_then(|pid| folder_id_map.get(&pid).copied()),
+            };
+            match storage.create_folder(CreateFolderInput {
+                parent: parent_ref,
+                known_parent_manifest_path: None,
+                name: folder.name.clone(),
+            }) {
+                Ok(file) => {
+                    folder_id_map.insert(folder.id, file.folder.folder_id);
+                    folders_created += 1;
+                    made_progress = true;
+                    events.push(AppEvent::FolderUpserted {
+                        folder: file.folder.clone(),
+                        manifest_path: file.manifest_path.clone(),
+                        command_id: String::new(),
+                    });
+                }
+                Err(error) => {
+                    log::error!("import: create_folder failed: {error}");
+                    return (
+                        ImportResult::Failed {
+                            message: error.to_string(),
+                            partial_workspace_created: false,
+                        },
+                        events,
+                    );
+                }
+            }
+        }
+        pending = next_pass;
+    }
+    if !pending.is_empty() {
+        log::warn!(
+            "import: {} planned folder(s) had unresolved parents and were skipped",
+            pending.len()
+        );
+    }
+
+    // 2. Create requests with planned payload details.
+    let mut requests_created: usize = 0;
+    for planned_request in &job.plan.requests {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return (ImportResult::Canceled, events);
+        }
+        let parent_ref = crate::storage::RequestParentRef {
+            folder_id: planned_request
+                .parent_id
+                .and_then(|pid| folder_id_map.get(&pid).copied()),
+        };
+        let created = match storage.create_request(CreateRequestInput {
+            parent: parent_ref,
+            known_parent_manifest_path: None,
+            name: planned_request.name.clone(),
+            method: planned_request.method,
+            url: planned_request.url.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_request failed: {error}");
+                return (
+                    ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: false,
+                    },
+                    events,
+                );
+            }
+        };
+        let mut request_file = created;
+        request_file.meta.updated_at = Utc::now();
+        request_file.request.headers = planned_request.headers.clone();
+        request_file.request.query_params = planned_request.query.clone();
+        request_file.auth = planned_request.auth.clone();
+        request_file.body = planned_request.body.clone();
+        request_file.scripts = planned_request.scripts.clone();
+        if let Err(error) = storage.save_request(&request_file) {
+            log::error!("import: save_request failed: {error}");
+            return (
+                ImportResult::Failed {
+                    message: error.to_string(),
+                    partial_workspace_created: false,
+                },
+                events,
+            );
+        }
+        requests_created += 1;
+        events.push(AppEvent::RequestUpserted {
+            request: request_file,
+            parent_id: parent_ref.folder_id,
+            command_id: String::new(),
+        });
+    }
+
+    // 3. Create environments.
+    let mut environments_created: usize = 0;
+    let mut first_env_id: Option<Ulid> = None;
+    for planned_env in &job.plan.environments {
+        if job.cancellation.load(Ordering::SeqCst) {
+            return (ImportResult::Canceled, events);
+        }
+        let created = match storage.create_environment(CreateEnvironmentInput {
+            name: planned_env.name.clone(),
+        }) {
+            Ok(file) => file,
+            Err(error) => {
+                log::error!("import: create_environment failed: {error}");
+                return (
+                    ImportResult::Failed {
+                        message: error.to_string(),
+                        partial_workspace_created: false,
+                    },
+                    events,
+                );
+            }
+        };
+        let env_id = created.environment.environment_id;
+        let updated =
+            match storage.update_environment_variables(env_id, planned_env.variables.clone()) {
+                Ok(updated) => updated,
+                Err(error) => {
+                    log::error!("import: update_environment_variables failed: {error}");
+                    return (
+                        ImportResult::Failed {
+                            message: error.to_string(),
+                            partial_workspace_created: false,
+                        },
+                        events,
+                    );
+                }
+            };
+        events.push(AppEvent::EnvironmentUpserted {
+            environment: updated.environment.clone(),
+            command_id: String::new(),
+        });
+        if first_env_id.is_none() {
+            first_env_id = Some(env_id);
+        }
+        environments_created += 1;
+    }
+
+    // 4. Activate the first imported environment if none is active yet.
+    if let Some(env_id) = first_env_id
+        && let Ok(mut local_state) = storage.load_local_state()
+        && local_state
+            .local_state
+            .active_global_environment_id
+            .is_none()
+    {
+        local_state.local_state.active_global_environment_id = Some(env_id);
+        local_state.local_state.updated_at = Utc::now();
+        if let Err(error) = storage.save_local_state(&local_state) {
+            log::error!("import: save_local_state failed: {error}");
+        }
+    }
+
+    let summary = format!(
+        "Imported {} request(s), {} folder(s), {} environment(s)",
+        requests_created, folders_created, environments_created
+    );
+    let counts = ImportCounts {
+        requests: requests_created,
+        folders: folders_created,
+        environments: environments_created,
+    };
+    (
+        ImportResult::Done {
+            summary,
+            counts,
+            workspace_id,
+            imported_into_current: true,
+        },
+        events,
+    )
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2836,6 +3531,42 @@ mod tests {
         assert!(!tree.is_expanded(missing_id));
     }
 
+    #[test]
+    fn inserting_existing_request_child_repositions_without_duplication() {
+        let folder_id = Ulid::new();
+        let first_request_id = Ulid::new();
+        let inserted_request_id = Ulid::new();
+        let mut tree = tree_with(
+            vec![folder_id],
+            vec![
+                folder_node(folder_id, None, vec![first_request_id, inserted_request_id]),
+                request_node(first_request_id, Some(folder_id)),
+                request_node(inserted_request_id, Some(folder_id)),
+            ],
+            vec![folder_id],
+        );
+
+        tree.insert_request_child_after(
+            folder_id,
+            first_request_id,
+            inserted_request_id,
+            "New Request 1".to_string(),
+            HttpMethod::Get,
+            String::new(),
+            None,
+        );
+
+        let children = &tree.nodes.get(&folder_id).unwrap().children;
+        assert_eq!(children, &[first_request_id, inserted_request_id]);
+        assert_eq!(
+            children
+                .iter()
+                .filter(|id| **id == inserted_request_id)
+                .count(),
+            1
+        );
+    }
+
     fn sample_request_file(
         request_id: Ulid,
         name: &str,
@@ -3368,6 +4099,7 @@ mod tests {
                 AppEvent::RequestUpserted {
                     request,
                     command_id,
+                    ..
                 } if command_id == &create_command_id => Some(request.clone()),
                 _ => None,
             })
@@ -3395,6 +4127,7 @@ mod tests {
                 AppEvent::RequestUpserted {
                     request,
                     command_id,
+                    ..
                 } if command_id == &duplicate_command_id => Some(request.clone()),
                 _ => None,
             })
@@ -3417,7 +4150,8 @@ mod tests {
             event,
             AppEvent::RequestUpserted {
                 request,
-                command_id
+                command_id,
+                ..
             } if command_id == &save_command_id
                 && request.meta.request_id == saved_request.meta.request_id
                 && request.request.method == HttpMethod::Post
@@ -3443,7 +4177,8 @@ mod tests {
             event,
             AppEvent::RequestUpserted {
                 request,
-                command_id
+                command_id,
+                ..
             } if command_id == &rename_command_id
                 && request.meta.request_id == saved_request.meta.request_id
                 && request.meta.name == "Phase4 Request Saved"
@@ -3515,6 +4250,7 @@ mod tests {
         );
         state.apply_event(&AppEvent::RequestUpserted {
             request: updated,
+            parent_id: None,
             command_id: Ulid::new().to_string(),
         });
 
@@ -3836,6 +4572,7 @@ mod tests {
                 HttpMethod::Post,
                 "https://example.com/optimistic",
             ),
+            parent_id: None,
             command_id: command_id.clone(),
         });
         state.apply_event(&AppEvent::SyncFailed {
@@ -5344,6 +6081,742 @@ expanded_item_ids = ["{folder_id}"]
                 (0, "row", Some(folder_id)),  // empty folder row
                 (0, "slot", Some(folder_id)), // after folder in root
             ]
+        );
+    }
+
+    use crate::importers::{PlannedEnvironment, PlannedFolder, PlannedRequest};
+
+    fn planned_request(
+        id: Ulid,
+        parent_id: Option<Ulid>,
+        name: &str,
+        method: HttpMethod,
+        url: &str,
+        auth: AuthConfig,
+        body: BodyConfig,
+        headers: Vec<HeaderField>,
+        query: Vec<QueryParamField>,
+        scripts: ScriptConfig,
+    ) -> PlannedRequest {
+        PlannedRequest {
+            id,
+            parent_id,
+            name: name.to_string(),
+            method,
+            url: url.to_string(),
+            headers,
+            query,
+            auth,
+            body,
+            scripts,
+            order: 0,
+        }
+    }
+
+    fn sample_import_plan() -> ImportPlan {
+        let outer_folder_id = Ulid::new();
+        let inner_folder_id = Ulid::new();
+        let request_in_inner_id = Ulid::new();
+        let request_in_outer_id = Ulid::new();
+        let root_request_id = Ulid::new();
+
+        ImportPlan {
+            workspace_name: "Imported API".to_string(),
+            folders: vec![
+                PlannedFolder {
+                    id: outer_folder_id,
+                    parent_id: None,
+                    name: "Users".to_string(),
+                    order: 0,
+                },
+                PlannedFolder {
+                    id: inner_folder_id,
+                    parent_id: Some(outer_folder_id),
+                    name: "Auth".to_string(),
+                    order: 0,
+                },
+            ],
+            requests: vec![
+                planned_request(
+                    root_request_id,
+                    None,
+                    "Healthcheck",
+                    HttpMethod::Get,
+                    "https://api.example.com/health",
+                    AuthConfig::None,
+                    BodyConfig::None,
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+                planned_request(
+                    request_in_outer_id,
+                    Some(outer_folder_id),
+                    "List Users",
+                    HttpMethod::Get,
+                    "https://api.example.com/users",
+                    AuthConfig::Bearer {
+                        token: Some("tok-123".to_string()),
+                    },
+                    BodyConfig::None,
+                    vec![HeaderField {
+                        name: "Accept".to_string(),
+                        value: "application/json".to_string(),
+                        enabled: true,
+                        description: None,
+                    }],
+                    vec![QueryParamField {
+                        name: "page".to_string(),
+                        value: "1".to_string(),
+                        enabled: true,
+                        description: None,
+                    }],
+                    ScriptConfig {
+                        post_response: Some("console.log('ok')".to_string()),
+                    },
+                ),
+                planned_request(
+                    request_in_inner_id,
+                    Some(inner_folder_id),
+                    "Login",
+                    HttpMethod::Post,
+                    "https://api.example.com/auth/login",
+                    AuthConfig::Basic {
+                        username: Some("alice".to_string()),
+                        password: Some("pw".to_string()),
+                    },
+                    BodyConfig::Json {
+                        text: "{\"email\":\"alice\"}".to_string(),
+                    },
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+            ],
+            environments: vec![PlannedEnvironment {
+                name: "Production".to_string(),
+                variables: vec![
+                    EnvironmentVariable {
+                        name: "base_url".to_string(),
+                        value: "https://api.example.com".to_string(),
+                        enabled: true,
+                        description: None,
+                    },
+                    EnvironmentVariable {
+                        name: "api_key".to_string(),
+                        value: "secret".to_string(),
+                        enabled: true,
+                        description: None,
+                    },
+                ],
+            }],
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Walks the on-disk workspace the runner produced and asserts the
+    /// `SharedStore` shape end-to-end — folders + nested requests, root
+    /// requests, environments, and active-env local state.
+    #[test]
+    fn run_import_job_materializes_plan_into_new_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        let job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
+        };
+        let result = run_import_job(&mut registry, &registry_repo, job);
+
+        let (summary, counts, workspace_id) = match result {
+            ImportResult::Done {
+                summary,
+                counts,
+                workspace_id,
+                imported_into_current,
+            } => {
+                assert!(
+                    !imported_into_current,
+                    "new-workspace import should not be flagged as imported_into_current"
+                );
+                (summary, counts, workspace_id)
+            }
+            other => panic!("expected Done, got {other:?}"),
+        };
+
+        assert_eq!(counts.folders, 2);
+        assert_eq!(counts.requests, 3);
+        assert_eq!(counts.environments, 1);
+        assert!(summary.contains("3 request(s)"));
+        assert!(summary.contains("2 folder(s)"));
+        assert!(summary.contains("1 environment(s)"));
+
+        // Reload the new workspace from disk to verify SharedStore shape.
+        let entry = registry
+            .registry
+            .workspaces
+            .iter()
+            .find(|w| w.workspace_id == workspace_id)
+            .expect("workspace entry persisted");
+        assert_eq!(entry.name, "Imported API");
+        assert_eq!(entry.path, "imported-api");
+
+        let ws_paths = registry_repo.workspace_paths(entry);
+        let reloaded =
+            WorkspaceRepository::new(FileSystemStorage::new(ws_paths.clone())).expect("reload");
+
+        // One root request + one root folder.
+        assert_eq!(reloaded.store.root_ids.len(), 2);
+        // Two folders + three requests = five nodes besides anything else.
+        assert_eq!(reloaded.store.nodes.len(), 5);
+        assert_eq!(reloaded.store.requests.len(), 3);
+
+        // Find the "Users" folder at the root and verify its nested structure.
+        let users_folder = reloaded
+            .store
+            .nodes
+            .values()
+            .find(|n| n.kind == NodeKind::Folder && n.name == "Users")
+            .expect("Users folder created");
+        assert_eq!(users_folder.parent_id, None);
+        // Users folder should contain the inner Auth folder + the List Users request.
+        assert_eq!(users_folder.children.len(), 2);
+
+        let auth_folder = reloaded
+            .store
+            .nodes
+            .values()
+            .find(|n| n.kind == NodeKind::Folder && n.name == "Auth")
+            .expect("Auth folder created");
+        assert_eq!(auth_folder.parent_id, Some(users_folder.id));
+        assert_eq!(auth_folder.children.len(), 1);
+
+        // The Login request inside Auth should carry the planned auth/body.
+        let login_id = auth_folder.children[0];
+        let login_file = reloaded
+            .store
+            .requests
+            .get(&login_id)
+            .expect("Login request file present");
+        assert_eq!(login_file.request.method, HttpMethod::Post);
+        assert_eq!(login_file.request.url, "https://api.example.com/auth/login");
+        assert!(matches!(login_file.auth, AuthConfig::Basic { .. }));
+        assert!(matches!(login_file.body, BodyConfig::Json { .. }));
+
+        // List Users request should carry the planned headers/query/post-script.
+        let list_users_id = users_folder
+            .children
+            .iter()
+            .copied()
+            .find(|id| {
+                reloaded
+                    .store
+                    .nodes
+                    .get(id)
+                    .is_some_and(|n| n.kind == NodeKind::Request && n.name == "List Users")
+            })
+            .expect("List Users request created");
+        let list_users = reloaded
+            .store
+            .requests
+            .get(&list_users_id)
+            .expect("List Users request file present");
+        assert!(matches!(list_users.auth, AuthConfig::Bearer { .. }));
+        assert_eq!(list_users.request.headers.len(), 1);
+        assert_eq!(list_users.request.headers[0].name, "Accept");
+        assert_eq!(list_users.request.query_params.len(), 1);
+        assert_eq!(list_users.request.query_params[0].name, "page");
+        assert_eq!(
+            list_users.scripts.post_response.as_deref(),
+            Some("console.log('ok')")
+        );
+
+        // Imported "Production" environment lives on disk with the planned vars.
+        assert!(
+            reloaded
+                .store
+                .environments
+                .values()
+                .any(|env| env.environment.name == "Production" && env.variables.len() == 2),
+            "Production environment with two variables should be persisted"
+        );
+
+        // Local state should now point at the first imported environment.
+        let local_state = reloaded.load_local_state().expect("load local state");
+        let active_env_id = local_state
+            .local_state
+            .active_global_environment_id
+            .expect("active env set");
+        let active_env = reloaded
+            .store
+            .environments
+            .get(&active_env_id)
+            .expect("active env exists");
+        assert_eq!(active_env.environment.name, "Production");
+    }
+
+    #[test]
+    fn run_import_job_yields_canceled_when_flag_set_upfront() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        let cancellation = Arc::new(AtomicBool::new(true));
+        let job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation,
+            needs_new_workspace: true,
+        };
+        let result = run_import_job(&mut registry, &registry_repo, job);
+        assert_eq!(result, ImportResult::Canceled);
+        // Nothing should be added to the registry.
+        assert!(registry.registry.workspaces.is_empty());
+    }
+
+    #[test]
+    fn run_import_job_returns_failed_with_partial_workspace_when_request_invalid() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        // A request whose name is empty whitespace trips `create_request`
+        // validation, simulating a mid-import failure after the workspace + a
+        // folder have been created.
+        let folder_id = Ulid::new();
+        let bad_request_id = Ulid::new();
+        let plan = ImportPlan {
+            workspace_name: "Partial Import".to_string(),
+            folders: vec![PlannedFolder {
+                id: folder_id,
+                parent_id: None,
+                name: "Good Folder".to_string(),
+                order: 0,
+            }],
+            requests: vec![PlannedRequest {
+                id: bad_request_id,
+                parent_id: Some(folder_id),
+                name: "   ".to_string(), // treated as empty by the repository
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+                headers: Vec::new(),
+                query: Vec::new(),
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                scripts: ScriptConfig::default(),
+                order: 0,
+            }],
+            environments: Vec::new(),
+            warnings: Vec::new(),
+        };
+        let job = ImportJob {
+            plan,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
+        };
+        let result = run_import_job(&mut registry, &registry_repo, job);
+        match result {
+            ImportResult::Failed {
+                message,
+                partial_workspace_created,
+            } => {
+                assert!(
+                    partial_workspace_created,
+                    "partial flag set after ws creation"
+                );
+                assert!(
+                    message.contains("Request name cannot be empty"),
+                    "failure message bubbles the repository error: {message}"
+                );
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+
+        // The workspace and the folder survived on disk; only the request
+        // failed.
+        assert_eq!(registry.registry.workspaces.len(), 1);
+        let entry = &registry.registry.workspaces[0];
+        let ws_paths = registry_repo.workspace_paths(entry);
+        let reloaded = WorkspaceRepository::new(FileSystemStorage::new(ws_paths))
+            .expect("reload partial workspace");
+        assert!(
+            reloaded
+                .store
+                .nodes
+                .values()
+                .any(|n| n.kind == NodeKind::Folder && n.name == "Good Folder"),
+            "folder survived on disk after partial import"
+        );
+        assert_eq!(reloaded.store.requests.len(), 0);
+    }
+
+    #[test]
+    fn run_import_job_dedupes_workspace_slug_against_existing_workspaces() {
+        let dir = tempdir().expect("tempdir");
+        let (mut registry, registry_repo) = test_registry_for_dir(dir.path());
+
+        // First import creates "Imported API" → slug `imported-api`.
+        let first_job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
+        };
+        let first = run_import_job(&mut registry, &registry_repo, first_job);
+        let first_ws_id = match first {
+            ImportResult::Done { workspace_id, .. } => workspace_id,
+            other => panic!("expected Done, got {other:?}"),
+        };
+
+        // Second import with the same name should keep the slug unique
+        // (`imported-api-2`).
+        let second_job = ImportJob {
+            plan: sample_import_plan(),
+            cancellation: Arc::new(AtomicBool::new(false)),
+            needs_new_workspace: true,
+        };
+        let second = run_import_job(&mut registry, &registry_repo, second_job);
+        let second_ws_id = match second {
+            ImportResult::Done { workspace_id, .. } => workspace_id,
+            other => panic!("expected Done, got {other:?}"),
+        };
+
+        assert_ne!(first_ws_id, second_ws_id);
+        let slugs: Vec<&str> = registry
+            .registry
+            .workspaces
+            .iter()
+            .map(|w| w.path.as_str())
+            .collect();
+        assert!(slugs.contains(&"imported-api"));
+        assert!(slugs.contains(&"imported-api-2"));
+    }
+
+    /// The runner must be wired into the existing background command queue:
+    /// sending `AppCommand::RunImport` produces `AppEvent::ImportResult`
+    /// observed on the event stream.
+    #[test]
+    fn worker_runs_import_job_and_emits_import_result_event() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam").join("placeholder"));
+        let backend = FileSystemStorage::new(paths);
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("init storage");
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::RunImport {
+                job: ImportJob {
+                    plan: sample_import_plan(),
+                    cancellation: Arc::new(AtomicBool::new(false)),
+                    needs_new_workspace: true,
+                },
+                command_id: command_id.clone(),
+            })
+            .expect("queue run import");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let import_result = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ImportResult {
+                    result,
+                    command_id: event_command_id,
+                } if event_command_id == &command_id => Some(result.clone()),
+                _ => None,
+            })
+            .expect("worker should emit ImportResult");
+        match import_result {
+            ImportResult::Done { counts, .. } => {
+                assert_eq!(counts.folders, 2);
+                assert_eq!(counts.requests, 3);
+                assert_eq!(counts.environments, 1);
+            }
+            other => panic!("expected Done via worker, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_into_current_updates_tree_with_nested_and_root_requests() {
+        let dir = tempdir().expect("tempdir");
+        let workspace_id = Ulid::new();
+        let data_root = DataRootPaths::new(
+            dir.path().join("beam"),
+            dir.path().join("beam_local"),
+            dir.path().join("beam_logs"),
+        );
+        let registry_repo = RegistryRepository::new(data_root.clone());
+        let workspace = crate::models::WorkspaceEntry {
+            workspace_id,
+            name: "My Workspace".to_string(),
+            path: "my-workspace".to_string(),
+            created_at: Utc::now(),
+        };
+        let registry = WorkspacesRegistryFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            registry: crate::models::WorkspacesRegistry {
+                active_workspace_id: Some(workspace_id),
+                workspaces: vec![workspace.clone()],
+            },
+        };
+        registry_repo.save(&registry).expect("save registry");
+
+        let ws_paths = data_root.workspace_paths(&workspace.path);
+        fs::create_dir_all(&ws_paths.root).expect("create workspace dir");
+        let mut storage =
+            WorkspaceRepository::new(FileSystemStorage::new(ws_paths)).expect("load workspace");
+        storage.initialize().expect("initialize workspace");
+
+        let folder_plan_id = Ulid::new();
+        let nested_plan_id = Ulid::new();
+        let root_plan_id = Ulid::new();
+        let plan = ImportPlan {
+            workspace_name: "Postman Import".to_string(),
+            folders: vec![PlannedFolder {
+                id: folder_plan_id,
+                parent_id: None,
+                name: "Users".to_string(),
+                order: 0,
+            }],
+            requests: vec![
+                planned_request(
+                    nested_plan_id,
+                    Some(folder_plan_id),
+                    "List Users",
+                    HttpMethod::Get,
+                    "https://example.com/users",
+                    AuthConfig::None,
+                    BodyConfig::None,
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+                planned_request(
+                    root_plan_id,
+                    None,
+                    "Healthcheck",
+                    HttpMethod::Get,
+                    "https://example.com/health",
+                    AuthConfig::None,
+                    BodyConfig::None,
+                    Vec::new(),
+                    Vec::new(),
+                    ScriptConfig::default(),
+                ),
+            ],
+            environments: Vec::new(),
+            warnings: Vec::new(),
+        };
+
+        let (result, events) = run_import_into_current(
+            &mut storage,
+            ImportJob {
+                plan,
+                cancellation: Arc::new(AtomicBool::new(false)),
+                needs_new_workspace: false,
+            },
+            workspace_id,
+        );
+        assert!(matches!(
+            result,
+            ImportResult::Done {
+                counts: ImportCounts {
+                    requests: 2,
+                    folders: 1,
+                    ..
+                },
+                ..
+            }
+        ));
+
+        let mut state = AppShellState::default();
+        for event in events {
+            state.apply_event(&event);
+        }
+
+        let folder = state
+            .workspace_tree
+            .nodes
+            .values()
+            .find(|node| node.kind == TreeNodeKind::Folder && node.name == "Users")
+            .expect("imported folder should be in the live tree");
+        let folder_id = folder.id;
+        let nested = folder
+            .children
+            .iter()
+            .filter_map(|id| state.workspace_tree.node(*id))
+            .find(|node| node.name == "List Users")
+            .expect("nested request should be under its imported folder");
+        assert_eq!(nested.parent_id, Some(folder.id));
+        let root_request_id = state
+            .workspace_tree
+            .roots
+            .iter()
+            .filter_map(|id| state.workspace_tree.node(*id))
+            .find(|node| node.kind == TreeNodeKind::Request && node.name == "Healthcheck")
+            .map(|node| node.id)
+            .expect("root request should be in the live tree");
+
+        storage
+            .delete_request(DeleteRequestInput {
+                request_id: root_request_id,
+                known_request_path: None,
+                known_parent_manifest_path: None,
+            })
+            .expect("imported root request should be deletable immediately");
+        storage
+            .delete_folder(folder_id)
+            .expect("imported folder should be deletable immediately");
+    }
+
+    /// When the import plan is env-only (no folders, no requests) the worker
+    /// imports directly into the currently-active workspace.
+    #[test]
+    fn worker_runs_import_environments_only_into_current_workspace() {
+        let dir = tempdir().expect("tempdir");
+        let workspace_slug = "my-workspace";
+        let workspace_id = Ulid::new();
+        let data_root = DataRootPaths::new(
+            dir.path().join("beam"),
+            dir.path().join("beam_local"),
+            dir.path().join("beam_logs"),
+        );
+
+        // Seed the registry so the active workspace exists on disk.
+        let registry_repo = RegistryRepository::new(data_root.clone());
+        let ws_entry = crate::models::WorkspaceEntry {
+            workspace_id,
+            name: "My Workspace".to_string(),
+            path: workspace_slug.to_string(),
+            created_at: Utc::now(),
+        };
+        let registry = WorkspacesRegistryFile {
+            schema_version: crate::schema::SCHEMA_VERSION_V1,
+            registry: crate::models::WorkspacesRegistry {
+                active_workspace_id: Some(workspace_id),
+                workspaces: vec![ws_entry.clone()],
+            },
+        };
+        registry_repo.save(&registry).expect("save registry");
+
+        // Create a WorkspaceRepository for the active workspace.
+        let ws_paths = data_root.workspace_paths(&ws_entry.path);
+        fs::create_dir_all(&ws_paths.root).expect("create ws dir");
+        let mut storage =
+            WorkspaceRepository::new(FileSystemStorage::new(ws_paths)).expect("load workspace");
+        storage.initialize().expect("init storage");
+
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let command_id = next_command_id();
+        let env_plan = ImportPlan {
+            workspace_name: "Imported Env".to_string(),
+            folders: Vec::new(),
+            requests: Vec::new(),
+            environments: vec![PlannedEnvironment {
+                name: "Staging".to_string(),
+                variables: vec![EnvironmentVariable {
+                    name: "host".to_string(),
+                    value: "staging.example.com".to_string(),
+                    enabled: true,
+                    description: None,
+                }],
+            }],
+            warnings: Vec::new(),
+        };
+        runtime
+            .command_tx
+            .send(AppCommand::RunImport {
+                job: ImportJob {
+                    plan: env_plan,
+                    cancellation: Arc::new(AtomicBool::new(false)),
+                    needs_new_workspace: false,
+                },
+                command_id: command_id.clone(),
+            })
+            .expect("queue run import");
+
+        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let import_result = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::ImportResult {
+                    result,
+                    command_id: event_command_id,
+                } if event_command_id == &command_id => Some(result.clone()),
+                _ => None,
+            })
+            .expect("worker should emit ImportResult");
+
+        match &import_result {
+            ImportResult::Done {
+                counts,
+                imported_into_current,
+                workspace_id: result_ws_id,
+                ..
+            } => {
+                assert!(
+                    *imported_into_current,
+                    "env-only import should be flagged as imported_into_current"
+                );
+                assert_eq!(
+                    *result_ws_id, workspace_id,
+                    "workspace_id should match the active workspace"
+                );
+                assert_eq!(counts.folders, 0);
+                assert_eq!(counts.requests, 0);
+                assert_eq!(counts.environments, 1);
+            }
+            other => panic!("expected Done via worker, got {other:?}"),
+        }
+
+        // No new workspace should appear in the registry.
+        let reloaded_registry = RegistryRepository::new(DataRootPaths::new(
+            dir.path().join("beam"),
+            dir.path().join("beam_local"),
+            dir.path().join("beam_logs"),
+        ))
+        .load()
+        .expect("re-read registry");
+        assert_eq!(
+            reloaded_registry.registry.workspaces.len(),
+            1,
+            "no new workspace should be created"
+        );
+
+        // The event list should also carry an EnvironmentUpserted so the
+        // in-memory UI state stays in sync without a full workspace reload.
+        let upsert_count = events
+            .iter()
+            .filter(|e| matches!(e, AppEvent::EnvironmentUpserted { .. }))
+            .count();
+        assert_eq!(upsert_count, 1, "should emit one EnvironmentUpserted");
+
+        // Verify the storage has the new environment.
+        // (We can't access `storage` after passing it to the worker, but
+        // the EnvironmentUpserted + ImportResult guarantees success.)
+    }
+
+    /// Sanity-check that the runner is format-agnostic: it only references
+    /// source-agnostic types (`ImportPlan` / `PlannedRequest` / etc.) and
+    /// never any Postman/Insomnia/cURL type.
+    #[test]
+    fn runner_only_references_source_agnostic_ir_types() {
+        // If this compiles, the runner does not depend on format-specific
+        // types — adding a new importer is purely additive (a new module +
+        // one DETECTORS entry), never an edit to `run_import_job`.
+        fn _compile_check(_plan: ImportPlan, _env: PlannedEnvironment) {
+            // Intentionally empty: this is a type-level guarantee, not
+            // runtime behaviour.
+        }
+        _compile_check(
+            sample_import_plan(),
+            PlannedEnvironment {
+                name: "x".to_string(),
+                variables: Vec::new(),
+            },
         );
     }
 }

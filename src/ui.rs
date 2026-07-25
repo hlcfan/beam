@@ -2,7 +2,9 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
@@ -34,10 +36,13 @@ use ulid::Ulid;
 
 use crate::app_shell::next_command_id;
 use crate::app_shell::{
-    AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData, StartupMessage,
-    TreeNodeKind,
+    AppCommand, AppEvent, AppShellState, DataSyncRuntime, ImportJob, ImportResult, RequestPaneData,
+    StartupMessage, TreeNodeKind,
 };
 use crate::assets::{Assets, embedded_theme_contents};
+use crate::importers::{
+    CurlPlan, DetectedSource, ImportPlan, is_curl, parse_curl, parser_for, scanner, tag_label,
+};
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, BodyFormatKind, EnvironmentFile, EnvironmentScope,
     EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
@@ -566,6 +571,7 @@ struct BeamView {
     environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     settings_dialog_view: Option<Entity<SettingsDialogView>>,
     key_bindings_dialog_view: Option<Entity<KeyBindingsDialogView>>,
+    import_dialog_view: Option<Entity<ImportDialogView>>,
     request_execution_states: HashMap<Ulid, RequestExecutionState>,
     next_request_run_id: u64,
     app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
@@ -883,6 +889,849 @@ struct EnvironmentManagerDialogView {
     loaded_environment_name: Option<String>,
     pending_new_environment_command_id: Option<String>,
     error: Option<String>,
+}
+
+enum FileState {
+    Waiting,
+    Importing,
+    Done { summary: String },
+    Failed { message: String },
+}
+
+struct FileRow {
+    relative_label: Option<String>,
+    detected: DetectedSource,
+    state: FileState,
+    plan: Option<ImportPlan>,
+    command_id: Option<String>,
+    imported_workspace_id: Option<Ulid>,
+    needs_new_workspace: bool,
+}
+
+struct ImportDialogView {
+    files: HashMap<PathBuf, FileRow>,
+    importing: bool,
+    any_success: bool,
+    all_done: bool,
+    enqueued_count: usize,
+    completed_count: usize,
+    cancellation: Arc<AtomicBool>,
+    show_cancel_confirm: bool,
+    was_cancelled: bool,
+    app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
+}
+
+impl ImportDialogView {
+    fn new(
+        app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            files: HashMap::new(),
+            importing: false,
+            any_success: false,
+            all_done: false,
+            enqueued_count: 0,
+            completed_count: 0,
+            cancellation: Arc::new(AtomicBool::new(false)),
+            show_cancel_confirm: false,
+            was_cancelled: false,
+            app_command_tx,
+        }
+    }
+
+    fn clear_files(&mut self, cx: &mut Context<Self>) {
+        self.files.clear();
+        self.any_success = false;
+        self.all_done = false;
+        self.enqueued_count = 0;
+        self.completed_count = 0;
+        self.show_cancel_confirm = false;
+        self.was_cancelled = false;
+        cx.notify();
+    }
+
+    fn handle_import_result(
+        &mut self,
+        result: ImportResult,
+        command_id: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .files
+            .values()
+            .any(|f| f.command_id.as_deref() == Some(&command_id))
+        {
+            self.completed_count += 1;
+            match result {
+                ImportResult::Done {
+                    summary,
+                    counts: _,
+                    workspace_id,
+                    imported_into_current,
+                } => {
+                    self.any_success = true;
+                    for row in self
+                        .files
+                        .values_mut()
+                        .filter(|f| f.command_id.as_deref() == Some(&command_id))
+                    {
+                        if !imported_into_current {
+                            row.imported_workspace_id = Some(workspace_id);
+                        }
+                        row.state = FileState::Done {
+                            summary: summary.clone(),
+                        };
+                    }
+                }
+                ImportResult::Failed {
+                    message,
+                    partial_workspace_created,
+                } => {
+                    log::error!("import failed: {message}");
+                    let mut msg = message;
+                    if partial_workspace_created {
+                        msg.push_str(
+                            "\nWorkspace created but partially imported — delete it if unwanted.",
+                        );
+                    }
+                    for row in self
+                        .files
+                        .values_mut()
+                        .filter(|f| f.command_id.as_deref() == Some(&command_id))
+                    {
+                        row.state = FileState::Failed {
+                            message: msg.clone(),
+                        };
+                    }
+                }
+                ImportResult::Canceled => {
+                    for row in self
+                        .files
+                        .values_mut()
+                        .filter(|f| f.command_id.as_deref() == Some(&command_id))
+                    {
+                        if matches!(row.state, FileState::Importing) {
+                            row.state = FileState::Failed {
+                                message: "Canceled by user".to_string(),
+                            };
+                        }
+                    }
+                }
+            }
+
+            if self.completed_count >= self.enqueued_count {
+                self.importing = false;
+                self.all_done = true;
+                self.show_cancel_confirm = false;
+                if self.any_success && !self.was_cancelled {
+                    if let Some(first_done) = self
+                        .files
+                        .values()
+                        .find(|f| matches!(f.state, FileState::Done { .. }))
+                    {
+                        if let Some(workspace_id) = first_done.imported_workspace_id {
+                            let _ = self.app_command_tx.send(AppCommand::SwitchWorkspace {
+                                workspace_id,
+                                command_id: next_command_id(),
+                            });
+                        }
+                    }
+                }
+            }
+            cx.notify();
+        }
+    }
+
+    fn process_paths(
+        &mut self,
+        paths: Vec<PathBuf>,
+        folder_root: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let paths: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| {
+                if self.files.contains_key(path) {
+                    return false;
+                }
+                self.files.insert(
+                    path.clone(),
+                    FileRow {
+                        relative_label: folder_root.as_ref().and_then(|root| {
+                            path.strip_prefix(root)
+                                .ok()
+                                .map(|path| path.to_string_lossy().to_string())
+                        }),
+                        detected: DetectedSource::Unknown,
+                        state: FileState::Waiting,
+                        plan: None,
+                        command_id: None,
+                        imported_workspace_id: None,
+                        needs_new_workspace: false,
+                    },
+                );
+                true
+            })
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        let view = cx.entity();
+        cx.spawn_in(window, async move |_, cx| {
+            for path in paths {
+                let relative = folder_root
+                    .as_ref()
+                    .and_then(|root| path.strip_prefix(root).ok().map(|p| p.to_path_buf()));
+                let read_result = cx
+                    .background_executor()
+                    .spawn({
+                        let path = path.clone();
+                        async move { std::fs::read_to_string(&path).ok() }
+                    })
+                    .await;
+                match read_result {
+                    Some(content) => {
+                        let ext_hint = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_string());
+                        let detection =
+                            cx.background_executor()
+                                .spawn({
+                                    let content = content.clone();
+                                    let ext_hint = ext_hint.clone();
+                                    async move {
+                                        crate::importers::detect(&content, ext_hint.as_deref())
+                                    }
+                                })
+                                .await;
+                        if detection == DetectedSource::Unknown {
+                            view.update_in(cx, |this, _, cx| {
+                                this.files.insert(
+                                    path.clone(),
+                                    FileRow {
+                                        relative_label: relative
+                                            .map(|p| p.to_string_lossy().to_string()),
+                                        detected: detection,
+                                        state: FileState::Failed {
+                                            message: "Unknown format".to_string(),
+                                        },
+                                        plan: None,
+                                        command_id: None,
+                                        imported_workspace_id: None,
+                                        needs_new_workspace: false,
+                                    },
+                                );
+                                cx.notify();
+                            })
+                            .ok();
+                            continue;
+                        }
+                        let _parser = parser_for(&detection);
+                        let plan_result = cx
+                            .background_executor()
+                            .spawn({
+                                let content = content.clone();
+                                let detection = detection.clone();
+                                async move {
+                                    if let Some(parser) = parser_for(&detection) {
+                                        // TODO: Insomnia "all data" exports may contain multiple
+                                        // workspace resources. `InsomniaParser::parse` returns
+                                        // only the first one, so split these exports with
+                                        // `list_workspaces`/`for_workspace` before enqueueing.
+                                        parser.parse(&content)
+                                    } else {
+                                        Err(crate::error::BeamError::Validation {
+                                            message: "Uknown format".to_string(),
+                                        })
+                                    }
+                                }
+                            })
+                            .await;
+                        match plan_result {
+                            Ok(plan) => {
+                                let needs_new_workspace =
+                                    crate::importers::content_has_workspace(&content);
+                                log::info!("needs_nwe_workspace: {:?}", needs_new_workspace);
+                                view.update_in(cx, |this, _, cx| {
+                                    this.files.insert(
+                                        path.clone(),
+                                        FileRow {
+                                            relative_label: relative
+                                                .map(|p| p.to_string_lossy().to_string()),
+                                            detected: detection,
+                                            state: FileState::Waiting,
+                                            plan: Some(plan),
+                                            command_id: None,
+                                            imported_workspace_id: None,
+                                            needs_new_workspace,
+                                        },
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                            Err(err) => {
+                                view.update_in(cx, |this, _, cx| {
+                                    this.files.insert(
+                                        path.clone(),
+                                        FileRow {
+                                            relative_label: relative
+                                                .map(|p| p.to_string_lossy().to_string()),
+                                            detected: detection,
+                                            state: FileState::Failed {
+                                                message: err.to_string(),
+                                            },
+                                            plan: None,
+                                            command_id: None,
+                                            imported_workspace_id: None,
+                                            needs_new_workspace: false,
+                                        },
+                                    );
+                                    cx.notify();
+                                })
+                                .ok();
+                            }
+                        }
+                    }
+                    None => {
+                        view.update_in(cx, |this, _, cx| {
+                            this.files.insert(
+                                path.clone(),
+                                FileRow {
+                                    relative_label: relative
+                                        .map(|p| p.to_string_lossy().to_string()),
+                                    detected: DetectedSource::Unknown,
+                                    state: FileState::Failed {
+                                        message: "Could not read file".to_string(),
+                                    },
+                                    plan: None,
+                                    command_id: None,
+                                    imported_workspace_id: None,
+                                    needs_new_workspace: false,
+                                },
+                            );
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_drop_paths(
+        &mut self,
+        paths: ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut file_paths: Vec<PathBuf> = Vec::new();
+        let mut folder_paths: Vec<PathBuf> = Vec::new();
+        for p in paths.0.iter() {
+            if p.is_dir() {
+                folder_paths.push(p.clone());
+            } else if p.is_file() {
+                file_paths.push(p.clone());
+            }
+        }
+        if !file_paths.is_empty() {
+            self.process_paths(file_paths, None, window, cx);
+        }
+        for folder in folder_paths {
+            let view = cx.entity();
+            let root = folder.clone();
+            let root_for_scan = root.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                let scan_result = cx
+                    .background_executor()
+                    .spawn(async move { scanner::scan_folder(&root_for_scan) })
+                    .await;
+                match scan_result {
+                    Ok(scanned_paths) => {
+                        view.update_in(cx, |this, window, cx| {
+                            this.process_paths(scanned_paths, Some(root.clone()), window, cx);
+                        })
+                        .ok();
+                    }
+                    Err(err) => {
+                        view.update_in(cx, |this, _, cx| {
+                            this.files.insert(
+                                root.clone(),
+                                FileRow {
+                                    relative_label: None,
+                                    detected: DetectedSource::Unknown,
+                                    state: FileState::Failed {
+                                        message: format!("Folder scan error: {err:?}"),
+                                    },
+                                    plan: None,
+                                    command_id: None,
+                                    imported_workspace_id: None,
+                                    needs_new_workspace: false,
+                                },
+                            );
+                            cx.notify();
+                        })
+                        .ok();
+                    }
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn render_file_row(
+        &self,
+        path: &PathBuf,
+        row: &FileRow,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let label = if let Some(ref rel) = row.relative_label {
+            rel.to_string()
+        } else {
+            file_name.to_string()
+        };
+        let tag_text = tag_label(&row.detected);
+        let tag = Tag::secondary().small().outline().child(tag_text);
+        let status = match &row.state {
+            FileState::Waiting => h_flex()
+                .items_center()
+                .gap_1()
+                .child(
+                    div()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(cx.theme().muted_foreground),
+                )
+                .child("Waiting")
+                .text_xs()
+                .text_color(cx.theme().muted_foreground),
+            FileState::Importing => div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child("Importing..."),
+            FileState::Done { summary } => {
+                let msg = summary.clone();
+                h_flex().items_center().child(
+                    div()
+                        .id("import-done-icon")
+                        .tooltip(move |window, cx| Tooltip::new(msg.clone()).build(window, cx))
+                        .child(
+                            Icon::default()
+                                .path("icons/check.svg")
+                                .size(px(14.0))
+                                .text_color(cx.theme().success),
+                        ),
+                )
+            }
+            FileState::Failed { message } => {
+                let msg = message.clone();
+                h_flex().items_center().child(
+                    div()
+                        .id("import-fail-icon")
+                        .tooltip(move |window, cx| Tooltip::new(msg.clone()).build(window, cx))
+                        .child(
+                            Icon::default()
+                                .path("icons/info.svg")
+                                .size(px(14.0))
+                                .text_color(cx.theme().muted_foreground),
+                        ),
+                )
+            }
+        };
+        v_flex().w_full().gap_0().child(
+            h_flex()
+                .w_full()
+                .items_center()
+                .justify_between()
+                .py_1()
+                .rounded(px(4.0))
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_2()
+                        .flex_1()
+                        .child(div().text_sm().truncate().child(label)),
+                )
+                .child(h_flex().items_center().gap_2().child(tag).child(status)),
+        )
+    }
+}
+
+impl Render for ImportDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_files = !self.files.is_empty();
+        let view = cx.entity();
+
+        v_flex()
+            .w_full()
+            .px_2()
+            .gap_4()
+            .when(!has_files, |this| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            "Supports Postman collections and environments, and Insomnia exports. Files are imported as one batch: an included Insomnia workspace creates a new workspace; otherwise, everything goes into the active workspace.",
+                        ),
+                )
+                .child({
+                    let _drop_view = view.clone();
+                    div()
+                        .w_full()
+                        .h(px(160.0))
+                        .rounded(px(8.0))
+                        .border_dashed()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .cursor_pointer()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .gap_3()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_this, _: &MouseDownEvent, window, cx| {
+                                let rx = cx.prompt_for_paths(PathPromptOptions {
+                                    files: true,
+                                    directories: true,
+                                    multiple: true,
+                                    prompt: None,
+                                });
+                                let entity = cx.entity();
+                                cx.spawn_in(window, async move |_, cx| {
+                                    let picked = match rx.await {
+                                        Ok(Ok(Some(p))) => p,
+                                        _ => return,
+                                    };
+                                    entity
+                                        .update_in(cx, move |this, window, cx| {
+                                            this.handle_drop_paths(
+                                                ExternalPaths(picked.into()),
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                })
+                                .detach();
+                            }),
+                        )
+                        .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                            style
+                                .bg(cx.theme().accent.opacity(0.08))
+                                .border_color(cx.theme().accent)
+                        })
+                        .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
+                            this.handle_drop_paths(paths.clone(), window, cx);
+                        }))
+                        .child(
+                            Icon::default()
+                                .path("icons/upload.svg")
+                                .size(px(28.0))
+                                .text_color(cx.theme().muted_foreground),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Drag files or folders here, or click to choose."),
+                        )
+                })
+            })
+            .when(has_files, |this| {
+                this.child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!("{} files", self.files.len())),
+                        )
+                        .child({
+                            h_flex()
+                                .text_xs()
+                                .cursor_pointer()
+                                .text_color(cx.theme().muted_foreground)
+                                .when(self.importing, |this| this.opacity(0.4).cursor_default())
+                                .child("Clear")
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, _: &MouseDownEvent, _window, cx| {
+                                        if !this.importing {
+                                            this.clear_files(cx);
+                                        }
+                                    }),
+                                )
+                        }),
+                )
+            })
+            .when(has_files, |this| {
+                let all_failed = self
+                    .files
+                    .values()
+                    .all(|f| matches!(f.state, FileState::Failed { .. }));
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .max_h(px(320.0))
+                        .overflow_y_scrollbar()
+                        .gap_0()
+                        .when(all_failed, |this| {
+                            this.child(
+                                div()
+                                    .w_full()
+                                    .px_2()
+                                    .py_1()
+                                    .mb_1()
+                                    .rounded(px(4.0))
+                                    .bg(cx.theme().danger.opacity(0.08))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(cx.theme().danger)
+                                            .child(
+                                                "No files could be imported. See details below.",
+                                            ),
+                                    ),
+                            )
+                        })
+                        .children({
+                            let mut children = Vec::new();
+                            for (path, row) in &self.files {
+                                children.push(self.render_file_row(path, row, cx));
+                            }
+                            children
+                        }),
+                )
+            })
+            .child({
+                if self.show_cancel_confirm && self.importing {
+                    v_flex()
+                        .w_full()
+                        .gap_3()
+                        .pt_2()
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(
+                                    "An import is in progress. Canceling will stop the \
+                                     current import. Are you sure?",
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child({
+                                    let keep_btn = Button::new("import-dialog-keep-importing")
+                                        .ghost()
+                                        .small()
+                                        .cursor_pointer()
+                                        .label("Keep importing");
+                                    keep_btn.on_click(cx.listener(
+                                        |this, _: &ClickEvent, _window, cx| {
+                                            this.show_cancel_confirm = false;
+                                            cx.notify();
+                                        },
+                                    ))
+                                })
+                                .child(
+                                    Button::new("import-dialog-cancel-import")
+                                        .primary()
+                                        .small()
+                                        .cursor_pointer()
+                                        .label("Cancel import")
+                                        .on_click(cx.listener(
+                                            |this, _: &ClickEvent, _window, cx| {
+                                                this.cancellation.store(true, Ordering::SeqCst);
+                                                this.was_cancelled = true;
+                                                for row in this.files.values_mut() {
+                                                    match row.state {
+                                                        FileState::Importing => {
+                                                            row.state = FileState::Failed {
+                                                                message: "Canceled by user"
+                                                                    .to_string(),
+                                                            };
+                                                        }
+                                                        FileState::Waiting => {
+                                                            row.state = FileState::Failed {
+                                                                message: "Canceled before import"
+                                                                    .to_string(),
+                                                            };
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                this.show_cancel_confirm = false;
+                                                cx.notify();
+                                            },
+                                        )),
+                                ),
+                        )
+                        .into_any_element()
+                } else {
+                    h_flex()
+                        .w_full()
+                        .justify_between()
+                        .pt_2()
+                        .child({
+                            let mut cancel_btn = Button::new("import-dialog-cancel")
+                                .ghost()
+                                .small()
+                                .cursor_pointer()
+                                .label("Cancel");
+                            if self.importing {
+                                cancel_btn = cancel_btn.tooltip("Import in progress");
+                            }
+                            cancel_btn.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                if this.importing {
+                                    this.show_cancel_confirm = true;
+                                    cx.notify();
+                                } else {
+                                    window.close_dialog(cx);
+                                }
+                            }))
+                        })
+                        .child(
+                            Button::new("import-dialog-submit")
+                                .primary()
+                                .small()
+                                .cursor_pointer()
+                                .label(if self.all_done {
+                                    "Done"
+                                } else if self.importing {
+                                    "Importing..."
+                                } else {
+                                    "Import"
+                                })
+                                .disabled(self.files.is_empty() || self.importing)
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                                    if this.all_done {
+                                        _window.close_dialog(cx);
+                                        return;
+                                    }
+                                    if this.importing {
+                                        return;
+                                    }
+                                    let has_waiting = this.files.values().any(|f| {
+                                        f.plan.is_some() && matches!(f.state, FileState::Waiting)
+                                    });
+                                    if !has_waiting {
+                                        return;
+                                    }
+                                    this.cancellation = Arc::new(AtomicBool::new(false));
+                                    this.was_cancelled = false;
+                                    this.show_cancel_confirm = false;
+                                    let workspace_count = this
+                                        .files
+                                        .values()
+                                        .filter(|row| {
+                                            row.plan.is_some()
+                                                && matches!(row.state, FileState::Waiting)
+                                                && row.needs_new_workspace
+                                        })
+                                        .count();
+                                    let has_separate_environment = this.files.values().any(|row| {
+                                        row.plan.is_some()
+                                            && matches!(row.state, FileState::Waiting)
+                                            && matches!(
+                                                row.detected,
+                                                DetectedSource::PostmanEnvironment
+                                            )
+                                    });
+                                    if workspace_count > 1 && has_separate_environment {
+                                        for row in this.files.values_mut() {
+                                            if row.plan.is_some()
+                                                && matches!(row.state, FileState::Waiting)
+                                            {
+                                                row.state = FileState::Failed {
+                                                    message: "An import batch with multiple workspaces cannot include separate environment files"
+                                                        .to_string(),
+                                                };
+                                            }
+                                        }
+                                        this.all_done = true;
+                                        cx.notify();
+                                        return;
+                                    }
+
+                                    let mut queued_plans = this
+                                        .files
+                                        .iter()
+                                        .filter(|row| {
+                                            row.1.plan.is_some()
+                                                && matches!(row.1.state, FileState::Waiting)
+                                        })
+                                        .filter_map(|(path, row)| {
+                                            row.plan
+                                                .clone()
+                                                .map(|plan| {
+                                                    (
+                                                        path.clone(),
+                                                        plan,
+                                                        row.needs_new_workspace,
+                                                    )
+                                                })
+                                        })
+                                        .collect::<Vec<_>>();
+                                    queued_plans.sort_by(|a, b| a.0.cmp(&b.0));
+                                    let Some((batch_plan, needs_new_workspace)) =
+                                        crate::importers::merge_file_plans(
+                                            queued_plans
+                                                .into_iter()
+                                                .map(|(_, plan, needs_workspace)| {
+                                                    (plan, needs_workspace)
+                                                })
+                                                .collect(),
+                                        )
+                                    else {
+                                        return;
+                                    };
+
+                                    let command_id = next_command_id();
+                                    let job = ImportJob {
+                                        plan: batch_plan,
+                                        cancellation: this.cancellation.clone(),
+                                        needs_new_workspace,
+                                    };
+                                    let _ = this.app_command_tx.send(AppCommand::RunImport {
+                                        job,
+                                        command_id: command_id.clone(),
+                                    });
+                                    for row in this.files.values_mut() {
+                                        if row.plan.is_some()
+                                            && matches!(row.state, FileState::Waiting)
+                                        {
+                                            row.state = FileState::Importing;
+                                            row.command_id = Some(command_id.clone());
+                                        }
+                                    }
+                                    this.enqueued_count = 1;
+                                    this.completed_count = 0;
+                                    this.importing = true;
+                                    cx.notify();
+                                })),
+                        )
+                        .into_any_element()
+                }
+            })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2965,6 +3814,29 @@ impl BeamView {
         cx.notify();
     }
 
+    fn open_import_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let import_view =
+            cx.new(|cx| ImportDialogView::new(self.app_command_tx.clone(), _window, cx));
+        self.import_dialog_view = Some(import_view.clone());
+        cx.defer(move |cx| {
+            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
+                let _ = root_window.update(cx, |_, window, cx| {
+                    window.defer(cx, move |window, cx| {
+                        window.open_dialog(cx, move |dialog, _, _| {
+                            dialog
+                                .title("Import requests")
+                                .w(px(640.0))
+                                .child(import_view.clone())
+                                .keyboard(false)
+                                .overlay_closable(false)
+                        });
+                    });
+                });
+            }
+        });
+        cx.notify();
+    }
+
     fn open_key_bindings_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.new(|_cx| KeyBindingsDialogView);
         self.key_bindings_dialog_view = Some(view.clone());
@@ -4427,7 +5299,12 @@ impl BeamView {
     /// Tells the user why a drop was rejected when the destination folder
     /// already contains an item with the same name. Called instead of
     /// silently no-op'ing the drop.
-    fn notify_tree_move_name_conflict(&self, moving_id: Ulid, window: &mut Window, cx: &mut Context<Self>) {
+    fn notify_tree_move_name_conflict(
+        &self,
+        moving_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(node) = self.shell.workspace_tree.node(moving_id) else {
             return;
         };
@@ -4559,7 +5436,11 @@ impl BeamView {
         };
         self.request_move_destination_viable(request_id, destination_parent_id, insertion_index)
             && self
-                .request_move_action_for_destination(request_id, destination_parent_id, insertion_index)
+                .request_move_action_for_destination(
+                    request_id,
+                    destination_parent_id,
+                    insertion_index,
+                )
                 .is_none()
     }
 
@@ -4607,7 +5488,11 @@ impl BeamView {
             return None;
         }
         if check_name_conflict
-            && self.has_name_conflict_in_scope(destination_parent_id, request_id, &request_node.name)
+            && self.has_name_conflict_in_scope(
+                destination_parent_id,
+                request_id,
+                &request_node.name,
+            )
         {
             return None;
         }
@@ -4726,7 +5611,11 @@ impl BeamView {
         };
         self.folder_move_destination_viable(folder_id, destination_parent_id, insertion_index)
             && self
-                .folder_move_action_for_destination(folder_id, destination_parent_id, insertion_index)
+                .folder_move_action_for_destination(
+                    folder_id,
+                    destination_parent_id,
+                    insertion_index,
+                )
                 .is_none()
     }
 
@@ -4809,13 +5698,21 @@ impl BeamView {
             return self
                 .request_move_action(dragged.request_id, target_id, placement)
                 .is_some()
-                || self.request_move_blocked_by_name_conflict(dragged.request_id, target_id, placement);
+                || self.request_move_blocked_by_name_conflict(
+                    dragged.request_id,
+                    target_id,
+                    placement,
+                );
         }
         if let Some(dragged) = dragged_value.downcast_ref::<DraggedFolder>() {
             return self
                 .folder_move_action(dragged.folder_id, target_id, placement)
                 .is_some()
-                || self.folder_move_blocked_by_name_conflict(dragged.folder_id, target_id, placement);
+                || self.folder_move_blocked_by_name_conflict(
+                    dragged.folder_id,
+                    target_id,
+                    placement,
+                );
         }
         false
     }
@@ -4887,24 +5784,40 @@ impl BeamView {
     /// Slot-based counterpart to [`Self::request_move_blocked_by_name_conflict`],
     /// used when the drop lands on a between-items slot (e.g. an expanded
     /// folder's "insert as first/last child" affordance) instead of a row body.
-    fn request_move_slot_blocked_by_name_conflict(&self, request_id: Ulid, slot: &TreeDropSlot) -> bool {
+    fn request_move_slot_blocked_by_name_conflict(
+        &self,
+        request_id: Ulid,
+        slot: &TreeDropSlot,
+    ) -> bool {
         let Some((destination_parent_id, insertion_index)) = self.slot_to_destination(slot) else {
             return false;
         };
         self.request_move_destination_viable(request_id, destination_parent_id, insertion_index)
             && self
-                .request_move_action_for_destination(request_id, destination_parent_id, insertion_index)
+                .request_move_action_for_destination(
+                    request_id,
+                    destination_parent_id,
+                    insertion_index,
+                )
                 .is_none()
     }
 
     /// Slot-based counterpart to [`Self::folder_move_blocked_by_name_conflict`].
-    fn folder_move_slot_blocked_by_name_conflict(&self, folder_id: Ulid, slot: &TreeDropSlot) -> bool {
+    fn folder_move_slot_blocked_by_name_conflict(
+        &self,
+        folder_id: Ulid,
+        slot: &TreeDropSlot,
+    ) -> bool {
         let Some((destination_parent_id, insertion_index)) = self.slot_to_destination(slot) else {
             return false;
         };
         self.folder_move_destination_viable(folder_id, destination_parent_id, insertion_index)
             && self
-                .folder_move_action_for_destination(folder_id, destination_parent_id, insertion_index)
+                .folder_move_action_for_destination(
+                    folder_id,
+                    destination_parent_id,
+                    insertion_index,
+                )
                 .is_none()
     }
 
@@ -5251,7 +6164,6 @@ impl BeamView {
         let preferred_selected_request_id = self.shell.workspace_tree.selected_request_id();
         self.perform_tree_move_action(action, preferred_selected_request_id, None, window, cx);
     }
-
 
     fn render_tree_drop_slot(&self, slot: &TreeDropSlot, cx: &mut Context<Self>) -> AnyElement {
         let depth_inset = tree_depth_inset(slot.depth);
@@ -5633,6 +6545,7 @@ impl BeamView {
                 AppEvent::RequestUpserted {
                     request,
                     command_id,
+                    ..
                 } => {
                     if let Some(path) = request.file_path.clone() {
                         self.request_file_index
@@ -5834,6 +6747,13 @@ impl BeamView {
                             format!("Workspace \"{workspace_name}\" deleted."),
                             cx,
                         );
+                    }
+                }
+                AppEvent::ImportResult { result, command_id } => {
+                    if let Some(ref import_dialog) = self.import_dialog_view {
+                        import_dialog.update(cx, |dialog, cx| {
+                            dialog.handle_import_result(result.clone(), command_id.clone(), cx);
+                        });
                     }
                 }
                 _ => self.shell.apply_event(&event),
@@ -6715,6 +7635,7 @@ impl BeamView {
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
             key_bindings_dialog_view: None,
+            import_dialog_view: None,
             request_execution_states: HashMap::new(),
             next_request_run_id: 1,
             current_workspace_paths: workspace_paths,
@@ -6862,7 +7783,7 @@ impl BeamView {
                 let request_id = completion.request_id;
                 let run_id = completion.run_id;
                 let maybe_outcome = completion.outcome;
-                // Phase 2 assumption: only the latest run for this request is allowed to mutate
+                // only the latest run for this request is allowed to mutate
                 // request-local execution state, so stale completions are dropped by run-id check.
 
                 if !request_run_completion_is_current(
@@ -7707,6 +8628,58 @@ impl BeamView {
         })
     }
 
+    fn apply_curl_plan(request: &mut RequestAuthoringState, plan: CurlPlan) {
+        request.method = plan.method;
+        request.url = plan.url;
+        request.headers = plan.headers;
+        request.query_params = plan.query;
+        request.body = plan.body;
+        request.auth = plan.auth;
+        request.ensure_trailing_empty_row();
+    }
+
+    fn import_curl_from_url_input(
+        &mut self,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !is_curl(value) {
+            return false;
+        }
+
+        let plan = match parse_curl(value) {
+            Ok(plan) => plan,
+            Err(error) => {
+                window.push_notification(format!("Could not parse cURL command: {error}"), cx);
+                return true;
+            }
+        };
+
+        Self::apply_curl_plan(&mut self.request, plan);
+        self.rebuild_request_param_inputs(window, cx);
+        self.rebuild_request_header_inputs(window, cx);
+        self.sync_request_auth_inputs(window, cx);
+
+        let url = self.request.url.clone();
+        self.url_input.update(cx, |input, cx| {
+            input.set_value(url, window, cx);
+            input.focus(window, cx);
+        });
+
+        let body_language = Self::body_editor_language(&self.request.body);
+        let body_text = Self::body_editor_text(&self.request.body);
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_highlighter(body_language, cx);
+            input.set_value(body_text, window, cx);
+        });
+
+        self.show_invalid_url_border = false;
+        self.schedule_request_save(cx);
+        cx.notify();
+        true
+    }
+
     fn resubscribe_request_url_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.url_input.clone();
         self.request_url_editor_change_sub = Some(cx.subscribe_in(
@@ -7714,13 +8687,21 @@ impl BeamView {
             window,
             move |this, _, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Change => {
-                    this.request.url = this.url_input.read(cx).value().to_string();
+                    let value = this.url_input.read(cx).value().to_string();
+                    if this.import_curl_from_url_input(&value, window, cx) {
+                        return;
+                    }
+                    this.request.url = value;
                     this.show_invalid_url_border = false;
                     this.schedule_request_save(cx);
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => {
-                    this.request.url = this.url_input.read(cx).value().to_string();
+                    let value = this.url_input.read(cx).value().to_string();
+                    if this.import_curl_from_url_input(&value, window, cx) {
+                        return;
+                    }
+                    this.request.url = value;
                     this.schedule_request_save(cx);
                     this.handle_send_or_cancel_action(window, cx);
                     cx.notify();
@@ -10142,6 +11123,7 @@ impl BeamView {
             .w_full()
             .gap_0()
             .rounded(px(8.0))
+            .border_dashed()
             .border_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().background)
@@ -10766,6 +11748,36 @@ impl BeamView {
                             .child("Settings"),
                     ),
             )
+            .child({
+                let is_importing = self
+                    .import_dialog_view
+                    .as_ref()
+                    .map_or(false, |v| v.read(cx).importing);
+                Button::new("status-bar-import-modal")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .ml_1()
+                    .h(px(22.0))
+                    .px_1()
+                    .rounded(px(6.0))
+                    .disabled(is_importing)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_import_dialog(window, cx);
+                    }))
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Icon::default()
+                                    .path("icons/import.svg")
+                                    .size(px(14.0))
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child("Import"),
+                    )
+            })
             .child(div().flex_1())
             .child(
                 Button::new("status-bar-key-bindings-modal")
@@ -11472,7 +12484,8 @@ mod tests {
         request_run_completion_is_current, response_summary_for_selected_request,
         send_button_state_for_selected_request,
     };
-    use crate::models::BodyConfig;
+    use crate::importers::parse_curl;
+    use crate::models::{AuthConfig, BodyConfig, HttpMethod};
     use crate::paths::BeamPaths;
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
 
@@ -11481,6 +12494,54 @@ mod tests {
             url: "https://example.com".to_string(),
             ..RequestAuthoringState::default()
         }
+    }
+
+    #[test]
+    fn apply_curl_plan_replaces_current_request_authoring_fields() {
+        let mut request = RequestAuthoringState {
+            method: HttpMethod::Delete,
+            url: "https://old.example.com".to_string(),
+            ..RequestAuthoringState::default()
+        };
+        let plan = parse_curl(
+            r#"curl -X POST -u user:pass -H 'X-Test: yes' -H 'Content-Type: application/json' -d '{"ok":true}' https://new.example.com/items"#,
+        )
+        .unwrap();
+
+        BeamView::apply_curl_plan(&mut request, plan);
+
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.url, "https://new.example.com/items");
+        assert_eq!(
+            request.auth,
+            AuthConfig::Basic {
+                username: Some("user".to_string()),
+                password: Some("pass".to_string()),
+            }
+        );
+        assert!(
+            request.headers.iter().any(|header| {
+                header.name == "X-Test" && header.value == "yes" && header.enabled
+            })
+        );
+        assert_eq!(
+            request.body,
+            BodyConfig::Json {
+                text: r#"{"ok":true}"#.to_string(),
+            }
+        );
+        assert!(
+            request
+                .headers
+                .last()
+                .is_some_and(|header| { header.name.is_empty() && header.value.is_empty() })
+        );
+        assert!(
+            request
+                .query_params
+                .last()
+                .is_some_and(|param| { param.name.is_empty() && param.value.is_empty() })
+        );
     }
 
     #[test]

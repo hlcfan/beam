@@ -1,4 +1,7 @@
-#![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
 
 use beam::app_shell::{StartupLoad, start_data_sync_worker, startup_preload};
 use beam::logger::init_logging;

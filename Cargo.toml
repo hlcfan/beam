@@ -12,6 +12,7 @@ gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", 
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "1d217ee39d381ac101b7cf49d3d22451ac1093fe", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 thiserror = "2.0"
 toml = "0.8"
 ulid = { version = "1.2", features = ["serde"] }
