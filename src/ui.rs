@@ -11757,6 +11757,7 @@ impl BeamView {
                     .small()
                     .ghost()
                     .cursor_pointer()
+                    .ml_1()
                     .h(px(22.0))
                     .px_1()
                     .rounded(px(6.0))
