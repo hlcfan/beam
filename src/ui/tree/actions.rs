@@ -10,7 +10,7 @@ impl BeamView {
         self.persist_current_response_scroll_offset(cx);
         self.pending_response_scroll_offset_persistence_due_at = None;
         self.shell.workspace_tree.select_request(request_id);
-        self.request_view_history.visit(request_id);
+        self.request_view_histories.visit(request_id);
         self.sync_request_editor_from_selection(window, cx);
     }
 
@@ -66,17 +66,17 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let next_id = match direction {
-            RequestViewHistoryDirection::Prev => self.request_view_history.go_back(),
-            RequestViewHistoryDirection::Next => self.request_view_history.go_forward(),
+        let request_id = match direction {
+            RequestViewHistoryDirection::Prev => self.request_view_histories.go_back(),
+            RequestViewHistoryDirection::Next => self.request_view_histories.go_forward(),
         };
-        let Some(next_id) = next_id else {
+        let Some(request_id) = request_id else {
             return;
         };
-        if Some(next_id) == self.shell.workspace_tree.selected_request_id() {
+        if Some(request_id) == self.shell.workspace_tree.selected_request_id() {
             return;
         }
-        self.select_request(next_id, window, cx);
+        self.select_request(request_id, window, cx);
         self.commit_request_selection(window, cx);
     }
 
@@ -145,8 +145,10 @@ impl BeamView {
     /// already has selected at startup, so the very first `cmd-alt-down` / `cmd-alt-up`
     /// keypress has a meaningful anchor to step from.
     pub(in crate::ui) fn seed_request_view_history(&mut self) {
+        self.request_view_histories
+            .set_active_workspace(self.shell.workspace.workspace_id);
         if let Some(request_id) = self.shell.workspace_tree.selected_request_id() {
-            self.request_view_history.visit(request_id);
+            self.request_view_histories.visit(request_id);
         }
     }
 

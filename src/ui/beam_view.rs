@@ -64,8 +64,8 @@ pub(super) struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     pub(super) env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
-    /// In-memory sequence of requests the user has selected. Cleared on workspace switch.
-    pub(super) request_view_history: RequestViewHistory,
+    /// In-memory sequence of requests the user has selected across all workspaces.
+    pub(super) request_view_histories: WorkspaceRequestViewHistories,
     pub(super) request_body_editor_cache: HashMap<Ulid, Entity<InputState>>,
     pub(super) request_body_editor_cache_order: Vec<Ulid>,
     pub(super) request_body_editor_change_sub: Option<Subscription>,
@@ -228,7 +228,7 @@ impl BeamView {
             tree_drag_scroll_task: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
-            request_view_history: RequestViewHistory::default(),
+            request_view_histories: WorkspaceRequestViewHistories::default(),
             request_body_editor_cache: HashMap::new(),
             request_body_editor_cache_order: Vec::new(),
             request_body_editor_change_sub: None,
