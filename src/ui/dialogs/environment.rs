@@ -590,7 +590,7 @@ impl Render for EnvironmentManagerDialogView {
                     .w_full()
                     .context_menu({
                         move |menu, _, cx| {
-                            BeamView::build_text_edit_context_menu(
+                            build_text_edit_context_menu(
                                 menu,
                                 environment_name_has_selection,
                                 cx.theme().muted_foreground,
@@ -674,7 +674,7 @@ impl Render for EnvironmentManagerDialogView {
                                 .appearance(false)
                                 .context_menu({
                                     move |menu, _, cx| {
-                                        BeamView::build_text_edit_context_menu(
+                                        build_text_edit_context_menu(
                                             menu,
                                             key_has_selection,
                                             cx.theme().muted_foreground,
@@ -691,7 +691,7 @@ impl Render for EnvironmentManagerDialogView {
                                 .appearance(false)
                                 .context_menu({
                                     move |menu, _, cx| {
-                                        BeamView::build_text_edit_context_menu(
+                                        build_text_edit_context_menu(
                                             menu,
                                             value_has_selection,
                                             cx.theme().muted_foreground,

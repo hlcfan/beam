@@ -1,10 +1,20 @@
+mod actions;
 mod dialogs;
+mod text_edit_menu;
+mod theme;
+
+use actions::*;
 
 use dialogs::{
     EnvironmentManagerDialogView, ImportDialogView, KeyBindingsDialogView, SettingsDialogView,
     TreeNodeDeleteDialogView, TreeRenameDialogView, WorkspaceDeleteDialogView, WorkspaceDialogMode,
     WorkspaceNameDialogView,
 };
+use text_edit_menu::{
+    append_with_image_or_plain, build_text_edit_context_menu,
+    build_text_edit_context_menu_with_find,
+};
+use theme::init_theme_registry;
 
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
@@ -21,11 +31,11 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
-    ThemeMode, ThemeRegistry, TitleBar, VirtualListScrollHandle, WindowExt as _,
+    ThemeRegistry, TitleBar, VirtualListScrollHandle, WindowExt as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
     hover_card::HoverCard,
-    input::{self, Input, InputEvent, InputState, Position, TabSize},
+    input::{Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
     menu::{DropdownMenu as _, PopupMenuItem},
     native_menu::NativeMenu,
@@ -47,7 +57,7 @@ use crate::app_shell::{
     AppCommand, AppEvent, AppShellState, DataSyncRuntime, ImportJob, ImportResult, RequestPaneData,
     StartupMessage, TreeNodeKind,
 };
-use crate::assets::{Assets, embedded_theme_contents};
+use crate::assets::Assets;
 use crate::importers::{
     CurlPlan, DetectedSource, ImportPlan, is_curl, parse_curl, parser_for, scanner, tag_label,
 };
@@ -77,157 +87,6 @@ use crate::tree_dnd::{
     SLOT_RIGHT_PAD_PX, TREE_ROW_HEIGHT_PX, TreeDropPlacement, TreeDropSlot, TreeRenderItem,
     TreeRowViewModel, build_tree_render_items, tree_depth_inset,
 };
-
-actions!(
-    beam,
-    [
-        QuitApp,
-        SendActiveRequest,
-        CreateRequestBelowActive,
-        FocusUrlInput,
-        OpenSettings,
-        SelectNextRequestInTree,
-        SelectPrevRequestInTree,
-        SelectNextRequestInViewHistory,
-        SelectPrevRequestInViewHistory,
-        FormatRequestBody,
-        FormatResponseBody,
-        DuplicateActiveRequest,
-        RenameActiveRequest
-    ]
-);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct SwitchTheme(pub SharedString);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct SwitchThemeMode(pub ThemeMode);
-
-actions!(beam, [TreeMenuAddRequestAtRoot, TreeMenuAddFolderAtRoot]);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuSendRequest(Ulid);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuCopyAsCurl(Ulid);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuAddRequestInFolder(Ulid);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuAddFolderInFolder(Ulid);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuRename(Ulid);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuDelete(Ulid);
-
-#[derive(Action, Clone, PartialEq)]
-#[action(namespace = beam, no_json)]
-struct TreeMenuDuplicateRequest(Ulid);
-
-#[cfg(target_os = "macos")]
-fn build_macos_theme_menu(cx: &App) -> MenuItem {
-    let themes = ThemeRegistry::global(cx).sorted_themes();
-    let active_theme_name = cx.theme().theme_name().clone();
-    MenuItem::Submenu(Menu {
-        name: "Theme".into(),
-        items: themes
-            .iter()
-            .map(|theme| {
-                MenuItem::action(theme.name.clone(), SwitchTheme(theme.name.clone()))
-                    .checked(theme.name == active_theme_name)
-            })
-            .collect(),
-        disabled: false,
-    })
-}
-
-#[cfg(target_os = "macos")]
-fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
-    vec![
-        Menu {
-            name: "Beam".into(),
-            items: vec![
-                MenuItem::action("Settings", OpenSettings),
-                MenuItem::separator(),
-                MenuItem::Submenu(Menu {
-                    name: "Appearance".into(),
-                    items: vec![
-                        MenuItem::action("Light", SwitchThemeMode(ThemeMode::Light))
-                            .checked(!cx.theme().mode.is_dark()),
-                        MenuItem::action("Dark", SwitchThemeMode(ThemeMode::Dark))
-                            .checked(cx.theme().mode.is_dark()),
-                    ],
-                    disabled: false,
-                }),
-                build_macos_theme_menu(cx),
-                MenuItem::separator(),
-                MenuItem::action("Quit Beam", QuitApp),
-            ],
-            disabled: false,
-        },
-        Menu {
-            name: "File".into(),
-            items: vec![
-                MenuItem::action("New Request", CreateRequestBelowActive),
-                MenuItem::separator(),
-                MenuItem::action("Duplicate Request", DuplicateActiveRequest),
-                MenuItem::action("Rename Request", RenameActiveRequest),
-                MenuItem::separator(),
-                MenuItem::action("Focus URL", FocusUrlInput),
-            ],
-            disabled: false,
-        },
-        Menu {
-            name: "Edit".into(),
-            items: vec![
-                MenuItem::action("Undo", gpui_component::input::Undo),
-                MenuItem::action("Redo", gpui_component::input::Redo),
-                MenuItem::separator(),
-                MenuItem::action("Cut", gpui_component::input::Cut),
-                MenuItem::action("Copy", gpui_component::input::Copy),
-                MenuItem::action("Paste", gpui_component::input::Paste),
-                MenuItem::separator(),
-                MenuItem::action("Select All", gpui_component::input::SelectAll),
-            ],
-            disabled: false,
-        },
-        Menu {
-            name: "View".into(),
-            items: vec![MenuItem::action("Focus URL", FocusUrlInput)],
-            disabled: false,
-        },
-    ]
-}
-
-#[cfg(not(target_family = "wasm"))]
-fn init_theme_registry(
-    preferred_theme_name: Option<SharedString>,
-    preferred_font_size: AppFontSize,
-    cx: &mut App,
-) {
-    let registry = ThemeRegistry::global_mut(cx);
-    for (theme_path, content) in embedded_theme_contents() {
-        if let Err(error) = registry.load_themes_from_str(&content) {
-            log::error!("Failed to preload theme file {theme_path}: {error}");
-        }
-    }
-
-    if let Some(theme_name) = preferred_theme_name.as_ref() {
-        let _ = BeamView::apply_named_theme_by_name(theme_name.as_ref(), cx, false);
-    }
-    BeamView::apply_font_size(preferred_font_size, cx);
-}
 
 pub fn run_app(
     state: AppShellState,
@@ -922,21 +781,6 @@ struct StoredResponseSnapshot {
     content_type: Option<String>,
 }
 
-/// Append a context-menu item to a [`NativeMenu`], preferring an icon variant.
-///
-/// `icon_path` is the asset-source relative path (e.g. `"icons/cut.svg"`).
-/// The icon is resolved via the registered [`AssetSource`]; the item is
-/// added with `menu_with_icon_disabled` (preserving the `disabled` state).
-fn append_with_image_or_plain(
-    menu: NativeMenu,
-    label: &str,
-    icon_path: &str,
-    disabled: bool,
-    action: Box<dyn gpui::Action>,
-) -> NativeMenu {
-    menu.menu_with_icon_disabled(label, Icon::default().path(icon_path), disabled, action)
-}
-
 enum BodyFormatHint<'a> {
     FromConfig(&'a BodyConfig),
     FromContentType(Option<&'a str>),
@@ -1138,96 +982,6 @@ impl BeamView {
                 .size(px(520.0))
                 .child(sheet_view.clone())
         });
-    }
-
-    fn apply_theme_mode(mode: ThemeMode, cx: &mut App) {
-        let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
-        Theme::change(mode, None, cx);
-        Self::apply_font_size(active_font_size, cx);
-        #[cfg(target_os = "macos")]
-        cx.set_menus(build_macos_system_menus(cx));
-        if let Err(error) = Self::persist_theme_state_from_app(cx) {
-            log::error!("{error}");
-        }
-    }
-
-    fn apply_named_theme(theme_name: SharedString, cx: &mut App) {
-        if Self::apply_named_theme_by_name(theme_name.as_ref(), cx, true) {
-            return;
-        }
-    }
-
-    fn apply_font_size(font_size: AppFontSize, cx: &mut App) {
-        let theme = Theme::global_mut(cx);
-        theme.font_size = px(font_size.pixels());
-        theme.mono_font_size = px(font_size.mono_pixels());
-        cx.refresh_windows();
-    }
-
-    fn apply_font_size_setting(
-        &mut self,
-        font_size: AppFontSize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        Self::apply_font_size(font_size, cx);
-        self.shell.theme.font_size = font_size;
-        if let Err(error) = self.persist_font_size_state(font_size) {
-            window.push_notification(error, cx);
-        }
-        cx.notify();
-    }
-
-    fn apply_auto_format_response_setting(
-        &mut self,
-        auto_format_response: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.shell.theme.auto_format_response = auto_format_response;
-        if let Err(error) = self.persist_auto_format_response_state(auto_format_response) {
-            window.push_notification(error, cx);
-        }
-        cx.notify();
-    }
-
-    fn apply_wrap_body_editor_setting(
-        &mut self,
-        wrap_body_editor: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.shell.theme.wrap_body_editor = wrap_body_editor;
-        self.request_body_editor.update(cx, |input, cx| {
-            input.set_soft_wrap(wrap_body_editor, window, cx);
-        });
-        self.response_body_editor.update(cx, |input, cx| {
-            input.set_soft_wrap(wrap_body_editor, window, cx);
-        });
-        if let Err(error) = self.persist_wrap_body_editor_state(wrap_body_editor) {
-            window.push_notification(error, cx);
-        }
-        cx.notify();
-    }
-
-    fn apply_named_theme_by_name(theme_name: &str, cx: &mut App, persist: bool) -> bool {
-        let stored_theme_name: SharedString = theme_name.to_string().into();
-        let theme_config = ThemeRegistry::global(cx)
-            .themes()
-            .get(&stored_theme_name)
-            .cloned();
-        if let Some(theme_config) = theme_config {
-            Theme::global_mut(cx).apply_config(&theme_config);
-            #[cfg(target_os = "macos")]
-            cx.set_menus(build_macos_system_menus(cx));
-            if persist {
-                if let Err(error) = Self::persist_theme_state_from_app(cx) {
-                    log::error!("{error}");
-                }
-            }
-            return true;
-        }
-        false
     }
 
     fn open_settings_dialog(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -3866,44 +3620,6 @@ impl BeamView {
         local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
-            .map_err(|error| format!("Failed to save local state: {error}"))
-    }
-
-    fn persist_font_size_state(&self, font_size: AppFontSize) -> Result<(), String> {
-        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
-        let storage = WorkspaceRepository::new(backend)
-            .map_err(|error| format!("Failed to load workspace: {error}"))?;
-        storage
-            .persist_font_size_state(font_size)
-            .map_err(|error| format!("Failed to save local state: {error}"))
-    }
-
-    fn persist_auto_format_response_state(&self, auto_format_response: bool) -> Result<(), String> {
-        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
-        let storage = WorkspaceRepository::new(backend)
-            .map_err(|error| format!("Failed to load workspace: {error}"))?;
-        storage
-            .persist_auto_format_response_state(auto_format_response)
-            .map_err(|error| format!("Failed to save local state: {error}"))
-    }
-
-    fn persist_wrap_body_editor_state(&self, wrap_body_editor: bool) -> Result<(), String> {
-        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
-        let storage = WorkspaceRepository::new(backend)
-            .map_err(|error| format!("Failed to load workspace: {error}"))?;
-        storage
-            .persist_wrap_body_editor_state(wrap_body_editor)
-            .map_err(|error| format!("Failed to save local state: {error}"))
-    }
-
-    fn persist_theme_state_from_app(cx: &App) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let backend = FileSystemStorage::new(paths);
-        let storage = WorkspaceRepository::new(backend)
-            .map_err(|error| format!("Failed to load workspace: {error}"))?;
-        let active_theme_name = cx.theme().theme_name().to_string();
-        storage
-            .persist_theme_state(active_theme_name.as_str())
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 
@@ -7094,7 +6810,7 @@ impl BeamView {
                                             .appearance(false)
                                             .context_menu({
                                                 move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
+                                                    build_text_edit_context_menu(
                                                         menu,
                                                         url_has_selection,
                                                         cx.theme().muted_foreground,
@@ -7474,58 +7190,6 @@ impl BeamView {
         tabs
     }
 
-    fn build_text_edit_context_menu(
-        menu: NativeMenu,
-        has_selection: bool,
-        _muted_color: Hsla,
-    ) -> NativeMenu {
-        let menu = append_with_image_or_plain(
-            menu,
-            "Cut",
-            "icons/cut.svg",
-            !has_selection,
-            Box::new(input::Cut),
-        );
-        let menu = append_with_image_or_plain(
-            menu,
-            "Copy",
-            "icons/copy.svg",
-            !has_selection,
-            Box::new(input::Copy),
-        );
-        let menu = append_with_image_or_plain(
-            menu,
-            "Paste",
-            "icons/clipboard-paste.svg",
-            false,
-            Box::new(input::Paste),
-        );
-        let menu = menu.separator();
-        append_with_image_or_plain(
-            menu,
-            "Select All",
-            "icons/square-dashed-text.svg",
-            false,
-            Box::new(input::SelectAll),
-        )
-    }
-
-    fn build_text_edit_context_menu_with_find(
-        menu: NativeMenu,
-        has_selection: bool,
-        muted_color: Hsla,
-    ) -> NativeMenu {
-        let menu = append_with_image_or_plain(
-            menu,
-            "Find",
-            "icons/search.svg",
-            false,
-            Box::new(input::Search),
-        )
-        .separator();
-        Self::build_text_edit_context_menu(menu, has_selection, muted_color)
-    }
-
     fn render_request_editor_surface(
         &self,
         window: &mut Window,
@@ -7595,7 +7259,7 @@ impl BeamView {
                                             Box::new(FormatRequestBody),
                                         )
                                         .separator();
-                                    Self::build_text_edit_context_menu_with_find(
+                                    build_text_edit_context_menu_with_find(
                                         menu,
                                         request_body_has_selection,
                                         muted_foreground,
@@ -7670,7 +7334,7 @@ impl BeamView {
                                             .appearance(false)
                                             .context_menu({
                                                 move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
+                                                    build_text_edit_context_menu(
                                                         menu,
                                                         key_has_selection,
                                                         cx.theme().muted_foreground,
@@ -7705,7 +7369,7 @@ impl BeamView {
                                             .appearance(false)
                                             .context_menu({
                                                 move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
+                                                    build_text_edit_context_menu(
                                                         menu,
                                                         value_has_selection,
                                                         cx.theme().muted_foreground,
@@ -7799,7 +7463,7 @@ impl BeamView {
                                             .appearance(false)
                                             .context_menu({
                                                 move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
+                                                    build_text_edit_context_menu(
                                                         menu,
                                                         key_has_selection,
                                                         cx.theme().muted_foreground,
@@ -7834,7 +7498,7 @@ impl BeamView {
                                             .appearance(false)
                                             .context_menu({
                                                 move |menu, _, cx| {
-                                                    Self::build_text_edit_context_menu(
+                                                    build_text_edit_context_menu(
                                                         menu,
                                                         value_has_selection,
                                                         cx.theme().muted_foreground,
@@ -8023,7 +7687,7 @@ impl BeamView {
                                                 .w_full()
                                                 .context_menu({
                                                     move |menu, _, cx| {
-                                                        Self::build_text_edit_context_menu(
+                                                        build_text_edit_context_menu(
                                                             menu,
                                                             bearer_has_selection,
                                                             cx.theme().muted_foreground,
@@ -8069,7 +7733,7 @@ impl BeamView {
                                                 .w_full()
                                                 .context_menu({
                                                     move |menu, _, cx| {
-                                                        Self::build_text_edit_context_menu(
+                                                        build_text_edit_context_menu(
                                                             menu,
                                                             basic_username_has_selection,
                                                             cx.theme().muted_foreground,
@@ -8107,7 +7771,7 @@ impl BeamView {
                                                 .w_full()
                                                 .context_menu({
                                                     move |menu, _, cx| {
-                                                        Self::build_text_edit_context_menu(
+                                                        build_text_edit_context_menu(
                                                             menu,
                                                             basic_password_has_selection,
                                                             cx.theme().muted_foreground,
@@ -8212,7 +7876,7 @@ impl BeamView {
                                                 .w_full()
                                                 .context_menu({
                                                     move |menu, _, cx| {
-                                                        Self::build_text_edit_context_menu(
+                                                        build_text_edit_context_menu(
                                                             menu,
                                                             api_key_value_has_selection,
                                                             cx.theme().muted_foreground,
@@ -8252,7 +7916,7 @@ impl BeamView {
                                                 .w_full()
                                                 .context_menu({
                                                     move |menu, _, cx| {
-                                                        Self::build_text_edit_context_menu(
+                                                        build_text_edit_context_menu(
                                                             menu,
                                                             api_key_name_has_selection,
                                                             cx.theme().muted_foreground,
@@ -8518,7 +8182,7 @@ impl BeamView {
                                 .text_size(cx.theme().mono_font_size)
                                 .context_menu({
                                     move |menu, _, cx| {
-                                        Self::build_text_edit_context_menu_with_find(
+                                        build_text_edit_context_menu_with_find(
                                             menu,
                                             post_script_has_selection,
                                             cx.theme().muted_foreground,
@@ -8774,7 +8438,7 @@ impl BeamView {
                                 Box::new(FormatResponseBody),
                             )
                             .separator();
-                        Self::build_text_edit_context_menu(
+                        build_text_edit_context_menu(
                             menu,
                             response_body_has_selection,
                             muted_foreground,
