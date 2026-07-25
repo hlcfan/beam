@@ -7,8 +7,8 @@
     {
       "name": "Matrix",
       "mode": "dark",
-      "radius": 6,
-      "radius.lg": 8,
+      "radius": 0,
+      "radius.lg": 0,
       "colors": {
         "accent.background": "#002d00",
         "accent.foreground": "#00FF00",
