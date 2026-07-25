@@ -623,6 +623,8 @@ impl BeamView {
                 if Some(request_id) == this.shell.workspace_tree.selected_request_id() {
                     this.response_history_entries =
                         load_response_history_entries(&this.current_workspace_paths, request_id);
+                    this.selected_response_history_index =
+                        (!this.response_history_entries.is_empty()).then_some(0);
                 }
                 match outcome.script_result.as_ref() {
                     Some(script_result) => {

@@ -24,6 +24,7 @@ impl BeamView {
         }
 
         let response_histories = self.response_history_entries.clone();
+        let selected_response_history_index = self.selected_response_history_index;
         let response_history_view = cx.entity();
         tabs = tabs.child(
             Button::new("response-history-dropdown")
@@ -71,6 +72,8 @@ impl BeamView {
                             .collect::<Vec<_>>(),
                     );
                     let menu_response_histories = response_histories.clone();
+                    let menu_selected_response_history_index =
+                        selected_response_history_index;
                     let menu_response_history_view = response_history_view.clone();
                     let menu_popup_menu = popup_menu.clone();
                     let scroll_handle = VirtualListScrollHandle::new();
@@ -79,6 +82,8 @@ impl BeamView {
                         PopupMenuItem::element(move |_, _cx| {
                             let row_sizes = row_sizes.clone();
                             let list_response_histories = menu_response_histories.clone();
+                            let selected_response_history_index =
+                                menu_selected_response_history_index;
                             let list_response_history_view = menu_response_history_view.clone();
                             let list_popup_menu = menu_popup_menu.clone();
                             let scroll_handle = scroll_handle.clone();
@@ -114,6 +119,9 @@ impl BeamView {
                                                     .h(row_content_height)
                                                     .rounded(px(6.0))
                                                     .cursor_pointer()
+                                                    .selected(
+                                                        selected_response_history_index == Some(ix),
+                                                    )
                                                     .px_1()
                                                     .py_1()
                                                     .child(
@@ -149,6 +157,8 @@ impl BeamView {
                                                                 window,
                                                                 cx,
                                                             );
+                                                            this.selected_response_history_index =
+                                                                Some(ix);
                                                             popup_menu.update(cx, |_, cx| {
                                                                 cx.emit(DismissEvent)
                                                             });
