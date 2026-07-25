@@ -28,7 +28,8 @@ use crate::storage::registry_repo::RegistryRepository;
 use crate::storage::workspace_repo::WorkspaceRepository;
 use crate::storage::{
     CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
-    DuplicateRequestInput, MoveRequestInput, RenameRequestInput, WorkspaceStorage,
+    DuplicateFolderInput, DuplicateRequestInput, DuplicatedFolderItem, MoveRequestInput,
+    RenameRequestInput, WorkspaceStorage,
 };
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, folder_dir_name, request_file_name, scope_key,
@@ -1384,6 +1385,7 @@ pub enum AppOperation {
     CreateRequest,
     CreateRequestAfter,
     DuplicateRequest,
+    DuplicateFolder,
     RenameRequest,
     UpdateRequest,
     SaveRequest,
@@ -1409,6 +1411,7 @@ impl AppOperation {
             AppOperation::CreateRequest => "create_request",
             AppOperation::CreateRequestAfter => "create_request_after",
             AppOperation::DuplicateRequest => "duplicate_request",
+            AppOperation::DuplicateFolder => "duplicate_folder",
             AppOperation::RenameRequest => "rename_request",
             AppOperation::UpdateRequest => "update_request",
             AppOperation::SaveRequest => "save_request",
@@ -1457,6 +1460,10 @@ pub enum AppCommand {
     },
     DuplicateRequest {
         input: DuplicateRequestInput,
+        command_id: String,
+    },
+    DuplicateFolder {
+        input: DuplicateFolderInput,
         command_id: String,
     },
     RenameRequest {
@@ -1525,6 +1532,7 @@ impl AppCommand {
             | AppCommand::CreateRequest { command_id, .. }
             | AppCommand::CreateRequestAfter { command_id, .. }
             | AppCommand::DuplicateRequest { command_id, .. }
+            | AppCommand::DuplicateFolder { command_id, .. }
             | AppCommand::RenameRequest { command_id, .. }
             | AppCommand::UpdateRequest { command_id, .. }
             | AppCommand::SaveRequest { command_id, .. }
@@ -1552,6 +1560,7 @@ impl AppCommand {
             AppCommand::CreateRequest { .. } => AppOperation::CreateRequest,
             AppCommand::CreateRequestAfter { .. } => AppOperation::CreateRequestAfter,
             AppCommand::DuplicateRequest { .. } => AppOperation::DuplicateRequest,
+            AppCommand::DuplicateFolder { .. } => AppOperation::DuplicateFolder,
             AppCommand::RenameRequest { .. } => AppOperation::RenameRequest,
             AppCommand::UpdateRequest { .. } => AppOperation::UpdateRequest,
             AppCommand::SaveRequest { .. } => AppOperation::SaveRequest,
@@ -1919,6 +1928,11 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
                 return Err("Request name cannot be empty.".to_string());
             }
         }
+        AppCommand::DuplicateFolder { input, .. } => {
+            if input.duplicate_name.trim().is_empty() {
+                return Err("Folder name cannot be empty.".to_string());
+            }
+        }
         AppCommand::RenameRequest { input, .. } => {
             if input.new_name.trim().is_empty() {
                 return Err("Request name cannot be empty.".to_string());
@@ -2064,6 +2078,33 @@ fn handle_command<B: StorageIoBackend>(
                 },
                 command_id,
             }])
+        }
+        AppCommand::DuplicateFolder { input, command_id } => {
+            let items = storage
+                .duplicate_folder(input)
+                .map_err(|error| error.to_string())?;
+            Ok(items
+                .into_iter()
+                .map(|item| match item {
+                    DuplicatedFolderItem::Folder(folder) => AppEvent::FolderUpserted {
+                        folder: folder.folder,
+                        manifest_path: folder.manifest_path,
+                        command_id: command_id.clone(),
+                    },
+                    DuplicatedFolderItem::Request(request) => {
+                        let parent_id = storage
+                            .store
+                            .nodes
+                            .get(&request.meta.request_id)
+                            .and_then(|node| node.parent_id);
+                        AppEvent::RequestUpserted {
+                            request,
+                            placement: RequestEventPlacement::Append { parent_id },
+                            command_id: command_id.clone(),
+                        }
+                    }
+                })
+                .collect())
         }
         AppCommand::RenameRequest { input, command_id } => {
             let renamed = storage

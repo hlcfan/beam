@@ -218,6 +218,13 @@ impl BeamView {
                     false,
                     Box::new(TreeMenuRename(row_id)),
                 );
+                let menu = append_with_image_or_plain(
+                    menu,
+                    "Duplicate",
+                    "icons/duplicate.svg",
+                    false,
+                    Box::new(TreeMenuDuplicateFolder(row_id)),
+                );
                 append_with_image_or_plain(
                     menu,
                     "Delete",

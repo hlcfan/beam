@@ -17,8 +17,8 @@ use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
 use crate::storage::io_backend::StorageIoBackend;
 use crate::storage::{
     BootstrapReport, CreateEnvironmentInput, CreateFolderInput, CreateRequestInput,
-    DeleteRequestInput, DuplicateRequestInput, MoveFolderInput, MoveRequestInput,
-    RenameRequestInput, WorkspaceStorage,
+    DeleteRequestInput, DuplicateFolderInput, DuplicateRequestInput, DuplicatedFolderItem,
+    MoveFolderInput, MoveRequestInput, RenameRequestInput, RequestParentRef, WorkspaceStorage,
 };
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, assert_name_unique, ensure_parent_kind, find_unique_name,
@@ -44,6 +44,8 @@ pub struct WorkspaceRepository<B: StorageIoBackend> {
     backend: B,
     pub store: SharedStore,
 }
+
+pub const MAX_FOLDER_DUPLICATION_DEPTH: usize = 10;
 
 impl<B: StorageIoBackend> WorkspaceRepository<B> {
     pub fn new(backend: B) -> Result<Self> {
@@ -979,6 +981,127 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             items: Vec::new(),
             manifest_path: Some(manifest_path),
         })
+    }
+
+    pub fn duplicate_folder(
+        &mut self,
+        input: DuplicateFolderInput,
+    ) -> Result<Vec<DuplicatedFolderItem>> {
+        let name = input.duplicate_name.trim();
+        if name.is_empty() {
+            return Err(BeamError::Validation {
+                message: "Duplicate folder name cannot be empty".to_string(),
+            });
+        }
+        let source = self
+            .store
+            .nodes
+            .get(&input.folder_id)
+            .filter(|node| node.kind == NodeKind::Folder)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "folder",
+                id: input.folder_id.to_string(),
+            })?;
+        self.validate_folder_duplication_depth(input.folder_id)?;
+        let mut items = Vec::new();
+        let root = self.create_folder(CreateFolderInput {
+            parent: input.parent,
+            known_parent_manifest_path: None,
+            name: name.to_string(),
+        })?;
+        let root_id = root.folder.folder_id;
+        items.push(DuplicatedFolderItem::Folder(root));
+        self.duplicate_folder_children(&source.children, root_id, &mut items)?;
+        Ok(items)
+    }
+
+    fn validate_folder_duplication_depth(&self, root_folder_id: Ulid) -> Result<()> {
+        let mut stack = vec![(root_folder_id, 0usize)];
+        while let Some((node_id, depth)) = stack.pop() {
+            let node = self
+                .store
+                .nodes
+                .get(&node_id)
+                .ok_or_else(|| BeamError::NotFound {
+                    entity: "node",
+                    id: node_id.to_string(),
+                })?;
+            if depth > MAX_FOLDER_DUPLICATION_DEPTH {
+                return Err(BeamError::Validation {
+                    message: format!(
+                        "Folder duplication supports at most {MAX_FOLDER_DUPLICATION_DEPTH} nested folder levels"
+                    ),
+                });
+            }
+            for child_id in &node.children {
+                let child = self
+                    .store
+                    .nodes
+                    .get(child_id)
+                    .ok_or_else(|| BeamError::NotFound {
+                        entity: "node",
+                        id: child_id.to_string(),
+                    })?;
+                match child.kind {
+                    NodeKind::Folder => stack.push((*child_id, depth + 1)),
+                    NodeKind::Request if !self.store.requests.contains_key(child_id) => {
+                        return Err(BeamError::NotFound {
+                            entity: "request",
+                            id: child_id.to_string(),
+                        });
+                    }
+                    NodeKind::Request => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn duplicate_folder_children(
+        &mut self,
+        source_children: &[Ulid],
+        target_folder_id: Ulid,
+        items: &mut Vec<DuplicatedFolderItem>,
+    ) -> Result<()> {
+        for source_id in source_children {
+            let source =
+                self.store
+                    .nodes
+                    .get(source_id)
+                    .cloned()
+                    .ok_or_else(|| BeamError::NotFound {
+                        entity: "node",
+                        id: source_id.to_string(),
+                    })?;
+            match source.kind {
+                NodeKind::Folder => {
+                    let folder = self.create_folder(CreateFolderInput {
+                        parent: crate::storage::FolderParentRef {
+                            folder_id: Some(target_folder_id),
+                        },
+                        known_parent_manifest_path: None,
+                        name: source.name,
+                    })?;
+                    let folder_id = folder.folder.folder_id;
+                    items.push(DuplicatedFolderItem::Folder(folder));
+                    self.duplicate_folder_children(&source.children, folder_id, items)?;
+                }
+                NodeKind::Request => {
+                    let request = self.duplicate_request(DuplicateRequestInput {
+                        request_id: source.id,
+                        duplicate_name: source.name,
+                        parent: RequestParentRef {
+                            folder_id: Some(target_folder_id),
+                        },
+                        known_request_path: None,
+                        known_parent_manifest_path: None,
+                    })?;
+                    items.push(DuplicatedFolderItem::Request(request));
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn rename_folder(&mut self, folder_id: Ulid, new_name: &str) -> Result<FolderFile> {
@@ -2342,6 +2465,156 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
             request_c_node.parent_id,
             Some(folder_b.folder.folder_id),
             "request C should remain under folder B"
+        );
+    }
+
+    #[test]
+    fn duplicate_folder_recursively_copies_children_with_fresh_ids() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let mut storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
+        storage.initialize().expect("initialize");
+
+        let source = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Source".to_string(),
+            })
+            .expect("create source folder");
+        let request = storage
+            .create_request(CreateRequestInput {
+                parent: RequestParentRef {
+                    folder_id: Some(source.folder.folder_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Get Users".to_string(),
+                method: HttpMethod::Post,
+                url: "https://example.com/users".to_string(),
+            })
+            .expect("create request");
+        let nested = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef {
+                    folder_id: Some(source.folder.folder_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Nested".to_string(),
+            })
+            .expect("create nested folder");
+
+        let items = storage
+            .duplicate_folder(DuplicateFolderInput {
+                folder_id: source.folder.folder_id,
+                duplicate_name: "Source (Copy)".to_string(),
+                parent: crate::storage::FolderParentRef { folder_id: None },
+            })
+            .expect("duplicate folder");
+
+        assert_eq!(items.len(), 3);
+        let duplicated_root_id = match &items[0] {
+            DuplicatedFolderItem::Folder(folder) => folder.folder.folder_id,
+            _ => panic!("root item should be a folder"),
+        };
+        let duplicated_request = match &items[1] {
+            DuplicatedFolderItem::Request(request) => request,
+            _ => panic!("second item should preserve request ordering"),
+        };
+        let duplicated_nested_id = match &items[2] {
+            DuplicatedFolderItem::Folder(folder) => folder.folder.folder_id,
+            _ => panic!("third item should preserve folder ordering"),
+        };
+
+        assert_ne!(duplicated_root_id, source.folder.folder_id);
+        assert_ne!(duplicated_request.meta.request_id, request.meta.request_id);
+        assert_ne!(duplicated_nested_id, nested.folder.folder_id);
+        assert_eq!(duplicated_request.request, request.request);
+        assert_eq!(
+            storage.store.nodes[&duplicated_root_id].children,
+            vec![duplicated_request.meta.request_id, duplicated_nested_id]
+        );
+
+        let reloaded = WorkspaceRepository::new(backend).expect("reload duplicated tree");
+        assert_eq!(
+            reloaded.store.nodes[&duplicated_root_id].children,
+            vec![duplicated_request.meta.request_id, duplicated_nested_id]
+        );
+        assert_eq!(
+            reloaded.store.requests[&duplicated_request.meta.request_id].request,
+            request.request
+        );
+    }
+
+    #[test]
+    fn duplicate_folder_enforces_depth_limit_before_writing() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("initialize");
+
+        let root = storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Root".to_string(),
+            })
+            .expect("create root");
+        let mut parent_id = root.folder.folder_id;
+        for depth in 1..=MAX_FOLDER_DUPLICATION_DEPTH {
+            parent_id = storage
+                .create_folder(CreateFolderInput {
+                    parent: crate::storage::FolderParentRef {
+                        folder_id: Some(parent_id),
+                    },
+                    known_parent_manifest_path: None,
+                    name: format!("Level {depth}"),
+                })
+                .expect("create folder at supported depth")
+                .folder
+                .folder_id;
+        }
+
+        storage
+            .duplicate_folder(DuplicateFolderInput {
+                folder_id: root.folder.folder_id,
+                duplicate_name: "Allowed Copy".to_string(),
+                parent: crate::storage::FolderParentRef { folder_id: None },
+            })
+            .expect("duplicate at maximum supported depth");
+
+        storage
+            .create_folder(CreateFolderInput {
+                parent: crate::storage::FolderParentRef {
+                    folder_id: Some(parent_id),
+                },
+                known_parent_manifest_path: None,
+                name: "Too Deep".to_string(),
+            })
+            .expect("create folder beyond duplication depth");
+        let root_count_before = storage.store.root_ids.len();
+
+        let error = storage
+            .duplicate_folder(DuplicateFolderInput {
+                folder_id: root.folder.folder_id,
+                duplicate_name: "Rejected Copy".to_string(),
+                parent: crate::storage::FolderParentRef { folder_id: None },
+            })
+            .expect_err("reject folder beyond maximum depth");
+
+        assert!(
+            error
+                .to_string()
+                .contains("at most 10 nested folder levels")
+        );
+        assert_eq!(storage.store.root_ids.len(), root_count_before);
+        assert!(
+            storage
+                .store
+                .root_ids
+                .iter()
+                .filter_map(|id| storage.store.nodes.get(id))
+                .all(|node| node.name != "Rejected Copy")
         );
     }
 }

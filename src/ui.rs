@@ -100,9 +100,9 @@ use crate::script::EnvironmentChangeKind;
 use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::workspace_repo::WorkspaceRepository;
 use crate::storage::{
-    CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateRequestInput,
-    FolderParentRef, KnownParentManifestPath, MoveFolderInput, MoveRequestInput,
-    RenameRequestInput, RequestParentRef,
+    CreateFolderInput, CreateRequestInput, DeleteRequestInput, DuplicateFolderInput,
+    DuplicateRequestInput, FolderParentRef, KnownParentManifestPath, MoveFolderInput,
+    MoveRequestInput, RenameRequestInput, RequestParentRef,
 };
 use crate::tree_dnd::{
     SLOT_BAR_HEIGHT_PX, SLOT_DEPTH_GAP_PX, SLOT_DRAG_PROXIMITY_PX, SLOT_HIT_HEIGHT_PX,

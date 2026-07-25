@@ -61,6 +61,19 @@ pub struct DuplicateRequestInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateFolderInput {
+    pub folder_id: Ulid,
+    pub duplicate_name: String,
+    pub parent: FolderParentRef,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DuplicatedFolderItem {
+    Folder(crate::models::FolderFile),
+    Request(crate::models::RequestFile),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenameRequestInput {
     pub request_id: Ulid,
     pub new_name: String,

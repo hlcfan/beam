@@ -345,6 +345,29 @@ impl BeamView {
         }
     }
 
+    pub(in crate::ui) fn next_duplicate_folder_name(&self, folder_id: Ulid) -> Option<String> {
+        let source = self.shell.workspace_tree.node(folder_id)?;
+        let parent = FolderParentRef {
+            folder_id: source.parent_id,
+        };
+        let siblings = self.folder_sibling_names_in_parent(parent);
+        let base = format!("{} (Copy)", source.name);
+        if !siblings.iter().any(|name| name.eq_ignore_ascii_case(&base)) {
+            return Some(base);
+        }
+        let mut idx = 2;
+        loop {
+            let candidate = format!("{} (Copy {idx})", source.name);
+            if !siblings
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(&candidate))
+            {
+                return Some(candidate);
+            }
+            idx += 1;
+        }
+    }
+
     pub(in crate::ui) fn add_request_from_tree_node(
         &mut self,
         node_id: Ulid,
@@ -863,6 +886,15 @@ impl BeamView {
         self.duplicate_request_from_tree_node(action.0, window, cx);
     }
 
+    pub(in crate::ui) fn on_action_tree_menu_duplicate_folder(
+        &mut self,
+        action: &TreeMenuDuplicateFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.duplicate_folder_from_tree_node(action.0, window, cx);
+    }
+
     pub(in crate::ui) fn on_action_tree_menu_add_request_at_root(
         &mut self,
         _: &TreeMenuAddRequestAtRoot,
@@ -910,6 +942,60 @@ impl BeamView {
             command_id,
         };
         if let Err(error) = self.publish_app_command(command) {
+            window.push_notification(error, cx);
+        }
+    }
+
+    pub(in crate::ui) fn duplicate_folder_from_tree_node(
+        &mut self,
+        folder_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(duplicate_name) = self.next_duplicate_folder_name(folder_id) else {
+            window.push_notification("Unable to duplicate this folder.", cx);
+            return;
+        };
+        let Some(source) = self.shell.workspace_tree.node(folder_id) else {
+            window.push_notification("Unable to determine folder parent.", cx);
+            return;
+        };
+        let parent = FolderParentRef {
+            folder_id: source.parent_id,
+        };
+        let siblings = source
+            .parent_id
+            .and_then(|parent_id| {
+                self.shell
+                    .workspace_tree
+                    .node(parent_id)
+                    .map(|node| node.children.as_slice())
+            })
+            .unwrap_or(self.shell.workspace_tree.roots());
+        let insertion_index = siblings
+            .iter()
+            .position(|id| *id == folder_id)
+            .map(|index| index + 1)
+            .unwrap_or(siblings.len());
+        let command_id = next_command_id();
+        self.pending_folder_placements.insert(
+            command_id.clone(),
+            PendingFolderPlacement::After {
+                parent,
+                insertion_index,
+                known_target_manifest_path: self
+                    .folder_parent_input_for_tree_node(folder_id)
+                    .and_then(|(_, path)| path),
+            },
+        );
+        if let Err(error) = self.publish_app_command(AppCommand::DuplicateFolder {
+            input: DuplicateFolderInput {
+                folder_id,
+                duplicate_name,
+                parent,
+            },
+            command_id,
+        }) {
             window.push_notification(error, cx);
         }
     }
