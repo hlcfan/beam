@@ -66,6 +66,7 @@ impl BeamView {
     ) {
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
             self.response_history_entries.clear();
+            self.selected_response_history_index = None;
             self.clear_response_pane(window, cx);
             self.script_result = None;
             return;
@@ -73,6 +74,8 @@ impl BeamView {
 
         self.response_history_entries =
             load_response_history_entries(&self.current_workspace_paths, request_id);
+        self.selected_response_history_index =
+            (!self.response_history_entries.is_empty()).then_some(0);
         if let Some(snapshot) = self.response_history_entries.first().map(|entry| {
             load_response_snapshot_for_history_entry(&self.current_workspace_paths, entry)
         }) {
