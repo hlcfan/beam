@@ -40,7 +40,9 @@ use crate::app_shell::{
     StartupMessage, TreeNodeKind,
 };
 use crate::assets::{Assets, embedded_theme_contents};
-use crate::importers::{DetectedSource, ImportPlan, parser_for, scanner, tag_label};
+use crate::importers::{
+    CurlPlan, DetectedSource, ImportPlan, is_curl, parse_curl, parser_for, scanner, tag_label,
+};
 use crate::models::{
     AppFontSize, AuthConfig, BodyConfig, BodyFormatKind, EnvironmentFile, EnvironmentScope,
     EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
@@ -8626,6 +8628,58 @@ impl BeamView {
         })
     }
 
+    fn apply_curl_plan(request: &mut RequestAuthoringState, plan: CurlPlan) {
+        request.method = plan.method;
+        request.url = plan.url;
+        request.headers = plan.headers;
+        request.query_params = plan.query;
+        request.body = plan.body;
+        request.auth = plan.auth;
+        request.ensure_trailing_empty_row();
+    }
+
+    fn import_curl_from_url_input(
+        &mut self,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !is_curl(value) {
+            return false;
+        }
+
+        let plan = match parse_curl(value) {
+            Ok(plan) => plan,
+            Err(error) => {
+                window.push_notification(format!("Could not parse cURL command: {error}"), cx);
+                return true;
+            }
+        };
+
+        Self::apply_curl_plan(&mut self.request, plan);
+        self.rebuild_request_param_inputs(window, cx);
+        self.rebuild_request_header_inputs(window, cx);
+        self.sync_request_auth_inputs(window, cx);
+
+        let url = self.request.url.clone();
+        self.url_input.update(cx, |input, cx| {
+            input.set_value(url, window, cx);
+            input.focus(window, cx);
+        });
+
+        let body_language = Self::body_editor_language(&self.request.body);
+        let body_text = Self::body_editor_text(&self.request.body);
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_highlighter(body_language, cx);
+            input.set_value(body_text, window, cx);
+        });
+
+        self.show_invalid_url_border = false;
+        self.schedule_request_save(cx);
+        cx.notify();
+        true
+    }
+
     fn resubscribe_request_url_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let editor = self.url_input.clone();
         self.request_url_editor_change_sub = Some(cx.subscribe_in(
@@ -8633,13 +8687,21 @@ impl BeamView {
             window,
             move |this, _, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Change => {
-                    this.request.url = this.url_input.read(cx).value().to_string();
+                    let value = this.url_input.read(cx).value().to_string();
+                    if this.import_curl_from_url_input(&value, window, cx) {
+                        return;
+                    }
+                    this.request.url = value;
                     this.show_invalid_url_border = false;
                     this.schedule_request_save(cx);
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => {
-                    this.request.url = this.url_input.read(cx).value().to_string();
+                    let value = this.url_input.read(cx).value().to_string();
+                    if this.import_curl_from_url_input(&value, window, cx) {
+                        return;
+                    }
+                    this.request.url = value;
                     this.schedule_request_save(cx);
                     this.handle_send_or_cancel_action(window, cx);
                     cx.notify();
@@ -12421,7 +12483,8 @@ mod tests {
         request_run_completion_is_current, response_summary_for_selected_request,
         send_button_state_for_selected_request,
     };
-    use crate::models::BodyConfig;
+    use crate::importers::parse_curl;
+    use crate::models::{AuthConfig, BodyConfig, HttpMethod};
     use crate::paths::BeamPaths;
     use crate::request_authoring::{RequestAuthoringState, SendButtonState};
 
@@ -12430,6 +12493,54 @@ mod tests {
             url: "https://example.com".to_string(),
             ..RequestAuthoringState::default()
         }
+    }
+
+    #[test]
+    fn apply_curl_plan_replaces_current_request_authoring_fields() {
+        let mut request = RequestAuthoringState {
+            method: HttpMethod::Delete,
+            url: "https://old.example.com".to_string(),
+            ..RequestAuthoringState::default()
+        };
+        let plan = parse_curl(
+            r#"curl -X POST -u user:pass -H 'X-Test: yes' -H 'Content-Type: application/json' -d '{"ok":true}' https://new.example.com/items"#,
+        )
+        .unwrap();
+
+        BeamView::apply_curl_plan(&mut request, plan);
+
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.url, "https://new.example.com/items");
+        assert_eq!(
+            request.auth,
+            AuthConfig::Basic {
+                username: Some("user".to_string()),
+                password: Some("pass".to_string()),
+            }
+        );
+        assert!(
+            request.headers.iter().any(|header| {
+                header.name == "X-Test" && header.value == "yes" && header.enabled
+            })
+        );
+        assert_eq!(
+            request.body,
+            BodyConfig::Json {
+                text: r#"{"ok":true}"#.to_string(),
+            }
+        );
+        assert!(
+            request
+                .headers
+                .last()
+                .is_some_and(|header| { header.name.is_empty() && header.value.is_empty() })
+        );
+        assert!(
+            request
+                .query_params
+                .last()
+                .is_some_and(|param| { param.name.is_empty() && param.value.is_empty() })
+        );
     }
 
     #[test]

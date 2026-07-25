@@ -354,6 +354,7 @@ impl WorkspaceTreeState {
         manifest_path: Option<PathBuf>,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.children.retain(|id| *id != request_id);
             parent.children.push(request_id);
         }
         self.nodes.insert(
@@ -382,6 +383,7 @@ impl WorkspaceTreeState {
         manifest_path: Option<PathBuf>,
     ) {
         if let Some(parent) = self.nodes.get_mut(&parent_id) {
+            parent.children.retain(|id| *id != request_id);
             if let Some(index) = parent
                 .children
                 .iter()
@@ -3527,6 +3529,42 @@ mod tests {
         assert!(tree.is_expanded(folder_id));
         assert!(!tree.is_expanded(request_id));
         assert!(!tree.is_expanded(missing_id));
+    }
+
+    #[test]
+    fn inserting_existing_request_child_repositions_without_duplication() {
+        let folder_id = Ulid::new();
+        let first_request_id = Ulid::new();
+        let inserted_request_id = Ulid::new();
+        let mut tree = tree_with(
+            vec![folder_id],
+            vec![
+                folder_node(folder_id, None, vec![first_request_id, inserted_request_id]),
+                request_node(first_request_id, Some(folder_id)),
+                request_node(inserted_request_id, Some(folder_id)),
+            ],
+            vec![folder_id],
+        );
+
+        tree.insert_request_child_after(
+            folder_id,
+            first_request_id,
+            inserted_request_id,
+            "New Request 1".to_string(),
+            HttpMethod::Get,
+            String::new(),
+            None,
+        );
+
+        let children = &tree.nodes.get(&folder_id).unwrap().children;
+        assert_eq!(children, &[first_request_id, inserted_request_id]);
+        assert_eq!(
+            children
+                .iter()
+                .filter(|id| **id == inserted_request_id)
+                .count(),
+            1
+        );
     }
 
     fn sample_request_file(

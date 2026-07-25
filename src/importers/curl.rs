@@ -194,15 +194,46 @@ pub fn parse(value: &str) -> Result<CurlPlan, BeamError> {
         &form_fields,
         &urlencoded_fields,
     );
+    let (url, query) = split_url_query(url.unwrap_or_default());
 
     Ok(CurlPlan {
         method,
-        url: url.unwrap_or_default(),
+        url,
         headers,
-        query: Vec::new(),
+        query,
         body,
         auth,
     })
+}
+
+fn split_url_query(url: String) -> (String, Vec<QueryParamField>) {
+    let before_fragment_end = url.find('#').unwrap_or(url.len());
+    let Some(query_start) = url[..before_fragment_end].find('?') else {
+        return (url, Vec::new());
+    };
+
+    let query_text = &url[query_start + 1..before_fragment_end];
+    let query = if query_text.is_empty() {
+        Vec::new()
+    } else {
+        query_text
+            .split('&')
+            .map(|pair| {
+                let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+                QueryParamField {
+                    name: name.to_string(),
+                    value: value.to_string(),
+                    enabled: true,
+                    description: None,
+                }
+            })
+            .collect()
+    };
+
+    let mut url_without_query = String::with_capacity(url.len());
+    url_without_query.push_str(&url[..query_start]);
+    url_without_query.push_str(&url[before_fragment_end..]);
+    (url_without_query, query)
 }
 
 fn push_header(headers: &mut Vec<HeaderField>, name: String, value: String) {
@@ -518,6 +549,54 @@ mod tests {
     fn url_flag_sets_url() {
         let plan = parse("curl --url https://example.com").unwrap();
         assert_eq!(plan.url, "https://example.com");
+    }
+
+    #[test]
+    fn url_query_is_moved_into_params() {
+        let plan = parse(r#"curl --url 'https://httpbingo.org/get?aaa=111&='"#).unwrap();
+
+        assert_eq!(plan.url, "https://httpbingo.org/get");
+        assert_eq!(
+            plan.query,
+            vec![
+                QueryParamField {
+                    name: "aaa".to_string(),
+                    value: "111".to_string(),
+                    enabled: true,
+                    description: None,
+                },
+                QueryParamField {
+                    name: String::new(),
+                    value: String::new(),
+                    enabled: true,
+                    description: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn url_query_preserves_duplicates_encoding_and_fragment() {
+        let plan =
+            parse(r#"curl 'https://example.com/items?tag=one&tag=two%20words&flag#results'"#)
+                .unwrap();
+
+        assert_eq!(plan.url, "https://example.com/items#results");
+        assert_eq!(
+            plan.query
+                .iter()
+                .map(|param| (param.name.as_str(), param.value.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("tag", "one"), ("tag", "two%20words"), ("flag", "")]
+        );
+    }
+
+    #[test]
+    fn question_mark_in_fragment_is_not_treated_as_query() {
+        let plan = parse(r#"curl 'https://example.com/items#results?view=full'"#).unwrap();
+
+        assert_eq!(plan.url, "https://example.com/items#results?view=full");
+        assert!(plan.query.is_empty());
     }
 
     #[test]
