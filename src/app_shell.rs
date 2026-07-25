@@ -232,6 +232,31 @@ impl WorkspaceTreeState {
         }
     }
 
+    /// Expands `folder_id` and each of its ancestor folders.
+    ///
+    /// Returns `false` when `folder_id` is missing or is not a folder.
+    pub fn reveal_folder(&mut self, folder_id: Ulid) -> bool {
+        if !self
+            .nodes
+            .get(&folder_id)
+            .is_some_and(|node| node.kind == TreeNodeKind::Folder)
+        {
+            return false;
+        }
+
+        self.expanded.insert(folder_id);
+        for ancestor in self.ancestors(folder_id) {
+            if self
+                .nodes
+                .get(&ancestor)
+                .is_some_and(|node| node.kind == TreeNodeKind::Folder)
+            {
+                self.expanded.insert(ancestor);
+            }
+        }
+        true
+    }
+
     /// Returns every request node id in pre-order traversal of the full tree
     /// (root → first child → ... → sibling), ignoring the current `expanded` set.
     /// Folders are visited but not included in the result.
@@ -3664,6 +3689,60 @@ mod tests {
         assert!(tree.is_expanded(folder_id));
         assert!(!tree.is_expanded(request_id));
         assert!(!tree.is_expanded(missing_id));
+    }
+
+    #[test]
+    fn reveal_folder_expands_it_and_ancestors_without_changing_request_selection() {
+        let parent_id = Ulid::new();
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let mut tree = WorkspaceTreeState::default();
+        tree.nodes.insert(
+            parent_id,
+            TreeNode {
+                id: parent_id,
+                name: "Parent".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: vec![folder_id],
+            },
+        );
+        tree.nodes.insert(
+            folder_id,
+            TreeNode {
+                id: folder_id,
+                name: "Child".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: Some(parent_id),
+                children: Vec::new(),
+            },
+        );
+        tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Active".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com".to_string()),
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.set_selected_request(Some(request_id));
+
+        assert!(tree.reveal_folder(folder_id));
+        assert!(tree.is_expanded(parent_id));
+        assert!(tree.is_expanded(folder_id));
+        assert_eq!(tree.selected_request_id(), Some(request_id));
+        assert!(!tree.reveal_folder(request_id));
     }
 
     #[test]

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, actions, div, px,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, Icon, Sizable as _, WindowExt as _, h_flex,
@@ -13,7 +13,7 @@ use gpui_component::{
 };
 use ulid::Ulid;
 
-use super::super::BeamView;
+use super::super::{BeamView, OpenCommandPalette};
 use crate::app_shell::{TreeNodeKind, WorkspaceTreeDescriptor, WorkspaceTreeState};
 
 const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
@@ -168,11 +168,6 @@ fn match_tier(entry: &CommandPaletteEntry, query: &str) -> u8 {
     }
 }
 
-#[derive(Clone)]
-pub(in crate::ui) struct CommandPaletteEvent {
-    pub(super) entry: CommandPaletteEntry,
-}
-
 pub(in crate::ui) struct CommandPaletteDialogView {
     beam_view: Entity<BeamView>,
     search_input: Entity<InputState>,
@@ -182,8 +177,6 @@ pub(in crate::ui) struct CommandPaletteDialogView {
     result_scroll_handle: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
-
-impl EventEmitter<CommandPaletteEvent> for CommandPaletteDialogView {}
 
 impl CommandPaletteDialogView {
     pub(super) fn new(
@@ -253,17 +246,46 @@ impl CommandPaletteDialogView {
         cx.notify();
     }
 
-    fn activate_index(&mut self, index: usize, cx: &mut Context<Self>) {
+    fn activate_index(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(entry) = self.filtered_entries.get(index).cloned() else {
             return;
         };
         self.selected_index = index;
-        cx.emit(CommandPaletteEvent { entry });
-        cx.notify();
+        window.close_dialog(cx);
+
+        self.beam_view.update(cx, |beam_view, cx| {
+            beam_view.command_palette_dialog_view = None;
+            match entry.kind {
+                CommandPaletteEntryKind::Request { request_id } => {
+                    if !beam_view
+                        .shell
+                        .workspace_tree
+                        .node(request_id)
+                        .is_some_and(|node| node.kind == TreeNodeKind::Request)
+                    {
+                        return;
+                    }
+                    beam_view.select_request(request_id, window, cx);
+                    beam_view.commit_request_selection(window, cx);
+                }
+                CommandPaletteEntryKind::Folder { folder_id } => {
+                    beam_view.reveal_tree_folder(folder_id, window, cx);
+                }
+                CommandPaletteEntryKind::Command(CommandPaletteCommand::OpenSettings) => {
+                    beam_view.open_settings_dialog(window, cx);
+                }
+                CommandPaletteEntryKind::Command(CommandPaletteCommand::OpenKeyBindings) => {
+                    beam_view.open_key_bindings_dialog(window, cx);
+                }
+                CommandPaletteEntryKind::Command(CommandPaletteCommand::OpenEnvironmentManager) => {
+                    beam_view.open_environment_manager(window, cx);
+                }
+            }
+        });
     }
 
-    fn activate_selected(&mut self, cx: &mut Context<Self>) {
-        self.activate_index(self.selected_index, cx);
+    fn activate_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.activate_index(self.selected_index, window, cx);
     }
 
     fn on_select_next(
@@ -286,9 +308,9 @@ impl CommandPaletteDialogView {
         self.select_previous(cx);
     }
 
-    fn on_confirm(&mut self, _: &ConfirmPaletteItem, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_confirm(&mut self, _: &ConfirmPaletteItem, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
-        self.activate_selected(cx);
+        self.activate_selected(window, cx);
     }
 
     fn on_dismiss(
@@ -299,6 +321,14 @@ impl CommandPaletteDialogView {
     ) {
         cx.stop_propagation();
         window.close_dialog(cx);
+        self.beam_view.update(cx, |beam_view, cx| {
+            beam_view.command_palette_dialog_view = None;
+            cx.notify();
+        });
+    }
+
+    fn on_open_palette(&mut self, _: &OpenCommandPalette, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
     }
 
     fn icon_path(entry: &CommandPaletteEntry) -> &'static str {
@@ -381,8 +411,8 @@ impl Render for CommandPaletteDialogView {
                                 )
                             }),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.activate_index(index, cx);
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_index(index, window, cx);
                     })),
             );
         }
@@ -393,6 +423,7 @@ impl Render for CommandPaletteDialogView {
             .on_action(cx.listener(Self::on_select_previous))
             .on_action(cx.listener(Self::on_confirm))
             .on_action(cx.listener(Self::on_dismiss))
+            .on_action(cx.listener(Self::on_open_palette))
             .w_full()
             .p_2()
             .gap_2()

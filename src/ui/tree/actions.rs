@@ -117,6 +117,30 @@ impl BeamView {
         }
     }
 
+    /// Expands and reveals a folder without changing the active request or request view history.
+    pub(in crate::ui) fn reveal_tree_folder(
+        &mut self,
+        folder_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.shell.workspace_tree.reveal_folder(folder_id) {
+            return;
+        }
+        if let Err(error) = self.persist_tree_expansion_state() {
+            window.push_notification(error, cx);
+        }
+        let items = build_tree_render_items(&self.shell.workspace_tree);
+        if let Some(index) = items
+            .iter()
+            .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == folder_id))
+        {
+            self.collection_scroll_handle
+                .scroll_to_item(index, ScrollStrategy::Top);
+        }
+        cx.notify();
+    }
+
     /// Initializes the request view history with whatever request the shell
     /// already has selected at startup, so the very first `cmd-alt-down` / `cmd-alt-up`
     /// keypress has a meaningful anchor to step from.
