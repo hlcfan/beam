@@ -20,6 +20,7 @@ The hierarchy is: **Workspace → Folders → Requests**. Collections have been 
 - Multi-workspace organization with folders
 - Import Postman collections/environments and Insomnia JSON or v5 YAML exports
 - Paste cURL commands into the URL field to populate the current request
+- Command palette for searching requests and folders and running common commands
 - Response history view (next to Headers in response pane)
 - Theme support (light/dark), font size settings, response auto-format
 
@@ -50,7 +51,7 @@ src/
 │   ├── text_edit_menu.rs    # Shared input and editor context-menu builders
 │   ├── theme.rs             # Theme registry and theme/font/format setting application
 │   ├── dialogs.rs           # Dialog module root and shared dialog helpers
-│   ├── dialogs/             # Import, environment, settings, key binding, tree, and workspace dialogs
+│   ├── dialogs/             # Command palette, import, environment, settings, key binding, tree, and workspace dialogs
 │   ├── request.rs           # Request UI module root and shared request behavior
 │   ├── request/             # Body, cURL, editor, execution, and request persistence
 │   ├── response.rs          # Response UI module root and shared response behavior
@@ -93,6 +94,7 @@ src/
 | `storage/registry_repo.rs` | **Workspace registry**. `RegistryRepository` loads/saves `workspaces.toml`, bootstraps a default workspace on first run, and manages multi-workspace CRUD (create, delete, rename, switch). |
 | `app_shell.rs` | **Application shell & orchestration**. Owns `AppShellState`, `DataSyncRuntime`, pane-split layout, startup preload logic, and the background command queue that feeds the repository. Manages workspace switching. |
 | `ui.rs` / `ui/` | **GPUI front-end**. `ui.rs` is the module root and public entry point. Cohesive submodules own `BeamView`, actions, application events, dialogs, environments, request authoring/execution/persistence, response history/rendering/persistence, themes, text-edit menus, and workspace-tree interactions. Keep new UI code in the narrowest owning module rather than growing `ui.rs`. |
+| `ui/dialogs/command_palette.rs` | **Command palette**. Builds and filters entries for active-workspace requests, folders, and app commands. An empty query shows up to 10 recently viewed requests plus commands; selecting a request opens it, while selecting a folder reveals it in the workspace tree. |
 | `tree_dnd.rs` | **Pure tree drag/drop logic**. Calculates drop destinations independently of GPUI and `BeamView`; UI drag state and rendering remain under `ui/tree/`. |
 | `request_authoring.rs` | **Request editor state**. Tab enums, send-button states, and validation helpers for the request authoring panel. |
 | `importers.rs` / `importers/` | **Import pipeline**. Detects Postman and Insomnia exports, parses them into the format-neutral `ImportPlan`, merges multi-file batches, and provides bounded folder scanning. The cURL parser uses a separate `CurlPlan` because it updates the open request instead of materializing a workspace tree. |
@@ -133,6 +135,18 @@ This pattern ensures that a single corrupted file on disk never renders the enti
 #### Environment Variable Resolution
 Requests support variable substitution from active environment.
 // TODO
+
+#### Command Palette
+The command palette is implemented in `src/ui/dialogs/command_palette.rs` and opened through `OpenCommandPalette`.
+
+- Platform shortcut: `Command-K` on macOS and `Ctrl-K` on Windows/Linux.
+- Search covers request names, folder names, and registered command titles in the active workspace. Ancestor paths are displayed for tree entries but are not searchable.
+- Empty search results contain up to 10 requests ordered by view recency, followed by `Open Settings`, `Open Key Bindings`, and `Open Environment Manager`.
+- Non-empty results rank exact name matches before prefix matches, then substring matches; recent requests break ties ahead of other entries.
+- Palette navigation uses Up/Down or Ctrl-P/Ctrl-N, Enter confirms, and Escape dismisses.
+- Request selection opens and records the request; folder selection expands its ancestor chain and reveals it in the tree.
+
+When adding a palette command, extend `CommandPaletteCommand`, `COMMANDS`, activation handling, and icon selection together. Keep entry construction and filtering independent of GPUI rendering so their behavior remains unit-testable.
 
 #### Import Pipeline
 File imports are split into detection/parsing and materialization:
@@ -279,7 +293,6 @@ See `TODO.md` for planned features. Common enhancement areas:
 - Additional authentication methods
 - GraphQL subscriptions
 - WebSocket support
-- Request history (currently only response history is stored)
 - Export functionality
 - Collaborative features
 - Cloud sync

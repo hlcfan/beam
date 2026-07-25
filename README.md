@@ -15,6 +15,7 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 - Post-response JavaScript scripting with console output, tests, and environment updates
 - Import Postman collections and environments, plus Insomnia JSON and v5 YAML exports
 - Paste cURL commands into the URL field to populate the current request
+- Command palette for quickly opening requests, revealing folders, and running common commands
 - Response history view in the response pane
 - Persistent TOML-based storage for workspaces, requests, environments, local history, and script results on your machine
 - Theme support with light/dark mode and a clean desktop interface
