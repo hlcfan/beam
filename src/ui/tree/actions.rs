@@ -345,87 +345,6 @@ impl BeamView {
         }
     }
 
-    pub(in crate::ui) fn quote_shell_arg(value: &str) -> String {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
-
-    pub(in crate::ui) fn build_curl_for_request(&self, request_id: Ulid) -> Option<String> {
-        let pane = self.shell.request_pane_data.get(&request_id)?;
-        let mut url = pane.url.clone();
-        let query_pairs: Vec<String> = pane
-            .query_params
-            .iter()
-            .filter(|param| param.enabled && !param.name.trim().is_empty())
-            .map(|param| format!("{}={}", param.name.trim(), param.value.trim()))
-            .collect();
-        if !query_pairs.is_empty() {
-            let joiner = if url.contains('?') { "&" } else { "?" };
-            url.push_str(joiner);
-            url.push_str(&query_pairs.join("&"));
-        }
-
-        let mut parts = vec![
-            "curl".to_string(),
-            "-X".to_string(),
-            format!("{:?}", pane.method).to_uppercase(),
-            Self::quote_shell_arg(&url),
-        ];
-
-        for header in pane
-            .headers
-            .iter()
-            .filter(|header| header.enabled && !header.name.trim().is_empty())
-        {
-            parts.push("-H".to_string());
-            parts.push(Self::quote_shell_arg(&format!(
-                "{}: {}",
-                header.name.trim(),
-                header.value
-            )));
-        }
-
-        let body_payload = match &pane.body {
-            BodyConfig::None => None,
-            BodyConfig::Raw { text, .. } | BodyConfig::Json { text } | BodyConfig::Xml { text } => {
-                (!text.is_empty()).then_some(text.clone())
-            }
-            BodyConfig::Graphql {
-                query,
-                variables_json,
-            } => {
-                let mut payload = String::new();
-                payload.push_str("{\"query\":");
-                payload.push_str(&serde_json::to_string(query).ok()?);
-                if let Some(variables) = variables_json.as_ref().filter(|v| !v.trim().is_empty()) {
-                    payload.push_str(",\"variables\":");
-                    if serde_json::from_str::<serde_json::Value>(variables).is_ok() {
-                        payload.push_str(variables);
-                    } else {
-                        payload.push_str(&serde_json::to_string(variables).ok()?);
-                    }
-                }
-                payload.push('}');
-                Some(payload)
-            }
-            BodyConfig::FormUrlEncoded { fields } | BodyConfig::Multipart { fields } => {
-                let payload = fields
-                    .iter()
-                    .filter(|field| !field.name.trim().is_empty())
-                    .map(|field| format!("{}={}", field.name.trim(), field.value))
-                    .collect::<Vec<_>>()
-                    .join("&");
-                (!payload.is_empty()).then_some(payload)
-            }
-        };
-
-        if let Some(payload) = body_payload {
-            parts.push("--data-raw".to_string());
-            parts.push(Self::quote_shell_arg(&payload));
-        }
-
-        Some(parts.join(" "))
-    }
-
     pub(in crate::ui) fn add_request_from_tree_node(
         &mut self,
         node_id: Ulid,
@@ -960,19 +879,6 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         self.add_folder_at_root(window, cx);
-    }
-
-    pub(in crate::ui) fn copy_request_as_curl_from_tree_node(
-        &mut self,
-        request_id: Ulid,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(curl) = self.build_curl_for_request(request_id) else {
-            window.push_notification("Unable to build cURL command for this request.", cx);
-            return;
-        };
-        cx.write_to_clipboard(ClipboardItem::new_string(curl));
     }
 
     pub(in crate::ui) fn duplicate_request_from_tree_node(
