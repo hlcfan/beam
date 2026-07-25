@@ -1,6 +1,7 @@
 mod actions;
 mod dialogs;
 mod request;
+mod response;
 mod text_edit_menu;
 mod theme;
 
@@ -16,6 +17,14 @@ use request::body::{
     body_format_from_config, body_format_label, body_from_format, body_tab_label,
     body_with_updated_text, format_body_text, response_body_editor_language,
     supported_body_formats,
+};
+use response::history::{
+    ResponseHistoryEntry, StoredResponseSnapshot, load_response_history_entries,
+    load_response_snapshot_for_history_entry,
+};
+use response::persistence::{
+    ConsoleMessageView, PersistedScriptResult, clear_script_result_for_request, load_script_result,
+    persist_response_snapshot, persist_script_result,
 };
 use text_edit_menu::{
     append_with_image_or_plain, build_text_edit_context_menu,
@@ -79,8 +88,8 @@ use crate::request_authoring::{
     validate_rename,
 };
 use crate::script::{
-    ConsoleLevel, EnvironmentChange, EnvironmentChangeKind, ScriptExecutionResult,
-    ScriptRuntimeResponse, TestResult, execute_post_request_script,
+    ConsoleLevel, EnvironmentChangeKind, ScriptExecutionResult, ScriptRuntimeResponse,
+    execute_post_request_script,
 };
 use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::workspace_repo::WorkspaceRepository;
@@ -686,96 +695,8 @@ struct RequestExecutionState {
 }
 
 const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
-const RESPONSE_BODY_TRUNCATED_NOTE: &str =
-    "[Response body omitted from local history (truncated).]";
 const MACOS_COMMAND_ICON_PATH: &str = "icons/command.svg";
 const NON_MACOS_COMMAND_ICON_PATH: &str = "icons/chevron-up.svg";
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
-struct PersistedScriptResult {
-    request_id: String,
-    success: bool,
-    failed: bool,
-    error_type: Option<String>,
-    error_message: Option<String>,
-    failure_message: Option<String>,
-    #[serde(default)]
-    console_output: Vec<ConsoleMessageView>,
-    #[serde(default)]
-    test_results: Vec<TestResult>,
-    #[serde(default)]
-    environment_diff: Vec<EnvironmentChange>,
-    #[serde(default)]
-    no_environment_selected_with_env_writes: bool,
-    updated_at: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct ConsoleMessageView {
-    level: String,
-    message: String,
-    timestamp: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
-struct RequestHistoryFile {
-    #[serde(default)]
-    meta: Option<RequestHistoryMeta>,
-    #[serde(default)]
-    executions: Vec<RequestHistoryExecution>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct RequestHistoryMeta {
-    request_id: String,
-    #[serde(default)]
-    schema_version: Option<u32>,
-    #[serde(default)]
-    updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct RequestHistoryExecution {
-    #[serde(default)]
-    timestamp: Option<String>,
-    status: Option<u16>,
-    duration_ms: Option<u64>,
-    response_summary: Option<RequestHistoryResponseSummary>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct RequestHistoryResponseSummary {
-    body_bytes: Option<u64>,
-    body_ref: Option<String>,
-    #[serde(default)]
-    body_truncated: bool,
-    #[serde(default)]
-    headers: Vec<RequestHistoryHeader>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct RequestHistoryHeader {
-    name: String,
-    value: String,
-}
-
-#[derive(Clone)]
-struct ResponseHistoryEntry {
-    timestamp_text: String,
-    status_text: String,
-    execution: RequestHistoryExecution,
-}
-
-#[derive(Clone)]
-struct StoredResponseSnapshot {
-    status: String,
-    status_code: Option<u16>,
-    time: String,
-    size: String,
-    body: String,
-    headers_raw: String,
-    content_type: Option<String>,
-}
 
 impl BeamView {
     fn begin_request_run_for(&mut self, request_id: Ulid) -> u64 {
@@ -1222,115 +1143,6 @@ impl BeamView {
         self.sync_response_pane_from_selection(window, cx);
     }
 
-    fn on_response_body_editor_updated(&mut self, cx: &mut Context<Self>) {
-        if self.suppress_response_scroll_offset_persistence {
-            return;
-        }
-        self.schedule_response_scroll_offset_persistence(cx);
-    }
-
-    fn schedule_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
-        if !self.response_scroll_offset_needs_persist(cx) {
-            return;
-        }
-        self.pending_response_scroll_offset_persistence_due_at =
-            Some(Instant::now() + Duration::from_millis(150));
-        if self.response_scroll_offset_persistence_tick_scheduled {
-            return;
-        }
-        self.response_scroll_offset_persistence_tick_scheduled = true;
-        self.schedule_response_scroll_offset_persistence_tick(cx);
-    }
-
-    fn process_pending_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
-        let Some(due_at) = self.pending_response_scroll_offset_persistence_due_at else {
-            self.response_scroll_offset_persistence_tick_scheduled = false;
-            return;
-        };
-        if Instant::now() < due_at {
-            self.schedule_response_scroll_offset_persistence_tick(cx);
-            return;
-        }
-        self.pending_response_scroll_offset_persistence_due_at = None;
-        self.response_scroll_offset_persistence_tick_scheduled = false;
-        if self.response_scroll_offset_needs_persist(cx) {
-            self.persist_current_response_scroll_offset(cx);
-        }
-    }
-
-    fn schedule_response_scroll_offset_persistence_tick(&self, cx: &mut Context<Self>) {
-        let view = cx.entity();
-
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                this.process_pending_response_scroll_offset_persistence(cx);
-            });
-        })
-        .detach();
-    }
-
-    fn response_scroll_offset_needs_persist(&self, cx: &App) -> bool {
-        let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
-            return false;
-        };
-        let Some(pane_data) = self.shell.request_pane_data.get(&request_id) else {
-            return false;
-        };
-        self.current_response_scroll_offset(cx) != pane_data.response_scroll_offset
-    }
-
-    fn current_response_scroll_offset(&self, cx: &App) -> Point<Pixels> {
-        self.response_body_editor.read(cx).scroll_offset()
-    }
-
-    fn persist_current_response_scroll_offset(&mut self, cx: &App) {
-        let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
-            return;
-        };
-        self.persist_response_scroll_offset_for_request(request_id, cx);
-    }
-
-    fn update_response_body_editor_with_scroll_persistence_suppressed(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        update: impl FnOnce(&mut InputState, &mut Window, &mut Context<InputState>),
-    ) {
-        self.suppress_response_scroll_offset_persistence = true;
-        self.response_body_editor.update(cx, |input, cx| {
-            update(input, window, cx);
-        });
-        self.suppress_response_scroll_offset_persistence = false;
-    }
-
-    fn restore_selected_request_response_scroll_offset(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
-            return;
-        };
-        let Some(pane_data) = self.shell.request_pane_data.get(&request_id) else {
-            return;
-        };
-
-        let response_scroll_offset = pane_data.response_scroll_offset;
-
-        let previous_focus = window.focused(cx);
-        self.response_body_editor.update(cx, |input, cx| {
-            input.set_scroll_offset(response_scroll_offset, cx);
-        });
-        if let Some(previous_focus) = previous_focus {
-            previous_focus.focus(window, cx);
-        }
-    }
-
     fn select_request(&mut self, request_id: Ulid, window: &mut Window, cx: &mut Context<Self>) {
         self.persist_current_response_scroll_offset(cx);
         self.pending_response_scroll_offset_persistence_due_at = None;
@@ -1447,13 +1259,6 @@ impl BeamView {
         }
     }
 
-    fn persist_response_scroll_offset_for_request(&mut self, request_id: Ulid, cx: &App) {
-        let response_scroll_offset = self.current_response_scroll_offset(cx);
-        if let Some(pane_data) = self.shell.request_pane_data.get_mut(&request_id) {
-            pane_data.response_scroll_offset = response_scroll_offset;
-        }
-    }
-
     fn refresh_active_request_cache(&mut self) {
         let selected_request_id = self.shell.workspace_tree.selected_request_id();
         let cached_request_id = self
@@ -1523,18 +1328,17 @@ impl BeamView {
             return;
         };
 
-        self.response_history_entries = Self::load_response_history_entries(request_id);
-        if let Some(snapshot) = self
-            .response_history_entries
-            .first()
-            .map(Self::load_response_snapshot_for_history_entry)
-        {
+        self.response_history_entries =
+            load_response_history_entries(&self.current_workspace_paths, request_id);
+        if let Some(snapshot) = self.response_history_entries.first().map(|entry| {
+            load_response_snapshot_for_history_entry(&self.current_workspace_paths, entry)
+        }) {
             self.apply_response_snapshot(&snapshot, window, cx);
             self.restore_selected_request_response_scroll_offset(window, cx);
         } else {
             self.clear_response_pane(window, cx);
         }
-        self.script_result = Self::load_script_result(request_id);
+        self.script_result = load_script_result(&self.current_workspace_paths, request_id);
 
         let (status, status_code, time, size) = response_summary_for_selected_request(
             Some(request_id),
@@ -1550,86 +1354,6 @@ impl BeamView {
         self.response_size = size;
     }
 
-    fn load_request_history_file(request_id: Ulid) -> Option<RequestHistoryFile> {
-        let paths = BeamPaths::default_user_config();
-        let history_file_path = paths
-            .local_dir
-            .join("history/by-request")
-            .join(format!("{request_id}.history.toml"));
-        let content = fs::read_to_string(history_file_path).ok()?;
-        let history_file: RequestHistoryFile = toml::from_str(&content).ok()?;
-
-        Some(history_file)
-    }
-
-    fn response_snapshot_from_history_execution(
-        paths: &BeamPaths,
-        execution: &RequestHistoryExecution,
-    ) -> StoredResponseSnapshot {
-        let (status, status_code, time, size) = Self::response_history_summary_parts(execution);
-        let mut body = String::new();
-        let mut headers_raw = String::new();
-        let mut content_type = None;
-
-        if let Some(summary) = execution.response_summary.as_ref() {
-            if !summary.headers.is_empty() {
-                headers_raw = summary
-                    .headers
-                    .iter()
-                    .map(|header| format!("{}: {}", header.name, header.value))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                content_type = summary
-                    .headers
-                    .iter()
-                    .find(|header| header.name.eq_ignore_ascii_case("content-type"))
-                    .map(|header| header.value.clone());
-            }
-            body = if summary.body_truncated {
-                RESPONSE_BODY_TRUNCATED_NOTE.to_string()
-            } else if let Some(body_ref) = summary.body_ref.as_ref() {
-                let body_path = paths.local_dir.join("history/responses").join(body_ref);
-                fs::read(body_path)
-                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
-        }
-
-        StoredResponseSnapshot {
-            status,
-            status_code,
-            time,
-            size,
-            body,
-            headers_raw,
-            content_type,
-        }
-    }
-
-    fn response_history_summary_parts(
-        execution: &RequestHistoryExecution,
-    ) -> (String, Option<u16>, String, String) {
-        let status = execution
-            .status
-            .map(|code| code.to_string())
-            .unwrap_or_else(|| "—".to_string());
-        let time = execution
-            .duration_ms
-            .map(|ms| format!("{ms} ms"))
-            .unwrap_or_else(|| "—".to_string());
-        let size = execution
-            .response_summary
-            .as_ref()
-            .and_then(|summary| summary.body_bytes)
-            .and_then(|n| usize::try_from(n).ok())
-            .map(format_bytes)
-            .unwrap_or_else(|| "—".to_string());
-
-        (status, execution.status, time, size)
-    }
-
     fn status_code_in_color(status: Option<u16>, cx: &App) -> Hsla {
         match status {
             Some(200..=299) => cx.theme().success,
@@ -1638,80 +1362,6 @@ impl BeamView {
             Some(100..=199) => cx.theme().info,
             _ => cx.theme().muted_foreground,
         }
-    }
-
-    fn load_response_snapshot_for_history_entry(
-        entry: &ResponseHistoryEntry,
-    ) -> StoredResponseSnapshot {
-        let paths = BeamPaths::default_user_config();
-        Self::response_snapshot_from_history_execution(&paths, &entry.execution)
-    }
-
-    fn load_response_history_entries(request_id: Ulid) -> Vec<ResponseHistoryEntry> {
-        let Some(history_file) = Self::load_request_history_file(request_id) else {
-            return Vec::new();
-        };
-
-        history_file
-            .executions
-            .iter()
-            .rev()
-            .map(|execution| {
-                let timestamp_text = execution
-                    .timestamp
-                    .as_deref()
-                    .map(Self::format_human_timestamp)
-                    .unwrap_or_else(|| "Unknown time".to_string());
-                let status_text = execution
-                    .status
-                    .map(|code| code.to_string())
-                    .unwrap_or_else(|| "—".to_string());
-
-                ResponseHistoryEntry {
-                    timestamp_text,
-                    status_text,
-                    execution: execution.clone(),
-                }
-            })
-            .collect()
-    }
-
-    fn script_result_file_path(request_id: Ulid) -> PathBuf {
-        let paths = BeamPaths::default_user_config();
-        paths
-            .local_dir
-            .join("script_results")
-            .join(format!("{request_id}.toml"))
-    }
-
-    fn load_script_result(request_id: Ulid) -> Option<PersistedScriptResult> {
-        let path = Self::script_result_file_path(request_id);
-        let content = fs::read_to_string(path).ok()?;
-        let parsed: PersistedScriptResult = toml::from_str(&content).ok()?;
-        (parsed.request_id == request_id.to_string()).then_some(parsed)
-    }
-
-    fn persist_script_result(
-        request_id: Ulid,
-        result: &PersistedScriptResult,
-    ) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let dir = paths.local_dir.join("script_results");
-        fs::create_dir_all(&dir)
-            .map_err(|error| format!("Failed to create script_results directory: {error}"))?;
-        let path = dir.join(format!("{request_id}.toml"));
-        let content = toml::to_string_pretty(result)
-            .map_err(|error| format!("Failed to encode script result: {error}"))?;
-        fs::write(path, content).map_err(|error| format!("Failed to write script result: {error}"))
-    }
-
-    fn clear_script_result_for_request(request_id: Ulid) -> Result<(), String> {
-        let path = Self::script_result_file_path(request_id);
-        if path.exists() {
-            fs::remove_file(path)
-                .map_err(|error| format!("Failed to clear script result: {error}"))?;
-        }
-        Ok(())
     }
 
     fn clear_request_param_inputs(&mut self) {
@@ -4780,6 +4430,7 @@ impl BeamView {
         };
 
         let selected_environment_id = self.selected_environment_id_for_view();
+        let response_persistence_paths = self.current_workspace_paths.clone();
         let no_environment_selected = selected_environment_id.is_none();
         let environment_variables = self.load_environment_for_script(selected_environment_id);
         let request_snapshot =
@@ -4935,20 +4586,29 @@ impl BeamView {
                         );
                     }
                 }
-                if let Err(error) = Self::persist_response_snapshot(request_id, &response) {
+                if let Err(error) =
+                    persist_response_snapshot(&response_persistence_paths, request_id, &response)
+                {
                     log::error!("Failed to persist response snapshot: {error}");
                 }
                 if Some(request_id) == this.shell.workspace_tree.selected_request_id() {
-                    this.response_history_entries = Self::load_response_history_entries(request_id);
+                    this.response_history_entries =
+                        load_response_history_entries(&this.current_workspace_paths, request_id);
                 }
                 match outcome.script_result.as_ref() {
                     Some(script_result) => {
-                        if let Err(error) = Self::persist_script_result(request_id, script_result) {
+                        if let Err(error) = persist_script_result(
+                            &response_persistence_paths,
+                            request_id,
+                            script_result,
+                        ) {
                             log::error!("Failed to persist script result: {error}");
                         }
                     }
                     None => {
-                        if let Err(error) = Self::clear_script_result_for_request(request_id) {
+                        if let Err(error) =
+                            clear_script_result_for_request(&response_persistence_paths, request_id)
+                        {
                             log::error!("Failed to clear script result: {error}");
                         }
                     }
@@ -5098,56 +4758,6 @@ impl BeamView {
             no_environment_selected_with_env_writes,
             updated_at: Utc::now().to_rfc3339(),
         }
-    }
-
-    fn persist_response_snapshot(
-        request_id: Ulid,
-        response: &HttpResponseSnapshot,
-    ) -> Result<(), String> {
-        let paths = BeamPaths::default_user_config();
-        let history_dir = paths.local_dir.join("history");
-        let by_request_dir = history_dir.join("by-request");
-        let responses_dir = history_dir.join("responses");
-        fs::create_dir_all(&by_request_dir)
-            .map_err(|error| format!("Failed to create history directory: {error}"))?;
-        fs::create_dir_all(&responses_dir)
-            .map_err(|error| format!("Failed to create responses directory: {error}"))?;
-
-        let history_path = by_request_dir.join(format!("{request_id}.history.toml"));
-        let mut history_file = fs::read_to_string(&history_path)
-            .ok()
-            .and_then(|content| toml::from_str::<RequestHistoryFile>(&content).ok())
-            .unwrap_or_default();
-
-        let execution_id = Ulid::new().to_string();
-        let body_ref = format!("{execution_id}.response.bin");
-        fs::write(responses_dir.join(&body_ref), response.body.as_bytes())
-            .map_err(|error| format!("Failed to write response body: {error}"))?;
-
-        history_file.meta = Some(RequestHistoryMeta {
-            request_id: request_id.to_string(),
-            schema_version: Some(1),
-            updated_at: Some(Utc::now().to_rfc3339()),
-        });
-        history_file.executions.push(RequestHistoryExecution {
-            timestamp: Some(response.timestamp.clone()),
-            status: response.status_code,
-            duration_ms: Self::parse_response_duration_ms(&response.time),
-            response_summary: Some(RequestHistoryResponseSummary {
-                body_bytes: Some(response.body.len() as u64),
-                body_ref: Some(body_ref),
-                body_truncated: false,
-                headers: Self::parse_response_headers(&response.headers)
-                    .into_iter()
-                    .map(|(name, value)| RequestHistoryHeader { name, value })
-                    .collect(),
-            }),
-        });
-
-        let content = toml::to_string_pretty(&history_file)
-            .map_err(|error| format!("Failed to encode history file: {error}"))?;
-        fs::write(history_path, content)
-            .map_err(|error| format!("Failed to write history file: {error}"))
     }
 
     fn parse_response_duration_ms(time: &str) -> Option<u64> {
@@ -7707,9 +7317,10 @@ impl BeamView {
                                     if let Some(request_id) =
                                         this.shell.workspace_tree.selected_request_id()
                                     {
-                                        if let Err(error) =
-                                            Self::clear_script_result_for_request(request_id)
-                                        {
+                                        if let Err(error) = clear_script_result_for_request(
+                                            &this.current_workspace_paths,
+                                            request_id,
+                                        ) {
                                             log::error!("Failed to clear script result: {error}");
                                         }
                                     }
@@ -7995,7 +7606,8 @@ impl BeamView {
                                                             cx.stop_propagation();
                                                             window.prevent_default();
                                                             let snapshot =
-                                                                Self::load_response_snapshot_for_history_entry(
+                                                                load_response_snapshot_for_history_entry(
+                                                                    &this.current_workspace_paths,
                                                                     &history_entry,
                                                                 );
                                                             this.apply_response_snapshot(
