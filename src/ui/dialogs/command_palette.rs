@@ -20,6 +20,7 @@ const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
 const RESULT_ROW_HEIGHT: f32 = 48.0;
 const RESULT_SECTION_HEIGHT: f32 = 28.0;
 const MAX_RESULT_LIST_HEIGHT: f32 = 380.0;
+const MAX_RECENT_REQUESTS: usize = 10;
 
 actions!(
     command_palette,
@@ -152,6 +153,7 @@ pub(super) fn filter_command_palette_entries(
             .cloned()
             .collect::<Vec<_>>();
         recent.sort_by_key(|entry| entry.request_recency_rank);
+        recent.truncate(MAX_RECENT_REQUESTS);
         recent.extend(
             entries
                 .iter()
@@ -783,6 +785,33 @@ mod tests {
         assert_eq!(
             titles(&filter_command_palette_entries(&entries, "  ")),
             vec!["Newer", "Older", "Open Settings"]
+        );
+    }
+
+    #[test]
+    fn empty_query_limits_recent_requests_without_limiting_search() {
+        let entries = (0..12)
+            .map(|rank| {
+                entry(
+                    &format!("Request {rank}"),
+                    CommandPaletteEntryKind::Request {
+                        request_id: Ulid::new(),
+                    },
+                    Some(rank),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let empty_results = filter_command_palette_entries(&entries, "");
+        assert_eq!(empty_results.len(), MAX_RECENT_REQUESTS);
+        assert_eq!(empty_results[0].title, "Request 0");
+        assert_eq!(empty_results[9].title, "Request 9");
+
+        assert_eq!(
+            titles(&filter_command_palette_entries(&entries, "Request")),
+            (0..12)
+                .map(|rank| format!("Request {rank}"))
+                .collect::<Vec<_>>()
         );
     }
 
