@@ -11,6 +11,7 @@ const TREE_DRAG_SCROLL_SLOW_ZONE_PX: f32 = 48.0;
 const TREE_DRAG_SCROLL_FAST_STEP_PX: f32 = 14.0;
 const TREE_DRAG_SCROLL_SLOW_STEP_PX: f32 = 6.0;
 const TREE_DRAG_SCROLL_TICK: Duration = Duration::from_millis(16);
+const MAX_REQUEST_VIEW_HISTORY_ENTRIES: usize = 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TreeNeighborDirection {
@@ -52,6 +53,10 @@ impl RequestViewHistory {
             self.entries.truncate(cursor + 1);
         }
         self.entries.push(request_id);
+        if self.entries.len() > MAX_REQUEST_VIEW_HISTORY_ENTRIES {
+            let excess = self.entries.len() - MAX_REQUEST_VIEW_HISTORY_ENTRIES;
+            self.entries.drain(..excess);
+        }
         self.cursor = self.entries.len().checked_sub(1);
     }
 
@@ -107,6 +112,7 @@ impl RequestViewHistory {
     fn touch_recent(&mut self, request_id: Ulid) {
         self.recent.retain(|id| *id != request_id);
         self.recent.insert(0, request_id);
+        self.recent.truncate(MAX_REQUEST_VIEW_HISTORY_ENTRIES);
     }
 
     #[cfg(test)]
@@ -199,7 +205,7 @@ impl Render for TreeDragPreview {
 
 #[cfg(test)]
 mod tests {
-    use super::RequestViewHistory;
+    use super::{MAX_REQUEST_VIEW_HISTORY_ENTRIES, RequestViewHistory};
     use ulid::Ulid;
 
     #[test]
@@ -414,5 +420,44 @@ mod tests {
         assert_eq!(history.go_back(), Some(r2));
         assert_eq!(history.go_back(), None);
         assert_eq!(history.go_forward(), Some(r3));
+    }
+
+    #[test]
+    fn request_view_history_discards_oldest_entries_over_limit() {
+        let request_ids = (0..=MAX_REQUEST_VIEW_HISTORY_ENTRIES)
+            .map(|_| Ulid::new())
+            .collect::<Vec<_>>();
+        let mut history = RequestViewHistory::default();
+
+        for request_id in request_ids.iter().copied() {
+            history.visit(request_id);
+        }
+
+        for expected in request_ids[1..MAX_REQUEST_VIEW_HISTORY_ENTRIES]
+            .iter()
+            .rev()
+        {
+            assert_eq!(history.go_back(), Some(*expected));
+        }
+        assert_eq!(history.go_back(), None);
+    }
+
+    #[test]
+    fn request_view_history_limits_recent_requests() {
+        let request_ids = (0..=MAX_REQUEST_VIEW_HISTORY_ENTRIES)
+            .map(|_| Ulid::new())
+            .collect::<Vec<_>>();
+        let mut history = RequestViewHistory::default();
+
+        for request_id in request_ids.iter().copied() {
+            history.visit(request_id);
+        }
+
+        assert_eq!(
+            history.recent_request_ids().len(),
+            MAX_REQUEST_VIEW_HISTORY_ENTRIES
+        );
+        assert_eq!(history.recent_request_ids().first(), request_ids.last());
+        assert!(!history.recent_request_ids().contains(&request_ids[0]));
     }
 }
