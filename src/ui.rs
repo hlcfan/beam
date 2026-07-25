@@ -643,22 +643,19 @@ impl RequestViewHistory {
         self.cursor = None;
     }
 
-    /// Records a new visit. If the user had stepped back in the history, the
-    /// forward entries are truncated (browser-style) before appending the new
-    /// request. Re-selecting the entry already at the cursor is a no-op that
-    /// leaves the forward history intact. If the request already lives in the
-    /// history, the entries are collapsed down to just before the existing
-    /// occurrence (the re-visit then re-appends it at the new tip), which
-    /// keeps the backward path duplicate-free.
+    /// Records a request selection in chronological order.
+    ///
+    /// Selecting the request already at the cursor is a no-op. Otherwise, any
+    /// entries ahead of the cursor are discarded before the selected request
+    /// is appended. Request ids may therefore appear more than once: visiting
+    /// A, B, C, D, then C produces `[A, B, C, D, C]`.
     fn visit(&mut self, request_id: Ulid) {
         if let Some(cursor) = self.cursor
             && self.entries.get(cursor) == Some(&request_id)
         {
             return;
         }
-        if let Some(existing) = self.entries.iter().position(|id| *id == request_id) {
-            self.entries.truncate(existing);
-        } else if let Some(cursor) = self.cursor
+        if let Some(cursor) = self.cursor
             && cursor + 1 < self.entries.len()
         {
             self.entries.truncate(cursor + 1);
@@ -12832,24 +12829,49 @@ updated_at = "2026-05-27T08:30:00.000000Z"
     }
 
     #[test]
-    fn request_view_history_revisit_existing_entry_does_not_duplicate() {
+    fn request_view_history_revisit_existing_entry_records_transition() {
         let r1 = Ulid::new();
         let r2 = Ulid::new();
         let r3 = Ulid::new();
+        let r4 = Ulid::new();
         let mut history = RequestViewHistory::default();
 
         history.visit(r1);
         history.visit(r2);
         history.visit(r3);
-        // Step back so r3 and the cursor sit at r2.
-        assert_eq!(history.go_back(), Some(r2));
+        history.visit(r4);
+        history.visit(r3);
 
-        // Re-selecting r1 (a request that already lives in the backward
-        // history) must collapse the entries down to [r1] so the backward
-        // path stays duplicate-free.
-        history.visit(r1);
+        assert_eq!(history.go_back(), Some(r4));
+        assert_eq!(history.go_back(), Some(r3));
+        assert_eq!(history.go_back(), Some(r2));
+        assert_eq!(history.go_back(), Some(r1));
         assert_eq!(history.go_back(), None);
+        assert_eq!(history.go_forward(), Some(r2));
+        assert_eq!(history.go_forward(), Some(r3));
+        assert_eq!(history.go_forward(), Some(r4));
+        assert_eq!(history.go_forward(), Some(r3));
         assert_eq!(history.go_forward(), None);
+    }
+
+    #[test]
+    fn request_view_history_new_visit_after_back_replaces_forward_branch() {
+        let r1 = Ulid::new();
+        let r2 = Ulid::new();
+        let r3 = Ulid::new();
+        let r4 = Ulid::new();
+        let mut history = RequestViewHistory::default();
+
+        history.visit(r1);
+        history.visit(r2);
+        history.visit(r3);
+        assert_eq!(history.go_back(), Some(r2));
+        history.visit(r4);
+
+        assert_eq!(history.go_forward(), None);
+        assert_eq!(history.go_back(), Some(r2));
+        assert_eq!(history.go_back(), Some(r1));
+        assert_eq!(history.go_back(), None);
     }
 
     #[test]
