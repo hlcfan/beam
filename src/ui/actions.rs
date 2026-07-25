@@ -10,6 +10,7 @@ actions!(
         CreateRequestBelowActive,
         FocusUrlInput,
         OpenSettings,
+        OpenCommandPalette,
         SelectNextRequestInTree,
         SelectPrevRequestInTree,
         SelectNextRequestInViewHistory,

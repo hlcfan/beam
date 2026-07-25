@@ -1,3 +1,6 @@
+// Phase 1 intentionally defines the palette model before Phase 2 wires it into a view.
+#[allow(dead_code)]
+mod command_palette;
 mod environment;
 mod import;
 mod key_bindings;

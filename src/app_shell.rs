@@ -158,6 +158,14 @@ pub struct TreeRow {
     pub selected: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceTreeDescriptor {
+    pub id: Ulid,
+    pub kind: TreeNodeKind,
+    pub name: String,
+    pub ancestor_path: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct WorkspaceTreeState {
     nodes: HashMap<Ulid, TreeNode>,
@@ -228,22 +236,61 @@ impl WorkspaceTreeState {
     /// (root → first child → ... → sibling), ignoring the current `expanded` set.
     /// Folders are visited but not included in the result.
     pub fn ordered_request_ids(&self) -> Vec<Ulid> {
-        let mut out = Vec::new();
-        for root in &self.roots {
-            self.collect_request_ids(*root, &mut out);
-        }
-        out
+        self.preorder_descriptors()
+            .into_iter()
+            .filter_map(|descriptor| {
+                (descriptor.kind == TreeNodeKind::Request).then_some(descriptor.id)
+            })
+            .collect()
     }
 
-    fn collect_request_ids(&self, id: Ulid, out: &mut Vec<Ulid>) {
+    /// Returns folders and requests in full tree order, including descendants
+    /// of collapsed folders. Ancestor names are collected during traversal.
+    pub fn preorder_descriptors(&self) -> Vec<WorkspaceTreeDescriptor> {
+        let mut descriptors = Vec::new();
+        let mut visited = HashSet::new();
+        let mut ancestor_path = Vec::new();
+        for root in &self.roots {
+            self.collect_preorder_descriptors(
+                *root,
+                &mut ancestor_path,
+                &mut visited,
+                &mut descriptors,
+            );
+        }
+        descriptors
+    }
+
+    fn collect_preorder_descriptors(
+        &self,
+        id: Ulid,
+        ancestor_path: &mut Vec<String>,
+        visited: &mut HashSet<Ulid>,
+        descriptors: &mut Vec<WorkspaceTreeDescriptor>,
+    ) {
+        if !visited.insert(id) {
+            return;
+        }
         let Some(node) = self.nodes.get(&id) else {
             return;
         };
-        if node.kind == TreeNodeKind::Request {
-            out.push(id);
+
+        descriptors.push(WorkspaceTreeDescriptor {
+            id: node.id,
+            kind: node.kind,
+            name: node.name.clone(),
+            ancestor_path: ancestor_path.clone(),
+        });
+
+        let is_folder = node.kind == TreeNodeKind::Folder;
+        if is_folder {
+            ancestor_path.push(node.name.clone());
         }
         for child_id in &node.children {
-            self.collect_request_ids(*child_id, out);
+            self.collect_preorder_descriptors(*child_id, ancestor_path, visited, descriptors);
+        }
+        if is_folder {
+            ancestor_path.pop();
         }
     }
 
@@ -3617,6 +3664,111 @@ mod tests {
         assert!(tree.is_expanded(folder_id));
         assert!(!tree.is_expanded(request_id));
         assert!(!tree.is_expanded(missing_id));
+    }
+
+    #[test]
+    fn preorder_descriptors_include_collapsed_descendants_and_ancestor_paths() {
+        let folder_id = Ulid::new();
+        let nested_folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let mut tree = WorkspaceTreeState::default();
+        tree.nodes.insert(
+            folder_id,
+            TreeNode {
+                id: folder_id,
+                name: "Users".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: vec![nested_folder_id],
+            },
+        );
+        tree.nodes.insert(
+            nested_folder_id,
+            TreeNode {
+                id: nested_folder_id,
+                name: "Authentication".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: Some(folder_id),
+                children: vec![request_id],
+            },
+        );
+        tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Profile".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: None,
+                manifest_path: None,
+                parent_id: Some(nested_folder_id),
+                children: Vec::new(),
+            },
+        );
+        tree.roots = vec![folder_id];
+
+        let descriptors = tree.preorder_descriptors();
+
+        assert_eq!(
+            descriptors
+                .iter()
+                .map(|descriptor| descriptor.id)
+                .collect::<Vec<_>>(),
+            vec![folder_id, nested_folder_id, request_id]
+        );
+        assert_eq!(descriptors[0].ancestor_path, Vec::<String>::new());
+        assert_eq!(descriptors[1].ancestor_path, vec!["Users"]);
+        assert_eq!(
+            descriptors[2].ancestor_path,
+            vec!["Users", "Authentication"]
+        );
+    }
+
+    #[test]
+    fn preorder_descriptors_stop_at_cycles_and_skip_missing_ids() {
+        let folder_a = Ulid::new();
+        let folder_b = Ulid::new();
+        let missing = Ulid::new();
+        let mut tree = WorkspaceTreeState::default();
+        tree.nodes.insert(
+            folder_a,
+            TreeNode {
+                id: folder_a,
+                name: "A".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: Some(folder_b),
+                children: vec![folder_b, missing],
+            },
+        );
+        tree.nodes.insert(
+            folder_b,
+            TreeNode {
+                id: folder_b,
+                name: "B".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: Some(folder_a),
+                children: vec![folder_a],
+            },
+        );
+        tree.roots = vec![folder_a];
+
+        let descriptors = tree.preorder_descriptors();
+
+        assert_eq!(descriptors.len(), 2);
+        assert_eq!(descriptors[0].id, folder_a);
+        assert_eq!(descriptors[1].id, folder_b);
     }
 
     #[test]
