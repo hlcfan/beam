@@ -17,7 +17,8 @@ use actions::*;
 use tree::*;
 
 use dialogs::{
-    EnvironmentManagerDialogView, ImportDialogView, KeyBindingsDialogView, SettingsDialogView,
+    ConfirmPaletteItem, DismissCommandPalette, EnvironmentManagerDialogView, ImportDialogView,
+    KeyBindingsDialogView, SelectNextPaletteItem, SelectPreviousPaletteItem, SettingsDialogView,
     TreeRenameDialogView,
 };
 use request::body::{
@@ -126,6 +127,10 @@ pub fn run_app(
             cx,
         );
         cx.bind_keys([
+            KeyBinding::new("up", SelectPreviousPaletteItem, Some("CommandPalette")),
+            KeyBinding::new("down", SelectNextPaletteItem, Some("CommandPalette")),
+            KeyBinding::new("enter", ConfirmPaletteItem, Some("CommandPalette")),
+            KeyBinding::new("escape", DismissCommandPalette, Some("CommandPalette")),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-q", QuitApp, None),
             #[cfg(target_os = "macos")]

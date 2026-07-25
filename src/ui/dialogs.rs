@@ -1,4 +1,3 @@
-// Phase 1 intentionally defines the palette model before Phase 2 wires it into a view.
 #[allow(dead_code)]
 mod command_palette;
 mod environment;
@@ -8,6 +7,11 @@ mod settings;
 mod tree;
 mod workspace;
 
+#[allow(unused_imports)]
+pub(super) use command_palette::{
+    CommandPaletteDialogView, CommandPaletteEvent, ConfirmPaletteItem, DismissCommandPalette,
+    SelectNextPaletteItem, SelectPreviousPaletteItem,
+};
 pub(super) use environment::EnvironmentManagerDialogView;
 pub(super) use import::ImportDialogView;
 pub(super) use key_bindings::KeyBindingsDialogView;

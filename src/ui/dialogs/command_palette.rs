@@ -1,8 +1,34 @@
 use std::collections::HashMap;
 
+use gpui::prelude::FluentBuilder as _;
+use gpui::{
+    AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, actions, div, px,
+};
+use gpui_component::{
+    ActiveTheme as _, Icon, Sizable as _, WindowExt as _, h_flex,
+    input::{Input, InputEvent, InputState},
+    v_flex,
+};
 use ulid::Ulid;
 
+use super::super::BeamView;
 use crate::app_shell::{TreeNodeKind, WorkspaceTreeDescriptor, WorkspaceTreeState};
+
+const COMMAND_PALETTE_CONTEXT: &str = "CommandPalette";
+const RESULT_ROW_HEIGHT: f32 = 52.0;
+const MAX_RESULT_LIST_HEIGHT: f32 = 364.0;
+
+actions!(
+    command_palette,
+    [
+        SelectNextPaletteItem,
+        SelectPreviousPaletteItem,
+        ConfirmPaletteItem,
+        DismissCommandPalette
+    ]
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
@@ -139,6 +165,272 @@ fn match_tier(entry: &CommandPaletteEntry, query: &str) -> u8 {
         1
     } else {
         2
+    }
+}
+
+#[derive(Clone)]
+pub(in crate::ui) struct CommandPaletteEvent {
+    pub(super) entry: CommandPaletteEntry,
+}
+
+pub(in crate::ui) struct CommandPaletteDialogView {
+    beam_view: Entity<BeamView>,
+    search_input: Entity<InputState>,
+    all_entries: Vec<CommandPaletteEntry>,
+    filtered_entries: Vec<CommandPaletteEntry>,
+    selected_index: usize,
+    result_scroll_handle: ScrollHandle,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl EventEmitter<CommandPaletteEvent> for CommandPaletteDialogView {}
+
+impl CommandPaletteDialogView {
+    pub(super) fn new(
+        beam_view: Entity<BeamView>,
+        all_entries: Vec<CommandPaletteEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let search_input =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search requests and commands"));
+        let filtered_entries = filter_command_palette_entries(&all_entries, "");
+        let input_for_subscription = search_input.clone();
+        let subscription = cx.subscribe_in(
+            &search_input,
+            window,
+            move |this, _, event: &InputEvent, _, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let query = input_for_subscription.read(cx).value().to_string();
+                this.filtered_entries = filter_command_palette_entries(&this.all_entries, &query);
+                this.selected_index = 0;
+                if !this.filtered_entries.is_empty() {
+                    this.result_scroll_handle.scroll_to_item(0);
+                }
+                cx.notify();
+            },
+        );
+
+        let input_to_focus = search_input.clone();
+        window.defer(cx, move |window, cx| {
+            input_to_focus.update(cx, |input, cx| input.focus(window, cx));
+        });
+
+        Self {
+            beam_view,
+            search_input,
+            all_entries,
+            filtered_entries,
+            selected_index: 0,
+            result_scroll_handle: ScrollHandle::new(),
+            _subscriptions: vec![subscription],
+        }
+    }
+
+    fn select_next(&mut self, cx: &mut Context<Self>) {
+        if self.filtered_entries.is_empty() {
+            return;
+        }
+        self.selected_index = (self.selected_index + 1) % self.filtered_entries.len();
+        self.result_scroll_handle
+            .scroll_to_item(self.selected_index);
+        cx.notify();
+    }
+
+    fn select_previous(&mut self, cx: &mut Context<Self>) {
+        if self.filtered_entries.is_empty() {
+            return;
+        }
+        self.selected_index = if self.selected_index == 0 {
+            self.filtered_entries.len() - 1
+        } else {
+            self.selected_index - 1
+        };
+        self.result_scroll_handle
+            .scroll_to_item(self.selected_index);
+        cx.notify();
+    }
+
+    fn activate_index(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(entry) = self.filtered_entries.get(index).cloned() else {
+            return;
+        };
+        self.selected_index = index;
+        cx.emit(CommandPaletteEvent { entry });
+        cx.notify();
+    }
+
+    fn activate_selected(&mut self, cx: &mut Context<Self>) {
+        self.activate_index(self.selected_index, cx);
+    }
+
+    fn on_select_next(
+        &mut self,
+        _: &SelectNextPaletteItem,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.select_next(cx);
+    }
+
+    fn on_select_previous(
+        &mut self,
+        _: &SelectPreviousPaletteItem,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        self.select_previous(cx);
+    }
+
+    fn on_confirm(&mut self, _: &ConfirmPaletteItem, _: &mut Window, cx: &mut Context<Self>) {
+        cx.stop_propagation();
+        self.activate_selected(cx);
+    }
+
+    fn on_dismiss(
+        &mut self,
+        _: &DismissCommandPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        window.close_dialog(cx);
+    }
+
+    fn icon_path(entry: &CommandPaletteEntry) -> &'static str {
+        match entry.kind {
+            CommandPaletteEntryKind::Request { .. } => "icons/file.svg",
+            CommandPaletteEntryKind::Folder { .. } => "icons/folder.svg",
+            CommandPaletteEntryKind::Command(CommandPaletteCommand::OpenSettings) => {
+                "icons/settings.svg"
+            }
+            CommandPaletteEntryKind::Command(CommandPaletteCommand::OpenKeyBindings) => {
+                "icons/command.svg"
+            }
+            CommandPaletteEntryKind::Command(CommandPaletteCommand::OpenEnvironmentManager) => {
+                "icons/variable.svg"
+            }
+        }
+    }
+}
+
+impl Render for CommandPaletteDialogView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _ = &self.beam_view;
+        let list_height =
+            px((self.filtered_entries.len() as f32 * RESULT_ROW_HEIGHT)
+                .min(MAX_RESULT_LIST_HEIGHT));
+        let mut results = v_flex()
+            .id("command-palette-results")
+            .w_full()
+            .h(list_height)
+            .overflow_y_scroll()
+            .track_scroll(&self.result_scroll_handle);
+
+        for (index, entry) in self.filtered_entries.iter().cloned().enumerate() {
+            let is_selected = index == self.selected_index;
+            let icon_path = Self::icon_path(&entry);
+            let title = entry.title;
+            let subtitle = entry.subtitle;
+            results = results.child(
+                h_flex()
+                    .id(("command-palette-row", index))
+                    .w_full()
+                    .h(px(RESULT_ROW_HEIGHT))
+                    .flex_none()
+                    .items_center()
+                    .gap_3()
+                    .px_3()
+                    .rounded(cx.theme().radius)
+                    .cursor_pointer()
+                    .when(is_selected, |this| this.bg(cx.theme().list_active))
+                    .when(!is_selected, |this| {
+                        this.hover(|this| this.bg(cx.theme().list_hover))
+                    })
+                    .child(
+                        Icon::default()
+                            .path(icon_path)
+                            .small()
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(
+                        v_flex()
+                            .min_w_0()
+                            .flex_grow(1.0)
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .text_sm()
+                                    .text_color(cx.theme().foreground)
+                                    .truncate()
+                                    .child(title),
+                            )
+                            .when_some(subtitle, |this, subtitle| {
+                                this.child(
+                                    div()
+                                        .w_full()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .truncate()
+                                        .child(subtitle),
+                                )
+                            }),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.activate_index(index, cx);
+                    })),
+            );
+        }
+
+        v_flex()
+            .key_context(COMMAND_PALETTE_CONTEXT)
+            .on_action(cx.listener(Self::on_select_next))
+            .on_action(cx.listener(Self::on_select_previous))
+            .on_action(cx.listener(Self::on_confirm))
+            .on_action(cx.listener(Self::on_dismiss))
+            .w_full()
+            .p_2()
+            .gap_2()
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_center()
+                    .gap_2()
+                    .rounded(cx.theme().radius)
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
+                    .px_2()
+                    .child(
+                        Icon::default()
+                            .path("icons/search.svg")
+                            .small()
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(Input::new(&self.search_input).w_full().appearance(false)),
+            )
+            .when(self.filtered_entries.is_empty(), |this| {
+                this.child(
+                    div()
+                        .w_full()
+                        .h(px(96.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("No matching requests, folders, or commands"),
+                )
+            })
+            .when(!self.filtered_entries.is_empty(), |this| {
+                this.child(results)
+            })
+            .into_any_element()
     }
 }
 
