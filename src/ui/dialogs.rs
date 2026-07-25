@@ -32,7 +32,7 @@ impl BeamView {
         }
         let entries = command_palette::build_command_palette_entries(
             &self.shell.workspace_tree,
-            self.request_view_history.recent_request_ids(),
+            self.request_view_histories.recent_request_ids(),
         );
         let beam_view = cx.entity();
         let palette_view =

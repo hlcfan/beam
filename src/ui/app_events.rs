@@ -47,7 +47,8 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         self.invalidate_env_var_resolved_cache();
-        self.request_view_history.clear();
+        self.request_view_histories
+            .set_active_workspace(workspace_id);
         let data_root = DataRootPaths::default_user_config();
         if let Some(workspace_id) = workspace_id
             && let Some(entry) = self
@@ -67,7 +68,6 @@ impl BeamView {
         self.request_file_index = Self::build_request_file_index(&self.shell);
         self.prune_request_execution_states();
         self.sync_request_editor_from_selection(window, cx);
-        self.seed_request_view_history();
     }
 
     fn process_app_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -106,7 +106,7 @@ impl BeamView {
                         self.shell.workspace_tree.selected_request_id() == Some(*request_id);
                     self.clear_request_execution_state(*request_id);
                     self.request_file_index.remove(request_id);
-                    self.request_view_history.prune(*request_id);
+                    self.request_view_histories.prune(*request_id);
                     self.request_body_editor_cache.remove(request_id);
                     self.request_body_editor_cache_order
                         .retain(|id| id != request_id);
@@ -206,6 +206,7 @@ impl BeamView {
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
                     self.shell.apply_event(&event);
                     self.apply_active_workspace_ui_state(Some(*workspace_id), window, cx);
+                    self.seed_request_view_history();
                 }
                 AppEvent::WorkspaceDeleted {
                     workspace_id,
@@ -215,9 +216,11 @@ impl BeamView {
                     ..
                 } => {
                     let deleted_active = self.shell.workspace.workspace_id == Some(*workspace_id);
+                    self.request_view_histories.prune_workspace(*workspace_id);
                     self.shell.apply_event(&event);
                     if deleted_active {
                         self.apply_active_workspace_ui_state(*new_active_workspace_id, window, cx);
+                        self.seed_request_view_history();
                         if !new_active_workspace_name.is_empty() {
                             window.push_notification(
                                 format!(

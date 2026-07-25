@@ -25,7 +25,7 @@ pub(super) enum RequestViewHistoryDirection {
     Prev,
 }
 
-/// Tracks the in-memory sequence of requests the user has viewed.
+/// Tracks the in-memory sequence of requests the user has viewed in one workspace.
 #[derive(Clone, Debug, Default)]
 pub(super) struct RequestViewHistory {
     entries: Vec<Ulid>,
@@ -33,13 +33,64 @@ pub(super) struct RequestViewHistory {
     recent: Vec<Ulid>,
 }
 
-impl RequestViewHistory {
-    pub(super) fn clear(&mut self) {
-        self.entries.clear();
-        self.cursor = None;
-        self.recent.clear();
+/// Keeps an independent request-view history and cursor for every visited workspace.
+#[derive(Clone, Debug, Default)]
+pub(super) struct WorkspaceRequestViewHistories {
+    histories: HashMap<Ulid, RequestViewHistory>,
+    active_workspace_id: Option<Ulid>,
+}
+
+impl WorkspaceRequestViewHistories {
+    pub(super) fn set_active_workspace(&mut self, workspace_id: Option<Ulid>) {
+        self.active_workspace_id = workspace_id;
     }
 
+    pub(super) fn visit(&mut self, request_id: Ulid) {
+        let Some(workspace_id) = self.active_workspace_id else {
+            return;
+        };
+        self.histories
+            .entry(workspace_id)
+            .or_default()
+            .visit(request_id);
+    }
+
+    pub(super) fn prune(&mut self, request_id: Ulid) {
+        let Some(history) = self
+            .active_workspace_id
+            .and_then(|workspace_id| self.histories.get_mut(&workspace_id))
+        else {
+            return;
+        };
+        history.prune(request_id);
+    }
+
+    pub(super) fn prune_workspace(&mut self, workspace_id: Ulid) {
+        self.histories.remove(&workspace_id);
+    }
+
+    pub(super) fn go_back(&mut self) -> Option<Ulid> {
+        self.active_history_mut()?.go_back()
+    }
+
+    pub(super) fn go_forward(&mut self) -> Option<Ulid> {
+        self.active_history_mut()?.go_forward()
+    }
+
+    pub(super) fn recent_request_ids(&self) -> &[Ulid] {
+        self.active_workspace_id
+            .and_then(|workspace_id| self.histories.get(&workspace_id))
+            .map(RequestViewHistory::recent_request_ids)
+            .unwrap_or(&[])
+    }
+
+    fn active_history_mut(&mut self) -> Option<&mut RequestViewHistory> {
+        let workspace_id = self.active_workspace_id?;
+        self.histories.get_mut(&workspace_id)
+    }
+}
+
+impl RequestViewHistory {
     pub(super) fn visit(&mut self, request_id: Ulid) {
         self.touch_recent(request_id);
         if let Some(cursor) = self.cursor
@@ -63,15 +114,15 @@ impl RequestViewHistory {
     pub(super) fn prune(&mut self, request_id: Ulid) {
         self.recent.retain(|id| *id != request_id);
         let Some(cursor) = self.cursor else {
-            self.entries.retain(|id| *id != request_id);
+            self.entries.retain(|candidate| *candidate != request_id);
             return;
         };
         let removed_before = self.entries[..cursor]
             .iter()
-            .filter(|id| **id == request_id)
+            .filter(|candidate| **candidate == request_id)
             .count();
         let current_was_removed = self.entries.get(cursor) == Some(&request_id);
-        self.entries.retain(|id| *id != request_id);
+        self.entries.retain(|candidate| *candidate != request_id);
         if self.entries.is_empty() {
             self.cursor = None;
             return;
@@ -99,10 +150,10 @@ impl RequestViewHistory {
     pub(super) fn go_forward(&mut self) -> Option<Ulid> {
         let cursor = self.cursor?;
         let next = cursor + 1;
-        let id = self.entries.get(next).copied()?;
+        let request_id = self.entries.get(next).copied()?;
         self.cursor = Some(next);
-        self.touch_recent(id);
-        Some(id)
+        self.touch_recent(request_id);
+        Some(request_id)
     }
 
     pub(super) fn recent_request_ids(&self) -> &[Ulid] {
@@ -205,7 +256,9 @@ impl Render for TreeDragPreview {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_REQUEST_VIEW_HISTORY_ENTRIES, RequestViewHistory};
+    use super::{
+        MAX_REQUEST_VIEW_HISTORY_ENTRIES, RequestViewHistory, WorkspaceRequestViewHistories,
+    };
     use ulid::Ulid;
 
     #[test]
@@ -263,18 +316,31 @@ mod tests {
     }
 
     #[test]
-    fn request_view_history_clear_on_workspace_switch_resets_navigation_and_mru() {
+    fn workspace_request_view_histories_keep_independent_entries_and_cursors() {
+        let w1 = Ulid::new();
+        let w2 = Ulid::new();
         let r1 = Ulid::new();
         let r2 = Ulid::new();
-        let mut history = RequestViewHistory::default();
-        history.visit(r1);
-        history.visit(r2);
-        assert_eq!(history.go_back(), Some(r1));
+        let r3 = Ulid::new();
+        let r4 = Ulid::new();
+        let mut histories = WorkspaceRequestViewHistories::default();
 
-        history.clear();
-        assert_eq!(history.go_back(), None);
-        assert_eq!(history.go_forward(), None);
-        assert!(history.recent_request_ids().is_empty());
+        histories.set_active_workspace(Some(w1));
+        histories.visit(r1);
+        histories.visit(r2);
+        histories.set_active_workspace(Some(w2));
+        histories.visit(r3);
+        histories.visit(r4);
+
+        assert_eq!(histories.go_back(), Some(r3));
+        assert_eq!(histories.go_back(), None);
+
+        histories.set_active_workspace(Some(w1));
+        assert_eq!(histories.go_back(), Some(r1));
+        assert_eq!(histories.go_forward(), Some(r2));
+
+        histories.set_active_workspace(Some(w2));
+        assert_eq!(histories.go_forward(), Some(r4));
     }
 
     #[test]
