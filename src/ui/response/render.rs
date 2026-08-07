@@ -77,6 +77,9 @@ impl BeamView {
                     let menu_response_history_view = response_history_view.clone();
                     let menu_popup_menu = popup_menu.clone();
                     let scroll_handle = VirtualListScrollHandle::new();
+                    if let Some(index) = selected_response_history_index {
+                        scroll_handle.scroll_to_item(index, ScrollStrategy::Center);
+                    }
 
                     menu = menu.item(
                         PopupMenuItem::element(move |_, _cx| {
