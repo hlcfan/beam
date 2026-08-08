@@ -17,10 +17,8 @@ impl KeyBindingsDialogView {
                 ("Open Command Palette", "cmd-p"),
                 ("Next Item in Command Palette", "ctrl-j"),
                 ("Previous Item in Command Palette", "ctrl-k"),
-                ("Next Item in Tree", "cmd-alt-down"),
-                ("Previous Item in Tree", "cmd-alt-up"),
-                ("Next Item in Tree", "ctrl-j"),
-                ("Previous Item in Tree", "ctrl-k"),
+                ("Next Item in Tree", "cmd-alt-down / ctrl-j"),
+                ("Previous Item in Tree", "cmd-alt-up / ctrl-k"),
                 ("Expand/Collapse Selected Folder", "space"),
                 ("Next Request in History", "cmd-alt-right"),
                 ("Previous Request in History", "cmd-alt-left"),
@@ -39,10 +37,8 @@ impl KeyBindingsDialogView {
                 ("Open Command Palette", "ctrl-p"),
                 ("Next Item in Command Palette", "ctrl-j"),
                 ("Previous Item in Command Palette", "ctrl-k"),
-                ("Next Item in Tree", "ctrl-j"),
-                ("Previous Item in Tree", "ctrl-k"),
-                ("Next Item in Tree", "ctrl-alt-down"),
-                ("Previous Item in Tree", "ctrl-alt-up"),
+                ("Next Item in Tree", "ctrl-alt-down / ctrl-j"),
+                ("Previous Item in Tree", "ctrl-alt-up / ctrl-k"),
                 ("Expand/Collapse Selected Folder", "space"),
                 ("Next Request in History", "ctrl-alt-right"),
                 ("Previous Request in History", "ctrl-alt-left"),
@@ -95,10 +91,20 @@ impl Render for KeyBindingsDialogView {
         let bindings = Self::key_bindings_list();
         let mut list = v_flex().w_full().flex_none().gap_2();
         for (label, binding) in bindings {
-            let tokens = key_binding_display_tokens(binding);
             let mut chips = h_flex().items_center().gap_1();
-            for token in tokens {
-                chips = chips.child(render_key_binding_chip(token.as_str(), cx));
+            for (index, alternative) in binding.split(" / ").enumerate() {
+                if index > 0 {
+                    chips = chips.child(
+                        div()
+                            .mx_1()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("/"),
+                    );
+                }
+                for token in key_binding_display_tokens(alternative) {
+                    chips = chips.child(render_key_binding_chip(token.as_str(), cx));
+                }
             }
             list = list.child(
                 h_flex()
