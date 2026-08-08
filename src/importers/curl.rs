@@ -400,6 +400,8 @@ fn tokenize(input: &str) -> Vec<String> {
                         chars.next();
                     }
                 }
+                // Recover Postman's `\\\n--flag` continuation after it becomes `\\--flag`.
+                Some('-') if current.is_empty() => {}
                 _ => current.push('\\'),
             },
             '\'' | '"' => {
@@ -519,6 +521,51 @@ mod tests {
         assert_eq!(plan.headers.len(), 1);
         assert_eq!(plan.headers[0].name, "X-Foo");
         assert_eq!(plan.headers[0].value, "bar");
+    }
+
+    #[test]
+    fn parses_postman_multiline_command() {
+        let cmd = "curl --location 'http://localhost:8081/buildings' \\
+--header 'aa: bbb1' \\
+--header 'Content-Type: text/plain' \\
+--data '{\n\t\"address\": \"Address 2\",\n\t\"number_of_floors\": 5\n}'";
+        let plan = parse(cmd).unwrap();
+        assert_eq!(plan.method, HttpMethod::Post);
+        assert_eq!(plan.url, "http://localhost:8081/buildings");
+        assert_eq!(plan.headers.len(), 2);
+        assert_eq!(plan.headers[0].name, "aa");
+        assert_eq!(plan.headers[0].value, "bbb1");
+        assert_eq!(plan.headers[1].name, "Content-Type");
+        assert_eq!(plan.headers[1].value, "text/plain");
+    }
+
+    #[test]
+    fn parses_postman_command_after_single_line_input_removes_newlines() {
+        let cmd = concat!(
+            "curl --location 'http://localhost:8081/buildings' \\",
+            "\n",
+            "--header 'aa: bbb1' \\",
+            "\n",
+            "--header 'Content-Type: text/plain' \\",
+            "\n",
+            "--data '{",
+            "\n",
+            "\t\"address\": \"Address 2\",",
+            "\n",
+            "\t\"number_of_floors\": 5",
+            "\n",
+            "}'",
+        )
+        .replace(['\n', '\r'], "");
+        let plan = parse(&cmd).unwrap();
+
+        assert_eq!(plan.method, HttpMethod::Post);
+        assert_eq!(plan.url, "http://localhost:8081/buildings");
+        assert_eq!(plan.headers.len(), 2);
+        assert_eq!(plan.headers[0].name, "aa");
+        assert_eq!(plan.headers[0].value, "bbb1");
+        assert_eq!(plan.headers[1].name, "Content-Type");
+        assert_eq!(plan.headers[1].value, "text/plain");
     }
 
     #[test]
