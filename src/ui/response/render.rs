@@ -379,9 +379,26 @@ impl BeamView {
                                 let highlight_length = contour.length() * 0.28;
                                 let highlight_end = (contour.length() + highlight_length) * delta;
                                 let highlight_start = highlight_end - highlight_length;
-                                if let Some(highlight) =
-                                    contour.path(highlight_start, highlight_end)
-                                {
+                                let taper_length = 2.0_f32.min(contour.arc_length);
+                                if let Some(highlight) = contour.path(
+                                    highlight_start,
+                                    highlight_end.min(taper_length),
+                                    1.0,
+                                ) {
+                                    window.paint_path(highlight, color.opacity(0.85));
+                                }
+                                if let Some(highlight) = contour.path(
+                                    highlight_start.max(taper_length),
+                                    highlight_end.min(contour.length() - taper_length),
+                                    2.0,
+                                ) {
+                                    window.paint_path(highlight, color.opacity(0.85));
+                                }
+                                if let Some(highlight) = contour.path(
+                                    highlight_start.max(contour.length() - taper_length),
+                                    highlight_end,
+                                    1.0,
+                                ) {
                                     window.paint_path(highlight, color.opacity(0.85));
                                 }
                             },
@@ -543,7 +560,7 @@ impl ShimmerTopContour {
     fn new(bounds: Bounds<Pixels>) -> Option<Self> {
         const PANE_RADIUS: f32 = 8.0;
         const STROKE_WIDTH: f32 = 2.0;
-        const CORNER_SWEEP: f32 = 5.0 * std::f32::consts::PI / 18.0;
+        const CORNER_SWEEP: f32 = std::f32::consts::FRAC_PI_3;
 
         let width = f32::from(bounds.size.width);
         let height = f32::from(bounds.size.height);
@@ -573,14 +590,14 @@ impl ShimmerTopContour {
         self.arc_length * 2.0 + self.line_length
     }
 
-    fn path(&self, start: f32, end: f32) -> Option<Path<Pixels>> {
+    fn path(&self, start: f32, end: f32, stroke_width: f32) -> Option<Path<Pixels>> {
         let start = start.clamp(0.0, self.length());
         let end = end.clamp(0.0, self.length());
         if end <= start {
             return None;
         }
 
-        let mut builder = PathBuilder::stroke(px(2.0));
+        let mut builder = PathBuilder::stroke(px(stroke_width));
         builder.move_to(self.point_at(start));
         let mut cursor = start;
 
@@ -619,7 +636,7 @@ impl ShimmerTopContour {
     fn point_at(&self, distance: f32) -> Point<Pixels> {
         let distance = distance.clamp(0.0, self.length());
         if distance <= self.arc_length {
-            let angle = 11.0 * std::f32::consts::PI / 9.0 + distance / self.radius;
+            let angle = 7.0 * std::f32::consts::PI / 6.0 + distance / self.radius;
             return point(
                 self.left_center.x + px(self.radius * angle.cos()),
                 self.left_center.y + px(self.radius * angle.sin()),
@@ -656,15 +673,15 @@ mod tests {
         })
         .expect("the response panel is large enough for the shimmer contour");
 
-        assert_point_close(contour.point_at(0.0), 2.637_689, 3.500_487);
+        assert_point_close(contour.point_at(0.0), 1.937_822, 4.5);
         assert_point_close(contour.point_at(contour.arc_length), 8.0, 1.0);
         assert_point_close(
             contour.point_at(contour.arc_length + contour.line_length),
             92.0,
             1.0,
         );
-        assert_point_close(contour.point_at(contour.length()), 97.362_31, 3.500_487);
-        assert!(contour.path(0.0, contour.length()).is_some());
+        assert_point_close(contour.point_at(contour.length()), 98.062_18, 4.5);
+        assert!(contour.path(0.0, contour.length(), 2.0).is_some());
     }
 
     fn assert_point_close(actual: Point<Pixels>, expected_x: f32, expected_y: f32) {
