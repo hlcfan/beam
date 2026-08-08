@@ -150,7 +150,7 @@ pub fn run_app(
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-d", DuplicateActiveRequest, None),
             #[cfg(target_os = "macos")]
-            KeyBinding::new("cmd-backspace", DeleteActiveRequest, None),
+            KeyBinding::new("cmd-backspace", DeleteSelectedTreeNode, None),
             KeyBinding::new("f2", RenameActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
@@ -169,9 +169,10 @@ pub fn run_app(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-d", DuplicateActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
-            KeyBinding::new("ctrl-delete", DeleteActiveRequest, None),
+            KeyBinding::new("ctrl-delete", DeleteSelectedTreeNode, None),
             KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
             KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
+            KeyBinding::new("space", ToggleSelectedFolder, Some("WorkspaceTree")),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-alt-down", SelectNextRequestInTree, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -234,7 +235,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.duplicate_active_request(window, cx);
+                                    beam_view.duplicate_selected_tree_node(window, cx);
                                 });
                             });
                         }
@@ -252,7 +253,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.rename_active_request(window, cx);
+                                    beam_view.rename_selected_tree_node(window, cx);
                                 });
                             });
                         }
@@ -260,7 +261,7 @@ pub fn run_app(
                 }
             });
         });
-        cx.on_action(|_: &DeleteActiveRequest, cx: &mut App| {
+        cx.on_action(|_: &DeleteSelectedTreeNode, cx: &mut App| {
             cx.defer(move |cx| {
                 if let Some(window_handle) = cx.active_window() {
                     if let Some(root) = window_handle
@@ -270,7 +271,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.delete_active_request(window, cx);
+                                    beam_view.delete_selected_tree_node(window, cx);
                                 });
                             });
                         }

@@ -13,13 +13,14 @@ actions!(
         OpenCommandPalette,
         SelectNextRequestInTree,
         SelectPrevRequestInTree,
+        ToggleSelectedFolder,
         SelectNextRequestInViewHistory,
         SelectPrevRequestInViewHistory,
         FormatRequestBody,
         FormatResponseBody,
         DuplicateActiveRequest,
         RenameActiveRequest,
-        DeleteActiveRequest
+        DeleteSelectedTreeNode
     ]
 );
 

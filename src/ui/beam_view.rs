@@ -3,6 +3,7 @@ use super::*;
 pub(super) struct BeamView {
     pub(super) shell: AppShellState,
     pub(super) focus_handle: FocusHandle,
+    pub(super) tree_focus_handle: FocusHandle,
     pub(super) current_workspace_paths: BeamPaths,
     pub(super) request: RequestAuthoringState,
     pub(super) startup_messages: Vec<StartupMessage>,
@@ -167,9 +168,11 @@ impl BeamView {
 
         let request_file_index = Self::build_request_file_index(&shell);
         let focus_handle = cx.focus_handle();
+        let tree_focus_handle = cx.focus_handle();
         let mut view = Self {
             shell,
             focus_handle,
+            tree_focus_handle,
             request,
             startup_messages,
             url_input,
@@ -561,7 +564,8 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_duplicate_active_request))
             .on_action(cx.listener(Self::on_action_rename_active_request))
-            .on_action(cx.listener(Self::on_action_delete_active_request))
+            .on_action(cx.listener(Self::on_action_delete_selected_tree_node))
+            .on_action(cx.listener(Self::on_action_toggle_selected_folder))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .on_action(cx.listener(Self::on_action_format_request_body))
             .on_action(cx.listener(Self::on_action_format_response_body))

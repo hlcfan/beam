@@ -1,6 +1,31 @@
 use super::*;
 
 impl BeamView {
+    pub(in crate::ui) fn on_action_toggle_selected_folder(
+        &mut self,
+        _: &ToggleSelectedFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(folder_id) = self.shell.workspace_tree.selected_node_id() else {
+            return;
+        };
+        if !self
+            .shell
+            .workspace_tree
+            .node(folder_id)
+            .is_some_and(|node| node.kind == TreeNodeKind::Folder)
+        {
+            return;
+        }
+
+        self.shell.workspace_tree.toggle_expanded(folder_id);
+        if let Err(error) = self.persist_tree_expansion_state() {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
     pub(in crate::ui) fn select_request(
         &mut self,
         request_id: Ulid,
@@ -14,17 +39,22 @@ impl BeamView {
         self.sync_request_editor_from_selection(window, cx);
     }
 
-    /// Moves the workspace tree selection to the next or previous request in
-    /// pre-order traversal of the full tree. Folders that contain the target
-    /// are auto-expanded by `WorkspaceTreeState::select_request`, so collapsing
-    /// a folder no longer hides its requests from `cmd-alt-up` / `cmd-alt-down`.
+    /// Moves the workspace tree selection to the next or previous visible row.
+    /// Collapsed folder descendants are skipped and folders are selected without
+    /// changing the request shown in the editor.
     pub(in crate::ui) fn select_neighbor_request(
         &mut self,
         direction: TreeNeighborDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ordered = self.shell.workspace_tree.ordered_request_ids();
+        let ordered: Vec<Ulid> = self
+            .shell
+            .workspace_tree
+            .visible_rows()
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
         if ordered.is_empty() {
             return;
         }
@@ -32,7 +62,7 @@ impl BeamView {
         let next_id = match self
             .shell
             .workspace_tree
-            .selected_request_id()
+            .selected_node_id()
             .and_then(|current| ordered.iter().position(|id| *id == current))
         {
             Some(index) => match direction {
@@ -48,12 +78,28 @@ impl BeamView {
             None => ordered[0],
         };
 
-        if Some(next_id) == self.shell.workspace_tree.selected_request_id() {
+        if Some(next_id) == self.shell.workspace_tree.selected_node_id() {
             return;
         }
 
-        self.select_request(next_id, window, cx);
-        self.commit_request_selection(window, cx);
+        match self
+            .shell
+            .workspace_tree
+            .node(next_id)
+            .map(|node| node.kind)
+        {
+            Some(TreeNodeKind::Request) => {
+                self.select_request(next_id, window, cx);
+                self.commit_request_selection(window, cx);
+            }
+            Some(TreeNodeKind::Folder) => {
+                self.tree_focus_handle.focus(window, cx);
+                self.shell.workspace_tree.select_node(next_id);
+                self.scroll_tree_node_into_view(next_id);
+                cx.notify();
+            }
+            None => {}
+        }
     }
 
     /// Navigates the request view history (the in-memory sequence of requests
@@ -107,10 +153,14 @@ impl BeamView {
     /// (cmd-alt-up/down/left/right) can select a request whose row is scrolled out of the
     /// virtualized tree's viewport.
     pub(in crate::ui) fn scroll_selected_request_into_view(&self, request_id: Ulid) {
+        self.scroll_tree_node_into_view(request_id);
+    }
+
+    fn scroll_tree_node_into_view(&self, node_id: Ulid) {
         let items = build_tree_render_items(&self.shell.workspace_tree);
         if let Some(index) = items
             .iter()
-            .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == request_id))
+            .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == node_id))
         {
             self.collection_scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Top);
@@ -401,7 +451,7 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
-            window.push_notification("Unable to determine request parent.", cx);
+            window.push_notification("Unable to find the selected tree item.", cx);
             return;
         };
         let Some((parent, known_parent_manifest_path)) =
@@ -709,71 +759,71 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
-            window.push_notification("No active request selected.", cx);
+        let Some(selected_node_id) = self.shell.workspace_tree.selected_node_id() else {
+            self.add_request_at_root(window, cx);
             return;
         };
-        let Some((parent, known_parent_manifest_path)) =
-            self.request_parent_input_for_tree_node(active_request_id)
+        self.add_request_from_tree_node(selected_node_id, window, cx);
+    }
+
+    pub(in crate::ui) fn duplicate_selected_tree_node(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(node_id) = self.shell.workspace_tree.selected_node_id() else {
+            return;
+        };
+        let Some(node_kind) = self
+            .shell
+            .workspace_tree
+            .node(node_id)
+            .map(|node| node.kind)
         else {
-            window.push_notification("Unable to determine request parent.", cx);
             return;
         };
-        let command_id = next_command_id();
-        self.pending_request_creations.insert(command_id.clone());
-        let command = AppCommand::CreateRequestAfter {
-            input: CreateRequestInput {
-                parent,
-                known_parent_manifest_path,
-                name: self.next_new_request_name(parent),
-                method: HttpMethod::Get,
-                url: String::new(),
-            },
-            source_request_id: active_request_id,
-            command_id,
-        };
-        if let Err(error) = self.publish_app_command(command) {
-            window.push_notification(error, cx);
+        match node_kind {
+            TreeNodeKind::Folder => self.duplicate_folder_from_tree_node(node_id, window, cx),
+            TreeNodeKind::Request => self.duplicate_request_from_tree_node(node_id, window, cx),
         }
     }
 
-    pub(in crate::ui) fn duplicate_active_request(
+    pub(in crate::ui) fn rename_selected_tree_node(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
+        let Some(node_id) = self.shell.workspace_tree.selected_node_id() else {
             return;
         };
-        self.duplicate_request_from_tree_node(active_request_id, window, cx);
-    }
-
-    pub(in crate::ui) fn rename_active_request(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
-            return;
-        };
-        let kind = self
+        let Some(node_kind) = self
             .shell
             .workspace_tree
-            .node(active_request_id)
-            .map(|n| n.kind)
-            .unwrap_or(TreeNodeKind::Request);
-        self.open_rename_dialog_for_tree_node(active_request_id, kind, window, cx);
+            .node(node_id)
+            .map(|node| node.kind)
+        else {
+            return;
+        };
+        self.open_rename_dialog_for_tree_node(node_id, node_kind, window, cx);
     }
 
-    pub(in crate::ui) fn delete_active_request(
+    pub(in crate::ui) fn delete_selected_tree_node(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
+        let Some(node_id) = self.shell.workspace_tree.selected_node_id() else {
             return;
         };
-        self.show_delete_tree_node_dialog(active_request_id, TreeNodeKind::Request, cx);
+        let Some(node_kind) = self
+            .shell
+            .workspace_tree
+            .node(node_id)
+            .map(|node| node.kind)
+        else {
+            return;
+        };
+        self.show_delete_tree_node_dialog(node_id, node_kind, cx);
     }
 
     pub(in crate::ui) fn focus_url_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -798,7 +848,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.duplicate_active_request(window, cx);
+        self.duplicate_selected_tree_node(window, cx);
     }
 
     pub(in crate::ui) fn on_action_rename_active_request(
@@ -807,16 +857,16 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.rename_active_request(window, cx);
+        self.rename_selected_tree_node(window, cx);
     }
 
-    pub(in crate::ui) fn on_action_delete_active_request(
+    pub(in crate::ui) fn on_action_delete_selected_tree_node(
         &mut self,
-        _: &DeleteActiveRequest,
+        _: &DeleteSelectedTreeNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_active_request(window, cx);
+        self.delete_selected_tree_node(window, cx);
     }
 
     pub(in crate::ui) fn on_action_focus_url_input(

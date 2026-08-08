@@ -729,7 +729,7 @@ impl BeamView {
     pub(in crate::ui) fn perform_tree_move_action(
         &mut self,
         action: TreeMoveAction,
-        preferred_selected_request_id: Option<Ulid>,
+        _preferred_selected_request_id: Option<Ulid>,
         expand_target_id: Option<Ulid>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -752,104 +752,17 @@ impl BeamView {
                 if let Err(error) = self.publish_app_command(command) {
                     window.push_notification(error, cx);
                 }
-                return;
             }
-            TreeMoveAction::MoveFolder(_) => {}
-        }
-
-        // Capture the info needed for the in-memory update before the action is moved.
-        let (folder_id, new_parent_id, insertion_index, old_parent_id, folder_name) = match &action
-        {
             TreeMoveAction::MoveFolder(input) => {
-                let folder_id = input.folder_id;
-                let new_parent_id = input.new_parent.folder_id;
-                let insertion_index = input.insertion_index;
-                let old_parent_id = self
-                    .shell
-                    .shared_store
-                    .nodes
-                    .get(&folder_id)
-                    .and_then(|n| n.parent_id);
-                let folder_name = self
-                    .shell
-                    .shared_store
-                    .nodes
-                    .get(&folder_id)
-                    .map(|n| n.name.clone())
-                    .unwrap_or_default();
-                (
-                    folder_id,
-                    new_parent_id,
-                    insertion_index,
-                    old_parent_id,
-                    folder_name,
-                )
-            }
-            TreeMoveAction::MoveRequest(_) => unreachable!(),
-        };
-
-        let old_folder_dir = crate::workspace_tree::folder_dir_path(
-            &self.current_workspace_paths,
-            &self.shell.shared_store,
-            folder_id,
-        )
-        .ok();
-        let paths = self.current_workspace_paths.clone();
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            let result: std::result::Result<(), String> = cx
-                .background_executor()
-                .spawn(async move {
-                    let backend = FileSystemStorage::new(paths);
-                    let mut storage = WorkspaceRepository::new(backend)
-                        .map_err(|error| format!("Failed to load workspace: {error}"))?;
-                    match action {
-                        TreeMoveAction::MoveRequest(_) => {
-                            unreachable!()
-                        }
-                        TreeMoveAction::MoveFolder(input) => storage
-                            .move_folder(input)
-                            .map(|_| ())
-                            .map_err(|error| format!("Failed to move folder: {error}")),
-                    }
-                })
-                .await;
-            let _ = view.update_in(cx, move |this, window, cx| match result {
-                Ok(()) => {
-                    this.shell.apply_folder_move(
-                        folder_id,
-                        old_parent_id,
-                        new_parent_id,
-                        insertion_index,
-                        folder_name,
-                    );
-                    if let Some(old_folder_dir) = old_folder_dir.as_ref()
-                        && let Ok(new_folder_dir) = crate::workspace_tree::folder_dir_path(
-                            &this.current_workspace_paths,
-                            &this.shell.shared_store,
-                            folder_id,
-                        )
-                    {
-                        this.shell.replace_moved_folder_subtree_paths(
-                            folder_id,
-                            old_folder_dir,
-                            &new_folder_dir,
-                        );
-                        this.request_file_index = Self::build_request_file_index(&this.shell);
-                        this.active_request_cache = None;
-                        this.refresh_active_request_cache();
-                    }
-                    if let Some(request_id) = preferred_selected_request_id {
-                        this.select_request(request_id, window, cx);
-                    }
-                    cx.notify();
-                }
-                Err(error) => {
+                let command = AppCommand::MoveFolder {
+                    input,
+                    command_id: next_command_id(),
+                };
+                if let Err(error) = self.publish_app_command(command) {
                     window.push_notification(error, cx);
                 }
-            });
-        })
-        .detach();
+            }
+        }
     }
 
     pub(in crate::ui) fn handle_request_tree_drop(

@@ -137,6 +137,12 @@ impl BeamView {
                         should_sync_editor = true;
                     }
                 }
+                AppEvent::FolderMoved { .. } => {
+                    self.shell.apply_event(&event);
+                    self.request_file_index = Self::build_request_file_index(&self.shell);
+                    self.active_request_cache = None;
+                    self.refresh_active_request_cache();
+                }
                 AppEvent::SyncFailed {
                     command_id,
                     operation,

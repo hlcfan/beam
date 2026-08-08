@@ -28,8 +28,8 @@ use crate::storage::registry_repo::RegistryRepository;
 use crate::storage::workspace_repo::WorkspaceRepository;
 use crate::storage::{
     CreateEnvironmentInput, CreateFolderInput, CreateRequestInput, DeleteRequestInput,
-    DuplicateFolderInput, DuplicateRequestInput, DuplicatedFolderItem, MoveRequestInput,
-    RenameRequestInput, WorkspaceStorage,
+    DuplicateFolderInput, DuplicateRequestInput, DuplicatedFolderItem, MoveFolderInput,
+    MoveRequestInput, RenameRequestInput, WorkspaceStorage,
 };
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, folder_dir_name, request_file_name, scope_key,
@@ -171,16 +171,24 @@ pub struct WorkspaceTreeState {
     nodes: HashMap<Ulid, TreeNode>,
     roots: Vec<Ulid>,
     expanded: BTreeSet<Ulid>,
+    selected_node_id: Option<Ulid>,
     selected_request_id: Option<Ulid>,
 }
 
 impl WorkspaceTreeState {
+    pub fn selected_node_id(&self) -> Option<Ulid> {
+        self.selected_node_id
+    }
+
     pub fn selected_request_id(&self) -> Option<Ulid> {
         self.selected_request_id
     }
 
     pub fn set_selected_request(&mut self, request_id: Option<Ulid>) {
         self.selected_request_id = request_id;
+        if request_id.is_some() {
+            self.selected_node_id = request_id;
+        }
     }
 
     pub fn set_expanded<I>(&mut self, ids: I)
@@ -226,10 +234,20 @@ impl WorkspaceTreeState {
         if !self.request_exists(request_id) {
             return;
         }
+        self.selected_node_id = Some(request_id);
         self.selected_request_id = Some(request_id);
         for ancestor in self.ancestors(request_id) {
             self.expanded.insert(ancestor);
         }
+    }
+
+    /// Selects any tree node without changing the request shown in the editor.
+    pub fn select_node(&mut self, node_id: Ulid) -> bool {
+        if !self.nodes.contains_key(&node_id) {
+            return false;
+        }
+        self.selected_node_id = Some(node_id);
+        true
     }
 
     /// Expands `folder_id` and each of its ancestor folders.
@@ -386,8 +404,7 @@ impl WorkspaceTreeState {
             id: node.id,
             kind: node.kind,
             depth,
-            selected: node.kind == TreeNodeKind::Request
-                && Some(node.id) == self.selected_request_id,
+            selected: Some(node.id) == self.selected_node_id,
         });
 
         if node.kind != TreeNodeKind::Request && self.expanded.contains(&id) {
@@ -602,6 +619,9 @@ impl WorkspaceTreeState {
         if self.selected_request_id == Some(request_id) {
             self.selected_request_id = None;
         }
+        if self.selected_node_id == Some(request_id) {
+            self.selected_node_id = None;
+        }
         true
     }
 
@@ -671,6 +691,12 @@ impl WorkspaceTreeState {
         for id in &ids {
             self.nodes.remove(id);
             self.expanded.remove(id);
+        }
+        if self
+            .selected_node_id
+            .is_some_and(|selected_id| ids.contains(&selected_id))
+        {
+            self.selected_node_id = None;
         }
         if self
             .selected_request_id
@@ -1278,6 +1304,39 @@ impl AppShellState {
                     }
                 }
             }
+            AppEvent::FolderMoved {
+                folder,
+                old_parent_id,
+                new_parent_id,
+                insertion_index,
+                ..
+            } => {
+                let folder_id = folder.folder.folder_id;
+                let folder_name = folder.folder.name.clone();
+                let old_folder_dir = self
+                    .workspace_tree
+                    .node(folder_id)
+                    .and_then(|node| node.manifest_path.as_ref())
+                    .and_then(|path| path.parent())
+                    .map(Path::to_path_buf);
+                self.apply_folder_move(
+                    folder_id,
+                    *old_parent_id,
+                    *new_parent_id,
+                    *insertion_index,
+                    folder_name,
+                );
+                if let (Some(old_folder_dir), Some(new_folder_dir)) = (
+                    old_folder_dir.as_deref(),
+                    folder.manifest_path.as_ref().and_then(|path| path.parent()),
+                ) {
+                    self.replace_moved_folder_subtree_paths(
+                        folder_id,
+                        old_folder_dir,
+                        new_folder_dir,
+                    );
+                }
+            }
             AppEvent::FolderUpserted {
                 folder,
                 manifest_path,
@@ -1463,6 +1522,7 @@ pub enum AppOperation {
     SaveRequest,
     DeleteRequest,
     MoveRequest,
+    MoveFolder,
     CreateFolder,
     RenameFolder,
     DeleteFolder,
@@ -1489,6 +1549,7 @@ impl AppOperation {
             AppOperation::SaveRequest => "save_request",
             AppOperation::DeleteRequest => "delete_request",
             AppOperation::MoveRequest => "move_request",
+            AppOperation::MoveFolder => "move_folder",
             AppOperation::CreateFolder => "create_folder",
             AppOperation::RenameFolder => "rename_folder",
             AppOperation::DeleteFolder => "delete_folder",
@@ -1558,6 +1619,10 @@ pub enum AppCommand {
         input: MoveRequestInput,
         command_id: String,
     },
+    MoveFolder {
+        input: MoveFolderInput,
+        command_id: String,
+    },
     CreateFolder {
         input: CreateFolderInput,
         command_id: String,
@@ -1610,6 +1675,7 @@ impl AppCommand {
             | AppCommand::SaveRequest { command_id, .. }
             | AppCommand::DeleteRequest { command_id, .. }
             | AppCommand::MoveRequest { command_id, .. }
+            | AppCommand::MoveFolder { command_id, .. }
             | AppCommand::CreateFolder { command_id, .. }
             | AppCommand::RenameFolder { command_id, .. }
             | AppCommand::DeleteFolder { command_id, .. }
@@ -1638,6 +1704,7 @@ impl AppCommand {
             AppCommand::SaveRequest { .. } => AppOperation::SaveRequest,
             AppCommand::DeleteRequest { .. } => AppOperation::DeleteRequest,
             AppCommand::MoveRequest { .. } => AppOperation::MoveRequest,
+            AppCommand::MoveFolder { .. } => AppOperation::MoveFolder,
             AppCommand::CreateFolder { .. } => AppOperation::CreateFolder,
             AppCommand::RenameFolder { .. } => AppOperation::RenameFolder,
             AppCommand::DeleteFolder { .. } => AppOperation::DeleteFolder,
@@ -1675,6 +1742,13 @@ pub enum AppEvent {
     },
     RequestMoved {
         request: RequestFile,
+        new_parent_id: Option<Ulid>,
+        insertion_index: usize,
+        command_id: String,
+    },
+    FolderMoved {
+        folder: FolderFile,
+        old_parent_id: Option<Ulid>,
         new_parent_id: Option<Ulid>,
         insertion_index: usize,
         command_id: String,
@@ -2039,6 +2113,7 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
         AppCommand::DeleteEnvironment { .. }
         | AppCommand::DeleteRequest { .. }
         | AppCommand::MoveRequest { .. }
+        | AppCommand::MoveFolder { .. }
         | AppCommand::DeleteFolder { .. }
         | AppCommand::SwitchWorkspace { .. }
         | AppCommand::DeleteWorkspace { .. }
@@ -2222,6 +2297,25 @@ fn handle_command<B: StorageIoBackend>(
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::RequestMoved {
                 request: moved,
+                new_parent_id,
+                insertion_index,
+                command_id,
+            }])
+        }
+        AppCommand::MoveFolder { input, command_id } => {
+            let old_parent_id = storage
+                .store
+                .nodes
+                .get(&input.folder_id)
+                .and_then(|node| node.parent_id);
+            let new_parent_id = input.new_parent.folder_id;
+            let insertion_index = input.insertion_index;
+            let moved = storage
+                .move_folder(input)
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::FolderMoved {
+                folder: moved,
+                old_parent_id,
                 new_parent_id,
                 insertion_index,
                 command_id,
@@ -3569,6 +3663,7 @@ fn build_tree_from_shared_store(
         nodes,
         roots: shared_store.root_ids.clone(),
         expanded: BTreeSet::new(),
+        selected_node_id: None,
         selected_request_id: None,
     }
 }
@@ -3743,6 +3838,57 @@ mod tests {
         assert!(tree.is_expanded(folder_id));
         assert_eq!(tree.selected_request_id(), Some(request_id));
         assert!(!tree.reveal_folder(request_id));
+    }
+
+    #[test]
+    fn selecting_folder_highlights_it_without_changing_active_request() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let mut tree = WorkspaceTreeState::default();
+        tree.nodes.insert(
+            folder_id,
+            TreeNode {
+                id: folder_id,
+                name: "Folder".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com".to_string()),
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.roots = vec![folder_id, request_id];
+        tree.select_request(request_id);
+
+        assert!(tree.select_node(folder_id));
+        assert_eq!(tree.selected_node_id(), Some(folder_id));
+        assert_eq!(tree.selected_request_id(), Some(request_id));
+
+        let rows = tree.visible_rows();
+        assert!(rows.iter().any(|row| row.id == folder_id && row.selected));
+        assert!(rows.iter().any(|row| row.id == request_id && !row.selected));
+
+        let render_items = build_tree_render_items(&tree);
+        assert!(render_items.iter().any(
+            |item| matches!(item, TreeRenderItem::Row(row) if row.id == folder_id && row.selected)
+        ));
+        assert!(render_items.iter().any(
+            |item| matches!(item, TreeRenderItem::Row(row) if row.id == request_id && !row.selected)
+        ));
     }
 
     #[test]
