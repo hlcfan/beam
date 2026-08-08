@@ -100,6 +100,7 @@ impl BeamView {
                             }
                         }
                         TreeNodeKind::Request => {
+                            this.focus_handle.focus(window, cx);
                             this.select_request(row_id, window, cx);
                             if let Err(error) = this.persist_last_opened_request_id(row_id) {
                                 window.push_notification(error, cx);

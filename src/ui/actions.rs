@@ -18,7 +18,8 @@ actions!(
         FormatRequestBody,
         FormatResponseBody,
         DuplicateActiveRequest,
-        RenameActiveRequest
+        RenameActiveRequest,
+        DeleteActiveRequest
     ]
 );
 
