@@ -17,6 +17,9 @@ use crate::request_authoring::{RequestAuthoringState, SendButtonState, SendDisab
 use crate::script::{
     ConsoleLevel, ScriptExecutionResult, ScriptRuntimeResponse, execute_post_request_script,
 };
+use crate::template_variables::{
+    DynamicVariableContext, contains_dynamic_variable, resolve_template_variables,
+};
 
 use super::super::dialogs::EnvironmentManagerDialogView;
 use super::super::response::history::load_response_history_entries;
@@ -107,6 +110,32 @@ mod tests {
                 None
             ),
             SendButtonState::Sending
+        );
+    }
+
+    #[test]
+    fn dynamic_variable_url_is_ready_without_an_environment() {
+        let request = RequestAuthoringState {
+            url: "{{$timestamp}}".to_string(),
+            ..RequestAuthoringState::default()
+        };
+
+        assert_eq!(
+            send_button_state_for_selected_request(None, &HashMap::new(), &request, None),
+            SendButtonState::Ready
+        );
+    }
+
+    #[test]
+    fn unknown_variable_url_still_requires_an_environment() {
+        let request = RequestAuthoringState {
+            url: "{{host}}".to_string(),
+            ..RequestAuthoringState::default()
+        };
+
+        assert_eq!(
+            send_button_state_for_selected_request(None, &HashMap::new(), &request, None),
+            SendButtonState::Disabled(SendDisabledReason::InvalidUrl)
         );
     }
 
@@ -473,7 +502,7 @@ impl BeamView {
         let no_environment_selected = selected_environment_id.is_none();
         let environment_variables = self.load_environment_for_script(selected_environment_id);
         let request_snapshot =
-            resolve_request_with_environment(self.request.clone(), &environment_variables);
+            resolve_request_variables(self.request.clone(), &environment_variables);
         if !matches!(
             Self::send_button_state_without_runtime(&request_snapshot),
             SendButtonState::Ready
@@ -917,7 +946,7 @@ pub(in crate::ui) fn send_button_state_for_selected_request(
     if matches!(
         state,
         SendButtonState::Disabled(SendDisabledReason::InvalidUrl)
-    ) && selected_environment_id.is_some()
+    ) && (selected_environment_id.is_some() || contains_dynamic_variable(&request.url))
         && request.url.contains("{{")
         && request.url.contains("}}")
     {
@@ -926,41 +955,43 @@ pub(in crate::ui) fn send_button_state_for_selected_request(
     state
 }
 
-pub(in crate::ui) fn resolve_request_with_environment(
+/// Resolve request's environment variables and dynamic variables
+pub(in crate::ui) fn resolve_request_variables(
     mut request: RequestAuthoringState,
     environment_variables: &[EnvironmentVariable],
 ) -> RequestAuthoringState {
     let resolved_env = build_enabled_environment_lookup(environment_variables);
-    request.url = resolve_template_variables(&request.url, &resolved_env);
+    let dynamic = DynamicVariableContext::new();
+    request.url = resolve_template_variables(&request.url, &resolved_env, &dynamic);
     for header in &mut request.headers {
-        header.name = resolve_template_variables(&header.name, &resolved_env);
-        header.value = resolve_template_variables(&header.value, &resolved_env);
+        header.name = resolve_template_variables(&header.name, &resolved_env, &dynamic);
+        header.value = resolve_template_variables(&header.value, &resolved_env, &dynamic);
     }
     for param in &mut request.query_params {
-        param.name = resolve_template_variables(&param.name, &resolved_env);
-        param.value = resolve_template_variables(&param.value, &resolved_env);
+        param.name = resolve_template_variables(&param.name, &resolved_env, &dynamic);
+        param.value = resolve_template_variables(&param.value, &resolved_env, &dynamic);
     }
     match &mut request.auth {
         AuthConfig::None => {}
         AuthConfig::Bearer { token } => {
             if let Some(value) = token.as_mut() {
-                *value = resolve_template_variables(value, &resolved_env);
+                *value = resolve_template_variables(value, &resolved_env, &dynamic);
             }
         }
         AuthConfig::Basic { username, password } => {
             if let Some(value) = username.as_mut() {
-                *value = resolve_template_variables(value, &resolved_env);
+                *value = resolve_template_variables(value, &resolved_env, &dynamic);
             }
             if let Some(value) = password.as_mut() {
-                *value = resolve_template_variables(value, &resolved_env);
+                *value = resolve_template_variables(value, &resolved_env, &dynamic);
             }
         }
         AuthConfig::ApiKey { key, value, .. } => {
             if let Some(key_value) = key.as_mut() {
-                *key_value = resolve_template_variables(key_value, &resolved_env);
+                *key_value = resolve_template_variables(key_value, &resolved_env, &dynamic);
             }
             if let Some(auth_value) = value.as_mut() {
-                *auth_value = resolve_template_variables(auth_value, &resolved_env);
+                *auth_value = resolve_template_variables(auth_value, &resolved_env, &dynamic);
             }
         }
     }
@@ -968,26 +999,27 @@ pub(in crate::ui) fn resolve_request_with_environment(
         BodyConfig::None => {}
         BodyConfig::Raw { media_type, text } => {
             if let Some(content_type) = media_type.as_mut() {
-                *content_type = resolve_template_variables(content_type, &resolved_env);
+                *content_type = resolve_template_variables(content_type, &resolved_env, &dynamic);
             }
-            *text = resolve_template_variables(text, &resolved_env);
+            *text = resolve_template_variables(text, &resolved_env, &dynamic);
         }
         BodyConfig::Json { text } | BodyConfig::Xml { text } => {
-            *text = resolve_template_variables(text, &resolved_env);
+            *text = resolve_template_variables(text, &resolved_env, &dynamic);
         }
         BodyConfig::FormUrlEncoded { fields } | BodyConfig::Multipart { fields } => {
             for field in fields {
-                field.name = resolve_template_variables(&field.name, &resolved_env);
-                field.value = resolve_template_variables(&field.value, &resolved_env);
+                field.name = resolve_template_variables(&field.name, &resolved_env, &dynamic);
+                field.value = resolve_template_variables(&field.value, &resolved_env, &dynamic);
             }
         }
         BodyConfig::Graphql {
             query,
             variables_json,
         } => {
-            *query = resolve_template_variables(query, &resolved_env);
+            *query = resolve_template_variables(query, &resolved_env, &dynamic);
             if let Some(variables_text) = variables_json.as_mut() {
-                *variables_text = resolve_template_variables(variables_text, &resolved_env);
+                *variables_text =
+                    resolve_template_variables(variables_text, &resolved_env, &dynamic);
             }
         }
     }
@@ -1005,30 +1037,6 @@ pub(in crate::ui) fn build_enabled_environment_lookup(
             (!name.is_empty()).then_some((name.to_string(), entry.value.clone()))
         })
         .collect()
-}
-
-fn resolve_template_variables(input: &str, resolved_env: &HashMap<String, String>) -> String {
-    let mut output = String::new();
-    let mut index = 0usize;
-    while let Some(start_offset) = input[index..].find("{{") {
-        let start = index + start_offset;
-        output.push_str(&input[index..start]);
-        let token_start = start + 2;
-        let Some(end_offset) = input[token_start..].find("}}") else {
-            output.push_str(&input[start..]);
-            return output;
-        };
-        let end = token_start + end_offset;
-        let variable_name = input[token_start..end].trim();
-        if let Some(value) = resolved_env.get(variable_name) {
-            output.push_str(value);
-        } else {
-            output.push_str(&input[start..end + 2]);
-        }
-        index = end + 2;
-    }
-    output.push_str(&input[index..]);
-    output
 }
 
 pub(in crate::ui) fn parse_response_headers(headers: &str) -> Vec<(String, String)> {

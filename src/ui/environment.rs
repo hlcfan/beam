@@ -4,6 +4,7 @@ use super::*;
 pub(super) struct EnvVarHoverInfo {
     var_name: String,
     resolved_value: Option<String>,
+    is_dynamic: bool,
     token_bounds: Bounds<Pixels>,
 }
 
@@ -216,10 +217,13 @@ impl BeamView {
                 .find_map(|(byte_range, var_name)| {
                     let bounds = find_token_hover_bounds(input, &byte_range, pos, line_height)?;
                     let resolved_value = resolved_env.and_then(|m| m.get(&var_name).cloned());
+                    let is_dynamic = resolved_value.is_none()
+                        && crate::template_variables::is_dynamic_variable(&var_name);
 
                     Some(EnvVarHoverInfo {
                         var_name,
                         resolved_value,
+                        is_dynamic,
                         token_bounds: bounds,
                     })
                 })
@@ -251,6 +255,7 @@ impl BeamView {
             let popup_y = hover_info.token_bounds.bottom();
             let var_name = hover_info.var_name.clone();
             let resolved_value = hover_info.resolved_value.clone();
+            let is_dynamic = hover_info.is_dynamic;
 
             let content = h_flex()
                 .gap_1p5()
@@ -265,6 +270,12 @@ impl BeamView {
                         .text_sm()
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .child(val.clone())
+                        .into_any_element(),
+                    None if is_dynamic => div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .italic()
+                        .child("generated when request is sent")
                         .into_any_element(),
                     None => div()
                         .text_sm()

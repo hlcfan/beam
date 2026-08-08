@@ -16,6 +16,7 @@ serde_yaml = "0.9"
 thiserror = "2.0"
 toml = "0.8"
 ulid = { version = "1.2", features = ["serde"] }
+uuid = { version = "1.24", features = ["v4"] }
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 rust-embed = "8.8"
