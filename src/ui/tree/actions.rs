@@ -765,15 +765,23 @@ impl BeamView {
         self.open_rename_dialog_for_tree_node(active_request_id, kind, window, cx);
     }
 
-    pub(in crate::ui) fn delete_active_request(
+    pub(in crate::ui) fn delete_selected_tree_node(
         &mut self,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
+        let Some(node_id) = self.shell.workspace_tree.selected_node_id() else {
             return;
         };
-        self.show_delete_tree_node_dialog(active_request_id, TreeNodeKind::Request, cx);
+        let Some(node_kind) = self
+            .shell
+            .workspace_tree
+            .node(node_id)
+            .map(|node| node.kind)
+        else {
+            return;
+        };
+        self.show_delete_tree_node_dialog(node_id, node_kind, cx);
     }
 
     pub(in crate::ui) fn focus_url_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -816,7 +824,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.delete_active_request(window, cx);
+        self.delete_selected_tree_node(window, cx);
     }
 
     pub(in crate::ui) fn on_action_focus_url_input(
