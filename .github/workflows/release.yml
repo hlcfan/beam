@@ -223,5 +223,5 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
           files: dist/*
-          generate_release_notes: true
+          generate_release_notes: ${{ steps.meta.outputs.is_tip != 'true' }}
           prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}
