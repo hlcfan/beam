@@ -171,8 +171,7 @@ fn build_container_render_items(
             id: node.id,
             kind: node.kind,
             depth,
-            selected: node.kind == TreeNodeKind::Request
-                && Some(node.id) == tree.selected_request_id(),
+            selected: Some(node.id) == tree.selected_node_id(),
         }));
 
         if node.kind != TreeNodeKind::Request && tree.is_expanded(node.id) {

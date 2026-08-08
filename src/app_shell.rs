@@ -3813,6 +3813,14 @@ mod tests {
         let rows = tree.visible_rows();
         assert!(rows.iter().any(|row| row.id == folder_id && row.selected));
         assert!(rows.iter().any(|row| row.id == request_id && !row.selected));
+
+        let render_items = build_tree_render_items(&tree);
+        assert!(render_items.iter().any(
+            |item| matches!(item, TreeRenderItem::Row(row) if row.id == folder_id && row.selected)
+        ));
+        assert!(render_items.iter().any(
+            |item| matches!(item, TreeRenderItem::Row(row) if row.id == request_id && !row.selected)
+        ));
     }
 
     #[test]
