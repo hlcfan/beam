@@ -249,7 +249,7 @@ impl CommandPaletteDialogView {
             .update(cx, |input, cx| input.focus(window, cx));
     }
 
-    fn select_next(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn select_next(&mut self, cx: &mut Context<Self>) {
         if self.filtered_entries.is_empty() {
             return;
         }
@@ -260,7 +260,7 @@ impl CommandPaletteDialogView {
         cx.notify();
     }
 
-    fn select_previous(&mut self, cx: &mut Context<Self>) {
+    pub(in crate::ui) fn select_previous(&mut self, cx: &mut Context<Self>) {
         if self.filtered_entries.is_empty() {
             return;
         }

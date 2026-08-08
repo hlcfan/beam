@@ -129,8 +129,6 @@ pub fn run_app(
         cx.bind_keys([
             KeyBinding::new("up", SelectPreviousPaletteItem, Some("CommandPalette")),
             KeyBinding::new("down", SelectNextPaletteItem, Some("CommandPalette")),
-            KeyBinding::new("ctrl-p", SelectPreviousPaletteItem, Some("CommandPalette")),
-            KeyBinding::new("ctrl-n", SelectNextPaletteItem, Some("CommandPalette")),
             KeyBinding::new("enter", ConfirmPaletteItem, Some("CommandPalette")),
             KeyBinding::new("escape", DismissCommandPalette, Some("CommandPalette")),
             #[cfg(target_os = "macos")]
@@ -146,7 +144,7 @@ pub fn run_app(
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-,", OpenSettings, None),
             #[cfg(target_os = "macos")]
-            KeyBinding::new("cmd-k", OpenCommandPalette, None),
+            KeyBinding::new("cmd-p", OpenCommandPalette, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-d", DuplicateActiveRequest, None),
             #[cfg(target_os = "macos")]
@@ -165,13 +163,15 @@ pub fn run_app(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-,", OpenSettings, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
-            KeyBinding::new("ctrl-k", OpenCommandPalette, None),
+            KeyBinding::new("ctrl-p", OpenCommandPalette, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-d", DuplicateActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-delete", DeleteSelectedTreeNode, None),
             KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
             KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
+            KeyBinding::new("ctrl-j", SelectNextRequestInTree, None),
+            KeyBinding::new("ctrl-k", SelectPrevRequestInTree, None),
             KeyBinding::new("space", ToggleSelectedFolder, Some("WorkspaceTree")),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-alt-down", SelectNextRequestInTree, None),
@@ -343,11 +343,17 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.select_neighbor_request(
-                                        TreeNeighborDirection::Next,
-                                        window,
-                                        cx,
-                                    );
+                                    if let Some(palette) =
+                                        beam_view.command_palette_dialog_view.clone()
+                                    {
+                                        palette.update(cx, |palette, cx| palette.select_next(cx));
+                                    } else {
+                                        beam_view.select_neighbor_request(
+                                            TreeNeighborDirection::Next,
+                                            window,
+                                            cx,
+                                        );
+                                    }
                                 });
                             });
                         }
@@ -365,11 +371,18 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.select_neighbor_request(
-                                        TreeNeighborDirection::Prev,
-                                        window,
-                                        cx,
-                                    );
+                                    if let Some(palette) =
+                                        beam_view.command_palette_dialog_view.clone()
+                                    {
+                                        palette
+                                            .update(cx, |palette, cx| palette.select_previous(cx));
+                                    } else {
+                                        beam_view.select_neighbor_request(
+                                            TreeNeighborDirection::Prev,
+                                            window,
+                                            cx,
+                                        );
+                                    }
                                 });
                             });
                         }

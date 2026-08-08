@@ -14,9 +14,11 @@ impl KeyBindingsDialogView {
                 ("Delete Selected Item", "cmd-backspace"),
                 ("Focus URL", "cmd-l"),
                 ("Open Settings", "cmd-,"),
-                ("Open Command Palette", "cmd-k"),
+                ("Open Command Palette", "cmd-p"),
                 ("Next Item in Tree", "cmd-alt-down"),
                 ("Previous Item in Tree", "cmd-alt-up"),
+                ("Next Item in Tree", "ctrl-j"),
+                ("Previous Item in Tree", "ctrl-k"),
                 ("Expand/Collapse Selected Folder", "space"),
                 ("Next Request in History", "cmd-alt-right"),
                 ("Previous Request in History", "cmd-alt-left"),
@@ -32,7 +34,9 @@ impl KeyBindingsDialogView {
                 ("Delete Selected Item", "ctrl-delete"),
                 ("Focus URL", "ctrl-l"),
                 ("Open Settings", "ctrl-,"),
-                ("Open Command Palette", "ctrl-k"),
+                ("Open Command Palette", "ctrl-p"),
+                ("Next Item in Tree", "ctrl-j"),
+                ("Previous Item in Tree", "ctrl-k"),
                 ("Next Item in Tree", "ctrl-alt-down"),
                 ("Previous Item in Tree", "ctrl-alt-up"),
                 ("Expand/Collapse Selected Folder", "space"),
@@ -85,7 +89,7 @@ fn render_key_binding_chip(token: &str, cx: &App) -> Div {
 impl Render for KeyBindingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let bindings = Self::key_bindings_list();
-        let mut list = v_flex().w_full().gap_2();
+        let mut list = v_flex().w_full().flex_none().gap_2();
         for (label, binding) in bindings {
             let tokens = key_binding_display_tokens(binding);
             let mut chips = h_flex().items_center().gap_1();
@@ -107,6 +111,11 @@ impl Render for KeyBindingsDialogView {
                     .child(chips),
             );
         }
-        v_flex().w_full().p_3().child(list).into_any_element()
+        div()
+            .w_full()
+            .h(px(420.0))
+            .overflow_y_scrollbar()
+            .child(v_flex().w_full().p_3().child(list))
+            .into_any_element()
     }
 }
