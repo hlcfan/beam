@@ -547,6 +547,7 @@ impl ShimmerTopContour {
     fn new(bounds: Bounds<Pixels>) -> Option<Self> {
         const PANE_RADIUS: f32 = 8.0;
         const STROKE_WIDTH: f32 = 2.0;
+        const CORNER_SWEEP: f32 = 5.0 * std::f32::consts::PI / 18.0;
 
         let width = f32::from(bounds.size.width);
         let height = f32::from(bounds.size.height);
@@ -567,7 +568,7 @@ impl ShimmerTopContour {
             left_center,
             right_center,
             radius,
-            arc_length: std::f32::consts::FRAC_PI_2 * radius,
+            arc_length: CORNER_SWEEP * radius,
             line_length: (width - 2.0 * outer_radius).max(0.0),
         })
     }
@@ -622,7 +623,7 @@ impl ShimmerTopContour {
     fn point_at(&self, distance: f32) -> Point<Pixels> {
         let distance = distance.clamp(0.0, self.length());
         if distance <= self.arc_length {
-            let angle = std::f32::consts::PI + distance / self.radius;
+            let angle = 11.0 * std::f32::consts::PI / 9.0 + distance / self.radius;
             return point(
                 self.left_center.x + px(self.radius * angle.cos()),
                 self.left_center.y + px(self.radius * angle.sin()),
@@ -659,14 +660,14 @@ mod tests {
         })
         .expect("the response panel is large enough for the shimmer contour");
 
-        assert_point_close(contour.point_at(0.0), 1.0, 8.0);
+        assert_point_close(contour.point_at(0.0), 2.637_689, 3.500_487);
         assert_point_close(contour.point_at(contour.arc_length), 8.0, 1.0);
         assert_point_close(
             contour.point_at(contour.arc_length + contour.line_length),
             92.0,
             1.0,
         );
-        assert_point_close(contour.point_at(contour.length()), 99.0, 8.0);
+        assert_point_close(contour.point_at(contour.length()), 97.362_31, 3.500_487);
         assert!(contour.path(0.0, contour.length()).is_some());
     }
 
