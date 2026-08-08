@@ -561,6 +561,7 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_duplicate_active_request))
             .on_action(cx.listener(Self::on_action_rename_active_request))
+            .on_action(cx.listener(Self::on_action_delete_active_request))
             .on_action(cx.listener(Self::on_action_focus_url_input))
             .on_action(cx.listener(Self::on_action_format_request_body))
             .on_action(cx.listener(Self::on_action_format_response_body))
