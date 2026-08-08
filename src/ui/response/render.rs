@@ -376,10 +376,6 @@ impl BeamView {
                                     return;
                                 };
 
-                                if let Some(track) = contour.path(0.0, contour.length()) {
-                                    window.paint_path(track, color.opacity(0.18));
-                                }
-
                                 let highlight_length = contour.length() * 0.28;
                                 let highlight_end = (contour.length() + highlight_length) * delta;
                                 let highlight_start = highlight_end - highlight_length;
