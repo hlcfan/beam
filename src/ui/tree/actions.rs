@@ -451,7 +451,7 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let Some(node) = self.shell.workspace_tree.node(node_id).cloned() else {
-            window.push_notification("Unable to determine request parent.", cx);
+            window.push_notification("Unable to find the selected tree item.", cx);
             return;
         };
         let Some((parent, known_parent_manifest_path)) =
@@ -759,32 +759,11 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
-            window.push_notification("No active request selected.", cx);
+        let Some(selected_node_id) = self.shell.workspace_tree.selected_node_id() else {
+            self.add_request_at_root(window, cx);
             return;
         };
-        let Some((parent, known_parent_manifest_path)) =
-            self.request_parent_input_for_tree_node(active_request_id)
-        else {
-            window.push_notification("Unable to determine request parent.", cx);
-            return;
-        };
-        let command_id = next_command_id();
-        self.pending_request_creations.insert(command_id.clone());
-        let command = AppCommand::CreateRequestAfter {
-            input: CreateRequestInput {
-                parent,
-                known_parent_manifest_path,
-                name: self.next_new_request_name(parent),
-                method: HttpMethod::Get,
-                url: String::new(),
-            },
-            source_request_id: active_request_id,
-            command_id,
-        };
-        if let Err(error) = self.publish_app_command(command) {
-            window.push_notification(error, cx);
-        }
+        self.add_request_from_tree_node(selected_node_id, window, cx);
     }
 
     pub(in crate::ui) fn duplicate_selected_tree_node(
