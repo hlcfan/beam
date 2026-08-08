@@ -171,16 +171,24 @@ pub struct WorkspaceTreeState {
     nodes: HashMap<Ulid, TreeNode>,
     roots: Vec<Ulid>,
     expanded: BTreeSet<Ulid>,
+    selected_node_id: Option<Ulid>,
     selected_request_id: Option<Ulid>,
 }
 
 impl WorkspaceTreeState {
+    pub fn selected_node_id(&self) -> Option<Ulid> {
+        self.selected_node_id
+    }
+
     pub fn selected_request_id(&self) -> Option<Ulid> {
         self.selected_request_id
     }
 
     pub fn set_selected_request(&mut self, request_id: Option<Ulid>) {
         self.selected_request_id = request_id;
+        if request_id.is_some() {
+            self.selected_node_id = request_id;
+        }
     }
 
     pub fn set_expanded<I>(&mut self, ids: I)
@@ -226,10 +234,20 @@ impl WorkspaceTreeState {
         if !self.request_exists(request_id) {
             return;
         }
+        self.selected_node_id = Some(request_id);
         self.selected_request_id = Some(request_id);
         for ancestor in self.ancestors(request_id) {
             self.expanded.insert(ancestor);
         }
+    }
+
+    /// Selects any tree node without changing the request shown in the editor.
+    pub fn select_node(&mut self, node_id: Ulid) -> bool {
+        if !self.nodes.contains_key(&node_id) {
+            return false;
+        }
+        self.selected_node_id = Some(node_id);
+        true
     }
 
     /// Expands `folder_id` and each of its ancestor folders.
@@ -386,8 +404,7 @@ impl WorkspaceTreeState {
             id: node.id,
             kind: node.kind,
             depth,
-            selected: node.kind == TreeNodeKind::Request
-                && Some(node.id) == self.selected_request_id,
+            selected: Some(node.id) == self.selected_node_id,
         });
 
         if node.kind != TreeNodeKind::Request && self.expanded.contains(&id) {
@@ -602,6 +619,9 @@ impl WorkspaceTreeState {
         if self.selected_request_id == Some(request_id) {
             self.selected_request_id = None;
         }
+        if self.selected_node_id == Some(request_id) {
+            self.selected_node_id = None;
+        }
         true
     }
 
@@ -671,6 +691,12 @@ impl WorkspaceTreeState {
         for id in &ids {
             self.nodes.remove(id);
             self.expanded.remove(id);
+        }
+        if self
+            .selected_node_id
+            .is_some_and(|selected_id| ids.contains(&selected_id))
+        {
+            self.selected_node_id = None;
         }
         if self
             .selected_request_id
@@ -3569,6 +3595,7 @@ fn build_tree_from_shared_store(
         nodes,
         roots: shared_store.root_ids.clone(),
         expanded: BTreeSet::new(),
+        selected_node_id: None,
         selected_request_id: None,
     }
 }
@@ -3743,6 +3770,49 @@ mod tests {
         assert!(tree.is_expanded(folder_id));
         assert_eq!(tree.selected_request_id(), Some(request_id));
         assert!(!tree.reveal_folder(request_id));
+    }
+
+    #[test]
+    fn selecting_folder_highlights_it_without_changing_active_request() {
+        let folder_id = Ulid::new();
+        let request_id = Ulid::new();
+        let mut tree = WorkspaceTreeState::default();
+        tree.nodes.insert(
+            folder_id,
+            TreeNode {
+                id: folder_id,
+                name: "Folder".to_string(),
+                kind: TreeNodeKind::Folder,
+                request_method: None,
+                request_url: None,
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.nodes.insert(
+            request_id,
+            TreeNode {
+                id: request_id,
+                name: "Request".to_string(),
+                kind: TreeNodeKind::Request,
+                request_method: Some(HttpMethod::Get),
+                request_url: Some("https://example.com".to_string()),
+                manifest_path: None,
+                parent_id: None,
+                children: Vec::new(),
+            },
+        );
+        tree.roots = vec![folder_id, request_id];
+        tree.select_request(request_id);
+
+        assert!(tree.select_node(folder_id));
+        assert_eq!(tree.selected_node_id(), Some(folder_id));
+        assert_eq!(tree.selected_request_id(), Some(request_id));
+
+        let rows = tree.visible_rows();
+        assert!(rows.iter().any(|row| row.id == folder_id && row.selected));
+        assert!(rows.iter().any(|row| row.id == request_id && !row.selected));
     }
 
     #[test]
