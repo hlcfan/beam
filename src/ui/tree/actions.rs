@@ -831,9 +831,9 @@ impl BeamView {
         self.rename_selected_tree_node(window, cx);
     }
 
-    pub(in crate::ui) fn on_action_delete_active_request(
+    pub(in crate::ui) fn on_action_delete_selected_tree_node(
         &mut self,
-        _: &DeleteActiveRequest,
+        _: &DeleteSelectedTreeNode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

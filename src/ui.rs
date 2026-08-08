@@ -150,7 +150,7 @@ pub fn run_app(
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-d", DuplicateActiveRequest, None),
             #[cfg(target_os = "macos")]
-            KeyBinding::new("cmd-backspace", DeleteActiveRequest, None),
+            KeyBinding::new("cmd-backspace", DeleteSelectedTreeNode, None),
             KeyBinding::new("f2", RenameActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("alt-f4", QuitApp, None),
@@ -169,7 +169,7 @@ pub fn run_app(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-d", DuplicateActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
-            KeyBinding::new("ctrl-delete", DeleteActiveRequest, None),
+            KeyBinding::new("ctrl-delete", DeleteSelectedTreeNode, None),
             KeyBinding::new("cmd-alt-down", SelectNextRequestInTree, None),
             KeyBinding::new("cmd-alt-up", SelectPrevRequestInTree, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -260,7 +260,7 @@ pub fn run_app(
                 }
             });
         });
-        cx.on_action(|_: &DeleteActiveRequest, cx: &mut App| {
+        cx.on_action(|_: &DeleteSelectedTreeNode, cx: &mut App| {
             cx.defer(move |cx| {
                 if let Some(window_handle) = cx.active_window() {
                     if let Some(root) = window_handle

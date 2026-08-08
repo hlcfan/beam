@@ -19,7 +19,7 @@ actions!(
         FormatResponseBody,
         DuplicateActiveRequest,
         RenameActiveRequest,
-        DeleteActiveRequest
+        DeleteSelectedTreeNode
     ]
 );
 
