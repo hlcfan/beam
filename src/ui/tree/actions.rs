@@ -14,17 +14,22 @@ impl BeamView {
         self.sync_request_editor_from_selection(window, cx);
     }
 
-    /// Moves the workspace tree selection to the next or previous request in
-    /// pre-order traversal of the full tree. Folders that contain the target
-    /// are auto-expanded by `WorkspaceTreeState::select_request`, so collapsing
-    /// a folder no longer hides its requests from `cmd-alt-up` / `cmd-alt-down`.
+    /// Moves the workspace tree selection to the next or previous visible row.
+    /// Collapsed folder descendants are skipped and folders are selected without
+    /// changing the request shown in the editor.
     pub(in crate::ui) fn select_neighbor_request(
         &mut self,
         direction: TreeNeighborDirection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ordered = self.shell.workspace_tree.ordered_request_ids();
+        let ordered: Vec<Ulid> = self
+            .shell
+            .workspace_tree
+            .visible_rows()
+            .into_iter()
+            .map(|row| row.id)
+            .collect();
         if ordered.is_empty() {
             return;
         }
@@ -32,7 +37,7 @@ impl BeamView {
         let next_id = match self
             .shell
             .workspace_tree
-            .selected_request_id()
+            .selected_node_id()
             .and_then(|current| ordered.iter().position(|id| *id == current))
         {
             Some(index) => match direction {
@@ -48,12 +53,27 @@ impl BeamView {
             None => ordered[0],
         };
 
-        if Some(next_id) == self.shell.workspace_tree.selected_request_id() {
+        if Some(next_id) == self.shell.workspace_tree.selected_node_id() {
             return;
         }
 
-        self.select_request(next_id, window, cx);
-        self.commit_request_selection(window, cx);
+        match self
+            .shell
+            .workspace_tree
+            .node(next_id)
+            .map(|node| node.kind)
+        {
+            Some(TreeNodeKind::Request) => {
+                self.select_request(next_id, window, cx);
+                self.commit_request_selection(window, cx);
+            }
+            Some(TreeNodeKind::Folder) => {
+                self.shell.workspace_tree.select_node(next_id);
+                self.scroll_tree_node_into_view(next_id);
+                cx.notify();
+            }
+            None => {}
+        }
     }
 
     /// Navigates the request view history (the in-memory sequence of requests
@@ -107,10 +127,14 @@ impl BeamView {
     /// (cmd-alt-up/down/left/right) can select a request whose row is scrolled out of the
     /// virtualized tree's viewport.
     pub(in crate::ui) fn scroll_selected_request_into_view(&self, request_id: Ulid) {
+        self.scroll_tree_node_into_view(request_id);
+    }
+
+    fn scroll_tree_node_into_view(&self, node_id: Ulid) {
         let items = build_tree_render_items(&self.shell.workspace_tree);
         if let Some(index) = items
             .iter()
-            .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == request_id))
+            .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == node_id))
         {
             self.collection_scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Top);
