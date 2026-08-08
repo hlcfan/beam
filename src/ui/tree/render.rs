@@ -95,10 +95,14 @@ impl BeamView {
                     .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                         TreeNodeKind::Folder => {
                             this.focus_handle.focus(window, cx);
+                            let was_selected =
+                                this.shell.workspace_tree.selected_node_id() == Some(row_id);
                             this.shell.workspace_tree.select_node(row_id);
-                            this.shell.workspace_tree.toggle_expanded(row_id);
-                            if let Err(error) = this.persist_tree_expansion_state() {
-                                window.push_notification(error, cx);
+                            if was_selected {
+                                this.shell.workspace_tree.toggle_expanded(row_id);
+                                if let Err(error) = this.persist_tree_expansion_state() {
+                                    window.push_notification(error, cx);
+                                }
                             }
                             cx.notify();
                         }
