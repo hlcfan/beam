@@ -150,7 +150,7 @@ impl BeamView {
 
     /// Scrolls the workspace tree just enough to bring `request_id`'s row into view, leaving the
     /// scroll offset untouched if it's already visible. Needed because keyword-driven navigation
-    /// (cmd-alt-up/down/left/right) can select a request whose row is scrolled out of the
+    /// (cmd-alt-up/down/left/right or ctrl-j/k) can select a request whose row is scrolled out of the
     /// virtualized tree's viewport.
     pub(in crate::ui) fn scroll_selected_request_into_view(&self, request_id: Ulid) {
         self.scroll_tree_node_into_view(request_id);
@@ -192,7 +192,7 @@ impl BeamView {
     }
 
     /// Initializes the request view history with whatever request the shell
-    /// already has selected at startup, so the very first `cmd-alt-down` / `cmd-alt-up`
+    /// already has selected at startup, so the first tree-navigation
     /// keypress has a meaningful anchor to step from.
     pub(in crate::ui) fn seed_request_view_history(&mut self) {
         self.request_view_histories
