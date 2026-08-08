@@ -13,6 +13,7 @@ actions!(
         OpenCommandPalette,
         SelectNextRequestInTree,
         SelectPrevRequestInTree,
+        ToggleSelectedFolder,
         SelectNextRequestInViewHistory,
         SelectPrevRequestInViewHistory,
         FormatRequestBody,

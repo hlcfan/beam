@@ -94,7 +94,7 @@ impl BeamView {
                     .child(row_content)
                     .on_click(cx.listener(move |this, _, window, cx| match row_kind {
                         TreeNodeKind::Folder => {
-                            this.focus_handle.focus(window, cx);
+                            this.tree_focus_handle.focus(window, cx);
                             let was_selected =
                                 this.shell.workspace_tree.selected_node_id() == Some(row_id);
                             this.shell.workspace_tree.select_node(row_id);
@@ -107,7 +107,7 @@ impl BeamView {
                             cx.notify();
                         }
                         TreeNodeKind::Request => {
-                            this.focus_handle.focus(window, cx);
+                            this.tree_focus_handle.focus(window, cx);
                             this.select_request(row_id, window, cx);
                             if let Err(error) = this.persist_last_opened_request_id(row_id) {
                                 window.push_notification(error, cx);
@@ -329,6 +329,8 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let mut panel = v_flex()
+            .key_context("WorkspaceTree")
+            .track_focus(&self.tree_focus_handle)
             .h_full()
             .w_full()
             .gap(px(2.0))
@@ -399,7 +401,7 @@ impl BeamView {
                         MouseButton::Right,
                         move |ev: &MouseDownEvent, window, cx| {
                             view.update(cx, |this, cx| {
-                                this.focus_handle.focus(window, cx);
+                                this.tree_focus_handle.focus(window, cx);
                                 let menu = this.build_empty_space_context_menu();
                                 let position = Point {
                                     x: ev.position.x + px(4.),
@@ -585,7 +587,7 @@ impl BeamView {
                         let view = menu_view;
                         move |ev: &MouseDownEvent, window, cx| {
                             view.update(cx, |this, cx| {
-                                this.focus_handle.focus(window, cx);
+                                this.tree_focus_handle.focus(window, cx);
                                 let position = Point {
                                     x: ev.position.x + px(4.),
                                     y: ev.position.y,

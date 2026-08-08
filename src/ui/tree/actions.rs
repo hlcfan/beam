@@ -1,6 +1,31 @@
 use super::*;
 
 impl BeamView {
+    pub(in crate::ui) fn on_action_toggle_selected_folder(
+        &mut self,
+        _: &ToggleSelectedFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(folder_id) = self.shell.workspace_tree.selected_node_id() else {
+            return;
+        };
+        if !self
+            .shell
+            .workspace_tree
+            .node(folder_id)
+            .is_some_and(|node| node.kind == TreeNodeKind::Folder)
+        {
+            return;
+        }
+
+        self.shell.workspace_tree.toggle_expanded(folder_id);
+        if let Err(error) = self.persist_tree_expansion_state() {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
     pub(in crate::ui) fn select_request(
         &mut self,
         request_id: Ulid,
@@ -68,6 +93,7 @@ impl BeamView {
                 self.commit_request_selection(window, cx);
             }
             Some(TreeNodeKind::Folder) => {
+                self.tree_focus_handle.focus(window, cx);
                 self.shell.workspace_tree.select_node(next_id);
                 self.scroll_tree_node_into_view(next_id);
                 cx.notify();
