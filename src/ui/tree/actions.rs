@@ -737,32 +737,45 @@ impl BeamView {
         }
     }
 
-    pub(in crate::ui) fn duplicate_active_request(
+    pub(in crate::ui) fn duplicate_selected_tree_node(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
+        let Some(node_id) = self.shell.workspace_tree.selected_node_id() else {
             return;
         };
-        self.duplicate_request_from_tree_node(active_request_id, window, cx);
-    }
-
-    pub(in crate::ui) fn rename_active_request(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(active_request_id) = self.shell.workspace_tree.selected_request_id() else {
-            return;
-        };
-        let kind = self
+        let Some(node_kind) = self
             .shell
             .workspace_tree
-            .node(active_request_id)
-            .map(|n| n.kind)
-            .unwrap_or(TreeNodeKind::Request);
-        self.open_rename_dialog_for_tree_node(active_request_id, kind, window, cx);
+            .node(node_id)
+            .map(|node| node.kind)
+        else {
+            return;
+        };
+        match node_kind {
+            TreeNodeKind::Folder => self.duplicate_folder_from_tree_node(node_id, window, cx),
+            TreeNodeKind::Request => self.duplicate_request_from_tree_node(node_id, window, cx),
+        }
+    }
+
+    pub(in crate::ui) fn rename_selected_tree_node(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(node_id) = self.shell.workspace_tree.selected_node_id() else {
+            return;
+        };
+        let Some(node_kind) = self
+            .shell
+            .workspace_tree
+            .node(node_id)
+            .map(|node| node.kind)
+        else {
+            return;
+        };
+        self.open_rename_dialog_for_tree_node(node_id, node_kind, window, cx);
     }
 
     pub(in crate::ui) fn delete_selected_tree_node(
@@ -806,7 +819,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.duplicate_active_request(window, cx);
+        self.duplicate_selected_tree_node(window, cx);
     }
 
     pub(in crate::ui) fn on_action_rename_active_request(
@@ -815,7 +828,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.rename_active_request(window, cx);
+        self.rename_selected_tree_node(window, cx);
     }
 
     pub(in crate::ui) fn on_action_delete_active_request(

@@ -234,7 +234,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.duplicate_active_request(window, cx);
+                                    beam_view.duplicate_selected_tree_node(window, cx);
                                 });
                             });
                         }
@@ -252,7 +252,7 @@ pub fn run_app(
                         if let Ok(beam_view) = root.view().clone().downcast::<BeamView>() {
                             let _ = window_handle.update(cx, |_root_view, window, cx| {
                                 beam_view.update(cx, |beam_view, cx| {
-                                    beam_view.rename_active_request(window, cx);
+                                    beam_view.rename_selected_tree_node(window, cx);
                                 });
                             });
                         }
