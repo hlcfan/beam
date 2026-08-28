@@ -8,12 +8,19 @@ pub(super) struct EnvVarHoverInfo {
     token_bounds: Bounds<Pixels>,
 }
 
+/// The input operations needed to locate an environment-variable token under the pointer.
+///
+/// GPUI exposes single-line inputs and code editors as different state types, while Beam uses
+/// the same hover behavior for the URL input and request body editor. This small adapter keeps
+/// that behavior generic without depending on either concrete state type.
 pub(in crate::ui) trait EnvHoverInput {
     fn hover_value(&self) -> String;
     fn hover_line_height(&self) -> Option<Pixels>;
     fn hover_range_to_bounds(&self, range: &Range<usize>) -> Option<Bounds<Pixels>>;
 }
 
+// Both supported GPUI states expose the required operations with identical signatures. Generate
+// the forwarding implementations here so the adapter stays consistent as those operations change.
 macro_rules! impl_env_hover_input {
     ($state:ty) => {
         impl EnvHoverInput for $state {
@@ -32,6 +39,7 @@ macro_rules! impl_env_hover_input {
     };
 }
 
+// URL and other single-line fields use InputState; request bodies use EditorState.
 impl_env_hover_input!(InputState);
 impl_env_hover_input!(EditorState);
 
