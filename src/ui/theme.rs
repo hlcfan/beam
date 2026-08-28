@@ -108,6 +108,7 @@ impl BeamView {
             .cloned();
         if let Some(theme_config) = theme_config {
             Theme::global_mut(cx).apply_config(&theme_config);
+            Theme::sync_base(cx);
             #[cfg(target_os = "macos")]
             cx.set_menus(build_macos_system_menus(cx));
             if persist {
