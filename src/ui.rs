@@ -60,11 +60,11 @@ use gpui::prelude::FluentBuilder as _;
 use gpui::*;
 use gpui_component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
-    ThemeRegistry, TitleBar, VirtualListScrollHandle, WindowExt as _,
+    ThemeRegistry, ThemeStyled, TitleBar, VirtualListScrollHandle, WindowExt as _,
     button::{Button, ButtonVariants as _, DropdownButton},
     h_flex,
     hover_card::HoverCard,
-    input::{Input, InputEvent, InputState, Position, TabSize},
+    input::{Editor, EditorState, Input, InputEvent, InputState, Position, TabSize},
     list::ListItem,
     menu::{DropdownMenu as _, PopupMenuItem},
     native_menu::NativeMenu,

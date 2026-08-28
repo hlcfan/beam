@@ -7,8 +7,8 @@ edition = "2024"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 dirs = "6.0"
 gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["tree-sitter-javascript", "tree-sitter-html", "tree-sitter-graphql"], rev = "3067deae83a237a4485e79bd449acd84ca890c23" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "3067deae83a237a4485e79bd449acd84ca890c23" }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["tree-sitter-javascript", "tree-sitter-html", "tree-sitter-graphql"], rev = "6d07863fe7077f85abfa0ec2fcb05f3e17c573b2" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component", rev = "6d07863fe7077f85abfa0ec2fcb05f3e17c573b2" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland", "runtime_shaders"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

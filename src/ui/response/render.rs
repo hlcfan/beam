@@ -199,11 +199,11 @@ impl BeamView {
                     .read(cx)
                     .selected_range()
                     .is_empty();
-                Input::new(&self.response_body_editor)
+                Editor::new(&self.response_body_editor)
                     .h_full()
                     .p_0()
                     .border_0()
-                    .focus_bordered(false)
+                    .bordered(false)
                     .disabled(true)
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(cx.theme().mono_font_size)

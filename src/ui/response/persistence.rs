@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{App, Context, Pixels, Point, Window};
-use gpui_component::input::InputState;
+use gpui_component::input::EditorState;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -227,7 +227,7 @@ impl BeamView {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-        update: impl FnOnce(&mut InputState, &mut Window, &mut Context<InputState>),
+        update: impl FnOnce(&mut EditorState, &mut Window, &mut Context<EditorState>),
     ) {
         self.suppress_response_scroll_offset_persistence = true;
         self.response_body_editor.update(cx, |input, cx| {
