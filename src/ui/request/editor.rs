@@ -125,7 +125,7 @@ impl BeamView {
                 if latest_text != source_text {
                     window.push_notification(
                         (
-                            gpui_component::notification::NotificationType::Warning,
+                            gpui_kit::component::notification::NotificationType::Warning,
                             "Body changed while formatting. Please run Format again.",
                         ),
                         cx,
@@ -139,7 +139,7 @@ impl BeamView {
                     Err(error) => {
                         window.push_notification(
                             (
-                                gpui_component::notification::NotificationType::Error,
+                                gpui_kit::component::notification::NotificationType::Error,
                                 SharedString::from(format!(
                                     "Failed to format request body: {error}"
                                 )),
@@ -587,7 +587,7 @@ impl BeamView {
             h_flex().items_center().gap_1().child("Script")
         };
         let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
-            .anchor(gpui::Anchor::BottomLeft)
+            .anchor(gpui_kit::Anchor::BottomLeft)
             .open_delay(Duration::from_millis(100))
             .close_delay(Duration::from_millis(150))
             .trigger(
@@ -747,7 +747,7 @@ impl BeamView {
                             .border_color(cx.theme().border)
                             .child(
                                 div().w(px(28.0)).child(
-                                    gpui_component::checkbox::Checkbox::new(format!(
+                                    gpui_kit::component::checkbox::Checkbox::new(format!(
                                         "request-param-enabled-{index}"
                                     ))
                                     .small()
@@ -877,7 +877,7 @@ impl BeamView {
                             .border_color(cx.theme().border)
                             .child(
                                 div().w(px(28.0)).child(
-                                    gpui_component::checkbox::Checkbox::new(format!(
+                                    gpui_kit::component::checkbox::Checkbox::new(format!(
                                         "request-header-enabled-{index}"
                                     ))
                                     .small()

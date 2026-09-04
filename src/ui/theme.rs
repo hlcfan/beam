@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry, WindowExt as _};
+use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry, WindowExt as _};
+use gpui_kit::*;
 
 use super::BeamView;
 #[cfg(target_os = "macos")]

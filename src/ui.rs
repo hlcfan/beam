@@ -56,9 +56,7 @@ use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
 use chrono::{Local, Utc};
-use gpui::prelude::FluentBuilder as _;
-use gpui::*;
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
     ThemeRegistry, ThemeStyled, TitleBar, VirtualListScrollHandle, WindowExt as _,
     button::{Button, ButtonVariants as _, DropdownButton},
@@ -76,6 +74,8 @@ use gpui_component::{
     tooltip::Tooltip,
     v_flex, v_virtual_list,
 };
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
 use ulid::Ulid;
 
 use crate::app_shell::next_command_id;
@@ -117,9 +117,9 @@ pub fn run_app(
     sync_runtime: DataSyncRuntime,
     workspace_paths: BeamPaths,
 ) {
-    let app = gpui_platform::application().with_assets(Assets);
+    let app = gpui_kit::application().with_assets(Assets);
     app.run(move |cx| {
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         #[cfg(not(target_family = "wasm"))]
         init_theme_registry(
             state.theme.theme_name.clone().map(Into::into),

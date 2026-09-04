@@ -303,7 +303,7 @@ impl BeamView {
                 .child(match &resolved_value {
                     Some(val) => div()
                         .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
                         .child(val.clone())
                         .into_any_element(),
                     None if is_dynamic => div()
@@ -324,7 +324,7 @@ impl BeamView {
                 deferred(
                     anchored()
                         .snap_to_window_with_margin(px(8.))
-                        .anchor(gpui::Anchor::TopLeft)
+                        .anchor(gpui_kit::Anchor::TopLeft)
                         .position(point(popup_x, popup_y))
                         .child(
                             div()

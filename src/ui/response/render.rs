@@ -495,7 +495,7 @@ impl BeamView {
             .child("Status:")
             .child(
                 div()
-                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(status_color)
                     .when(status_text.is_some(), |div| div.cursor_pointer())
                     .child(status_code),
@@ -504,7 +504,7 @@ impl BeamView {
 
         match status_text {
             Some(status_text) => HoverCard::new("response-status-summary")
-                .anchor(gpui::Anchor::BottomRight)
+                .anchor(gpui_kit::Anchor::BottomRight)
                 .appearance(false)
                 .open_delay(Duration::from_millis(100))
                 .close_delay(Duration::from_millis(150))
@@ -661,7 +661,7 @@ impl ShimmerTopContour {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Bounds, Pixels, Point, point, px, size};
+    use gpui_kit::{Bounds, Pixels, Point, point, px, size};
 
     use super::ShimmerTopContour;
 
