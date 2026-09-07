@@ -7,10 +7,10 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AppFontSize, AppSettingsFile, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
-    EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField, HttpMethod,
-    ItemType, LocalStateFile, ManifestItemRef, QueryParamField, RequestDefinition, RequestFile,
-    RequestMeta, ScriptConfig, WorkspaceFile,
+    AppFontSize, AppSettingsFile, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile,
+    EnvironmentMeta, EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField,
+    HttpMethod, ItemType, LocalStateFile, ManifestItemRef, QueryParamField, RequestDefinition,
+    RequestFile, RequestMeta, ScriptConfig, WorkspaceFile,
 };
 use crate::paths::FOLDER_MANIFEST_FILE_NAME;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
@@ -1347,6 +1347,18 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         self.save_app_settings(&app_settings)
     }
 
+    pub fn persist_wrapping_indent_state(&self, wrapping_indent: AppWrappingIndent) -> Result<()> {
+        let mut app_settings = self.load_app_settings().unwrap_or_default();
+
+        if app_settings.app_settings.wrapping_indent == wrapping_indent {
+            return Ok(());
+        }
+
+        app_settings.app_settings.wrapping_indent = wrapping_indent;
+        app_settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&app_settings)
+    }
+
     fn seed_app_settings_file(&self) -> Result<AppSettingsFile> {
         let mut app_settings = AppSettingsFile::default();
         let local_state_path = &self.backend.paths().local_state_file;
@@ -2069,6 +2081,37 @@ mod tests {
         let loaded = storage.load_app_settings().expect("load app settings");
 
         assert!(!loaded.app_settings.auto_format_response);
+    }
+
+    #[test]
+    fn wrapping_indent_persists_both_modes_without_changing_other_settings() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace");
+        storage
+            .persist_wrap_body_editor_state(true)
+            .expect("enable wrapping");
+        for indent in [AppWrappingIndent::None, AppWrappingIndent::Same] {
+            storage
+                .persist_wrapping_indent_state(indent)
+                .expect("save indent");
+            let loaded = storage.load_app_settings().expect("load settings");
+            assert_eq!(loaded.app_settings.wrapping_indent, indent);
+            assert!(loaded.app_settings.wrap_body_editor);
+        }
+    }
+
+    #[test]
+    fn settings_without_wrapping_indent_default_to_same() {
+        let settings = AppSettingsFile::default();
+        let text = toml::to_string(&settings).expect("serialize settings");
+        let text = text
+            .lines()
+            .filter(|line| !line.starts_with("wrapping_indent ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let loaded: AppSettingsFile = toml::from_str(&text).expect("read existing settings");
+        assert_eq!(loaded.app_settings.wrapping_indent, AppWrappingIndent::Same);
     }
 
     #[test]

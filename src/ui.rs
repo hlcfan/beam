@@ -88,8 +88,8 @@ use crate::importers::{
     CurlPlan, DetectedSource, ImportPlan, is_curl, parse_curl, parser_for, scanner, tag_label,
 };
 use crate::models::{
-    AppFontSize, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope, EnvironmentVariable,
-    HttpMethod, LocalStateFile, RequestFile,
+    AppFontSize, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentScope,
+    EnvironmentVariable, HttpMethod, LocalStateFile, RequestFile,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;

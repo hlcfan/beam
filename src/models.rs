@@ -41,6 +41,35 @@ pub enum AppFontSize {
     Large,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppWrappingIndent {
+    #[default]
+    Same,
+    None,
+}
+
+impl std::fmt::Display for AppWrappingIndent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Same => "Same",
+            Self::None => "None",
+        })
+    }
+}
+
+impl std::str::FromStr for AppWrappingIndent {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "Same" => Ok(Self::Same),
+            "None" => Ok(Self::None),
+            _ => Err("Expected Same or None for wrapping indent"),
+        }
+    }
+}
+
 impl AppFontSize {
     pub fn from_pixels_value(font_size: f32) -> Self {
         if font_size <= 15.0 {
@@ -347,6 +376,8 @@ pub struct AppSettings {
     pub auto_format_response: bool,
     #[serde(default)]
     pub wrap_body_editor: bool,
+    #[serde(default)]
+    pub wrapping_indent: AppWrappingIndent,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -400,6 +431,7 @@ impl Default for AppSettingsFile {
                 font_size: AppFontSize::default(),
                 auto_format_response: default_auto_format_response(),
                 wrap_body_editor: false,
+                wrapping_indent: AppWrappingIndent::default(),
                 updated_at: Utc::now(),
             },
         }

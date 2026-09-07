@@ -1,3 +1,4 @@
+use gpui_kit::component::input::WrappingIndent;
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry, WindowExt as _};
 use gpui_kit::*;
 
@@ -5,7 +6,7 @@ use super::BeamView;
 #[cfg(target_os = "macos")]
 use super::actions::build_macos_system_menus;
 use crate::assets::embedded_theme_contents;
-use crate::models::AppFontSize;
+use crate::models::{AppFontSize, AppWrappingIndent};
 use crate::paths::BeamPaths;
 use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::workspace_repo::WorkspaceRepository;
@@ -100,6 +101,33 @@ impl BeamView {
         cx.notify();
     }
 
+    pub(super) fn apply_wrapping_indent_setting(
+        &mut self,
+        wrapping_indent: AppWrappingIndent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shell.theme.wrapping_indent = wrapping_indent;
+        let indent = Self::editor_wrapping_indent(wrapping_indent);
+        self.request_body_editor.update(cx, |input, cx| {
+            input.set_wrapping_indent(indent, window, cx);
+        });
+        self.response_body_editor.update(cx, |input, cx| {
+            input.set_wrapping_indent(indent, window, cx);
+        });
+        if let Err(error) = self.persist_wrapping_indent_state(wrapping_indent) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn editor_wrapping_indent(indent: AppWrappingIndent) -> WrappingIndent {
+        match indent {
+            AppWrappingIndent::Same => WrappingIndent::Same,
+            AppWrappingIndent::None => WrappingIndent::None,
+        }
+    }
+
     fn apply_named_theme_by_name(theme_name: &str, cx: &mut App, persist: bool) -> bool {
         let stored_theme_name: SharedString = theme_name.to_string().into();
         let theme_config = ThemeRegistry::global(cx)
@@ -145,6 +173,18 @@ impl BeamView {
             .map_err(|error| format!("Failed to load workspace: {error}"))?;
         storage
             .persist_wrap_body_editor_state(wrap_body_editor)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
+    fn persist_wrapping_indent_state(
+        &self,
+        wrapping_indent: AppWrappingIndent,
+    ) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_wrapping_indent_state(wrapping_indent)
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 

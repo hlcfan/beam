@@ -65,12 +65,18 @@ impl BeamView {
                 self.request_body_editor = cached_editor.clone();
                 self.request_body_editor.update(cx, |input, cx| {
                     input.set_soft_wrap(self.shell.theme.wrap_body_editor, window, cx);
+                    input.set_wrapping_indent(
+                        Self::editor_wrapping_indent(self.shell.theme.wrapping_indent),
+                        window,
+                        cx,
+                    );
                 });
                 self.resubscribe_request_body_editor(window, cx);
             } else {
                 let editor = Self::build_request_body_editor(
                     &self.request,
                     self.shell.theme.wrap_body_editor,
+                    self.shell.theme.wrapping_indent,
                     window,
                     cx,
                 );

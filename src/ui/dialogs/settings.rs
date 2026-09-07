@@ -1,4 +1,8 @@
 use super::super::*;
+use gpui_kit::component::{
+    IndexPath, Size, StyleSized,
+    select::{Select, SelectEvent, SelectState},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
@@ -9,15 +13,48 @@ enum SettingsSection {
 pub(in crate::ui) struct SettingsDialogView {
     beam_view: Entity<BeamView>,
     selected_section: SettingsSection,
+    wrapping_indent_select: Entity<SelectState<Vec<SharedString>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SettingsDialogView {
     pub(in crate::ui) fn new(
         beam_view: Entity<BeamView>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let wrapping_indent = beam_view.read(cx).shell.theme.wrapping_indent;
+        let options = [AppWrappingIndent::Same, AppWrappingIndent::None];
+        let selected = options.iter().position(|option| *option == wrapping_indent);
+        let wrapping_indent_select = cx.new(|cx| {
+            SelectState::new(
+                options
+                    .into_iter()
+                    .map(|option| SharedString::from(option.to_string()))
+                    .collect::<Vec<_>>(),
+                selected.map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        let subscription = cx.subscribe_in(
+            &wrapping_indent_select,
+            window,
+            |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(value)) = event else {
+                    return;
+                };
+                if let Ok(indent) = value.parse::<AppWrappingIndent>() {
+                    this.beam_view.update(cx, |this, cx| {
+                        this.apply_wrapping_indent_setting(indent, window, cx);
+                    });
+                    cx.notify();
+                }
+            },
+        );
         Self {
+            wrapping_indent_select,
+            _subscriptions: vec![subscription],
             beam_view,
             selected_section: SettingsSection::Theme,
         }
@@ -180,6 +217,30 @@ impl Render for SettingsDialogView {
                                             this.apply_wrap_body_editor_setting(*checked, window, cx);
                                         });
                                     })),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .mt_4()
+                            .gap_1()
+                            .child(div().text_sm().font_semibold().child("Wrapping indent"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Same keeps the original line’s indentation; None starts at the left edge."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_40()
+                            .input_h(Size::Medium)
+                            .flex_shrink_0()
+                            .child(
+                                Select::new(&self.wrapping_indent_select)
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .accessibility_label("Wrapping indent"),
                             ),
                     )
                     .child(
