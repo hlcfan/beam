@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Instant;
 
 use chrono::Utc;
-use gpui::{Pixels, Point, point, px};
+use gpui_kit::{Pixels, Point, point, px};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};

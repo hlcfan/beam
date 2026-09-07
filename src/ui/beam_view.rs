@@ -8,14 +8,14 @@ pub(super) struct BeamView {
     pub(super) request: RequestAuthoringState,
     pub(super) startup_messages: Vec<StartupMessage>,
     pub(super) url_input: Entity<InputState>,
-    pub(super) request_body_editor: Entity<InputState>,
-    pub(super) response_body_editor: Entity<InputState>,
+    pub(super) request_body_editor: Entity<EditorState>,
+    pub(super) response_body_editor: Entity<EditorState>,
     pub(super) response_headers_raw: String,
     pub(super) response_content_type: Option<String>,
     pub(super) response_body_language: &'static str,
     pub(super) response_history_entries: Vec<ResponseHistoryEntry>,
     pub(super) selected_response_history_index: Option<usize>,
-    pub(super) post_script_editor: Entity<InputState>,
+    pub(super) post_script_editor: Entity<EditorState>,
     pub(super) active_response_tab: ResponseTab,
     pub(super) response_status: String,
     pub(super) response_status_code: Option<u16>,
@@ -68,7 +68,7 @@ pub(super) struct BeamView {
     pub(super) env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
     /// In-memory sequence of requests the user has selected across all workspaces.
     pub(super) request_view_histories: WorkspaceRequestViewHistories,
-    pub(super) request_body_editor_cache: HashMap<Ulid, Entity<InputState>>,
+    pub(super) request_body_editor_cache: HashMap<Ulid, Entity<EditorState>>,
     pub(super) request_body_editor_cache_order: Vec<Ulid>,
     pub(super) request_body_editor_change_sub: Option<Subscription>,
     pub(super) request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
@@ -110,8 +110,8 @@ impl BeamView {
             Self::build_request_body_editor(&request, wrap_body_editor, window, cx);
 
         let response_body_editor = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("text")
+            EditorState::new(window, cx)
+                .language("text")
                 .replaceable(false)
                 .line_number(true)
                 .tab_size(TabSize {
@@ -125,8 +125,8 @@ impl BeamView {
         });
 
         let post_script_editor = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("javascript")
+            EditorState::new(window, cx)
+                .language("javascript")
                 .line_number(true)
                 .tab_size(TabSize {
                     tab_size: 2,

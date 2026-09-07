@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry, WindowExt as _};
+use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry, WindowExt as _};
+use gpui_kit::*;
 
 use super::BeamView;
 #[cfg(target_os = "macos")]
@@ -108,6 +108,7 @@ impl BeamView {
             .cloned();
         if let Some(theme_config) = theme_config {
             Theme::global_mut(cx).apply_config(&theme_config);
+            Theme::sync_base(cx);
             #[cfg(target_os = "macos")]
             cx.set_menus(build_macos_system_menus(cx));
             if persist {

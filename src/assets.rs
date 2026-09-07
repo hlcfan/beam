@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Result, SharedString};
+use gpui_kit::{AssetSource, Result, SharedString};
 use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
@@ -37,11 +37,11 @@ impl AssetSource for Assets {
             return Ok(Some(file.data));
         }
 
-        gpui_component_assets::Assets.load(path)
+        gpui_kit::assets::Assets.load(path)
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths = gpui_component_assets::Assets.list(path)?;
+        let mut paths = gpui_kit::assets::Assets.list(path)?;
         for local_path in BeamAssets::iter().filter(|candidate| candidate.starts_with(path)) {
             let local_path: SharedString = local_path.into();
             if !paths.contains(&local_path) {

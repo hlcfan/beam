@@ -125,7 +125,7 @@ impl BeamView {
                 if latest_text != source_text {
                     window.push_notification(
                         (
-                            gpui_component::notification::NotificationType::Warning,
+                            gpui_kit::component::notification::NotificationType::Warning,
                             "Body changed while formatting. Please run Format again.",
                         ),
                         cx,
@@ -139,7 +139,7 @@ impl BeamView {
                     Err(error) => {
                         window.push_notification(
                             (
-                                gpui_component::notification::NotificationType::Error,
+                                gpui_kit::component::notification::NotificationType::Error,
                                 SharedString::from(format!(
                                     "Failed to format request body: {error}"
                                 )),
@@ -168,10 +168,10 @@ impl BeamView {
     }
 
     pub(in crate::ui) fn replace_editor_text(
-        input: &mut InputState,
+        input: &mut EditorState,
         text: String,
         window: &mut Window,
-        cx: &mut Context<InputState>,
+        cx: &mut Context<EditorState>,
     ) {
         let scroll_offset = input.scroll_offset();
         input.replace_all(text, window, cx);
@@ -184,12 +184,12 @@ impl BeamView {
         wrap_body_editor: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<InputState> {
+    ) -> Entity<EditorState> {
         let body_text = body_editor_text(&request.body);
         let body_language = body_editor_language(&request.body);
         cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor(body_language)
+            EditorState::new(window, cx)
+                .language(body_language)
                 .line_number(true)
                 .tab_size(TabSize {
                     tab_size: 2,
@@ -247,7 +247,7 @@ impl BeamView {
     pub(in crate::ui) fn cache_body_editor(
         &mut self,
         request_id: Ulid,
-        editor: Entity<InputState>,
+        editor: Entity<EditorState>,
     ) {
         Self::insert_editor_cache_entry(
             &mut self.request_body_editor_cache,
@@ -258,12 +258,12 @@ impl BeamView {
         );
     }
 
-    pub(in crate::ui) fn insert_editor_cache_entry(
-        cache: &mut HashMap<Ulid, Entity<InputState>>,
+    pub(in crate::ui) fn insert_editor_cache_entry<T: 'static>(
+        cache: &mut HashMap<Ulid, Entity<T>>,
         order: &mut Vec<Ulid>,
         cap: usize,
         request_id: Ulid,
-        editor: Entity<InputState>,
+        editor: Entity<T>,
     ) {
         cache.insert(request_id, editor);
         order.push(request_id);
@@ -587,7 +587,7 @@ impl BeamView {
             h_flex().items_center().gap_1().child("Script")
         };
         let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
-            .anchor(gpui::Anchor::BottomLeft)
+            .anchor(gpui_kit::Anchor::BottomLeft)
             .open_delay(Duration::from_millis(100))
             .close_delay(Duration::from_millis(150))
             .trigger(
@@ -700,11 +700,11 @@ impl BeamView {
                             }
                         }))
                         .child(
-                            Input::new(&self.request_body_editor)
+                            Editor::new(&self.request_body_editor)
                                 .h_full()
                                 .p_0()
                                 .border_0()
-                                .focus_bordered(false)
+                                .bordered(false)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_size(cx.theme().mono_font_size)
                                 .context_menu(move |menu, _window, cx| {
@@ -747,7 +747,7 @@ impl BeamView {
                             .border_color(cx.theme().border)
                             .child(
                                 div().w(px(28.0)).child(
-                                    gpui_component::checkbox::Checkbox::new(format!(
+                                    gpui_kit::component::checkbox::Checkbox::new(format!(
                                         "request-param-enabled-{index}"
                                     ))
                                     .small()
@@ -877,7 +877,7 @@ impl BeamView {
                             .border_color(cx.theme().border)
                             .child(
                                 div().w(px(28.0)).child(
-                                    gpui_component::checkbox::Checkbox::new(format!(
+                                    gpui_kit::component::checkbox::Checkbox::new(format!(
                                         "request-header-enabled-{index}"
                                     ))
                                     .small()
@@ -1635,11 +1635,11 @@ impl BeamView {
                     .p_0()
                     .child(
                         div().w_full().h_full().overflow_y_scrollbar().child(
-                            Input::new(&self.post_script_editor)
+                            Editor::new(&self.post_script_editor)
                                 .h_full()
                                 .p_0()
                                 .border_0()
-                                .focus_bordered(false)
+                                .bordered(false)
                                 .font_family(cx.theme().mono_font_family.clone())
                                 .text_size(cx.theme().mono_font_size)
                                 .context_menu({

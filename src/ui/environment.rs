@@ -8,6 +8,41 @@ pub(super) struct EnvVarHoverInfo {
     token_bounds: Bounds<Pixels>,
 }
 
+/// The input operations needed to locate an environment-variable token under the pointer.
+///
+/// GPUI exposes single-line inputs and code editors as different state types, while Beam uses
+/// the same hover behavior for the URL input and request body editor. This small adapter keeps
+/// that behavior generic without depending on either concrete state type.
+pub(in crate::ui) trait EnvHoverInput {
+    fn hover_value(&self) -> String;
+    fn hover_line_height(&self) -> Option<Pixels>;
+    fn hover_range_to_bounds(&self, range: &Range<usize>) -> Option<Bounds<Pixels>>;
+}
+
+// Both supported GPUI states expose the required operations with identical signatures. Generate
+// the forwarding implementations here so the adapter stays consistent as those operations change.
+macro_rules! impl_env_hover_input {
+    ($state:ty) => {
+        impl EnvHoverInput for $state {
+            fn hover_value(&self) -> String {
+                self.value().to_string()
+            }
+
+            fn hover_line_height(&self) -> Option<Pixels> {
+                self.line_height()
+            }
+
+            fn hover_range_to_bounds(&self, range: &Range<usize>) -> Option<Bounds<Pixels>> {
+                self.range_to_bounds(range)
+            }
+        }
+    };
+}
+
+// URL and other single-line fields use InputState; request bodies use EditorState.
+impl_env_hover_input!(InputState);
+impl_env_hover_input!(EditorState);
+
 impl BeamView {
     pub(in crate::ui) fn active_environment_options(&self) -> Vec<(Ulid, String)> {
         self.shell
@@ -188,9 +223,9 @@ impl BeamView {
         environment_file_path_for_workspace(&self.current_workspace_paths, &environment.file_name)
     }
 
-    pub(in crate::ui) fn update_env_var_hover_for_input(
+    pub(in crate::ui) fn update_env_var_hover_for_input<T: EnvHoverInput + 'static>(
         &mut self,
-        input_entity: &Entity<InputState>,
+        input_entity: &Entity<T>,
         pos: Point<Pixels>,
         cx: &mut Context<Self>,
     ) {
@@ -208,11 +243,11 @@ impl BeamView {
 
         let found = {
             let input = input_entity.read(cx);
-            let text = input.value();
-            let line_height = input.line_height().unwrap_or(px(20.));
+            let text = input.hover_value();
+            let line_height = input.hover_line_height().unwrap_or(px(20.));
             let resolved_env = self.env_var_resolved_cache.as_ref().map(|(_, m)| m);
 
-            find_env_var_ranges(text.as_ref())
+            find_env_var_ranges(&text)
                 .into_iter()
                 .find_map(|(byte_range, var_name)| {
                     let bounds = find_token_hover_bounds(input, &byte_range, pos, line_height)?;
@@ -268,7 +303,7 @@ impl BeamView {
                 .child(match &resolved_value {
                     Some(val) => div()
                         .text_sm()
-                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
                         .child(val.clone())
                         .into_any_element(),
                     None if is_dynamic => div()
@@ -289,7 +324,7 @@ impl BeamView {
                 deferred(
                     anchored()
                         .snap_to_window_with_margin(px(8.))
-                        .anchor(gpui::Anchor::TopLeft)
+                        .anchor(gpui_kit::Anchor::TopLeft)
                         .position(point(popup_x, popup_y))
                         .child(
                             div()
@@ -325,12 +360,12 @@ pub(super) fn environment_file_path_for_workspace(
 /// visual lines, `InputState::range_to_bounds` collapses it into a single rect with negative
 /// width, so we walk byte-by-byte and reassemble per-line segments here.
 fn find_token_hover_bounds(
-    input: &InputState,
+    input: &impl EnvHoverInput,
     byte_range: &Range<usize>,
     pos: Point<Pixels>,
     line_height: Pixels,
 ) -> Option<Bounds<Pixels>> {
-    let token_bounds = input.range_to_bounds(byte_range)?;
+    let token_bounds = input.hover_range_to_bounds(byte_range)?;
     if token_bounds.size.width > px(0.) && token_bounds.size.height < line_height + px(1.) {
         return token_bounds.contains(&pos).then_some(token_bounds);
     }
@@ -347,7 +382,7 @@ fn find_token_hover_bounds(
     };
 
     for byte_offset in byte_range.start..byte_range.end {
-        let Some(b) = input.range_to_bounds(&(byte_offset..byte_offset + 1)) else {
+        let Some(b) = input.hover_range_to_bounds(&(byte_offset..byte_offset + 1)) else {
             continue;
         };
 

@@ -1,5 +1,5 @@
-use gpui::{Action, Hsla};
-use gpui_component::{Icon, input, native_menu::NativeMenu};
+use gpui_kit::component::{Icon, input, native_menu::NativeMenu};
+use gpui_kit::{Action, Hsla};
 
 /// Append a context-menu item to a [`NativeMenu`], preferring an icon variant.
 ///

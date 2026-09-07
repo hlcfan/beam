@@ -651,7 +651,7 @@ impl Render for EnvironmentManagerDialogView {
                     .border_color(cx.theme().border)
                     .child(
                         div().w(px(28.0)).child(
-                            gpui_component::checkbox::Checkbox::new(format!(
+                            gpui_kit::component::checkbox::Checkbox::new(format!(
                                 "env-var-enabled-{index}"
                             ))
                             .small()
