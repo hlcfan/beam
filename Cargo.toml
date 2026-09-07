@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 chrono = { version = "0.4", features = ["serde", "clock"] }
 dirs = "6.0"
-gpui-kit = { git = "https://github.com/longbridge/gpui-kit", features = ["tree-sitter-javascript", "tree-sitter-html", "tree-sitter-graphql"], rev = "4a654f45011da1edacb0a2ffa094d901dc97333d" }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", features = ["tree-sitter-javascript", "tree-sitter-html", "tree-sitter-graphql"], rev = "cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
