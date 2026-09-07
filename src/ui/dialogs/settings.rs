@@ -30,7 +30,7 @@ impl SettingsDialogView {
             SelectState::new(
                 options
                     .into_iter()
-                    .map(|option| SharedString::from(option.label()))
+                    .map(|option| SharedString::from(option.to_string()))
                     .collect::<Vec<_>>(),
                 selected.map(|row| IndexPath::default().row(row)),
                 window,
@@ -44,10 +44,7 @@ impl SettingsDialogView {
                 let SelectEvent::Confirm(Some(value)) = event else {
                     return;
                 };
-                if let Some(indent) = [AppWrappingIndent::Same, AppWrappingIndent::None]
-                    .into_iter()
-                    .find(|indent| indent.label() == value.as_ref())
-                {
+                if let Ok(indent) = value.parse::<AppWrappingIndent>() {
                     this.beam_view.update(cx, |this, cx| {
                         this.apply_wrapping_indent_setting(indent, window, cx);
                     });

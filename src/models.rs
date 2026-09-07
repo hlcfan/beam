@@ -49,11 +49,23 @@ pub enum AppWrappingIndent {
     None,
 }
 
-impl AppWrappingIndent {
-    pub const fn label(self) -> &'static str {
-        match self {
+impl std::fmt::Display for AppWrappingIndent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
             Self::Same => "Same",
             Self::None => "None",
+        })
+    }
+}
+
+impl std::str::FromStr for AppWrappingIndent {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "Same" => Ok(Self::Same),
+            "None" => Ok(Self::None),
+            _ => Err("Expected Same or None for wrapping indent"),
         }
     }
 }
