@@ -16,6 +16,7 @@ pub(in crate::ui) struct SettingsDialogView {
     beam_view: Entity<BeamView>,
     selected_section: SettingsSection,
     theme_combobox: Entity<ComboboxState<SearchableVec<SharedString>>>,
+    font_size_select: Entity<SelectState<Vec<SharedString>>>,
     wrapping_indent_select: Entity<SelectState<Vec<SharedString>>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -60,6 +61,38 @@ impl SettingsDialogView {
             }
         });
         let wrapping_indent = beam_view.read(cx).shell.theme.wrapping_indent;
+        let font_size = beam_view.read(cx).shell.theme.font_size;
+        let font_size_options = [AppFontSize::Small, AppFontSize::Medium, AppFontSize::Large];
+        let font_size_selected = font_size_options
+            .iter()
+            .position(|option| *option == font_size);
+        let font_size_select = cx.new(|cx| {
+            SelectState::new(
+                font_size_options
+                    .into_iter()
+                    .map(|option| SharedString::from(option.label()))
+                    .collect::<Vec<_>>(),
+                font_size_selected.map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        let font_size_subscription =
+            cx.subscribe_in(&font_size_select, window, |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(value)) = event else {
+                    return;
+                };
+                if let Some(font_size) =
+                    [AppFontSize::Small, AppFontSize::Medium, AppFontSize::Large]
+                        .into_iter()
+                        .find(|option| option.label() == value.as_ref())
+                {
+                    this.beam_view.update(cx, |this, cx| {
+                        this.apply_font_size_setting(font_size, window, cx);
+                    });
+                    cx.notify();
+                }
+            });
         let options = [AppWrappingIndent::Same, AppWrappingIndent::None];
         let selected = options.iter().position(|option| *option == wrapping_indent);
         let wrapping_indent_select = cx.new(|cx| {
@@ -90,8 +123,14 @@ impl SettingsDialogView {
         );
         Self {
             theme_combobox,
+            font_size_select,
             wrapping_indent_select,
-            _subscriptions: vec![theme_subscription, theme_observer, subscription],
+            _subscriptions: vec![
+                theme_subscription,
+                theme_observer,
+                font_size_subscription,
+                subscription,
+            ],
             beam_view,
             selected_section: SettingsSection::Theme,
         }
@@ -100,7 +139,6 @@ impl SettingsDialogView {
 
 impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
         let (auto_format_response, wrap_body_editor) = {
             let beam_view = self.beam_view.read(cx);
             (
@@ -108,13 +146,9 @@ impl Render for SettingsDialogView {
                 beam_view.shell.theme.wrap_body_editor,
             )
         };
-        let font_size_options = [AppFontSize::Small, AppFontSize::Medium, AppFontSize::Large];
-
         let mut right_panel = v_flex().w_full().h_full().gap_3();
         match self.selected_section {
             SettingsSection::Theme => {
-                let font_size_beam_view = self.beam_view.clone();
-                let font_size_options_for_menu = font_size_options;
                 right_panel = right_panel
                     .child(div().text_sm().font_semibold().child("Theme"))
                     .child(
@@ -145,43 +179,16 @@ impl Render for SettingsDialogView {
                             .child("Choose the app font scale for the interface."),
                     )
                     .child(
-                        DropdownButton::new("settings-font-size-dropdown")
+                        div()
                             .w(px(320.0))
-                            .button(
-                                Button::new("settings-font-size-dropdown-button")
-                                    .w(px(290.0))
-                                    .justify_start()
-                                    .label(active_font_size.label()),
-                            )
-                            .dropdown_menu(move |menu, window, _| {
-                                font_size_options_for_menu.into_iter().fold(
-                                    menu.scrollable(true).max_h(px(220.0)),
-                                    |menu, font_size| {
-                                        let target_view = font_size_beam_view.clone();
-                                        menu.item(
-                                            PopupMenuItem::element(move |_, _| {
-                                                div()
-                                                    .w_full()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .cursor_pointer()
-                                                    .child(font_size.label())
-                                            })
-                                            .checked(font_size == active_font_size)
-                                            .on_click(window.listener_for(
-                                                &target_view,
-                                                move |this: &mut BeamView, _, window, cx| {
-                                                    this.apply_font_size_setting(
-                                                        font_size,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                },
-                                            )),
-                                        )
-                                    },
-                                )
-                            }),
+                            .input_h(Size::Medium)
+                            .flex_shrink_0()
+                            .child(
+                                Select::new(&self.font_size_select)
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .accessibility_label("Font size"),
+                            ),
                     );
             }
             SettingsSection::Editor => {
