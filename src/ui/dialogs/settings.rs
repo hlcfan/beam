@@ -1,4 +1,8 @@
 use super::super::*;
+use gpui_kit::component::{
+    IndexPath, Size, StyleSized,
+    select::{Select, SelectEvent, SelectState},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SettingsSection {
@@ -9,15 +13,51 @@ enum SettingsSection {
 pub(in crate::ui) struct SettingsDialogView {
     beam_view: Entity<BeamView>,
     selected_section: SettingsSection,
+    wrapping_indent_select: Entity<SelectState<Vec<SharedString>>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl SettingsDialogView {
     pub(in crate::ui) fn new(
         beam_view: Entity<BeamView>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        wrapping_indent: AppWrappingIndent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let options = [AppWrappingIndent::Same, AppWrappingIndent::None];
+        let selected = options.iter().position(|option| *option == wrapping_indent);
+        let wrapping_indent_select = cx.new(|cx| {
+            SelectState::new(
+                options
+                    .into_iter()
+                    .map(|option| SharedString::from(option.label()))
+                    .collect::<Vec<_>>(),
+                selected.map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        let subscription = cx.subscribe_in(
+            &wrapping_indent_select,
+            window,
+            |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(value)) = event else {
+                    return;
+                };
+                if let Some(indent) = [AppWrappingIndent::Same, AppWrappingIndent::None]
+                    .into_iter()
+                    .find(|indent| indent.label() == value.as_ref())
+                {
+                    this.beam_view.update(cx, |this, cx| {
+                        this.apply_wrapping_indent_setting(indent, window, cx);
+                    });
+                    cx.notify();
+                }
+            },
+        );
         Self {
+            wrapping_indent_select,
+            _subscriptions: vec![subscription],
             beam_view,
             selected_section: SettingsSection::Theme,
         }
@@ -28,12 +68,11 @@ impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_theme_name = cx.theme().theme_name().clone();
         let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
-        let (auto_format_response, wrap_body_editor, wrapping_indent) = {
+        let (auto_format_response, wrap_body_editor) = {
             let beam_view = self.beam_view.read(cx);
             (
                 beam_view.shell.theme.auto_format_response,
                 beam_view.shell.theme.wrap_body_editor,
-                beam_view.shell.theme.wrapping_indent,
             )
         };
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
@@ -192,42 +231,20 @@ impl Render for SettingsDialogView {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child("Same keeps the original line’s indentation; None starts at the left edge. Applies to wrapped request and response bodies."),
+                                    .child("Same keeps the original line’s indentation; None starts at the left edge."),
                             ),
                     )
                     .child(
-                        DropdownButton::new("settings-wrapping-indent-dropdown")
-                            .w_full()
-                            .button(
-                                Button::new("settings-wrapping-indent-button")
+                        div()
+                            .w_40()
+                            .input_h(Size::Medium)
+                            .flex_shrink_0()
+                            .child(
+                                Select::new(&self.wrapping_indent_select)
+                                    .w_full()
                                     .cursor_pointer()
-                                    .justify_start()
-                                    .label(wrapping_indent.label()),
-                            )
-                            .dropdown_menu({
-                                let dialog = cx.entity().downgrade();
-                                move |menu, _, _| {
-                                    [AppWrappingIndent::Same, AppWrappingIndent::None]
-                                        .into_iter()
-                                        .fold(menu, |menu, indent| {
-                                            let dialog = dialog.clone();
-                                            menu.item(
-                                                PopupMenuItem::element(move |_, _| {
-                                                    div().w_full().px_2().py_1().cursor_pointer().child(indent.label())
-                                                })
-                                                .checked(indent == wrapping_indent)
-                                                .on_click(move |_, window, cx| {
-                                                    let _ = dialog.update(cx, |this, cx| {
-                                                        this.beam_view.update(cx, |this, cx| {
-                                                            this.apply_wrapping_indent_setting(indent, window, cx);
-                                                        });
-                                                        cx.notify();
-                                                    });
-                                                }),
-                                            )
-                                        })
-                                }
-                            }),
+                                    .accessibility_label("Wrapping indent"),
+                            ),
                     )
                     .child(
                         h_flex()

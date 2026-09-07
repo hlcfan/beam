@@ -79,7 +79,9 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let beam_view = cx.entity();
-        let settings_view = cx.new(|cx| SettingsDialogView::new(beam_view.clone(), window, cx));
+        let wrapping_indent = self.shell.theme.wrapping_indent;
+        let settings_view =
+            cx.new(|cx| SettingsDialogView::new(beam_view.clone(), wrapping_indent, window, cx));
         self.settings_dialog_view = Some(settings_view.clone());
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
