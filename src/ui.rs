@@ -59,7 +59,7 @@ use chrono::{Local, Utc};
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
     ThemeRegistry, ThemeStyled, TitleBar, VirtualListScrollHandle, WindowExt as _,
-    button::{Button, ButtonVariants as _, DropdownButton},
+    button::{Button, ButtonVariants as _},
     h_flex,
     hover_card::HoverCard,
     input::{Editor, EditorState, Input, InputEvent, InputState, Position, TabSize},
