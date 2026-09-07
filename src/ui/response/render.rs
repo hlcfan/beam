@@ -204,7 +204,7 @@ impl BeamView {
                     .p_0()
                     .border_0()
                     .bordered(false)
-                    .disabled(true)
+                    .readonly(true)
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_size(cx.theme().mono_font_size)
                     .context_menu(move |menu, _window, cx| {
