@@ -1,6 +1,8 @@
 use super::super::*;
 use gpui_kit::component::{
     IndexPath, Size, StyleSized,
+    combobox::{Combobox, ComboboxEvent, ComboboxState},
+    searchable_list::SearchableVec,
     select::{Select, SelectEvent, SelectState},
 };
 
@@ -13,6 +15,7 @@ enum SettingsSection {
 pub(in crate::ui) struct SettingsDialogView {
     beam_view: Entity<BeamView>,
     selected_section: SettingsSection,
+    theme_combobox: Entity<ComboboxState<SearchableVec<SharedString>>>,
     wrapping_indent_select: Entity<SelectState<Vec<SharedString>>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -23,6 +26,39 @@ impl SettingsDialogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let active_theme_name = cx.theme().theme_name().clone();
+        let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
+            .sorted_themes()
+            .into_iter()
+            .map(|theme| theme.name.clone())
+            .collect();
+        let selected = theme_options
+            .iter()
+            .position(|name| *name == active_theme_name)
+            .map(|row| IndexPath::default().row(row))
+            .into_iter()
+            .collect();
+        let theme_combobox = cx.new(|cx| {
+            ComboboxState::new(SearchableVec::new(theme_options), selected, window, cx)
+                .searchable(true)
+        });
+        let theme_subscription = cx.subscribe_in(&theme_combobox, window, |_, _, event, _, cx| {
+            let ComboboxEvent::Change(values) = event else {
+                return;
+            };
+            if let Some(theme_name) = values.first() {
+                BeamView::apply_named_theme(theme_name.clone(), cx);
+                cx.notify();
+            }
+        });
+        let theme_observer = cx.observe_global_in::<Theme>(window, |this, window, cx| {
+            let active_theme_name = cx.theme().theme_name().clone();
+            if this.theme_combobox.read(cx).selected_value().as_ref() != Some(&active_theme_name) {
+                this.theme_combobox.update(cx, |state, cx| {
+                    state.set_selected_values(&[active_theme_name], window, cx);
+                });
+            }
+        });
         let wrapping_indent = beam_view.read(cx).shell.theme.wrapping_indent;
         let options = [AppWrappingIndent::Same, AppWrappingIndent::None];
         let selected = options.iter().position(|option| *option == wrapping_indent);
@@ -53,8 +89,9 @@ impl SettingsDialogView {
             },
         );
         Self {
+            theme_combobox,
             wrapping_indent_select,
-            _subscriptions: vec![subscription],
+            _subscriptions: vec![theme_subscription, theme_observer, subscription],
             beam_view,
             selected_section: SettingsSection::Theme,
         }
@@ -63,7 +100,6 @@ impl SettingsDialogView {
 
 impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_theme_name = cx.theme().theme_name().clone();
         let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
         let (auto_format_response, wrap_body_editor) = {
             let beam_view = self.beam_view.read(cx);
@@ -72,20 +108,12 @@ impl Render for SettingsDialogView {
                 beam_view.shell.theme.wrap_body_editor,
             )
         };
-        let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
-            .sorted_themes()
-            .into_iter()
-            .map(|theme| theme.name.clone())
-            .collect();
         let font_size_options = [AppFontSize::Small, AppFontSize::Medium, AppFontSize::Large];
 
         let mut right_panel = v_flex().w_full().h_full().gap_3();
         match self.selected_section {
             SettingsSection::Theme => {
-                let beam_view = self.beam_view.clone();
-                let font_size_beam_view = beam_view.clone();
-                let active_theme_name_for_menu = active_theme_name.clone();
-                let theme_options_for_menu = theme_options.clone();
+                let font_size_beam_view = self.beam_view.clone();
                 let font_size_options_for_menu = font_size_options;
                 right_panel = right_panel
                     .child(div().text_sm().font_semibold().child("Theme"))
@@ -96,44 +124,12 @@ impl Render for SettingsDialogView {
                             .child("Choose a theme. The selected theme is also available from the system menu."),
                     )
                     .child(
-                        DropdownButton::new("settings-theme-dropdown")
+                        Combobox::new(&self.theme_combobox)
                             .w(px(320.0))
-                            .button(
-                                Button::new("settings-theme-dropdown-button")
-                                    .w(px(290.0))
-                                    .justify_start()
-                                    .label(active_theme_name.to_string()),
-                            )
-                            .dropdown_menu(move |menu, window, _| {
-                                theme_options_for_menu.clone().into_iter().fold(
-                                    menu.scrollable(true).max_h(px(220.0)),
-                                    |menu, theme_name| {
-                                        let selected_theme = theme_name.clone();
-                                    let target_view = beam_view.clone();
-                                    let checked = theme_name == active_theme_name_for_menu;
-                                    menu.item(
-                                            PopupMenuItem::element(move |_, _| {
-                                                div()
-                                                    .w_full()
-                                                    .px_2()
-                                                    .py_1()
-                                                    .cursor_pointer()
-                                                    .child(theme_name.clone())
-                                            })
-                                        .checked(checked)
-                                        .on_click(window.listener_for(
-                                            &target_view,
-                                            move |_: &mut BeamView, _, _, cx| {
-                                                BeamView::apply_named_theme(
-                                                    selected_theme.clone(),
-                                                    cx,
-                                                );
-                                                cx.notify();
-                                            },
-                                        )),
-                                    )
-                                })
-                            }),
+                            .cursor_pointer()
+                            .placeholder("Select theme")
+                            .search_placeholder("Search themes…")
+                            .menu_max_h(px(220.0)),
                     )
                     .child(div().mt_4().text_sm().font_semibold().child("Font size"))
                     .child(
