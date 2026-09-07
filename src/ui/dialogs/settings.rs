@@ -124,12 +124,18 @@ impl Render for SettingsDialogView {
                             .child("Choose a theme. The selected theme is also available from the system menu."),
                     )
                     .child(
-                        Combobox::new(&self.theme_combobox)
+                        div()
                             .w(px(320.0))
-                            .cursor_pointer()
-                            .placeholder("Select theme")
-                            .search_placeholder("Search themes…")
-                            .menu_max_h(px(220.0)),
+                            .input_h(Size::Medium)
+                            .flex_shrink_0()
+                            .child(
+                                Combobox::new(&self.theme_combobox)
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .placeholder("Select theme")
+                                    .search_placeholder("Search themes…")
+                                    .menu_max_h(px(220.0)),
+                            ),
                     )
                     .child(div().mt_4().text_sm().font_semibold().child("Font size"))
                     .child(
