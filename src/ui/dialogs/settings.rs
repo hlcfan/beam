@@ -20,10 +20,10 @@ pub(in crate::ui) struct SettingsDialogView {
 impl SettingsDialogView {
     pub(in crate::ui) fn new(
         beam_view: Entity<BeamView>,
-        wrapping_indent: AppWrappingIndent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let wrapping_indent = beam_view.read(cx).shell.theme.wrapping_indent;
         let options = [AppWrappingIndent::Same, AppWrappingIndent::None];
         let selected = options.iter().position(|option| *option == wrapping_indent);
         let wrapping_indent_select = cx.new(|cx| {

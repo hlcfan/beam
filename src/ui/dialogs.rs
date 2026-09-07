@@ -79,26 +79,21 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         let beam_view = cx.entity();
-        let wrapping_indent = self.shell.theme.wrapping_indent;
-        let settings_view =
-            cx.new(|cx| SettingsDialogView::new(beam_view.clone(), wrapping_indent, window, cx));
-        self.settings_dialog_view = Some(settings_view.clone());
-        cx.defer(move |cx| {
-            if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
-                let _ = root_window.update(cx, |_, window, cx| {
-                    window.defer(cx, move |window, cx| {
-                        window.open_dialog(cx, move |dialog, _, _| {
-                            dialog
-                                .title("Settings")
-                                .w(px(920.0))
-                                .max_w(px(1200.0))
-                                .child(settings_view.clone())
-                        });
-                    });
-                });
-            }
+        window.defer(cx, move |window, cx| {
+            // Construct outside a BeamView update so the dialog can read its settings.
+            let settings_view = cx.new(|cx| SettingsDialogView::new(beam_view.clone(), window, cx));
+            beam_view.update(cx, |this, cx| {
+                this.settings_dialog_view = Some(settings_view.clone());
+                cx.notify();
+            });
+            window.open_dialog(cx, move |dialog, _, _| {
+                dialog
+                    .title("Settings")
+                    .w(px(920.0))
+                    .max_w(px(1200.0))
+                    .child(settings_view.clone())
+            });
         });
-        cx.notify();
     }
 
     pub(in crate::ui) fn open_import_dialog(
