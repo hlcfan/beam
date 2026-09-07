@@ -182,6 +182,7 @@ impl BeamView {
     pub(in crate::ui) fn build_request_body_editor(
         request: &RequestAuthoringState,
         wrap_body_editor: bool,
+        wrapping_indent: AppWrappingIndent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<EditorState> {
@@ -196,6 +197,7 @@ impl BeamView {
                     hard_tabs: false,
                 })
                 .soft_wrap(wrap_body_editor)
+                .wrapping_indent(Self::editor_wrapping_indent(wrapping_indent))
                 .searchable(true)
                 .placeholder("Enter request body...")
                 .default_value(body_text)

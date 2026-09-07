@@ -106,8 +106,13 @@ impl BeamView {
         let post_script_text = request.post_script.clone().unwrap_or_default();
         let wrap_body_editor = shell.theme.wrap_body_editor;
 
-        let request_body_editor =
-            Self::build_request_body_editor(&request, wrap_body_editor, window, cx);
+        let request_body_editor = Self::build_request_body_editor(
+            &request,
+            wrap_body_editor,
+            shell.theme.wrapping_indent,
+            window,
+            cx,
+        );
 
         let response_body_editor = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -120,6 +125,7 @@ impl BeamView {
                 })
                 .searchable(true)
                 .soft_wrap(wrap_body_editor)
+                .wrapping_indent(Self::editor_wrapping_indent(shell.theme.wrapping_indent))
                 .placeholder("Response body will appear here...")
                 .default_value("aa")
         });

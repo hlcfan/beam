@@ -28,11 +28,12 @@ impl Render for SettingsDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_theme_name = cx.theme().theme_name().clone();
         let active_font_size = AppFontSize::from_pixels_value(cx.theme().font_size.as_f32());
-        let (auto_format_response, wrap_body_editor) = {
+        let (auto_format_response, wrap_body_editor, wrapping_indent) = {
             let beam_view = self.beam_view.read(cx);
             (
                 beam_view.shell.theme.auto_format_response,
                 beam_view.shell.theme.wrap_body_editor,
+                beam_view.shell.theme.wrapping_indent,
             )
         };
         let theme_options: Vec<SharedString> = ThemeRegistry::global(cx)
@@ -181,6 +182,52 @@ impl Render for SettingsDialogView {
                                         });
                                     })),
                             ),
+                    )
+                    .child(
+                        v_flex()
+                            .mt_4()
+                            .gap_1()
+                            .child(div().text_sm().font_semibold().child("Wrapping indent"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Same keeps the original line’s indentation; None starts at the left edge. Applies to wrapped request and response bodies."),
+                            ),
+                    )
+                    .child(
+                        DropdownButton::new("settings-wrapping-indent-dropdown")
+                            .w_full()
+                            .button(
+                                Button::new("settings-wrapping-indent-button")
+                                    .cursor_pointer()
+                                    .justify_start()
+                                    .label(wrapping_indent.label()),
+                            )
+                            .dropdown_menu({
+                                let dialog = cx.entity().downgrade();
+                                move |menu, _, _| {
+                                    [AppWrappingIndent::Same, AppWrappingIndent::None]
+                                        .into_iter()
+                                        .fold(menu, |menu, indent| {
+                                            let dialog = dialog.clone();
+                                            menu.item(
+                                                PopupMenuItem::element(move |_, _| {
+                                                    div().w_full().px_2().py_1().cursor_pointer().child(indent.label())
+                                                })
+                                                .checked(indent == wrapping_indent)
+                                                .on_click(move |_, window, cx| {
+                                                    let _ = dialog.update(cx, |this, cx| {
+                                                        this.beam_view.update(cx, |this, cx| {
+                                                            this.apply_wrapping_indent_setting(indent, window, cx);
+                                                        });
+                                                        cx.notify();
+                                                    });
+                                                }),
+                                            )
+                                        })
+                                }
+                            }),
                     )
                     .child(
                         h_flex()
