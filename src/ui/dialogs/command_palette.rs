@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
-use gpui::prelude::FluentBuilder as _;
-use gpui::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
-    actions, div, px,
-};
-use gpui_component::{
+use gpui_kit::component::{
     ActiveTheme as _, Icon, Sizable as _, WindowExt as _, h_flex,
     input::{Input, InputEvent, InputState},
     v_flex,
+};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::{
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    actions, div, px,
 };
 use ulid::Ulid;
 

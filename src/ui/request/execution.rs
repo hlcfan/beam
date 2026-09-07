@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 use chrono::Utc;
-use gpui::{Context, Window};
+use gpui_kit::{Context, Window};
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
 use tokio::sync::oneshot;

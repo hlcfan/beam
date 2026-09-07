@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::{ActiveTheme, ThemeMode, ThemeRegistry};
+use gpui_kit::component::{ActiveTheme, ThemeMode, ThemeRegistry};
+use gpui_kit::*;
 use ulid::Ulid;
 
 actions!(
@@ -122,14 +122,14 @@ pub(super) fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
         Menu {
             name: "Edit".into(),
             items: vec![
-                MenuItem::action("Undo", gpui_component::input::Undo),
-                MenuItem::action("Redo", gpui_component::input::Redo),
+                MenuItem::action("Undo", gpui_kit::component::input::Undo),
+                MenuItem::action("Redo", gpui_kit::component::input::Redo),
                 MenuItem::separator(),
-                MenuItem::action("Cut", gpui_component::input::Cut),
-                MenuItem::action("Copy", gpui_component::input::Copy),
-                MenuItem::action("Paste", gpui_component::input::Paste),
+                MenuItem::action("Cut", gpui_kit::component::input::Cut),
+                MenuItem::action("Copy", gpui_kit::component::input::Copy),
+                MenuItem::action("Paste", gpui_kit::component::input::Paste),
                 MenuItem::separator(),
-                MenuItem::action("Select All", gpui_component::input::SelectAll),
+                MenuItem::action("Select All", gpui_kit::component::input::SelectAll),
             ],
             disabled: false,
         },
