@@ -242,7 +242,7 @@ impl Render for SettingsDialogView {
                     )
                     .child(
                         div()
-                            .w_40()
+                            .w(px(320.0))
                             .input_h(Size::Medium)
                             .flex_shrink_0()
                             .child(
