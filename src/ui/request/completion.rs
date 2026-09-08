@@ -92,26 +92,35 @@ fn token_at_cursor(rope: &Rope, offset: usize) -> Option<VariableToken> {
     }
 
     let mut after = rope.chars_at(offset).peekable();
-    let mut end = offset;
+    // Only consume a trailing word when it belongs to an existing variable
+    // token (i.e. it is closed by `}`/`}}`). A fresh `{{` inserted in front
+    // of plain text (e.g. `The {{|name`) must insert instead of replacing.
+    let mut tentative = offset;
+    let mut truncated = false;
     while let Some(ch) = after.peek().copied() {
         if !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.' | '$') {
             break;
         }
-        end += ch.len_utf8();
+        tentative += ch.len_utf8();
         after.next();
-        if end - start > MAX_TOKEN_BYTES {
-            return None;
+        if tentative - start > MAX_TOKEN_BYTES {
+            truncated = true;
+            break;
         }
     }
-    let mut closing = end;
-    while matches!(after.peek(), Some(' ' | '\t')) {
-        closing += 1;
-        after.next();
-        if closing - start > MAX_TOKEN_BYTES {
-            return None;
+    let mut closing = tentative;
+    if !truncated {
+        while matches!(after.peek(), Some(' ' | '\t')) {
+            closing += 1;
+            after.next();
+            if closing - start > MAX_TOKEN_BYTES {
+                truncated = true;
+                break;
+            }
         }
     }
-    if after.next() == Some('}') {
+    let mut end = offset;
+    if !truncated && after.next() == Some('}') {
         end = closing + 1;
         if after.next() == Some('}') {
             end += 1;
@@ -252,11 +261,22 @@ mod tests {
     fn discovery_is_bounded_and_rejects_invalid_offsets() {
         let long_name = "x".repeat(MAX_TOKEN_BYTES + 1);
         let rope = Rope::from(format!("{{{{{long_name}}}}}"));
-        assert!(token_at_cursor(&rope, 2).is_none());
+        // Oversized trailing words are not consumed; completion inserts at
+        // the cursor instead of scanning the whole suffix.
+        let token = token_at_cursor(&rope, 2).expect("insertion token");
+        assert_eq!(token.start, 0);
+        assert_eq!(token.range.start, lsp_types::Position::new(0, 0));
+        assert_eq!(token.range.end, lsp_types::Position::new(0, 2));
         assert!(token_at_cursor(&rope, MAX_TOKEN_BYTES + 2).is_none());
         let rope = Rope::from("😀{{ho");
         assert!(token_at_cursor(&rope, 1).is_none());
         assert!(token_at_cursor(&rope, rope.len() + 1).is_none());
+    }
+
+    #[test]
+    fn inserts_before_plain_word_without_replacing_it() {
+        assert_eq!(complete("The {{name", 6, "host"), "The {{host}}name");
+        assert_eq!(complete("The {{name}}", 6, "host"), "The {{host}}");
     }
 
     #[test]
