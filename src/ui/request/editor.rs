@@ -188,8 +188,9 @@ impl BeamView {
     ) -> Entity<EditorState> {
         let body_text = body_editor_text(&request.body);
         let body_language = body_editor_language(&request.body);
+        let view = cx.entity().downgrade();
         cx.new(|cx| {
-            EditorState::new(window, cx)
+            let mut editor = EditorState::new(window, cx)
                 .language(body_language)
                 .line_number(true)
                 .tab_size(TabSize {
@@ -200,7 +201,15 @@ impl BeamView {
                 .wrapping_indent(Self::editor_wrapping_indent(wrapping_indent))
                 .searchable(true)
                 .placeholder("Enter request body...")
-                .default_value(body_text)
+                .default_value(body_text);
+            // The pinned editor retains its first trigger offset after dismissal.
+            // Anchor at zero so completing later text never blocks edits earlier in the body.
+            // Our provider supplies explicit replacement ranges for every item.
+            editor.present_completion_items(0, "", vec![], cx);
+            editor.lsp_mut().completion_provider = Some(std::rc::Rc::new(
+                super::completion::VariableCompletionProvider::new(view),
+            ));
+            editor
         })
     }
 

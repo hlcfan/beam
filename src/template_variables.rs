@@ -8,6 +8,8 @@ const ISO_TIMESTAMP: &str = "$isoTimestamp";
 const GUID: &str = "$guid";
 const RANDOM_UUID: &str = "$randomUUID";
 
+pub const DYNAMIC_VARIABLE_NAMES: [&str; 4] = [TIMESTAMP, ISO_TIMESTAMP, GUID, RANDOM_UUID];
+
 pub struct DynamicVariableContext {
     timestamp: DateTime<Utc>,
 }
@@ -30,7 +32,7 @@ impl DynamicVariableContext {
 }
 
 pub fn is_dynamic_variable(name: &str) -> bool {
-    matches!(name, TIMESTAMP | ISO_TIMESTAMP | GUID | RANDOM_UUID)
+    DYNAMIC_VARIABLE_NAMES.contains(&name)
 }
 
 pub fn contains_dynamic_variable(input: &str) -> bool {
