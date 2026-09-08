@@ -1,100 +1,142 @@
 use std::collections::BTreeMap;
 
-use gpui_kit::component::input::{CompletionProvider, Rope, RopeExt};
-use gpui_kit::{App, AppContext, Task, WeakEntity, Window};
-use lsp_types::{
-    CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse, CompletionTextEdit,
-    TextEdit,
-};
+use gpui_kit::component::input::{Rope, RopeExt};
+use gpui_kit::{AppContext, Context, Focusable, Window};
+use lsp_types::{CompletionItem, CompletionItemKind, CompletionTextEdit, TextEdit};
 
 use crate::models::{EnvironmentFile, EnvironmentVariable};
 use crate::template_variables::DYNAMIC_VARIABLE_NAMES;
 use crate::ui::BeamView;
 
-pub(super) struct VariableCompletionProvider {
-    view: WeakEntity<BeamView>,
-}
-
-impl VariableCompletionProvider {
-    pub(super) fn new(view: WeakEntity<BeamView>) -> Self {
-        Self { view }
-    }
-}
-
-impl CompletionProvider for VariableCompletionProvider {
-    fn completions(
-        &self,
-        text: &Rope,
-        offset: usize,
-        _: CompletionContext,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> Task<anyhow::Result<CompletionResponse>> {
-        let Some(token) = token_at_cursor(text, offset) else {
-            return Task::ready(Ok(CompletionResponse::Array(vec![])));
+impl BeamView {
+    pub(super) fn update_request_body_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.dismiss_request_body_completion(cx);
+        let editor = self.request_body_editor.read(cx);
+        if !editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        let offset = editor.cursor();
+        let Some(token) = token_at_cursor(editor.text(), offset) else {
+            return;
         };
-        let view = self.view.clone();
-        // Defer reading the view: programmatic editor changes can occur while it is updating.
-        cx.spawn(async move |cx| {
-            let path = view.read_with(cx, |view, _| {
-                view.selected_environment_id_for_view()
-                    .and_then(|id| view.environment_file_path_from_shell(id))
-            })?;
-            let items = cx
-                .background_spawn(async move {
-                    let variables = path
-                        .and_then(|path| std::fs::read_to_string(path).ok())
-                        .and_then(|content| toml::from_str::<EnvironmentFile>(&content).ok())
-                        .map(|file| file.variables)
-                        .unwrap_or_default();
-                    completion_items(&token, &variables)
-                })
-                .await;
-            Ok(CompletionResponse::Array(items))
-        })
+        let path = self
+            .selected_environment_id_for_view()
+            .and_then(|id| self.environment_file_path_from_shell(id));
+        let editor = self.request_body_editor.downgrade();
+        let prefix = token.prefix.clone();
+        let start = token.start;
+        let items = cx.background_spawn(async move {
+            let variables = path
+                .and_then(|path| std::fs::read_to_string(path).ok())
+                .and_then(|content| toml::from_str::<EnvironmentFile>(&content).ok())
+                .map(|file| file.variables)
+                .unwrap_or_default();
+            completion_items(&token, &variables)
+        });
+        self.request_body_completion_task = Some(cx.spawn_in(window, async move |_, cx| {
+            let items = items.await;
+            let _ = editor.update_in(cx, |editor, window, cx| {
+                if editor.cursor() == offset && editor.focus_handle(cx).is_focused(window) {
+                    // Each result owns its token range; no document-prefix query is constructed.
+                    editor.present_completion_items(start, prefix, items, cx);
+                }
+            });
+        }));
     }
 
-    fn is_completion_trigger(&self, _: usize, _: &str, _: &mut App) -> bool {
-        // Recompute on edits, including deletion and closing braces, to clear stale suggestions.
-        true
+    pub(super) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
+        self.request_body_completion_task = None;
+        self.request_body_editor.update(cx, |editor, cx| {
+            editor.dismiss_completion_overlay(cx);
+        });
     }
 }
+
+// Completion discovery stays bounded even in a single-line, multi-megabyte body.
+// Longer variable names can still be entered and resolved normally.
+const MAX_TOKEN_BYTES: usize = 4096;
 
 struct VariableToken {
+    start: usize,
     prefix: String,
     range: lsp_types::Range,
 }
 
 fn token_at_cursor(rope: &Rope, offset: usize) -> Option<VariableToken> {
-    let text = rope.to_string();
-    let before = text.get(..offset)?;
-    let start = before.rfind("{{")?;
-    let prefix = &before[start + 2..];
-    if prefix
-        .chars()
-        .any(|ch| matches!(ch, '{' | '}' | '\n' | '\r'))
-    {
+    if offset > rope.len() || !rope.is_char_boundary(offset) {
         return None;
     }
-    // Replace the remaining name and any existing closing braces, without consuming JSON/XML.
-    let suffix = &text[offset..];
-    let name_end = suffix
-        .find(|ch: char| !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.' | '$'))
-        .unwrap_or(suffix.len());
-    let mut end = offset + name_end;
-    let after_name = &text[end..];
-    let whitespace = after_name.len() - after_name.trim_start_matches([' ', '\t']).len();
-    let closing = &after_name[whitespace..];
-    if closing.starts_with("}}") {
-        end += whitespace + 2;
-    } else if closing.starts_with('}') {
-        end += whitespace + 1;
+    let mut before = rope.chars_at(offset);
+    let mut start = offset;
+    loop {
+        let ch = before.prev()?;
+        start -= ch.len_utf8();
+        if offset - start > MAX_TOKEN_BYTES {
+            return None;
+        }
+        match ch {
+            '{' => {
+                if before.prev()? != '{' {
+                    return None;
+                }
+                start -= 1;
+                break;
+            }
+            '}' | '\n' | '\r' => return None,
+            _ => {}
+        }
+    }
+
+    let mut after = rope.chars_at(offset).peekable();
+    let mut end = offset;
+    while let Some(ch) = after.peek().copied() {
+        if !ch.is_alphanumeric() && !matches!(ch, '_' | '-' | '.' | '$') {
+            break;
+        }
+        end += ch.len_utf8();
+        after.next();
+        if end - start > MAX_TOKEN_BYTES {
+            return None;
+        }
+    }
+    let mut closing = end;
+    while matches!(after.peek(), Some(' ' | '\t')) {
+        closing += 1;
+        after.next();
+        if closing - start > MAX_TOKEN_BYTES {
+            return None;
+        }
+    }
+    if after.next() == Some('}') {
+        end = closing + 1;
+        if after.next() == Some('}') {
+            end += 1;
+        }
     }
     Some(VariableToken {
-        prefix: prefix.trim_start().to_string(),
-        // Use the editor's own position convention for edits, including non-ASCII text.
-        range: lsp_types::Range::new(rope.offset_to_position(start), rope.offset_to_position(end)),
+        start,
+        prefix: rope
+            .slice(start + 2..offset)
+            .to_string()
+            .trim_start()
+            .to_string(),
+        range: lsp_types::Range::new(
+            completion_position(rope, start),
+            completion_position(rope, end),
+        ),
     })
+}
+
+fn completion_position(rope: &Rope, offset: usize) -> lsp_types::Position {
+    let point = rope.offset_to_point(offset);
+    // Match gpui-kit's character-column convention, using rope indexes instead of
+    // counting every character from the start of a potentially very long line.
+    let column = rope.byte_to_char_idx(offset) - rope.byte_to_char_idx(offset - point.column);
+    lsp_types::Position::new(point.row as u32, column as u32)
 }
 
 fn completion_items(
@@ -193,6 +235,55 @@ mod tests {
                 .prefix,
             ""
         );
+    }
+
+    #[test]
+    fn discovers_tokens_in_large_single_line_bodies() {
+        let padding = "😀".repeat(256 * 1024);
+        let rope = Rope::from(format!("{padding}{{{{ho}}}}{padding}"));
+        let token = token_at_cursor(&rope, padding.len() + 4).unwrap();
+        assert_eq!(token.prefix, "ho");
+        assert_eq!(token.start, padding.len());
+        assert_eq!(token.range.start, lsp_types::Position::new(0, 256 * 1024));
+        assert_eq!(token.range.end, lsp_types::Position::new(0, 256 * 1024 + 6));
+    }
+
+    #[test]
+    fn discovery_is_bounded_and_rejects_invalid_offsets() {
+        let long_name = "x".repeat(MAX_TOKEN_BYTES + 1);
+        let rope = Rope::from(format!("{{{{{long_name}}}}}"));
+        assert!(token_at_cursor(&rope, 2).is_none());
+        assert!(token_at_cursor(&rope, MAX_TOKEN_BYTES + 2).is_none());
+        let rope = Rope::from("😀{{ho");
+        assert!(token_at_cursor(&rope, 1).is_none());
+        assert!(token_at_cursor(&rope, rope.len() + 1).is_none());
+    }
+
+    #[test]
+    fn later_completion_does_not_affect_earlier_token() {
+        let rope = Rope::from("{{ho}} later {{ho}}");
+        let later = token_at_cursor(&rope, rope.len() - 2).unwrap();
+        let earlier = token_at_cursor(&rope, 4).unwrap();
+        assert!(later.start > earlier.start);
+        assert_eq!(earlier.start, 0);
+        assert_eq!(earlier.prefix, "ho");
+        assert_eq!(earlier.range.end, lsp_types::Position::new(0, 6));
+    }
+
+    #[test]
+    #[ignore = "manual performance measurement"]
+    fn measure_completion_discovery() {
+        for size in [10_000, 10_000_000] {
+            let rope = Rope::from(format!("{}{{{{ho}}}}", "x".repeat(size)));
+            let start = std::time::Instant::now();
+            for _ in 0..1_000 {
+                std::hint::black_box(token_at_cursor(&rope, rope.len() - 2));
+            }
+            eprintln!(
+                "{size} byte prefix: {:?} for 1000 token lookups",
+                start.elapsed()
+            );
+        }
     }
 
     #[test]
