@@ -209,19 +209,25 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_request_body_completion(cx);
         let editor = self.request_body_editor.clone();
-        self.request_body_editor_change_sub =
-            Some(
-                cx.subscribe_in(&editor, window, move |this, _, ev: &InputEvent, _, cx| {
-                    if !matches!(ev, InputEvent::Change) {
-                        return;
-                    }
-                    let next_body_text = this.request_body_editor.read(cx).value().to_string();
-                    this.request.body = body_with_updated_text(&this.request.body, next_body_text);
-                    this.schedule_request_save(cx);
-                    cx.notify();
-                }),
-            );
+        self.request_body_editor_change_sub = Some(cx.subscribe_in(
+            &editor,
+            window,
+            move |this, _, ev: &InputEvent, window, cx| {
+                if matches!(ev, InputEvent::Blur) {
+                    this.dismiss_request_body_completion(cx);
+                }
+                if !matches!(ev, InputEvent::Change) {
+                    return;
+                }
+                let next_body_text = this.request_body_editor.read(cx).value().to_string();
+                this.request.body = body_with_updated_text(&this.request.body, next_body_text);
+                this.schedule_request_save(cx);
+                this.update_request_body_completion(window, cx);
+                cx.notify();
+            },
+        ));
     }
 
     pub(in crate::ui) fn build_request_url_editor(
