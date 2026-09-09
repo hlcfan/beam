@@ -442,7 +442,8 @@ impl BeamView {
                 .w_full()
                 .relative()
                 .rounded(px(8.0))
-                .p_3()
+                .p_0()
+                .pt_2()
                 .child(
                     div()
                         .w_full()
