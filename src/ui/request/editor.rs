@@ -1616,16 +1616,11 @@ impl BeamView {
     ) -> AnyElement {
         let post_script_has_selection =
             !self.post_script_editor.read(cx).selected_range().is_empty();
-        // TODO: Keep this as a single parent card with one divider between editor/results.
-        // It avoids double-border overlap and is less error-prone than separate bordered panes.
         v_flex()
             .h_full()
             .w_full()
             .gap_0()
             .rounded(px(8.0))
-            .border_dashed()
-            .border_1()
-            .border_color(cx.theme().border)
             .bg(cx.theme().background)
             .child(
                 div()
@@ -1676,8 +1671,6 @@ impl BeamView {
                 .flex_1()
                 .w_full()
                 .rounded(px(8.0))
-                .border_1()
-                .border_color(cx.theme().border)
                 .p_0()
                 .child(self.render_request_editor_surface(window, cx)),
             RequestTab::PostScript => div()
@@ -1688,8 +1681,6 @@ impl BeamView {
                 .flex_1()
                 .w_full()
                 .rounded(px(8.0))
-                .border_1()
-                .border_color(cx.theme().border)
                 .p_3()
                 .child(self.render_request_editor_surface(window, cx)),
         };

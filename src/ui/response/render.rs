@@ -428,8 +428,6 @@ impl BeamView {
                 .w_full()
                 .relative()
                 .rounded(px(8.0))
-                .border_1()
-                .border_color(cx.theme().border)
                 .p_0()
                 .child(
                     div()
@@ -444,8 +442,6 @@ impl BeamView {
                 .w_full()
                 .relative()
                 .rounded(px(8.0))
-                .border_1()
-                .border_color(cx.theme().border)
                 .p_3()
                 .child(
                     div()
