@@ -13,11 +13,11 @@ cargo clean --release
 
 # Build the release binary
 echo "🔨 Building release binary..."
-cargo build --release --no-default-features
+cargo build --release --locked --bin beam
 
 # Create the macOS app bundle
 echo "📦 Creating macOS app bundle..."
-cargo bundle --release --no-default-features
+cargo bundle --release
 
 # Verify the app bundle was created
 if [ -d "target/release/bundle/osx/Beam.app" ]; then

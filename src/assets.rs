@@ -5,6 +5,7 @@ use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "assets"]
+#[include = "icons/**"]
 struct BeamAssets;
 
 #[derive(RustEmbed)]

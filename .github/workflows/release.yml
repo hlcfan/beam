@@ -130,7 +130,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        # Uses the shared size optimizations in Cargo.toml's release profile.
+        run: cargo build --release --locked --bin beam --target ${{ matrix.target }}
+
+      - name: Report release binary size
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+
+          binary = Path("target/${{ matrix.target }}/release/${{ matrix.binary_name }}")
+          size = binary.stat().st_size
+          report = f"${{ matrix.label }} release binary: {size:,} bytes ({size / 1024 / 1024:.2f} MiB)"
+          print(report)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(report + "\n")
 
       - name: Install cargo-bundle
         if: matrix.package_kind == 'app'
