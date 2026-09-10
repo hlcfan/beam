@@ -35,7 +35,7 @@ codegen-units = 1
 [package.metadata.bundle]
 name = "Beam"
 identifier = "com.hlcfan.beam"
-version = "0.1.0"
+version = "0.3.4"
 copyright = "Copyright (c) 2026 Beam"
 category = "Developer Tool"
 short_description = "A HTTP client for developers"
