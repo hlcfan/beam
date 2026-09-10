@@ -2242,8 +2242,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-base"
-version = "0.6.0"
-source = "git+https://github.com/longbridge/gpui-kit?rev=cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d#cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d"
+version = "0.6.1"
+source = "git+https://github.com/longbridge/gpui-kit?rev=4c061226c249903a4e41d4f0d15cbab849072db2#4c061226c249903a4e41d4f0d15cbab849072db2"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -2276,8 +2276,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-component"
-version = "0.6.0"
-source = "git+https://github.com/longbridge/gpui-kit?rev=cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d#cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d"
+version = "0.6.1"
+source = "git+https://github.com/longbridge/gpui-kit?rev=4c061226c249903a4e41d4f0d15cbab849072db2#4c061226c249903a4e41d4f0d15cbab849072db2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2302,6 +2302,7 @@ dependencies = [
  "once_cell",
  "paste",
  "raw-window-handle",
+ "regex",
  "resvg 0.45.1",
  "ropey",
  "rust-i18n",
@@ -2323,8 +2324,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-component-macros"
-version = "0.6.0"
-source = "git+https://github.com/longbridge/gpui-kit?rev=cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d#cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d"
+version = "0.6.1"
+source = "git+https://github.com/longbridge/gpui-kit?rev=4c061226c249903a4e41d4f0d15cbab849072db2#4c061226c249903a4e41d4f0d15cbab849072db2"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -2334,8 +2335,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-kit"
-version = "0.6.0"
-source = "git+https://github.com/longbridge/gpui-kit?rev=cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d#cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d"
+version = "0.6.1"
+source = "git+https://github.com/longbridge/gpui-kit?rev=4c061226c249903a4e41d4f0d15cbab849072db2#4c061226c249903a4e41d4f0d15cbab849072db2"
 dependencies = [
  "gpui-base",
  "gpui-component",
@@ -2347,8 +2348,8 @@ dependencies = [
 
 [[package]]
 name = "gpui-kit-assets"
-version = "0.6.0"
-source = "git+https://github.com/longbridge/gpui-kit?rev=cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d#cbdf5baa26a5c20ae5c1d7481bffdd1d0d2abd3d"
+version = "0.6.1"
+source = "git+https://github.com/longbridge/gpui-kit?rev=4c061226c249903a4e41d4f0d15cbab849072db2#4c061226c249903a4e41d4f0d15cbab849072db2"
 dependencies = [
  "anyhow",
  "gpui-pre",
