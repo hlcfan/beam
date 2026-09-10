@@ -1,3 +1,4 @@
+mod about;
 mod command_palette;
 mod environment;
 mod import;
@@ -6,6 +7,7 @@ mod settings;
 mod tree;
 mod workspace;
 
+pub(super) use about::open_about_dialog;
 pub(super) use command_palette::{
     CommandPaletteDialogView, ConfirmPaletteItem, DismissCommandPalette, SelectNextPaletteItem,
     SelectPreviousPaletteItem,

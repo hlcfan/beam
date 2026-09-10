@@ -297,6 +297,15 @@ pub fn run_app(
                 }
             });
         });
+        cx.on_action(|_: &OpenAbout, cx: &mut App| {
+            cx.defer(|cx| {
+                if let Some(window_handle) = cx.active_window() {
+                    let _ = window_handle.update(cx, |_, window, cx| {
+                        dialogs::open_about_dialog(window, cx);
+                    });
+                }
+            });
+        });
         cx.on_action(|_: &OpenSettings, cx: &mut App| {
             cx.defer(move |cx| {
                 if let Some(window_handle) = cx.active_window() {

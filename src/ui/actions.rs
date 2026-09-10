@@ -6,6 +6,7 @@ actions!(
     beam,
     [
         QuitApp,
+        OpenAbout,
         SendActiveRequest,
         CreateRequestBelowActive,
         FocusUrlInput,
@@ -89,6 +90,8 @@ pub(super) fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
         Menu {
             name: "Beam".into(),
             items: vec![
+                MenuItem::action("About Beam", OpenAbout),
+                MenuItem::separator(),
                 MenuItem::action("Settings", OpenSettings),
                 MenuItem::separator(),
                 MenuItem::Submenu(Menu {
