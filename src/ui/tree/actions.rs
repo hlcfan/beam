@@ -212,6 +212,7 @@ impl BeamView {
             .iter()
             .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == folder_id))
         {
+            // Folder reveals use minimal scrolling to preserve the surrounding tree context.
             self.collection_scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Top);
         }
