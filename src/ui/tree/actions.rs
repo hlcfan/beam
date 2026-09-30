@@ -188,20 +188,16 @@ impl BeamView {
             });
         }
         let mut offset = self.collection_scroll_handle.offset();
-        let visible_top = -offset.y;
-        let row_bottom = row_top + px(TREE_ROW_HEIGHT_PX);
-        let inset =
-            (viewport_height / 3.0).min((viewport_height - px(TREE_ROW_HEIGHT_PX)).max(px(0.0)));
-        let target_top = if row_top < visible_top {
-            row_top - inset
-        } else if row_bottom > visible_top + viewport_height {
-            row_bottom + inset - viewport_height
-        } else {
+        let Some(target_offset) = tree_selection_scroll_offset(
+            row_top,
+            px(TREE_ROW_HEIGHT_PX),
+            content_height,
+            viewport_height,
+            offset.y,
+        ) else {
             return;
         };
-        offset.y = -target_top
-            .max(px(0.0))
-            .min((content_height - viewport_height).max(px(0.0)));
+        offset.y = target_offset;
         self.collection_scroll_handle.set_offset(offset);
     }
 
@@ -1168,5 +1164,120 @@ impl BeamView {
         if let Err(error) = self.publish_app_command(command) {
             window.push_notification(error, cx);
         }
+    }
+}
+
+/// Returns a new scroll offset only when the selected row needs revealing.
+fn tree_selection_scroll_offset(
+    row_top: Pixels,
+    row_height: Pixels,
+    content_height: Pixels,
+    viewport_height: Pixels,
+    current_offset: Pixels,
+) -> Option<Pixels> {
+    if viewport_height <= px(0.0) {
+        return None;
+    }
+    let visible_top = -current_offset;
+    let row_bottom = row_top + row_height;
+    let inset = (viewport_height / 3.0).min((viewport_height - row_height).max(px(0.0)));
+    let target_top = if row_top < visible_top {
+        row_top - inset
+    } else if row_bottom > visible_top + viewport_height {
+        row_bottom + inset - viewport_height
+    } else {
+        return None;
+    };
+    Some(
+        -target_top
+            .max(px(0.0))
+            .min((content_height - viewport_height).max(px(0.0))),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tree_selection_scroll_offset;
+    use gpui_kit::px;
+
+    #[test]
+    fn selection_scroll_places_rows_one_third_inside_each_edge() {
+        // A 300px viewport reserves 100px of context on the approached side.
+        assert_eq!(
+            tree_selection_scroll_offset(px(450.0), px(30.0), px(1500.0), px(300.0), px(-600.0)),
+            Some(px(-350.0)),
+        );
+        assert_eq!(
+            tree_selection_scroll_offset(px(900.0), px(30.0), px(1500.0), px(300.0), px(-600.0)),
+            Some(px(-730.0)),
+        );
+    }
+
+    #[test]
+    fn selection_scroll_keeps_fully_visible_rows_in_place_including_edges() {
+        for row_top in [600.0, 700.0, 870.0] {
+            assert_eq!(
+                tree_selection_scroll_offset(
+                    px(row_top),
+                    px(30.0),
+                    px(1500.0),
+                    px(300.0),
+                    px(-600.0)
+                ),
+                None,
+            );
+        }
+    }
+
+    #[test]
+    fn selection_scroll_reveals_partially_clipped_rows() {
+        assert_eq!(
+            tree_selection_scroll_offset(px(590.0), px(30.0), px(1500.0), px(300.0), px(-600.0)),
+            Some(px(-490.0)),
+        );
+        assert_eq!(
+            tree_selection_scroll_offset(px(880.0), px(30.0), px(1500.0), px(300.0), px(-600.0)),
+            Some(px(-710.0)),
+        );
+    }
+
+    #[test]
+    fn selection_scroll_clamps_at_both_list_boundaries() {
+        assert_eq!(
+            tree_selection_scroll_offset(px(0.0), px(30.0), px(1500.0), px(300.0), px(-600.0)),
+            Some(px(0.0)),
+        );
+        assert_eq!(
+            tree_selection_scroll_offset(px(1470.0), px(30.0), px(1500.0), px(300.0), px(-600.0)),
+            Some(px(-1200.0)),
+        );
+    }
+
+    #[test]
+    fn selection_scroll_adapts_to_viewport_height() {
+        assert_eq!(
+            tree_selection_scroll_offset(px(450.0), px(30.0), px(1500.0), px(600.0), px(-600.0)),
+            Some(px(-250.0)),
+        );
+    }
+
+    #[test]
+    fn selection_scroll_handles_viewports_smaller_than_a_row() {
+        assert_eq!(
+            tree_selection_scroll_offset(px(100.0), px(30.0), px(500.0), px(20.0), px(-50.0)),
+            Some(px(-110.0)),
+        );
+        assert_eq!(
+            tree_selection_scroll_offset(px(100.0), px(30.0), px(500.0), px(0.0), px(-50.0)),
+            None,
+        );
+    }
+
+    #[test]
+    fn selection_scroll_does_not_scroll_content_that_fits() {
+        assert_eq!(
+            tree_selection_scroll_offset(px(120.0), px(30.0), px(150.0), px(300.0), px(0.0)),
+            None,
+        );
     }
 }
