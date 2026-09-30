@@ -1161,6 +1161,7 @@ impl BeamView {
 }
 
 /// Returns a new scroll offset only when the selected row needs revealing.
+/// The caller handles unmeasured viewports; `viewport_height` must be positive.
 fn tree_selection_scroll_offset(
     row_top: Pixels,
     row_height: Pixels,
@@ -1168,9 +1169,6 @@ fn tree_selection_scroll_offset(
     viewport_height: Pixels,
     current_offset: Pixels,
 ) -> Option<Pixels> {
-    if viewport_height <= px(0.0) {
-        return None;
-    }
     let visible_top = -current_offset;
     let row_bottom = row_top + row_height;
     let inset = (viewport_height / 3.0).min((viewport_height - row_height).max(px(0.0)));
@@ -1259,10 +1257,6 @@ mod tests {
         assert_eq!(
             tree_selection_scroll_offset(px(100.0), px(30.0), px(500.0), px(20.0), px(-50.0)),
             Some(px(-110.0)),
-        );
-        assert_eq!(
-            tree_selection_scroll_offset(px(100.0), px(30.0), px(500.0), px(0.0), px(-50.0)),
-            None,
         );
     }
 
