@@ -430,33 +430,15 @@ impl BeamView {
             let menu_view = view.clone();
             let scroll_view = view.clone();
             let list_view = view.clone();
-            // v_virtual_list lays items out at their declared heights, so we
-            // must publish a per-item height Vec that matches what the
-            // renderer will draw. Rows use the fixed TREE_ROW_HEIGHT_PX; slots
-            // are SLOT_HIT_HEIGHT_PX tall, with an extra SLOT_DEPTH_GAP_PX top
-            // margin when stacked after a slot at a different depth.
             let item_sizes = Rc::new(
                 items
                     .iter()
                     .enumerate()
-                    .map(|(i, item)| match item {
-                        TreeRenderItem::Row(_) => size(px(0.0), px(TREE_ROW_HEIGHT_PX)),
-                        TreeRenderItem::Slot(slot) => {
-                            let needs_depth_gap = i > 0
-                                && match &items[i - 1] {
-                                    TreeRenderItem::Slot(prev) => prev.depth != slot.depth,
-                                    TreeRenderItem::Row(_) => false,
-                                };
-                            size(
-                                px(0.0),
-                                px(SLOT_HIT_HEIGHT_PX
-                                    + if needs_depth_gap {
-                                        SLOT_DEPTH_GAP_PX
-                                    } else {
-                                        0.0
-                                    }),
-                            )
-                        }
+                    .map(|(i, item)| {
+                        size(
+                            px(0.0),
+                            tree_item_height(item, i.checked_sub(1).map(|prev| &items[prev])),
+                        )
                     })
                     .collect::<Vec<_>>(),
             );
@@ -474,33 +456,26 @@ impl BeamView {
                             move |this, range: Range<usize>, window, cx| {
                                 let mut rendered: Vec<AnyElement> =
                                     Vec::with_capacity(range.end - range.start);
-                                let mut prev_slot_depth: Option<usize> = if range.start == 0 {
-                                    None
-                                } else {
-                                    match &items_for_list[range.start - 1] {
-                                        TreeRenderItem::Slot(prev) => Some(prev.depth),
-                                        TreeRenderItem::Row(_) => None,
-                                    }
-                                };
                                 for idx in range {
                                     match &items_for_list[idx] {
                                         TreeRenderItem::Slot(slot) => {
-                                            let needs_depth_gap = prev_slot_depth
-                                                .is_some_and(|prev| prev != slot.depth);
+                                            let top_margin = tree_item_top_margin(
+                                                &items_for_list[idx],
+                                                idx.checked_sub(1)
+                                                    .map(|prev| &items_for_list[prev]),
+                                            );
                                             let slot_el = this.render_tree_drop_slot(slot, cx);
-                                            let el = if needs_depth_gap {
+                                            let el = if top_margin > px(0.0) {
                                                 div()
-                                                    .mt(px(SLOT_DEPTH_GAP_PX))
+                                                    .mt(top_margin)
                                                     .child(slot_el)
                                                     .into_any_element()
                                             } else {
                                                 slot_el
                                             };
-                                            prev_slot_depth = Some(slot.depth);
                                             rendered.push(el);
                                         }
                                         TreeRenderItem::Row(row) => {
-                                            prev_slot_depth = None;
                                             rendered.push(this.render_tree_row(row, window, cx));
                                         }
                                     }

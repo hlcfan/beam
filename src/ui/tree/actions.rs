@@ -178,19 +178,12 @@ impl BeamView {
             if i == index {
                 row_top = content_height;
             }
-            content_height += px(match item {
-                TreeRenderItem::Row(_) => TREE_ROW_HEIGHT_PX,
-                TreeRenderItem::Slot(slot) => {
-                    let depth_gap = i > 0
-                        && matches!(&items[i - 1], TreeRenderItem::Slot(prev) if prev.depth != slot.depth);
-                    SLOT_HIT_HEIGHT_PX + if depth_gap { SLOT_DEPTH_GAP_PX } else { 0.0 }
-                }
-            });
+            content_height += tree_item_height(item, i.checked_sub(1).map(|prev| &items[prev]));
         }
         let mut offset = self.collection_scroll_handle.offset();
         let Some(target_offset) = tree_selection_scroll_offset(
             row_top,
-            px(TREE_ROW_HEIGHT_PX),
+            tree_item_height(&items[index], index.checked_sub(1).map(|prev| &items[prev])),
             content_height,
             viewport_height,
             offset.y,
