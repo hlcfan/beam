@@ -9,6 +9,7 @@ pub(in crate::ui) struct EnvironmentManagerDialogView {
     active_environment_id: Option<Ulid>,
     show_environment_selector: bool,
     variables: Vec<EnvironmentVariable>,
+    variable_display_order: Vec<usize>,
     environment_name_input: Entity<InputState>,
     variable_name_inputs: Vec<Entity<InputState>>,
     variable_value_inputs: Vec<Entity<InputState>>,
@@ -59,6 +60,7 @@ impl EnvironmentManagerDialogView {
         }
 
         self.variables.clear();
+        self.variable_display_order.clear();
         self.clear_variable_inputs();
         self.loaded_environment_name = None;
         self.suppress_environment_name_change_events = true;
@@ -96,6 +98,7 @@ impl EnvironmentManagerDialogView {
             active_environment_id,
             show_environment_selector: true,
             variables: Vec::new(),
+            variable_display_order: Vec::new(),
             environment_name_input,
             variable_name_inputs: Vec::new(),
             variable_value_inputs: Vec::new(),
@@ -161,6 +164,8 @@ impl EnvironmentManagerDialogView {
             cx,
         );
         view.show_environment_selector = false;
+        // Sort only the sheet's initial presentation; edits keep their row positions.
+        view.variable_display_order = sorted_variable_display_order(&view.variables);
         view
     }
 
@@ -177,6 +182,7 @@ impl EnvironmentManagerDialogView {
     ) {
         let Some(path) = self.environment_file_path(environment_id) else {
             self.variables.clear();
+            self.variable_display_order.clear();
             self.clear_variable_inputs();
             self.error = Some("Environment file not found.".to_string());
             return;
@@ -185,6 +191,7 @@ impl EnvironmentManagerDialogView {
             Ok(content) => content,
             Err(error) => {
                 self.variables.clear();
+                self.variable_display_order.clear();
                 self.clear_variable_inputs();
                 self.error = Some(format!("Failed to read environment file: {error}"));
                 return;
@@ -194,6 +201,7 @@ impl EnvironmentManagerDialogView {
             Ok(parsed) => parsed,
             Err(error) => {
                 self.variables.clear();
+                self.variable_display_order.clear();
                 self.clear_variable_inputs();
                 self.error = Some(error);
                 return;
@@ -201,6 +209,7 @@ impl EnvironmentManagerDialogView {
         };
         let environment_name = parsed.environment.name.clone();
         self.variables = parsed.variables;
+        self.variable_display_order = (0..self.variables.len()).collect();
         self.loaded_environment_name = Some(environment_name.clone());
         self.rebuild_variable_inputs(window, cx);
         self.suppress_environment_name_change_events = true;
@@ -304,6 +313,7 @@ impl EnvironmentManagerDialogView {
             self.load_variables(next_environment_id, window, cx);
         } else {
             self.variables.clear();
+            self.variable_display_order.clear();
             self.clear_variable_inputs();
             self.loaded_environment_name = None;
             self.suppress_environment_name_change_events = true;
@@ -491,6 +501,7 @@ impl EnvironmentManagerDialogView {
     }
 
     fn add_variable(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.variable_display_order.push(self.variables.len());
         self.variables.push(EnvironmentVariable {
             name: String::new(),
             value: String::new(),
@@ -507,6 +518,7 @@ impl EnvironmentManagerDialogView {
             return;
         }
         self.variables.remove(index);
+        remove_variable_from_display_order(&mut self.variable_display_order, index);
         self.rebuild_variable_inputs(window, cx);
         self.schedule_variables_save(cx);
         cx.notify();
@@ -545,6 +557,21 @@ impl EnvironmentManagerDialogView {
             cx.notify();
         } else if active_environment_changed {
             cx.notify();
+        }
+    }
+}
+
+fn sorted_variable_display_order(variables: &[EnvironmentVariable]) -> Vec<usize> {
+    let mut order: Vec<_> = (0..variables.len()).collect();
+    order.sort_by_cached_key(|&index| variables[index].name.to_lowercase());
+    order
+}
+
+fn remove_variable_from_display_order(order: &mut Vec<usize>, index: usize) {
+    order.retain(|&row| row != index);
+    for row in order {
+        if *row > index {
+            *row -= 1;
         }
     }
 }
@@ -635,7 +662,8 @@ impl Render for EnvironmentManagerDialogView {
             div().into_any_element()
         });
         variables_rows =
-            variables_rows.children(self.variables.iter().enumerate().map(|(index, variable)| {
+            variables_rows.children(self.variable_display_order.iter().copied().map(|index| {
+                let variable = &self.variables[index];
                 let key_input = self.variable_name_inputs[index].clone();
                 let value_input = self.variable_value_inputs[index].clone();
                 let key_has_selection = !key_input.read(cx).selected_range().is_empty();
@@ -903,5 +931,88 @@ impl Render for EnvironmentManagerDialogView {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{remove_variable_from_display_order, sorted_variable_display_order};
+    use crate::models::EnvironmentVariable;
+
+    fn variables(names: &[&str]) -> Vec<EnvironmentVariable> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| EnvironmentVariable {
+                name: (*name).to_string(),
+                value: format!("value-{index}"),
+                enabled: index % 2 == 0,
+                description: Some(format!("description-{index}")),
+            })
+            .collect()
+    }
+
+    fn displayed_names<'a>(variables: &'a [EnvironmentVariable], order: &[usize]) -> Vec<&'a str> {
+        order
+            .iter()
+            .map(|&index| variables[index].name.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn sheet_order_sorts_case_insensitively_without_changing_saved_variables() {
+        let variables = variables(&["zebra", "beta", "ALPHA", "Beta", "alpha"]);
+        let saved = variables.clone();
+        let order = sorted_variable_display_order(&variables);
+
+        assert_eq!(order, vec![2, 4, 1, 3, 0]);
+        assert_eq!(
+            displayed_names(&variables, &order),
+            vec!["ALPHA", "alpha", "beta", "Beta", "zebra"]
+        );
+        assert_eq!(saved, variables);
+    }
+
+    #[test]
+    fn sheet_order_handles_empty_and_single_variable_environments() {
+        assert!(sorted_variable_display_order(&[]).is_empty());
+        assert_eq!(sorted_variable_display_order(&variables(&["key"])), vec![0]);
+    }
+
+    #[test]
+    fn edited_keys_keep_their_positions_until_the_sheet_reopens() {
+        let mut variables = variables(&["zebra", "alpha", "beta"]);
+        let order = sorted_variable_display_order(&variables);
+        variables[1].name = "zzzz".to_string();
+        variables[0].name = "aardvark".to_string();
+
+        assert_eq!(
+            displayed_names(&variables, &order),
+            vec!["zzzz", "beta", "aardvark"]
+        );
+        let reopened_order = sorted_variable_display_order(&variables);
+        assert_eq!(
+            displayed_names(&variables, &reopened_order),
+            vec!["aardvark", "beta", "zzzz"]
+        );
+    }
+
+    #[test]
+    fn deleting_a_sorted_row_preserves_remaining_rows_and_their_values() {
+        let mut variables = variables(&["zebra", "alpha", "beta"]);
+        let mut order = sorted_variable_display_order(&variables);
+        let removed_index = order[0];
+        variables.remove(removed_index);
+        remove_variable_from_display_order(&mut order, removed_index);
+
+        assert_eq!(displayed_names(&variables, &order), vec!["beta", "zebra"]);
+        assert_eq!(variables[order[0]].value, "value-2");
+        assert_eq!(variables[order[1]].value, "value-0");
+        for _ in 0..2 {
+            let removed_index = order[0];
+            variables.remove(removed_index);
+            remove_variable_from_display_order(&mut order, removed_index);
+        }
+        assert!(order.is_empty());
     }
 }
