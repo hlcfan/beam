@@ -148,8 +148,8 @@ impl BeamView {
         cx.notify();
     }
 
-    /// Scrolls the workspace tree just enough to bring `request_id`'s row into view, leaving the
-    /// scroll offset untouched if it's already visible. Needed because keyword-driven navigation
+    /// Reveals off-screen requests with one-third of the viewport as context above or below.
+    /// Requests already fully visible retain their position. Needed because keyboard-driven navigation
     /// (cmd-alt-up/down/left/right or ctrl-j/k) can select a request whose row is scrolled out of the
     /// virtualized tree's viewport.
     pub(in crate::ui) fn scroll_selected_request_into_view(&self, request_id: Ulid) {
@@ -158,13 +158,51 @@ impl BeamView {
 
     fn scroll_tree_node_into_view(&self, node_id: Ulid) {
         let items = build_tree_render_items(&self.shell.workspace_tree);
-        if let Some(index) = items
+        let Some(index) = items
             .iter()
             .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == node_id))
-        {
+        else {
+            return;
+        };
+        let viewport_height = self.collection_scroll_handle.bounds().size.height;
+        if viewport_height <= px(0.0) {
             self.collection_scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Top);
+            return;
         }
+
+        // Include drop slots and their depth gaps, matching the virtual list's layout.
+        let mut row_top = px(0.0);
+        let mut content_height = px(0.0);
+        for (i, item) in items.iter().enumerate() {
+            if i == index {
+                row_top = content_height;
+            }
+            content_height += px(match item {
+                TreeRenderItem::Row(_) => TREE_ROW_HEIGHT_PX,
+                TreeRenderItem::Slot(slot) => {
+                    let depth_gap = i > 0
+                        && matches!(&items[i - 1], TreeRenderItem::Slot(prev) if prev.depth != slot.depth);
+                    SLOT_HIT_HEIGHT_PX + if depth_gap { SLOT_DEPTH_GAP_PX } else { 0.0 }
+                }
+            });
+        }
+        let mut offset = self.collection_scroll_handle.offset();
+        let visible_top = -offset.y;
+        let row_bottom = row_top + px(TREE_ROW_HEIGHT_PX);
+        let inset =
+            (viewport_height / 3.0).min((viewport_height - px(TREE_ROW_HEIGHT_PX)).max(px(0.0)));
+        let target_top = if row_top < visible_top {
+            row_top - inset
+        } else if row_bottom > visible_top + viewport_height {
+            row_bottom + inset - viewport_height
+        } else {
+            return;
+        };
+        offset.y = -target_top
+            .max(px(0.0))
+            .min((content_height - viewport_height).max(px(0.0)));
+        self.collection_scroll_handle.set_offset(offset);
     }
 
     /// Expands and reveals a folder without changing the active request or request view history.
