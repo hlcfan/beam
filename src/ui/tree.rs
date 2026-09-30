@@ -25,6 +25,27 @@ pub(super) enum RequestViewHistoryDirection {
     Prev,
 }
 
+/// Declared height shared by virtual-list layout and selection scrolling.
+fn tree_item_height(item: &TreeRenderItem, previous: Option<&TreeRenderItem>) -> Pixels {
+    let height = match item {
+        TreeRenderItem::Row(_) => TREE_ROW_HEIGHT_PX,
+        TreeRenderItem::Slot(_) => SLOT_HIT_HEIGHT_PX,
+    };
+    px(height) + tree_item_top_margin(item, previous)
+}
+
+/// Separate adjacent drop targets at different nesting depths.
+fn tree_item_top_margin(item: &TreeRenderItem, previous: Option<&TreeRenderItem>) -> Pixels {
+    match (item, previous) {
+        (TreeRenderItem::Slot(slot), Some(TreeRenderItem::Slot(prev)))
+            if prev.depth != slot.depth =>
+        {
+            px(SLOT_DEPTH_GAP_PX)
+        }
+        _ => px(0.0),
+    }
+}
+
 /// Tracks the in-memory sequence of requests the user has viewed in one workspace.
 #[derive(Clone, Debug, Default)]
 pub(super) struct RequestViewHistory {
@@ -260,6 +281,52 @@ mod tests {
         MAX_REQUEST_VIEW_HISTORY_ENTRIES, RequestViewHistory, WorkspaceRequestViewHistories,
     };
     use ulid::Ulid;
+
+    #[test]
+    fn tree_item_geometry_includes_only_adjacent_slot_depth_gaps() {
+        use super::{tree_item_height, tree_item_top_margin};
+        use crate::app_shell::TreeNodeKind;
+        use crate::tree_dnd::{
+            SLOT_DEPTH_GAP_PX, SLOT_HIT_HEIGHT_PX, SlotVisualRole, TREE_ROW_HEIGHT_PX,
+            TreeDropPlacement, TreeDropSlot, TreeRenderItem, TreeRowViewModel,
+        };
+        use gpui_kit::px;
+
+        let slot = |depth| {
+            TreeRenderItem::Slot(TreeDropSlot {
+                depth,
+                target_id: None,
+                target_kind: None,
+                placement: TreeDropPlacement::Into,
+                container_id: None,
+                visual_role: SlotVisualRole::ContainerStart,
+            })
+        };
+        let row = TreeRenderItem::Row(TreeRowViewModel {
+            id: Ulid::new(),
+            kind: TreeNodeKind::Request,
+            depth: 0,
+            selected: false,
+        });
+        let shallow = slot(0);
+        let deep = slot(1);
+        for previous in [None, Some(&row), Some(&shallow)] {
+            assert_eq!(tree_item_top_margin(&shallow, previous), px(0.0));
+            assert_eq!(tree_item_height(&shallow, previous), px(SLOT_HIT_HEIGHT_PX));
+        }
+        for (item, previous) in [(&deep, &shallow), (&shallow, &deep)] {
+            assert_eq!(
+                tree_item_top_margin(item, Some(previous)),
+                px(SLOT_DEPTH_GAP_PX)
+            );
+            assert_eq!(
+                tree_item_height(item, Some(previous)),
+                px(SLOT_HIT_HEIGHT_PX + SLOT_DEPTH_GAP_PX)
+            );
+        }
+        assert_eq!(tree_item_top_margin(&row, Some(&deep)), px(0.0));
+        assert_eq!(tree_item_height(&row, Some(&deep)), px(TREE_ROW_HEIGHT_PX));
+    }
 
     #[test]
     fn request_view_history_records_and_steps_back_forward() {
