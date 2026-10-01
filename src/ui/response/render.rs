@@ -361,49 +361,64 @@ impl BeamView {
         div()
             .absolute()
             .top_0()
-            .bottom_0()
             .left_0()
             .right_0()
+            .h(px(2.0))
+            .overflow_hidden()
+            .bg(color.opacity(0.18))
             .with_animation(
                 "shimmer-loading",
-                Animation::new(Duration::from_millis(1400)).repeat(),
+                Animation::new(Duration::from_millis(2800)).repeat(),
                 move |this, delta| {
                     this.child(
                         canvas(
                             |_, _, _| {},
                             move |bounds, _, window, _| {
-                                let Some(contour) = ShimmerTopContour::new(bounds) else {
-                                    return;
-                                };
+                                let width = bounds.size.width;
+                                let height = bounds.size.height;
+                                let origin = bounds.origin;
 
-                                let highlight_length = contour.length() * 0.28;
-                                let highlight_end = (contour.length() + highlight_length) * delta;
-                                let highlight_start = highlight_end - highlight_length;
-                                let taper_length = 2.0_f32.min(contour.arc_length);
-                                if let Some(highlight) = contour.path(
-                                    highlight_start,
-                                    highlight_end.min(taper_length),
-                                    1.0,
-                                ) {
-                                    window.paint_path(highlight, color.opacity(0.85));
-                                }
-                                if let Some(highlight) = contour.path(
-                                    highlight_start.max(taper_length),
-                                    highlight_end.min(contour.length() - taper_length),
-                                    2.0,
-                                ) {
-                                    window.paint_path(highlight, color.opacity(0.85));
-                                }
-                                if let Some(highlight) = contour.path(
-                                    highlight_start.max(contour.length() - taper_length),
-                                    highlight_end,
-                                    1.0,
-                                ) {
-                                    window.paint_path(highlight, color.opacity(0.85));
+                                // Ease back and forth without restarting at the
+                                // left edge. Each half fades toward its thin tip.
+                                let travel = (1.0 - (delta * std::f32::consts::TAU).cos()) / 2.0;
+                                let half_length = width * 0.14;
+                                let center_x = half_length + (width - half_length * 2.0) * travel;
+                                let center_y = height * 0.5;
+                                for direction in [-1.0, 1.0] {
+                                    let tip_x = center_x + half_length * direction;
+                                    let control_x = center_x + half_length * direction * 0.45;
+                                    let mut highlight = PathBuilder::fill();
+                                    highlight.move_to(origin + point(tip_x, center_y));
+                                    highlight.curve_to(
+                                        origin + point(center_x, px(0.0)),
+                                        origin + point(control_x, px(0.0)),
+                                    );
+                                    highlight.line_to(origin + point(center_x, height));
+                                    highlight.curve_to(
+                                        origin + point(tip_x, center_y),
+                                        origin + point(control_x, height),
+                                    );
+                                    highlight.close();
+                                    let dim = color.opacity(0.0);
+                                    let bright = color.opacity(0.95);
+                                    let (from, to) = if direction < 0.0 {
+                                        (dim, bright)
+                                    } else {
+                                        (bright, dim)
+                                    };
+                                    if let Ok(highlight) = highlight.build() {
+                                        window.paint_path(
+                                            highlight,
+                                            linear_gradient(
+                                                90.0,
+                                                linear_color_stop(from, 0.0),
+                                                linear_color_stop(to, 1.0),
+                                            ),
+                                        );
+                                    }
                                 }
                             },
                         )
-                        .absolute()
                         .size_full(),
                     )
                 },
@@ -542,147 +557,5 @@ impl BeamView {
             });
 
         (status_code_text, status_text)
-    }
-}
-
-struct ShimmerTopContour {
-    left_center: Point<Pixels>,
-    right_center: Point<Pixels>,
-    radius: f32,
-    arc_length: f32,
-    line_length: f32,
-}
-
-impl ShimmerTopContour {
-    fn new(bounds: Bounds<Pixels>) -> Option<Self> {
-        const PANE_RADIUS: f32 = 8.0;
-        const STROKE_WIDTH: f32 = 2.0;
-        const CORNER_SWEEP: f32 = 7.0 * std::f32::consts::PI / 18.0;
-
-        let width = f32::from(bounds.size.width);
-        let height = f32::from(bounds.size.height);
-        let half_stroke = STROKE_WIDTH / 2.0;
-        let outer_radius = PANE_RADIUS.min(width / 2.0).min(height / 2.0);
-        let radius = outer_radius - half_stroke;
-        if width <= STROKE_WIDTH || height <= STROKE_WIDTH || radius <= 0.0 {
-            return None;
-        }
-
-        let origin_x = f32::from(bounds.origin.x);
-        let origin_y = f32::from(bounds.origin.y);
-        let center_y = origin_y + outer_radius;
-        let left_center = point(px(origin_x + outer_radius), px(center_y));
-        let right_center = point(px(origin_x + width - outer_radius), px(center_y));
-
-        Some(Self {
-            left_center,
-            right_center,
-            radius,
-            arc_length: CORNER_SWEEP * radius,
-            line_length: (width - 2.0 * outer_radius).max(0.0),
-        })
-    }
-
-    fn length(&self) -> f32 {
-        self.arc_length * 2.0 + self.line_length
-    }
-
-    fn path(&self, start: f32, end: f32, stroke_width: f32) -> Option<Path<Pixels>> {
-        let start = start.clamp(0.0, self.length());
-        let end = end.clamp(0.0, self.length());
-        if end <= start {
-            return None;
-        }
-
-        let mut builder = PathBuilder::stroke(px(stroke_width));
-        builder.move_to(self.point_at(start));
-        let mut cursor = start;
-
-        if cursor < self.arc_length {
-            let arc_end = end.min(self.arc_length);
-            builder.arc_to(
-                point(px(self.radius), px(self.radius)),
-                px(0.0),
-                false,
-                true,
-                self.point_at(arc_end),
-            );
-            cursor = arc_end;
-        }
-
-        let line_end_distance = self.arc_length + self.line_length;
-        if cursor < end && cursor < line_end_distance {
-            let line_end = end.min(line_end_distance);
-            builder.line_to(self.point_at(line_end));
-            cursor = line_end;
-        }
-
-        if cursor < end {
-            builder.arc_to(
-                point(px(self.radius), px(self.radius)),
-                px(0.0),
-                false,
-                true,
-                self.point_at(end),
-            );
-        }
-
-        builder.build().ok()
-    }
-
-    fn point_at(&self, distance: f32) -> Point<Pixels> {
-        let distance = distance.clamp(0.0, self.length());
-        if distance <= self.arc_length {
-            let angle = 10.0 * std::f32::consts::PI / 9.0 + distance / self.radius;
-            return point(
-                self.left_center.x + px(self.radius * angle.cos()),
-                self.left_center.y + px(self.radius * angle.sin()),
-            );
-        }
-
-        let line_end_distance = self.arc_length + self.line_length;
-        if distance <= line_end_distance {
-            return point(
-                self.left_center.x + px(distance - self.arc_length),
-                self.left_center.y - px(self.radius),
-            );
-        }
-
-        let angle = -std::f32::consts::FRAC_PI_2 + (distance - line_end_distance) / self.radius;
-        point(
-            self.right_center.x + px(self.radius * angle.cos()),
-            self.right_center.y + px(self.radius * angle.sin()),
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use gpui_kit::{Bounds, Pixels, Point, point, px, size};
-
-    use super::ShimmerTopContour;
-
-    #[test]
-    fn shimmer_contour_tracks_the_rounded_top_edge() {
-        let contour = ShimmerTopContour::new(Bounds {
-            origin: point(px(0.0), px(0.0)),
-            size: size(px(100.0), px(50.0)),
-        })
-        .expect("the response panel is large enough for the shimmer contour");
-
-        assert_point_close(contour.point_at(0.0), 1.422_152, 5.605_859);
-        assert_point_close(contour.point_at(contour.arc_length), 8.0, 1.0);
-        assert_point_close(
-            contour.point_at(contour.arc_length + contour.line_length),
-            92.0,
-            1.0,
-        );
-        assert_point_close(contour.point_at(contour.length()), 98.577_85, 5.605_859);
-        assert!(contour.path(0.0, contour.length(), 2.0).is_some());
-    }
-
-    fn assert_point_close(actual: Point<Pixels>, expected_x: f32, expected_y: f32) {
-        assert!((f32::from(actual.x) - expected_x).abs() < 0.001);
-        assert!((f32::from(actual.y) - expected_y).abs() < 0.001);
     }
 }
