@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::Colorize;
 
 pub(super) struct BeamView {
     pub(super) shell: AppShellState,
@@ -509,6 +510,17 @@ impl Render for BeamView {
                         TitleBar::new()
                             .w_full()
                             .h(BEAM_TITLE_BAR_HEIGHT)
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(
+                                    cx.theme()
+                                        .title_bar
+                                        .mix(cx.theme().background, 0.55)
+                                        .darken(0.02),
+                                    0.,
+                                ),
+                                linear_color_stop(cx.theme().title_bar.darken(0.02), 1.),
+                            ))
                             .child(self.render_title_bar_content(window, cx)),
                     ),
             )
