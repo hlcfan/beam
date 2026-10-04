@@ -108,6 +108,7 @@ impl BeamView {
                 .h_full()
                 .px_3()
                 .text_sm()
+                .line_height(relative(1.5))
                 .cursor_pointer()
                 .rounded(theme.radius_lg)
                 .border_1()
