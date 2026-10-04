@@ -1,6 +1,14 @@
 use super::*;
 use gpui_kit::base::{Tab, Tabs};
 
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+pub(in crate::ui) struct WorkspaceMenuRename(Ulid);
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
+pub(in crate::ui) struct WorkspaceMenuDelete(Ulid);
+
 impl BeamView {
     pub(in crate::ui) fn render_workspace_tabs(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -46,9 +54,59 @@ impl BeamView {
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.switch_workspace_from_tab(workspace_id, window, cx);
                 }))
+                .on_mouse_down(
+                    MouseButton::Right,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.focus_handle.focus(window, cx);
+                        this.show_workspace_tab_menu(workspace_id, event.position, window, cx);
+                    }),
+                )
                 .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                 .child(div().truncate().child(workspace.name.clone()))
             }))
+    }
+
+    pub(in crate::ui) fn on_action_workspace_menu_rename(
+        &mut self,
+        action: &WorkspaceMenuRename,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_rename_workspace_dialog(action.0, cx);
+    }
+
+    pub(in crate::ui) fn on_action_workspace_menu_delete(
+        &mut self,
+        action: &WorkspaceMenuDelete,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_delete_workspace_dialog(action.0, cx);
+    }
+
+    fn show_workspace_tab_menu(
+        &self,
+        workspace_id: Ulid,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu = append_with_image_or_plain(
+            NativeMenu::new(),
+            "Rename…",
+            "icons/edit.svg",
+            false,
+            Box::new(WorkspaceMenuRename(workspace_id)),
+        );
+        let menu = append_with_image_or_plain(
+            menu.separator(),
+            "Delete…",
+            "icons/trash.svg",
+            self.shell.workspace.all_workspaces.len() <= 1,
+            Box::new(WorkspaceMenuDelete(workspace_id)),
+        );
+        menu.show(position, window, cx);
     }
 
     pub(in crate::ui) fn switch_workspace_from_tab(

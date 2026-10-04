@@ -270,13 +270,6 @@ impl BeamView {
     }
 
     fn render_title_bar_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let workspace_button = div()
-            .flex_shrink_0()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                cx.stop_propagation();
-            })
-            .child(self.render_workspace_picker(true, cx));
-
         h_flex()
             .items_center()
             .justify_between()
@@ -287,8 +280,22 @@ impl BeamView {
             .text_sm()
             .text_color(cx.theme().foreground)
             .child(self.render_workspace_tabs(cx))
-            // Retain workspace actions until their tab entry points are added.
-            .child(workspace_button)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        Button::new("add-workspace")
+                            .small()
+                            .ghost()
+                            .cursor_pointer()
+                            .icon(Icon::default().path("icons/plus.svg"))
+                            .tooltip("New workspace")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_create_workspace_dialog(cx);
+                            })),
+                    ),
+            )
             .child(
                 div().flex().flex_shrink_0().occlude().child(
                     Button::new("title-bar-environment-sheet")
@@ -315,155 +322,6 @@ impl BeamView {
                         ),
                 ),
             )
-    }
-
-    fn render_workspace_picker(&self, compact: bool, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace = &self.shell.workspace;
-        let workspace_name = if workspace.workspace_name.is_empty() {
-            "Workspace".to_string()
-        } else {
-            workspace.workspace_name.clone()
-        };
-
-        let all_workspaces = workspace.all_workspaces.clone();
-        let current_workspace_id = workspace.workspace_id;
-        let can_delete = all_workspaces.len() > 1;
-
-        let view = cx.entity();
-        let view_for_new = view.clone();
-        let view_for_delete = view.clone();
-        let view_for_rename = view.clone();
-
-        let filled_bg_color = cx.theme().secondary;
-        let default_bg_color = cx.theme().background;
-        let filled_fg_color = cx.theme().secondary_foreground;
-        let default_fg_color = cx.theme().foreground;
-        let filled_icon_color = cx.theme().secondary_foreground.opacity(0.8);
-        let default_icon_color = cx.theme().muted_foreground;
-
-        Button::new("workspace-picker")
-            .ghost()
-            .small()
-            // Maybe match the height of the environment picker: 22px?
-            .h(px(28.0))
-            .px_2()
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .justify_start()
-            .bg(if compact {
-                filled_bg_color
-            } else {
-                default_bg_color
-            })
-            .when(compact, |b| b.min_w(px(130.0)))
-            .when(!compact, |b| b.w_full())
-            .child(
-                h_flex()
-                    .w_full()
-                    .items_center()
-                    .justify_between()
-                    .gap_1()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_semibold()
-                            .text_color(if compact {
-                                filled_fg_color
-                            } else {
-                                default_fg_color
-                            })
-                            .truncate()
-                            .child(workspace_name.clone()),
-                    )
-                    .child(
-                        Icon::default()
-                            .path("icons/chevron-down.svg")
-                            .size(px(12.0))
-                            .text_color(if compact {
-                                filled_icon_color
-                            } else {
-                                default_icon_color
-                            }),
-                    ),
-            )
-            .dropdown_menu(move |menu, window, _| {
-                let mut menu = menu.min_w(px(200.));
-
-                // List existing workspaces.
-                for entry in &all_workspaces {
-                    let checked = Some(entry.workspace_id) == current_workspace_id;
-                    let workspace_id = entry.workspace_id;
-                    let entry_name = entry.name.clone();
-                    let item_view = view.clone();
-                    menu = menu.item(
-                        PopupMenuItem::element(move |_, _| {
-                            div().w_full().cursor_pointer().child(entry_name.clone())
-                        })
-                        .checked(checked)
-                        .on_click(window.listener_for(
-                            &item_view,
-                            move |this, _, _, _cx| {
-                                if Some(workspace_id) != this.shell.workspace.workspace_id {
-                                    this.app_command_tx
-                                        .send(AppCommand::SwitchWorkspace {
-                                            workspace_id,
-                                            command_id: next_command_id(),
-                                        })
-                                        .ok();
-                                }
-                            },
-                        )),
-                    );
-                }
-
-                menu = menu.separator();
-
-                // New workspace.
-                let view_new = view_for_new.clone();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        div().w_full().cursor_pointer().child("New Workspace")
-                    })
-                    .on_click(window.listener_for(
-                        &view_new,
-                        |this, _, _, cx| {
-                            this.show_create_workspace_dialog(cx);
-                        },
-                    )),
-                );
-
-                // Delete workspace (only shown if more than one exists).
-                if can_delete {
-                    let view_del = view_for_delete.clone();
-                    menu = menu.item(
-                        PopupMenuItem::element(move |_, _| {
-                            div().w_full().cursor_pointer().child("Delete Workspace")
-                        })
-                        .on_click(window.listener_for(
-                            &view_del,
-                            |this, _, _, cx| {
-                                this.show_delete_workspace_dialog(cx);
-                            },
-                        )),
-                    );
-                }
-
-                // Rename workspace.
-                let view_ren = view_for_rename.clone();
-                menu = menu.item(
-                    PopupMenuItem::element(move |_, _| {
-                        div().w_full().cursor_pointer().child("Rename Workspace")
-                    })
-                    .on_click(window.listener_for(
-                        &view_ren,
-                        |this, _, _, cx| {
-                            this.show_rename_workspace_dialog(cx);
-                        },
-                    )),
-                );
-
-                menu
-            })
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
@@ -574,6 +432,8 @@ impl Render for BeamView {
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
+            .on_action(cx.listener(Self::on_action_workspace_menu_rename))
+            .on_action(cx.listener(Self::on_action_workspace_menu_delete))
             .on_action(cx.listener(Self::on_action_send_active_request))
             .on_action(cx.listener(Self::on_action_create_request_below_active))
             .on_action(cx.listener(Self::on_action_duplicate_active_request))
