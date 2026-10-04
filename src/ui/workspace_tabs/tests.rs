@@ -96,6 +96,15 @@ fn draw(cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
+fn settle_dialog(cx: &mut VisualTestContext) {
+    draw(cx);
+    // Dialog entrance moves hitboxes using wall-clock time, not the test clock.
+    std::thread::sleep(
+        *gpui_kit::component::dialog::ANIMATION_DURATION + std::time::Duration::from_millis(10),
+    );
+    draw(cx);
+}
+
 fn snapshot(cx: &mut VisualTestContext, id: impl Into<SharedString>) -> ElementSnapshot {
     let id = gpui::ElementId::from(id.into());
     cx.update(|window, _| find(window, &[], &id).expect("rendered control"))
@@ -381,8 +390,13 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
         fixture.commands.try_recv().is_err(),
         "right-click does not switch workspaces"
     );
+    // Linux's drawn native-menu fallback takes focus outside Beam's action scope.
+    // Dismiss it before dispatching the menu action directly.
+    cx.simulate_keystrokes("escape");
+    draw(cx);
     cx.dispatch_action(WorkspaceMenuRename(target));
     draw(cx);
+    snapshot(cx, "workspace-dialog-submit");
     cx.simulate_keystrokes("enter");
     draw(cx);
     let command = fixture.commands.try_recv();
@@ -398,12 +412,14 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
     );
 
     cx.dispatch_action(WorkspaceMenuRename(target));
-    draw(cx);
+    settle_dialog(cx);
     let submit = snapshot(cx, "workspace-dialog-submit").bounds().center();
     cx.simulate_click(submit, Modifiers::default());
     draw(cx);
+    let command = fixture.commands.try_recv();
     assert!(
-        matches!(fixture.commands.try_recv(), Ok(AppCommand::RenameWorkspace { workspace_id, .. }) if workspace_id == target)
+        matches!(command, Ok(AppCommand::RenameWorkspace { workspace_id, .. }) if workspace_id == target),
+        "command={command:?}"
     );
     let mut entries = fixture
         .view
@@ -452,6 +468,8 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
     cx.simulate_mouse_down(tab, MouseButton::Right, Modifiers::default());
     cx.simulate_mouse_up(tab, MouseButton::Right, Modifiers::default());
     draw(cx);
+    cx.simulate_keystrokes("escape");
+    draw(cx);
     cx.dispatch_action(WorkspaceMenuDelete(target));
     draw(cx);
     cx.simulate_keystrokes("escape");
@@ -461,7 +479,7 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
         "cancel does not delete"
     );
     cx.dispatch_action(WorkspaceMenuDelete(target));
-    draw(cx);
+    settle_dialog(cx);
     let delete = snapshot(cx, "delete-workspace-submit").bounds().center();
     cx.simulate_click(delete, Modifiers::default());
     draw(cx);
