@@ -255,14 +255,6 @@ impl BeamView {
                 }
                 _ => self.shell.apply_event(&event),
             }
-            if matches!(
-                event,
-                AppEvent::WorkspaceSwitched { .. }
-                    | AppEvent::WorkspaceDeleted { .. }
-                    | AppEvent::WorkspaceRenamed { .. }
-            ) {
-                self.sync_workspace_tab_focus(window, cx);
-            }
         }
 
         if let Some(request_id) = selected_request_to_persist

@@ -1,6 +1,4 @@
-use super::{
-    WorkspaceMenuDelete, WorkspaceMenuRename, WorkspaceTabNavigation, workspace_tab_index,
-};
+use super::{WorkspaceMenuDelete, WorkspaceMenuRename};
 use crate::app_shell::{AppCommand, AppEvent, AppShellState, DataSyncRuntime};
 use crate::models::WorkspaceEntry;
 use crate::paths::BeamPaths;
@@ -25,9 +23,16 @@ struct Fixture {
 }
 
 fn fixture(cx: &mut TestAppContext, count: usize) -> (Fixture, &mut VisualTestContext) {
+    fixture_with_active_workspace(cx, count, 0)
+}
+
+fn fixture_with_active_workspace(
+    cx: &mut TestAppContext,
+    count: usize,
+    active_index: usize,
+) -> (Fixture, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
-        super::init(cx);
     });
     let directory = tempfile::tempdir().expect("fixture directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
@@ -43,9 +48,9 @@ fn fixture(cx: &mut TestAppContext, count: usize) -> (Fixture, &mut VisualTestCo
     shell.workspace.workspace_id = shell
         .workspace
         .all_workspaces
-        .first()
+        .get(active_index)
         .map(|entry| entry.workspace_id);
-    shell.workspace.workspace_name = "Workspace 0".to_string();
+    shell.workspace.workspace_name = format!("Workspace {active_index}");
     let (command_tx, commands) = sync_channel(32);
     let (events, event_rx) = channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
@@ -73,6 +78,8 @@ fn fixture(cx: &mut TestAppContext, count: usize) -> (Fixture, &mut VisualTestCo
     cx.simulate_resize(size(px(800.), px(600.)));
     cx.update(|window, _| window.activate_window());
     draw(cx);
+    cx.update(|window, cx| window.simulate_next_frame(cx));
+    draw(cx);
     (
         Fixture {
             view,
@@ -94,15 +101,24 @@ fn snapshot(cx: &mut VisualTestContext, id: impl Into<SharedString>) -> ElementS
     cx.update(|window, _| find(window, &[], &id).expect("rendered control"))
 }
 
-#[test]
-fn workspace_tab_navigation_wraps_and_handles_empty_strips() {
-    use WorkspaceTabNavigation::{First, Last, Next, Previous};
-    assert_eq!(workspace_tab_index(0, 0, Next), None);
-    assert_eq!(workspace_tab_index(1, 0, Previous), Some(0));
-    assert_eq!(workspace_tab_index(3, 2, Next), Some(0));
-    assert_eq!(workspace_tab_index(3, 0, Previous), Some(2));
-    assert_eq!(workspace_tab_index(3, 2, First), Some(0));
-    assert_eq!(workspace_tab_index(3, 0, Last), Some(2));
+#[gpui_kit::test]
+fn startup_reveals_the_active_workspace_tab(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_active_workspace(cx, 12, 11);
+    let (active, scroll) = fixture.view.read_with(cx, |view, _| {
+        (
+            view.shell.workspace.workspace_id.expect("active workspace"),
+            view.workspace_tabs_scroll_handle.clone(),
+        )
+    });
+    let tab = snapshot(cx, format!("workspace-tab-{active}"));
+    assert_eq!(tab.selected(), Some(true));
+    assert!(
+        scroll.offset().x < px(0.),
+        "startup scrolls to the active tab"
+    );
+    assert!(tab.bounds().left() >= scroll.bounds().left());
+    assert!(tab.bounds().right() <= scroll.bounds().right());
+    assert!(fixture.commands.try_recv().is_err());
 }
 
 #[gpui_kit::test]
@@ -134,12 +150,6 @@ fn clicking_keeps_the_selected_workspace_tab_background(cx: &mut TestAppContext)
             });
             cx.simulate_mouse_up(tab.center(), button, Modifiers::default());
             draw(cx);
-            cx.update(|window, cx| {
-                assert_eq!(
-                    fixture.view.read(cx).focused_workspace_tab(window),
-                    Some(active)
-                );
-            });
             assert!(
                 fixture.commands.try_recv().is_err(),
                 "clicking the active tab does not switch"
@@ -301,58 +311,40 @@ fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn keyboard_focus_reveals_tabs_and_activation_requests_a_switch(cx: &mut TestAppContext) {
-    let (fixture, cx) = fixture(cx, 12);
-    let first = fixture.view.read_with(cx, |view, _| {
-        view.shell.workspace.all_workspaces[0].workspace_id
-    });
-    let second = fixture.view.read_with(cx, |view, _| {
-        view.shell.workspace.all_workspaces[1].workspace_id
-    });
-    let last = fixture.view.read_with(cx, |view, _| {
-        view.shell.workspace.all_workspaces[11].workspace_id
-    });
-    cx.update(|window, cx| {
-        fixture
-            .view
-            .update(cx, |view, cx| view.focus_workspace_tab(first, window, cx))
-    });
-    draw(cx);
-    cx.simulate_keystrokes("end");
-    draw(cx);
-    cx.update(|window, cx| {
-        assert_eq!(
-            fixture.view.read(cx).focused_workspace_tab(window),
-            Some(last)
+fn clicking_workspace_tabs_switches_without_taking_keyboard_focus(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let (first, second, input) = fixture.view.read_with(cx, |view, _| {
+        (
+            view.shell.workspace.all_workspaces[0].workspace_id,
+            view.shell.workspace.all_workspaces[1].workspace_id,
+            view.url_input.clone(),
         )
     });
-    let last_tab = snapshot(cx, format!("workspace-tab-{last}"));
-    let viewport = fixture
-        .view
-        .read_with(cx, |view, _| view.workspace_tabs_scroll_handle.bounds());
-    assert!(last_tab.bounds().right() <= viewport.right());
-    assert!(
-        fixture.commands.try_recv().is_err(),
-        "moving focus does not switch"
-    );
-    cx.simulate_keystrokes("home right enter");
+    cx.update(|window, cx| input.update(cx, |input, cx| input.focus(window, cx)));
     draw(cx);
-    assert!(
-        matches!(fixture.commands.try_recv(), Ok(AppCommand::SwitchWorkspace { workspace_id, .. }) if workspace_id == second)
-    );
+    let focus = cx.update(|window, cx| window.focused(cx).expect("URL input focused"));
+    for workspace_id in [first, second] {
+        let tab = snapshot(cx, format!("workspace-tab-{workspace_id}")).bounds();
+        cx.simulate_click(tab.center(), Modifiers::default());
+        draw(cx);
+        cx.update(|window, cx| assert_eq!(window.focused(cx), Some(focus.clone())));
+        if workspace_id == first {
+            assert!(
+                fixture.commands.try_recv().is_err(),
+                "active workspace is a no-op"
+            );
+        } else {
+            assert!(matches!(
+                fixture.commands.try_recv(),
+                Ok(AppCommand::SwitchWorkspace { workspace_id, .. }) if workspace_id == second
+            ));
+        }
+    }
     assert_eq!(
         snapshot(cx, format!("workspace-tab-{first}")).selected(),
         Some(true),
         "selection waits for worker confirmation"
     );
-    cx.simulate_keystrokes("home space");
-    assert!(
-        fixture.commands.try_recv().is_err(),
-        "active workspace is a no-op"
-    );
-    cx.simulate_keystrokes("tab");
-    draw(cx);
-    assert_eq!(snapshot(cx, "add-workspace").focused(), Some(true));
 }
 
 #[gpui_kit::test]
@@ -374,11 +366,6 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
         fixture.commands.try_recv().is_err(),
         "right-click does not switch workspaces"
     );
-    cx.simulate_keystrokes("shift-f10");
-    assert!(
-        fixture.commands.try_recv().is_err(),
-        "keyboard menu does not switch workspaces"
-    );
     cx.dispatch_action(WorkspaceMenuRename(target));
     draw(cx);
     cx.simulate_keystrokes("enter");
@@ -394,12 +381,6 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
             .read_with(cx, |view, _| view.shell.workspace.workspace_id),
         active
     );
-    cx.update(|window, cx| {
-        assert_eq!(
-            fixture.view.read(cx).focused_workspace_tab(window),
-            Some(target)
-        )
-    });
 
     cx.dispatch_action(WorkspaceMenuRename(target));
     draw(cx);
@@ -427,12 +408,6 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
     let renamed = snapshot(cx, format!("workspace-tab-{target}"));
     assert_eq!(renamed.label(), Some(entries[1].name.as_str()));
     assert!(renamed.bounds().size.width <= px(192.));
-    cx.update(|window, cx| {
-        assert_eq!(
-            fixture.view.read(cx).focused_workspace_tab(window),
-            Some(target)
-        )
-    });
 }
 
 #[gpui_kit::test]
@@ -456,11 +431,11 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
         matches!(fixture.commands.try_recv(), Ok(AppCommand::CreateWorkspace { name, .. }) if name == "Added workspace")
     );
 
-    cx.update(|window, cx| {
-        fixture
-            .view
-            .update(cx, |view, cx| view.focus_workspace_tab(target, window, cx))
-    });
+    let tab = snapshot(cx, format!("workspace-tab-{target}"))
+        .bounds()
+        .center();
+    cx.simulate_mouse_down(tab, MouseButton::Right, Modifiers::default());
+    cx.simulate_mouse_up(tab, MouseButton::Right, Modifiers::default());
     draw(cx);
     cx.dispatch_action(WorkspaceMenuDelete(target));
     draw(cx);
@@ -485,23 +460,16 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
         Some(active)
     );
 
-    cx.update(|window, cx| {
+    cx.update(|_, cx| {
         fixture.view.update(cx, |view, cx| {
             view.shell
                 .workspace
                 .all_workspaces
                 .retain(|entry| entry.workspace_id == active);
-            view.sync_workspace_tab_focus(window, cx);
             cx.notify();
         })
     });
     draw(cx);
-    cx.update(|window, cx| {
-        assert_eq!(
-            fixture.view.read(cx).focused_workspace_tab(window),
-            Some(active)
-        )
-    });
     cx.dispatch_action(WorkspaceMenuDelete(active));
     draw(cx);
     assert!(fixture.commands.try_recv().is_err());

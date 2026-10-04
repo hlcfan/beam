@@ -6,9 +6,6 @@ pub(super) struct BeamView {
     pub(super) focus_handle: FocusHandle,
     pub(super) tree_focus_handle: FocusHandle,
     pub(super) workspace_tabs_scroll_handle: ScrollHandle,
-    pub(super) workspace_tabs_focus_handle: FocusHandle,
-    pub(super) workspace_tab_focus_handles: HashMap<Ulid, FocusHandle>,
-    pub(super) workspace_tab_stop: Option<Ulid>,
     pub(super) current_workspace_paths: BeamPaths,
     pub(super) request: RequestAuthoringState,
     pub(super) startup_messages: Vec<StartupMessage>,
@@ -186,9 +183,6 @@ impl BeamView {
             focus_handle,
             tree_focus_handle,
             workspace_tabs_scroll_handle: ScrollHandle::new(),
-            workspace_tabs_focus_handle: cx.focus_handle(),
-            workspace_tab_focus_handles: HashMap::new(),
-            workspace_tab_stop: None,
             request,
             startup_messages,
             url_input,
@@ -271,18 +265,15 @@ impl BeamView {
         view.rebuild_request_auth_input_subscriptions(window, cx);
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
-        view.sync_workspace_tab_focus(window, cx);
-        view._subscriptions.push(cx.on_focus_in(
-            &view.workspace_tabs_focus_handle,
-            window,
-            |this, window, cx| {
-                if let Some(workspace_id) = this.focused_workspace_tab(window) {
-                    this.reveal_workspace_tab(workspace_id);
-                    cx.notify();
-                }
-            },
-        ));
-        view.reveal_active_workspace_tab();
+        // The scroll handle gets its viewport and overflow during the first prepaint.
+        // Revealing before that consumes the request without scrolling horizontally.
+        let view_handle = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            let _ = view_handle.update(cx, |view, cx| {
+                view.reveal_active_workspace_tab();
+                cx.notify();
+            });
+        });
         view.schedule_app_event_poll(window, cx);
         view
     }

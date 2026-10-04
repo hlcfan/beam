@@ -124,7 +124,6 @@ pub fn run_app(
     let app = gpui_kit::application().with_assets(Assets);
     app.run(move |cx| {
         gpui_kit::init(cx);
-        workspace_tabs::init(cx);
         #[cfg(not(target_family = "wasm"))]
         init_theme_registry(
             state.theme.theme_name.clone().map(Into::into),
