@@ -465,7 +465,8 @@ pub fn run_app(
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
             titlebar: Some(TitleBar::title_bar_options()),
-            ..Default::default()
+            // Let TitleBar own dragging so AppKit cannot move the window from a control.
+            ..TitleBar::window_options()
         };
 
         let state = state.clone();
