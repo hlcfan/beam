@@ -123,7 +123,18 @@ impl BeamView {
                             .bg(theme.background)
                             .text_color(theme.foreground)
                             .border_color(theme.border)
-                            .shadow(theme.shadow_tokens().sm)
+                            .shadow(
+                                theme
+                                    .shadow_tokens()
+                                    .sm
+                                    .into_iter()
+                                    .map(|shadow| BoxShadow {
+                                        color: shadow.color.opacity(0.5),
+                                        blur_radius: shadow.blur_radius / 2.,
+                                        ..shadow
+                                    })
+                                    .collect(),
+                            )
                     })
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
