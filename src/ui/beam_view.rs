@@ -5,6 +5,9 @@ pub(super) struct BeamView {
     pub(super) focus_handle: FocusHandle,
     pub(super) tree_focus_handle: FocusHandle,
     pub(super) workspace_tabs_scroll_handle: ScrollHandle,
+    pub(super) workspace_tabs_focus_handle: FocusHandle,
+    pub(super) workspace_tab_focus_handles: HashMap<Ulid, FocusHandle>,
+    pub(super) workspace_tab_stop: Option<Ulid>,
     pub(super) current_workspace_paths: BeamPaths,
     pub(super) request: RequestAuthoringState,
     pub(super) startup_messages: Vec<StartupMessage>,
@@ -182,6 +185,9 @@ impl BeamView {
             focus_handle,
             tree_focus_handle,
             workspace_tabs_scroll_handle: ScrollHandle::new(),
+            workspace_tabs_focus_handle: cx.focus_handle(),
+            workspace_tab_focus_handles: HashMap::new(),
+            workspace_tab_stop: None,
             request,
             startup_messages,
             url_input,
@@ -264,13 +270,26 @@ impl BeamView {
         view.rebuild_request_auth_input_subscriptions(window, cx);
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
+        view.sync_workspace_tab_focus(window, cx);
+        view._subscriptions.push(cx.on_focus_in(
+            &view.workspace_tabs_focus_handle,
+            window,
+            |this, window, cx| {
+                if let Some(workspace_id) = this.focused_workspace_tab(window) {
+                    this.reveal_workspace_tab(workspace_id);
+                    cx.notify();
+                }
+            },
+        ));
         view.reveal_active_workspace_tab();
         view.schedule_app_event_poll(window, cx);
         view
     }
 
     fn render_title_bar_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
-        h_flex()
+        let content = h_flex()
+            .absolute()
+            .inset_0()
             .items_center()
             .justify_between()
             .w_full()
@@ -290,6 +309,7 @@ impl BeamView {
                             .ghost()
                             .cursor_pointer()
                             .icon(Icon::default().path("icons/plus.svg"))
+                            .accessibility_label("New workspace")
                             .tooltip("New workspace")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.show_create_workspace_dialog(cx);
@@ -321,7 +341,18 @@ impl BeamView {
                                 .child("Environment variables"),
                         ),
                 ),
-            )
+            );
+
+        // TitleBar's internal flex item retains its intrinsic minimum width.
+        // Absolute contents let this wrapper contribute zero intrinsic width,
+        // while the tab viewport receives the actual remaining title-bar space.
+        div()
+            .relative()
+            .w_0()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .child(content)
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
@@ -430,6 +461,8 @@ impl Render for BeamView {
         let request_size = (1280.0 - left_size) * 0.5;
 
         v_flex()
+            .id("beam-view")
+            .test_support()
             .track_focus(&self.focus_handle)
             .size_full()
             .on_action(cx.listener(Self::on_action_workspace_menu_rename))
@@ -454,7 +487,19 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_tree_menu_add_request_at_root))
             .on_action(cx.listener(Self::on_action_tree_menu_add_folder_at_root))
             .bg(cx.theme().background)
-            .child(TitleBar::new().child(self.render_title_bar_content(window, cx)))
+            .child(
+                div()
+                    .id("beam-title-bar")
+                    .test_support()
+                    .w_full()
+                    .min_w_0()
+                    .flex_shrink_0()
+                    .child(
+                        TitleBar::new()
+                            .w_full()
+                            .child(self.render_title_bar_content(window, cx)),
+                    ),
+            )
             .child(
                 h_flex().flex_1().w_full().child(
                     h_resizable("beam-main-shell")

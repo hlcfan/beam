@@ -28,9 +28,7 @@ impl BeamView {
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
             cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
+                .timer(Duration::from_millis(25))
                 .await;
             let _ = view.update_in(cx, |this, window, cx| {
                 this.app_event_poll_scheduled = false;
@@ -256,6 +254,14 @@ impl BeamView {
                     }
                 }
                 _ => self.shell.apply_event(&event),
+            }
+            if matches!(
+                event,
+                AppEvent::WorkspaceSwitched { .. }
+                    | AppEvent::WorkspaceDeleted { .. }
+                    | AppEvent::WorkspaceRenamed { .. }
+            ) {
+                self.sync_workspace_tab_focus(window, cx);
             }
         }
 

@@ -66,7 +66,7 @@ impl WorkspaceNameDialogView {
                 return;
             }
         };
-        let _ = self.target_view.update(cx, |this, cx| {
+        self.target_view.update(cx, |this, cx| {
             if let Err(error) = this.publish_app_command(command) {
                 window.push_notification(error, cx);
                 return;
@@ -151,7 +151,7 @@ impl WorkspaceDeleteDialogView {
 
     pub(in crate::ui) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace_id = self.workspace_id;
-        let _ = self.target_view.update(cx, |this, cx| {
+        self.target_view.update(cx, |this, cx| {
             if let Err(error) = this.publish_app_command(AppCommand::DeleteWorkspace {
                 workspace_id,
                 command_id: next_command_id(),
