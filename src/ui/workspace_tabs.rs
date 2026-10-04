@@ -75,6 +75,9 @@ impl BeamView {
             .on_action(cx.listener(Self::on_action_open_workspace_tab_menu))
             .flex()
             .items_center()
+            .gap_1()
+            .px_1()
+            .h_full()
             .flex_1()
             .min_w_0()
             .overflow_x_scroll()
@@ -105,18 +108,22 @@ impl BeamView {
                 .px_3()
                 .text_sm()
                 .cursor_pointer()
-                .border_b_2()
+                .rounded(theme.radius_lg)
+                .border_1()
                 .border_color(theme.transparent)
                 .text_color(theme.muted_foreground)
-                .hover(|style| style.bg(theme.secondary))
+                .when(!selected, |tab| {
+                    tab.hover(|style| style.bg(theme.secondary))
+                })
                 .active(|style| style.bg(theme.secondary_active))
-                .focus_visible(|style| style.bg(theme.secondary).border_color(theme.primary))
+                .focus_visible(|style| style.border_color(theme.primary))
                 .styles(|styles| {
                     styles.selected(|style| {
                         style
-                            .bg(theme.secondary)
+                            .bg(theme.background)
                             .text_color(theme.foreground)
-                            .border_color(theme.primary)
+                            .border_color(theme.border)
+                            .shadow(theme.shadow_tokens().sm)
                     })
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
