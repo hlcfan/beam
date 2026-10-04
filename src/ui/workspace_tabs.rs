@@ -116,8 +116,8 @@ impl BeamView {
                 .text_color(theme.muted_foreground)
                 .when(!selected, |tab| {
                     tab.hover(|style| style.bg(theme.secondary))
+                        .active(|style| style.bg(theme.secondary_active))
                 })
-                .active(|style| style.bg(theme.secondary_active))
                 .focus_visible(|style| style.border_color(theme.primary))
                 .styles(|styles| {
                     styles.selected(|style| {
