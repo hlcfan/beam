@@ -265,15 +265,7 @@ impl BeamView {
         view.rebuild_request_auth_input_subscriptions(window, cx);
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
-        // The scroll handle gets its viewport and overflow during the first prepaint.
-        // Revealing before that consumes the request without scrolling horizontally.
-        let view_handle = cx.entity().downgrade();
-        window.on_next_frame(move |_, cx| {
-            let _ = view_handle.update(cx, |view, cx| {
-                view.reveal_active_workspace_tab();
-                cx.notify();
-            });
-        });
+        view.schedule_active_workspace_tab_reveal(window, cx);
         view.schedule_app_event_poll(window, cx);
         view
     }

@@ -99,6 +99,28 @@ impl BeamView {
             }))
     }
 
+    pub(in crate::ui) fn schedule_active_workspace_tab_reveal(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // The scroll handle gets its viewport and overflow during the first prepaint.
+        // Revealing before that consumes the request without scrolling horizontally.
+        let view_handle = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            let _ = view_handle.update(cx, |view, cx| {
+                view.reveal_active_workspace_tab();
+                cx.notify();
+            });
+        });
+    }
+
+    pub(in crate::ui) fn reveal_active_workspace_tab(&self) {
+        if let Some(workspace_id) = self.shell.workspace.workspace_id {
+            self.reveal_workspace_tab(workspace_id);
+        }
+    }
+
     pub(in crate::ui) fn reveal_workspace_tab(&self, workspace_id: Ulid) {
         if let Some(index) = self
             .shell
@@ -171,12 +193,6 @@ impl BeamView {
             command_id: next_command_id(),
         }) {
             window.push_notification(error, cx);
-        }
-    }
-
-    pub(in crate::ui) fn reveal_active_workspace_tab(&self) {
-        if let Some(workspace_id) = self.shell.workspace.workspace_id {
-            self.reveal_workspace_tab(workspace_id);
         }
     }
 }
