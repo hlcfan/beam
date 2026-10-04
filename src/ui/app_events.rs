@@ -46,6 +46,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reveal_active_workspace_tab();
         self.invalidate_env_var_resolved_cache();
         self.request_view_histories
             .set_active_workspace(workspace_id);

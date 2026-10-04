@@ -15,6 +15,7 @@ impl BeamView {
             .overflow_y_hidden()
             .track_scroll(&self.workspace_tabs_scroll_handle)
             .children(workspaces.iter().enumerate().map(|(index, workspace)| {
+                let workspace_id = workspace.workspace_id;
                 let selected = Some(workspace.workspace_id) == self.shell.workspace.workspace_id;
                 let name = workspace.name.clone();
                 Tab::new(SharedString::from(format!(
@@ -42,9 +43,29 @@ impl BeamView {
                             .border_color(theme.primary)
                     })
                 })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.switch_workspace_from_tab(workspace_id, window, cx);
+                }))
                 .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                 .child(div().truncate().child(workspace.name.clone()))
             }))
+    }
+
+    pub(in crate::ui) fn switch_workspace_from_tab(
+        &mut self,
+        workspace_id: Ulid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if Some(workspace_id) == self.shell.workspace.workspace_id {
+            return;
+        }
+        if let Err(error) = self.publish_app_command(AppCommand::SwitchWorkspace {
+            workspace_id,
+            command_id: next_command_id(),
+        }) {
+            window.push_notification(error, cx);
+        }
     }
 
     pub(in crate::ui) fn reveal_active_workspace_tab(&self) {
