@@ -4,6 +4,7 @@ pub(super) struct BeamView {
     pub(super) shell: AppShellState,
     pub(super) focus_handle: FocusHandle,
     pub(super) tree_focus_handle: FocusHandle,
+    pub(super) workspace_tabs_scroll_handle: ScrollHandle,
     pub(super) current_workspace_paths: BeamPaths,
     pub(super) request: RequestAuthoringState,
     pub(super) startup_messages: Vec<StartupMessage>,
@@ -180,6 +181,7 @@ impl BeamView {
             shell,
             focus_handle,
             tree_focus_handle,
+            workspace_tabs_scroll_handle: ScrollHandle::new(),
             request,
             startup_messages,
             url_input,
@@ -262,6 +264,7 @@ impl BeamView {
         view.rebuild_request_auth_input_subscriptions(window, cx);
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
+        view.reveal_active_workspace_tab();
         view.schedule_app_event_poll(window, cx);
         view
     }

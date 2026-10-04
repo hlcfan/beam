@@ -11,7 +11,9 @@ impl BeamView {
             .items_center()
             .flex_1()
             .min_w_0()
-            .overflow_x_hidden()
+            .overflow_x_scroll()
+            .overflow_y_hidden()
+            .track_scroll(&self.workspace_tabs_scroll_handle)
             .children(workspaces.iter().enumerate().map(|(index, workspace)| {
                 let selected = Some(workspace.workspace_id) == self.shell.workspace.workspace_id;
                 let name = workspace.name.clone();
@@ -43,5 +45,17 @@ impl BeamView {
                 .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                 .child(div().truncate().child(workspace.name.clone()))
             }))
+    }
+
+    pub(in crate::ui) fn reveal_active_workspace_tab(&self) {
+        if let Some(index) = self
+            .shell
+            .workspace
+            .all_workspaces
+            .iter()
+            .position(|workspace| Some(workspace.workspace_id) == self.shell.workspace.workspace_id)
+        {
+            self.workspace_tabs_scroll_handle.scroll_to_item(index);
+        }
     }
 }
