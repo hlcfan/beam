@@ -1,10 +1,8 @@
-use gpui_kit::component::{Selectable, button::Button, menu::PopupMenu, popover::Popover};
+use gpui_kit::component::{Selectable, button::Button};
 use gpui_kit::{
-    App, ClickEvent, Context, DismissEvent, Entity, Focusable as _, InteractiveElement as _,
-    IntoElement, MouseButton, MouseMoveEvent, ParentElement as _, Pixels, Point, RenderOnce,
-    Styled as _, Window, canvas, div,
+    App, ClickEvent, InteractiveElement as _, IntoElement, MouseButton, MouseMoveEvent,
+    ParentElement as _, Pixels, Point, RenderOnce, Styled as _, Window, canvas, div,
 };
-use std::rc::Rc;
 
 // Match GPUI's drag threshold, while keeping small pointer jitter clickable.
 const DRAG_THRESHOLD: f64 = 2.;
@@ -95,87 +93,10 @@ impl RenderOnce for TitleBarButton {
     }
 }
 
-pub(super) fn click_dropdown_menu(
-    mut button: Button,
-    builder: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
-    window: &mut Window,
-    cx: &mut App,
-) -> Popover {
-    let id = button
-        .interactivity()
-        .element_id
-        .clone()
-        .expect("title bar button id");
-    let style = button.style().clone();
-    let state = window.use_keyed_state((id.clone(), "click-menu"), cx, |_, _| {
-        ClickMenuState::default()
-    });
-    let open = state.read(cx).open;
-    let activation = state.clone();
-    let button = on_click_without_drag(
-        button.selected(open),
-        move |_, window, cx| {
-            activation.update(cx, |state, cx| {
-                state.open = !state.open;
-                if state.open {
-                    state.menu = None;
-                }
-                cx.notify();
-            });
-            window.refresh();
-        },
-        window,
-        cx,
-    );
-    let changes = state.clone();
-    let builder = Rc::new(builder);
-    Popover::new((id, "popover"))
-        .appearance(false)
-        .overlay_closable(false)
-        .trigger_style(style)
-        .trigger(button)
-        .open(open)
-        .on_open_change(move |open, _, cx| {
-            changes.update(cx, |state, cx| {
-                state.open = *open;
-                if !open {
-                    state.menu = None;
-                }
-                cx.notify();
-            });
-        })
-        .content(move |_, window, cx| {
-            if let Some(menu) = state.read(cx).menu.clone() {
-                return menu;
-            }
-            let builder = builder.clone();
-            let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
-                builder(menu, window, cx)
-            });
-            menu.focus_handle(cx).focus(window, cx);
-            let popover = cx.entity();
-            window
-                .subscribe(&menu, cx, move |_, _: &DismissEvent, window, cx| {
-                    // Restore focus before releasing the menu's focused entity.
-                    popover.update(cx, |state, cx| state.dismiss(window, cx));
-                    window.refresh();
-                })
-                .detach();
-            state.update(cx, |state, _| state.menu = Some(menu.clone()));
-            menu
-        })
-}
-
 #[derive(Default)]
 struct ClickGesture {
     start: Option<Point<Pixels>>,
     dragged: bool,
-}
-
-#[derive(Default)]
-struct ClickMenuState {
-    open: bool,
-    menu: Option<Entity<PopupMenu>>,
 }
 
 #[cfg(test)]

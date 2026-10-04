@@ -1,12 +1,20 @@
-use super::{click_dropdown_menu, on_click_without_drag};
+use super::on_click_without_drag;
 use gpui_kit as gpui;
 use gpui_kit::base::test_support::{find, snapshots};
-use gpui_kit::component::{Root, TitleBar, button::Button, h_flex, menu::PopupMenuItem};
-use gpui_kit::{
-    AppContext as _, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, Modifiers,
-    MouseButton, ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext,
-    Window, point, px, size,
+use gpui_kit::component::{
+    Root, Selectable, TitleBar,
+    button::Button,
+    h_flex,
+    menu::{PopupMenu, PopupMenuItem},
+    popover::Popover,
 };
+use gpui_kit::{
+    App, AppContext as _, Context, DismissEvent, Entity, FocusHandle, Focusable as _,
+    InteractiveElement as _, IntoElement, Modifiers, MouseButton, ParentElement as _, Render,
+    Styled as _, TestAppContext, VisualTestContext, Window, point, px, size,
+};
+
+use std::rc::Rc;
 
 struct Harness {
     activations: usize,
@@ -36,6 +44,83 @@ impl Render for Harness {
                 .child(environment),
         )
     }
+}
+
+fn click_dropdown_menu(
+    mut button: Button,
+    builder: impl Fn(PopupMenu, &mut Window, &mut Context<PopupMenu>) -> PopupMenu + 'static,
+    window: &mut Window,
+    cx: &mut App,
+) -> Popover {
+    let id = button
+        .interactivity()
+        .element_id
+        .clone()
+        .expect("title bar button id");
+    let style = button.style().clone();
+    let state = window.use_keyed_state((id.clone(), "click-menu"), cx, |_, _| {
+        ClickMenuState::default()
+    });
+    let open = state.read(cx).open;
+    let activation = state.clone();
+    let button = on_click_without_drag(
+        button.selected(open),
+        move |_, window, cx| {
+            activation.update(cx, |state, cx| {
+                state.open = !state.open;
+                if state.open {
+                    state.menu = None;
+                }
+                cx.notify();
+            });
+            window.refresh();
+        },
+        window,
+        cx,
+    );
+    let changes = state.clone();
+    let builder = Rc::new(builder);
+    Popover::new((id, "popover"))
+        .appearance(false)
+        .overlay_closable(false)
+        .trigger_style(style)
+        .trigger(button)
+        .open(open)
+        .on_open_change(move |open, _, cx| {
+            changes.update(cx, |state, cx| {
+                state.open = *open;
+                if !open {
+                    state.menu = None;
+                }
+                cx.notify();
+            });
+        })
+        .content(move |_, window, cx| {
+            if let Some(menu) = state.read(cx).menu.clone() {
+                return menu;
+            }
+            let builder = builder.clone();
+            let menu = PopupMenu::build(window, cx, move |menu, window, cx| {
+                builder(menu, window, cx)
+            });
+            menu.focus_handle(cx).focus(window, cx);
+            let popover = cx.entity();
+            window
+                .subscribe(&menu, cx, move |_, _: &DismissEvent, window, cx| {
+                    // Restore focus before releasing the menu's focused entity.
+                    popover.update(cx, |state, cx| state.dismiss(window, cx));
+                    window.refresh();
+                })
+                .detach();
+            state.update(cx, |state, _| state.menu = Some(menu.clone()));
+            menu
+        })
+}
+
+#[derive(Default)]
+struct ClickMenuState {
+    open: bool,
+    menu: Option<Entity<PopupMenu>>,
 }
 
 fn fixture(cx: &mut TestAppContext) -> (&mut VisualTestContext, Entity<Harness>) {
