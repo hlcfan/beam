@@ -106,6 +106,35 @@ fn workspace_tab_navigation_wraps_and_handles_empty_strips() {
 }
 
 #[gpui_kit::test]
+fn add_button_follows_short_tab_strips(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 3);
+    let last = fixture.view.read_with(cx, |view, _| {
+        view.shell.workspace.all_workspaces[2].workspace_id
+    });
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        cx.update(|_, cx| Theme::change(mode, None, cx));
+        for font_size in [14., 16., 18.] {
+            cx.update(|_, cx| {
+                Theme::global_mut(cx).font_size = px(font_size);
+                Theme::sync_base(cx);
+                cx.refresh_windows();
+            });
+            for width in [800., 1280.] {
+                cx.simulate_resize(size(px(width), px(600.)));
+                draw(cx);
+                let last_tab = snapshot(cx, format!("workspace-tab-{last}")).bounds();
+                let add = snapshot(cx, "add-workspace").bounds();
+                let environment = snapshot(cx, "title-bar-environment-sheet").bounds();
+                let gap = add.left() - last_tab.right();
+                assert!(gap >= px(0.) && gap <= px(font_size / 2.), "gap={gap:?}");
+                assert!(environment.left() - add.right() > px(font_size));
+                assert!(environment.right() <= px(width));
+            }
+        }
+    }
+}
+
+#[gpui_kit::test]
 fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
     let (fixture, cx) = fixture(cx, 12);
     let add = snapshot(cx, "add-workspace").bounds();

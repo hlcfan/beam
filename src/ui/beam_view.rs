@@ -291,7 +291,6 @@ impl BeamView {
             .absolute()
             .inset_0()
             .items_center()
-            .justify_between()
             .w_full()
             .min_w_0()
             .h_full()
@@ -316,6 +315,7 @@ impl BeamView {
                             })),
                     ),
             )
+            .child(div().flex_1().min_w_0())
             .child(
                 div().flex().flex_shrink_0().occlude().child(
                     Button::new("title-bar-environment-sheet")

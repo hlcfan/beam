@@ -78,7 +78,7 @@ impl BeamView {
             .gap_1()
             .px_1()
             .h_full()
-            .flex_1()
+            .flex_initial()
             .min_w_0()
             .overflow_x_scroll()
             .overflow_y_hidden()
