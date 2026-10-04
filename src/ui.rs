@@ -112,6 +112,9 @@ use crate::tree_dnd::{
     TreeRowViewModel, build_tree_render_items, tree_depth_inset,
 };
 
+// Window chrome uses a physical height to align native controls and sheet insets.
+const BEAM_TITLE_BAR_HEIGHT: Pixels = px(44.);
+
 pub fn run_app(
     state: AppShellState,
     startup_messages: Vec<StartupMessage>,
@@ -464,9 +467,13 @@ pub fn run_app(
             .detach();
         }
 
+        let mut titlebar = TitleBar::title_bar_options();
+        if let Some(position) = titlebar.traffic_light_position.as_mut() {
+            position.y += (BEAM_TITLE_BAR_HEIGHT - gpui_kit::component::TITLE_BAR_HEIGHT) / 2.;
+        }
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
-            titlebar: Some(TitleBar::title_bar_options()),
+            titlebar: Some(titlebar),
             ..Default::default()
         };
 

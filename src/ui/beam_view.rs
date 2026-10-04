@@ -497,6 +497,7 @@ impl Render for BeamView {
                     .child(
                         TitleBar::new()
                             .w_full()
+                            .h(BEAM_TITLE_BAR_HEIGHT)
                             .child(self.render_title_bar_content(window, cx)),
                     ),
             )
