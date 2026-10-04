@@ -170,14 +170,14 @@ impl BeamView {
         }
         let menu = append_with_image_or_plain(
             NativeMenu::new(),
-            "Rename…",
+            "Rename",
             "icons/edit.svg",
             false,
             Box::new(WorkspaceMenuRename(workspace_id)),
         );
         let menu = append_with_image_or_plain(
             menu.separator(),
-            "Delete…",
+            "Delete",
             "icons/trash.svg",
             self.shell.workspace.all_workspaces.len() <= 1,
             Box::new(WorkspaceMenuDelete(workspace_id)),
