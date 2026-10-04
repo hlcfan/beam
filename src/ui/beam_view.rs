@@ -278,13 +278,16 @@ impl BeamView {
             .items_center()
             .justify_between()
             .w_full()
+            .min_w_0()
             .h_full()
             .px_2()
             .text_sm()
             .text_color(cx.theme().foreground)
+            .child(self.render_workspace_tabs(cx))
+            // Retain workspace actions until their tab entry points are added.
             .child(workspace_button)
             .child(
-                div().flex().occlude().child(
+                div().flex().flex_shrink_0().occlude().child(
                     Button::new("title-bar-environment-sheet")
                         .small()
                         .ghost()

@@ -9,6 +9,7 @@ mod response;
 mod text_edit_menu;
 mod theme;
 mod tree;
+mod workspace_tabs;
 
 use beam_view::BeamView;
 use environment::{EnvVarHoverInfo, environment_file_path_for_workspace};
