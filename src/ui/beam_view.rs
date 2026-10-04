@@ -301,11 +301,16 @@ impl BeamView {
             .child(
                 div()
                     .flex_shrink_0()
+                    .h_full()
+                    .py_1()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         Button::new("add-workspace")
                             .small()
                             .ghost()
+                            .h_full()
+                            .w_auto()
+                            .aspect_ratio(1.)
                             .cursor_pointer()
                             .icon(Icon::default().path("icons/plus.svg"))
                             .accessibility_label("New workspace")
@@ -317,30 +322,36 @@ impl BeamView {
             )
             .child(div().flex_1().min_w_0())
             .child(
-                div().flex().flex_shrink_0().occlude().child(
-                    Button::new("title-bar-environment-sheet")
-                        .small()
-                        .ghost()
-                        .cursor_pointer()
-                        .h(px(22.0))
-                        .px_1()
-                        .rounded(px(6.0))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.open_environment_variables_sheet(window, cx);
-                        }))
-                        .child(
-                            h_flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    Icon::default()
-                                        .path("icons/variable.svg")
-                                        .size(px(14.0))
-                                        .text_color(cx.theme().muted_foreground),
-                                )
-                                .child("Environment variables"),
-                        ),
-                ),
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .h_full()
+                    .py_1()
+                    .occlude()
+                    .child(
+                        Button::new("title-bar-environment-sheet")
+                            .small()
+                            .ghost()
+                            .cursor_pointer()
+                            .h_full()
+                            .px_1()
+                            .rounded(px(6.0))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_environment_variables_sheet(window, cx);
+                            }))
+                            .child(
+                                h_flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        Icon::default()
+                                            .path("icons/variable.svg")
+                                            .size(px(14.0))
+                                            .text_color(cx.theme().muted_foreground),
+                                    )
+                                    .child("Environment variables"),
+                            ),
+                    ),
             );
 
         // TitleBar's internal flex item retains its intrinsic minimum width.

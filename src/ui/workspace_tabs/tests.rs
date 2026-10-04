@@ -135,7 +135,12 @@ fn add_button_follows_short_tab_strips(cx: &mut TestAppContext) {
                 assert!(title_bar.bottom() - active_tab.bottom() >= minimum_inset);
                 assert!(title_bar.size.height - active_tab.size.height <= px(font_size));
                 let add = snapshot(cx, "add-workspace").bounds();
+                assert_eq!(add.top(), active_tab.top());
+                assert_eq!(add.size.height, active_tab.size.height);
+                assert_eq!(add.size.width, add.size.height);
                 let environment = snapshot(cx, "title-bar-environment-sheet").bounds();
+                assert_eq!(environment.top(), active_tab.top());
+                assert_eq!(environment.size.height, active_tab.size.height);
                 let gap = add.left() - last_tab.right();
                 assert!(gap >= px(0.) && gap <= px(font_size / 2.), "gap={gap:?}");
                 assert!(environment.left() - add.right() > px(font_size));
