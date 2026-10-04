@@ -132,19 +132,34 @@ fn clicking_keeps_the_selected_workspace_tab_background(cx: &mut TestAppContext)
         cx.update(|_, cx| Theme::change(mode, None, cx));
         draw(cx);
         let tab = snapshot(cx, format!("workspace-tab-{active}")).bounds();
+        let selected_background = cx.update(|window, cx| {
+            let painted_tab = window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| quad.bounds == tab.scale(window.scale_factor()))
+                .expect("painted tab background");
+            if mode.is_dark() {
+                assert_ne!(painted_tab.background, Theme::global(cx).background.into());
+                assert!(!window.painted_quads().into_iter().any(|quad| {
+                    quad.bounds == tab.scale(window.scale_factor()) && quad.border_color.a > 0.
+                }));
+            } else {
+                assert_eq!(painted_tab.background, Theme::global(cx).background.into());
+            }
+            painted_tab.background
+        });
         for button in [MouseButton::Left, MouseButton::Right] {
             cx.simulate_mouse_down(tab.center(), button, Modifiers::default());
             // Check while pressed; native menu tracking can also consume mouse-up.
             draw(cx);
-            cx.update(|window, cx| {
+            cx.update(|window, _| {
                 let painted_tab = window
                     .painted_quads()
                     .into_iter()
                     .find(|quad| quad.bounds == tab.scale(window.scale_factor()))
                     .expect("painted tab background");
                 assert_eq!(
-                    painted_tab.background,
-                    Theme::global(cx).background.into(),
+                    painted_tab.background, selected_background,
                     "{button:?}-click preserves the selected background in {mode:?}"
                 );
             });

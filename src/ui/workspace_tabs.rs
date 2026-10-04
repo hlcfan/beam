@@ -63,6 +63,12 @@ impl BeamView {
                             .bg(theme.background)
                             .text_color(theme.foreground)
                             .border_color(theme.border.mix(theme.foreground, 0.95))
+                            .when(theme.mode.is_dark(), |style| {
+                                style
+                                    .bg(theme.background.mix_oklab(theme.foreground, 0.65))
+                                    .border_color(theme.transparent)
+                                    .font_semibold()
+                            })
                             .shadow(
                                 theme
                                     .shadow_tokens()
