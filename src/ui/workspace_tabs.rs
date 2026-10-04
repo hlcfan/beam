@@ -143,14 +143,18 @@ impl BeamView {
                     this.focus_workspace_tab(workspace_id, window, cx);
                     this.switch_workspace_from_tab(workspace_id, window, cx);
                 }))
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                .capture_any_mouse_down(cx.listener(
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        if event.button != MouseButton::Right {
+                            return;
+                        }
+                        // Native menu tracking can consume mouse-up. Stop before the tab
+                        // records a press that would leave its active background stuck.
                         cx.stop_propagation();
                         this.focus_workspace_tab(workspace_id, window, cx);
                         this.show_workspace_tab_menu(workspace_id, event.position, window, cx);
-                    }),
-                )
+                    },
+                ))
                 .tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
                 .child(div().truncate().child(workspace.name.clone()))
             }))

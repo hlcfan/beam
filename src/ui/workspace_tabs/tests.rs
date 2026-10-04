@@ -106,6 +106,45 @@ fn workspace_tab_navigation_wraps_and_handles_empty_strips() {
 }
 
 #[gpui_kit::test]
+fn right_click_keeps_the_selected_workspace_tab_background(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let active = fixture.view.read_with(cx, |view, _| {
+        view.shell.workspace.workspace_id.expect("active workspace")
+    });
+
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        cx.update(|_, cx| Theme::change(mode, None, cx));
+        draw(cx);
+        let tab = snapshot(cx, format!("workspace-tab-{active}")).bounds();
+        cx.simulate_mouse_down(tab.center(), MouseButton::Right, Modifiers::default());
+        // Native menu tracking can consume mouse-up, so redraw before delivering it.
+        draw(cx);
+        cx.update(|window, cx| {
+            let painted_tab = window
+                .painted_quads()
+                .into_iter()
+                .find(|quad| quad.bounds == tab.scale(window.scale_factor()))
+                .expect("painted tab background");
+            assert_eq!(
+                painted_tab.background,
+                Theme::global(cx).background.into(),
+                "right-click preserves the selected background in {mode:?}"
+            );
+            assert_eq!(
+                fixture.view.read(cx).focused_workspace_tab(window),
+                Some(active)
+            );
+        });
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "right-click does not switch"
+        );
+        cx.simulate_mouse_up(tab.center(), MouseButton::Right, Modifiers::default());
+        draw(cx);
+    }
+}
+
+#[gpui_kit::test]
 fn add_button_follows_short_tab_strips(cx: &mut TestAppContext) {
     let (fixture, cx) = fixture(cx, 3);
     let last = fixture.view.read_with(cx, |view, _| {
