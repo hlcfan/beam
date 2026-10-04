@@ -1,5 +1,6 @@
 use super::*;
 use gpui_kit::base::{Tab, Tabs};
+use gpui_kit::component::Colorize;
 
 #[cfg(test)]
 mod tests;
@@ -113,7 +114,7 @@ impl BeamView {
                 .rounded(theme.radius_lg)
                 .border_1()
                 .border_color(theme.transparent)
-                .text_color(theme.muted_foreground)
+                .text_color(theme.foreground)
                 .when(!selected, |tab| {
                     tab.hover(|style| style.bg(theme.secondary))
                         .active(|style| style.bg(theme.secondary_active))
@@ -124,15 +125,18 @@ impl BeamView {
                         style
                             .bg(theme.background)
                             .text_color(theme.foreground)
-                            .border_color(theme.border)
+                            .border_color(theme.border.mix(theme.foreground, 0.95))
                             .shadow(
                                 theme
                                     .shadow_tokens()
                                     .sm
                                     .into_iter()
                                     .map(|shadow| BoxShadow {
-                                        color: shadow.color.opacity(0.5),
+                                        color: shadow.color.opacity(0.65),
+                                        // Keep depth below the tab without a halo around its border.
+                                        offset: point(shadow.offset.x, shadow.offset.y * 2.),
                                         blur_radius: shadow.blur_radius / 2.,
+                                        spread_radius: -shadow.blur_radius / 4.,
                                         ..shadow
                                     })
                                     .collect(),
