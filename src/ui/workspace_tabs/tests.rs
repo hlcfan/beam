@@ -111,6 +111,9 @@ fn add_button_follows_short_tab_strips(cx: &mut TestAppContext) {
     let last = fixture.view.read_with(cx, |view, _| {
         view.shell.workspace.all_workspaces[2].workspace_id
     });
+    let first = fixture.view.read_with(cx, |view, _| {
+        view.shell.workspace.all_workspaces[0].workspace_id
+    });
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
         cx.update(|_, cx| Theme::change(mode, None, cx));
         for font_size in [14., 16., 18.] {
@@ -123,6 +126,14 @@ fn add_button_follows_short_tab_strips(cx: &mut TestAppContext) {
                 cx.simulate_resize(size(px(width), px(600.)));
                 draw(cx);
                 let last_tab = snapshot(cx, format!("workspace-tab-{last}")).bounds();
+                let active_tab = snapshot(cx, format!("workspace-tab-{first}")).bounds();
+                let title_bar = snapshot(cx, "beam-title-bar").bounds();
+                assert_eq!(active_tab.top(), last_tab.top());
+                assert_eq!(active_tab.size.height, last_tab.size.height);
+                let minimum_inset = px(font_size / 4. - 1.);
+                assert!(active_tab.top() - title_bar.top() >= minimum_inset);
+                assert!(title_bar.bottom() - active_tab.bottom() >= minimum_inset);
+                assert!(title_bar.size.height - active_tab.size.height <= px(font_size));
                 let add = snapshot(cx, "add-workspace").bounds();
                 let environment = snapshot(cx, "title-bar-environment-sheet").bounds();
                 let gap = add.left() - last_tab.right();
