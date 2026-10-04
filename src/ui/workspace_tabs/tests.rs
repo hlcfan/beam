@@ -146,6 +146,38 @@ fn add_button_follows_short_tab_strips(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn holding_title_bar_controls_does_not_start_a_window_drag(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 3);
+    let workspace = fixture.view.read_with(cx, |view, _| {
+        view.shell.workspace.all_workspaces[1].workspace_id
+    });
+    let add = snapshot(cx, "add-workspace").bounds();
+    let environment = snapshot(cx, "title-bar-environment-sheet").bounds();
+    let blank_title_bar = point((add.right() + environment.left()) / 2., add.center().y);
+    let title_bar = snapshot(cx, "beam-title-bar").bounds();
+
+    for control in [
+        format!("workspace-tab-{workspace}"),
+        "add-workspace".to_string(),
+        "title-bar-environment-sheet".to_string(),
+    ] {
+        let start = snapshot(cx, control).bounds().center();
+        cx.simulate_mouse_down(start, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_move(start, MouseButton::Left, Modifiers::default());
+        // Moving off the control into the draggable background must still be safe.
+        // TestWindow::start_window_move panics if the title bar starts a native drag.
+        cx.simulate_mouse_move(blank_title_bar, MouseButton::Left, Modifiers::default());
+        cx.simulate_mouse_up(blank_title_bar, MouseButton::Left, Modifiers::default());
+        draw(cx);
+        assert_eq!(snapshot(cx, "beam-title-bar").bounds(), title_bar);
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "drag must not activate the control"
+        );
+    }
+}
+
+#[gpui_kit::test]
 fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
     let (fixture, cx) = fixture(cx, 12);
     let add = snapshot(cx, "add-workspace").bounds();
