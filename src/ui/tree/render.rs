@@ -62,6 +62,24 @@ impl BeamView {
                 .tooltip(move |window, cx| Tooltip::new(tooltip_label.clone()).build(window, cx))
                 .child(label.clone()),
         );
+        if row.kind == TreeNodeKind::Request {
+            let request_id = row.id;
+            row_content = row_content.child(
+                Button::new(format!("tree-row-send-{}", request_id))
+                    .ghost()
+                    .small()
+                    .cursor_pointer()
+                    .disabled(self.is_request_sending(request_id))
+                    .icon(Icon::default().path("icons/play.svg"))
+                    .accessibility_label(format!("Send request {label}"))
+                    .tooltip("Send request")
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.send_request_from_tree_node(request_id, window, cx);
+                    })),
+            );
+        }
 
         let row_data = crate::app_shell::TreeRow {
             id: row.id,
