@@ -1,4 +1,9 @@
 use super::*;
+use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::spinner::Spinner;
+
+#[cfg(test)]
+mod tests;
 
 impl BeamView {
     pub(in crate::ui) fn render_tree_row(
@@ -66,8 +71,10 @@ impl BeamView {
         if row.kind == TreeNodeKind::Request {
             let request_id = row.id;
             let is_sending = self.is_request_sending(request_id);
+            let action_hover_group: SharedString =
+                format!("tree-row-send-hover-{request_id}").into();
             let action_label = if is_sending {
-                "Sending request"
+                "Stop request"
             } else {
                 "Send request"
             };
@@ -81,14 +88,59 @@ impl BeamView {
                             .invisible()
                             .group_hover(row_hover_group.clone(), |style| style.visible())
                     })
-                    .loading(is_sending)
-                    .icon(Icon::default().path("icons/play.svg"))
+                    .when(is_sending, |button| {
+                        button.w_6().px_0().group(action_hover_group.clone()).child(
+                            div()
+                                .relative()
+                                .size_4()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .id(format!("tree-row-spinner-{request_id}"))
+                                        .test_support()
+                                        .group_hover(action_hover_group.clone(), |style| {
+                                            style.invisible()
+                                        })
+                                        .child(Spinner::new().small()),
+                                )
+                                .child(
+                                    div()
+                                        .id(format!("tree-row-stop-{request_id}"))
+                                        .test_support()
+                                        .absolute()
+                                        .inset_0()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .invisible()
+                                        .group_hover(action_hover_group, |style| style.visible())
+                                        .child(Icon::default().path("icons/stop.svg").small()),
+                                ),
+                        )
+                    })
+                    .when(!is_sending, |button| {
+                        button.icon(Icon::default().path("icons/play.svg"))
+                    })
                     .accessibility_label(format!("{action_label} {label}"))
                     .tooltip(action_label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
-                        this.send_request_from_tree_node(request_id, window, cx);
+                        if is_sending {
+                            if !this.is_request_sending(request_id) {
+                                return;
+                            }
+                            if this.shell.workspace_tree.selected_request_id() == Some(request_id) {
+                                this.cancel_active_request_wait();
+                            } else {
+                                this.cancel_request_run_for(request_id);
+                            }
+                            cx.notify();
+                        } else if !this.is_request_sending(request_id) {
+                            this.send_request_from_tree_node(request_id, window, cx);
+                        }
                     })),
             );
         }
