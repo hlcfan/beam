@@ -25,6 +25,7 @@ impl BeamView {
             TreeNodeKind::Request => None,
         };
         let indent = px(tree_depth_inset(row.depth));
+        let row_hover_group: SharedString = format!("tree-row-hover-{}", row.id).into();
 
         let mut row_content = h_flex()
             .w_full()
@@ -69,6 +70,8 @@ impl BeamView {
                     .ghost()
                     .small()
                     .cursor_pointer()
+                    .invisible()
+                    .group_hover(row_hover_group.clone(), |style| style.visible())
                     .disabled(self.is_request_sending(request_id))
                     .icon(Icon::default().path("icons/play.svg"))
                     .accessibility_label(format!("Send request {label}"))
@@ -97,6 +100,7 @@ impl BeamView {
             .cursor_pointer()
             .child(
                 ListItem::new(format!("tree-row-{}", row_id))
+                    .group(row_hover_group)
                     .w_full()
                     .rounded(px(8.0))
                     .py_1()
