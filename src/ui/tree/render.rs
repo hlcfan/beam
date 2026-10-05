@@ -79,69 +79,81 @@ impl BeamView {
                 "Send request"
             };
             row_content = row_content.child(
-                Button::new(format!("tree-row-send-{}", request_id))
-                    .ghost()
-                    .small()
-                    .cursor_pointer()
-                    .when(!is_sending, |button| {
-                        button
-                            .invisible()
-                            .group_hover(row_hover_group.clone(), |style| style.visible())
-                    })
-                    .when(is_sending, |button| {
-                        button.w_6().px_0().group(action_hover_group.clone()).child(
-                            div()
-                                .relative()
-                                .size_4()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(
+                div()
+                    .id(format!("tree-row-action-{request_id}"))
+                    .flex_shrink_0()
+                    // Let the button dismiss its tooltip before blocking the row's mouse down.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        Button::new(format!("tree-row-send-{}", request_id))
+                            .ghost()
+                            .small()
+                            .cursor_pointer()
+                            .when(!is_sending, |button| {
+                                button
+                                    .invisible()
+                                    .group_hover(row_hover_group.clone(), |style| style.visible())
+                            })
+                            .when(is_sending, |button| {
+                                button.w_6().px_0().group(action_hover_group.clone()).child(
                                     div()
-                                        .id(format!("tree-row-spinner-{request_id}"))
-                                        .test_support()
-                                        .group_hover(action_hover_group.clone(), |style| {
-                                            style.invisible()
-                                        })
-                                        .child(Spinner::new().small()),
-                                )
-                                .child(
-                                    div()
-                                        .id(format!("tree-row-stop-{request_id}"))
-                                        .test_support()
-                                        .absolute()
-                                        .inset_0()
+                                        .relative()
+                                        .size_4()
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .invisible()
-                                        .group_hover(action_hover_group, |style| style.visible())
-                                        .child(Icon::default().path("icons/stop.svg").small()),
-                                ),
-                        )
-                    })
-                    .when(!is_sending, |button| {
-                        button.icon(Icon::default().path("icons/play.svg"))
-                    })
-                    .accessibility_label(format!("{action_label} {label}"))
-                    .tooltip(action_label)
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        cx.stop_propagation();
-                        if is_sending {
-                            if !this.is_request_sending(request_id) {
-                                return;
-                            }
-                            if this.shell.workspace_tree.selected_request_id() == Some(request_id) {
-                                this.cancel_active_request_wait();
-                            } else {
-                                this.cancel_request_run_for(request_id);
-                            }
-                            cx.notify();
-                        } else if !this.is_request_sending(request_id) {
-                            this.send_request_from_tree_node(request_id, window, cx);
-                        }
-                    })),
+                                        .child(
+                                            div()
+                                                .id(format!("tree-row-spinner-{request_id}"))
+                                                .test_support()
+                                                .group_hover(action_hover_group.clone(), |style| {
+                                                    style.invisible()
+                                                })
+                                                .child(Spinner::new().small()),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(format!("tree-row-stop-{request_id}"))
+                                                .test_support()
+                                                .absolute()
+                                                .inset_0()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .invisible()
+                                                .group_hover(action_hover_group, |style| {
+                                                    style.visible()
+                                                })
+                                                .child(
+                                                    Icon::default().path("icons/stop.svg").small(),
+                                                ),
+                                        ),
+                                )
+                            })
+                            .when(!is_sending, |button| {
+                                button.icon(Icon::default().path("icons/play.svg"))
+                            })
+                            .accessibility_label(format!("{action_label} {label}"))
+                            .tooltip(action_label)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                if is_sending {
+                                    if !this.is_request_sending(request_id) {
+                                        return;
+                                    }
+                                    if this.shell.workspace_tree.selected_request_id()
+                                        == Some(request_id)
+                                    {
+                                        this.cancel_active_request_wait();
+                                    } else {
+                                        this.cancel_request_run_for(request_id);
+                                    }
+                                    cx.notify();
+                                } else if !this.is_request_sending(request_id) {
+                                    this.send_request_from_tree_node(request_id, window, cx);
+                                }
+                            })),
+                    ),
             );
         }
 

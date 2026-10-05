@@ -1,6 +1,6 @@
 use super::{AppShellState, BeamPaths, BeamView, DataSyncRuntime, TreeNodeKind, TreeRowViewModel};
 use gpui_kit::base::test_support::{ElementSnapshot, find};
-use gpui_kit::component::Root;
+use gpui_kit::component::{ActiveTheme as _, Root};
 use gpui_kit::{
     AppContext as _, Context, ElementId, Entity, IntoElement, Modifiers, MouseButton,
     ParentElement, Render, SharedString, Styled, Subscription, TestAppContext, VisualTestContext,
@@ -32,7 +32,7 @@ impl Render for RowHost {
 }
 
 #[gpui_kit::test]
-fn hovering_spinner_reveals_stop_and_cancels_only_its_request(cx: &mut TestAppContext) {
+fn request_row_action_dismisses_tooltip_on_click(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let directory = tempfile::tempdir().expect("fixture directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
@@ -110,18 +110,19 @@ fn hovering_spinner_reveals_stop_and_cancels_only_its_request(cx: &mut TestAppCo
     assert!(!snapshot(cx, &spinner_id).visible());
     assert!(snapshot(cx, &stop_id).visible());
     assert_eq!(snapshot(cx, &button_id).bounds(), button);
-
-    cx.simulate_mouse_move(
-        point(px(350.), px(150.)),
-        MouseButton::Left,
-        Modifiers::default(),
-    );
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
     draw(cx);
-    assert!(snapshot(cx, &spinner_id).visible());
-    assert!(!snapshot(cx, &stop_id).visible());
+    assert!(tooltip_visible(cx, &button_id));
 
+    // Click while the tooltip is visible and keep the pointer stationary.
     cx.simulate_click(button.center(), Modifiers::default());
     draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
     assert_eq!(cancel_rx.try_recv(), Ok(()));
     assert_eq!(
         other_cancel_rx.try_recv(),
@@ -155,6 +156,7 @@ fn hovering_spinner_reveals_stop_and_cancels_only_its_request(cx: &mut TestAppCo
         cx.notify();
     });
     draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
     cx.simulate_click(button.center(), Modifiers::default());
     draw(cx);
     assert_eq!(cancel_rx.try_recv(), Ok(()));
@@ -164,6 +166,64 @@ fn hovering_spinner_reveals_stop_and_cancels_only_its_request(cx: &mut TestAppCo
         assert_eq!(view.response_status, "Canceled");
         assert_eq!(view.response_status_code, None);
     });
+
+    view.update(cx, |view, cx| {
+        view.begin_request_run_for(request_id);
+        cx.notify();
+    });
+    draw(cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
+
+    // Completion must not reopen the tooltip beneath a stationary pointer.
+    view.update(cx, |view, cx| {
+        let run_id = view.request_execution_states[&request_id].run_id;
+        crate::ui::request::execution::apply_request_run_completion_status(
+            &mut view.request_execution_states,
+            request_id,
+            run_id,
+            true,
+        );
+        cx.notify();
+    });
+    draw(cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
+    assert_eq!(
+        snapshot(cx, &button_id).label(),
+        Some("Send request Unknown")
+    );
+
+    cx.simulate_mouse_move(
+        point(px(350.), px(150.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    draw(cx);
+    let idle_button = snapshot(cx, &button_id).bounds();
+    cx.simulate_mouse_move(
+        idle_button.center(),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    draw(cx);
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert!(tooltip_visible(cx, &button_id));
+
+    // The idle Send action dismisses its tooltip too, even if URL validation fails.
+    cx.simulate_click(idle_button.center(), Modifiers::default());
+    draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
+    cx.executor()
+        .advance_clock(std::time::Duration::from_secs(1));
+    draw(cx);
+    assert!(!tooltip_visible(cx, &button_id));
 }
 
 fn draw(cx: &mut VisualTestContext) {
@@ -174,4 +234,16 @@ fn draw(cx: &mut VisualTestContext) {
 fn snapshot(cx: &mut VisualTestContext, id: &str) -> ElementSnapshot {
     let id = ElementId::from(SharedString::from(id.to_owned()));
     cx.update(|window, _| find(window, &[], &id).expect("rendered control"))
+}
+
+fn tooltip_visible(cx: &mut VisualTestContext, button_id: &str) -> bool {
+    // This fixture has no other popovers; a painted popover is the action tooltip.
+    let button = snapshot(cx, button_id).bounds();
+    cx.update(|window, cx| {
+        let button = button.scale(window.scale_factor());
+        window.painted_quads().iter().any(|quad| {
+            quad.background == cx.theme().tokens.popover.into()
+                && quad.bounds.top() >= button.bottom()
+        })
+    })
 }
