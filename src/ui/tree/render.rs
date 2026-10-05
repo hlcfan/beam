@@ -65,17 +65,26 @@ impl BeamView {
         );
         if row.kind == TreeNodeKind::Request {
             let request_id = row.id;
+            let is_sending = self.is_request_sending(request_id);
+            let action_label = if is_sending {
+                "Sending request"
+            } else {
+                "Send request"
+            };
             row_content = row_content.child(
                 Button::new(format!("tree-row-send-{}", request_id))
                     .ghost()
                     .small()
                     .cursor_pointer()
-                    .invisible()
-                    .group_hover(row_hover_group.clone(), |style| style.visible())
-                    .disabled(self.is_request_sending(request_id))
+                    .when(!is_sending, |button| {
+                        button
+                            .invisible()
+                            .group_hover(row_hover_group.clone(), |style| style.visible())
+                    })
+                    .loading(is_sending)
                     .icon(Icon::default().path("icons/play.svg"))
-                    .accessibility_label(format!("Send request {label}"))
-                    .tooltip("Send request")
+                    .accessibility_label(format!("{action_label} {label}"))
+                    .tooltip(action_label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _, window, cx| {
                         cx.stop_propagation();
