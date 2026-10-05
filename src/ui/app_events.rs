@@ -28,9 +28,7 @@ impl BeamView {
         let view = cx.entity();
         cx.spawn_in(window, async move |_, cx| {
             cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
+                .timer(Duration::from_millis(25))
                 .await;
             let _ = view.update_in(cx, |this, window, cx| {
                 this.app_event_poll_scheduled = false;
@@ -46,6 +44,7 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reveal_active_workspace_tab();
         self.invalidate_env_var_resolved_cache();
         self.request_view_histories
             .set_active_workspace(workspace_id);

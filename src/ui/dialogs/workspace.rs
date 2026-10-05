@@ -1,8 +1,27 @@
 use super::super::*;
 
+#[derive(Clone, Copy)]
 pub(in crate::ui) enum WorkspaceDialogMode {
     Create,
-    Rename,
+    Rename { workspace_id: Ulid },
+}
+
+impl WorkspaceDialogMode {
+    fn command(self, name: &str) -> Result<AppCommand, String> {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err("Workspace name cannot be empty.".to_string());
+        }
+        let command_id = next_command_id();
+        Ok(match self {
+            Self::Create => AppCommand::CreateWorkspace { name, command_id },
+            Self::Rename { workspace_id } => AppCommand::RenameWorkspace {
+                workspace_id,
+                new_name: name,
+                command_id,
+            },
+        })
+    }
 }
 
 pub(in crate::ui) struct WorkspaceNameDialogView {
@@ -40,28 +59,17 @@ impl WorkspaceNameDialogView {
     }
 
     pub(in crate::ui) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self.name_input.read(cx).value().trim().to_string();
-        if name.is_empty() {
-            window.push_notification("Workspace name cannot be empty.", cx);
-            return;
-        }
-        let is_create = matches!(self.mode, WorkspaceDialogMode::Create);
-        let _ = self.target_view.update(cx, |this, cx| {
-            if is_create {
-                this.app_command_tx
-                    .send(AppCommand::CreateWorkspace {
-                        name,
-                        command_id: next_command_id(),
-                    })
-                    .ok();
-            } else if let Some(workspace_id) = this.shell.workspace.workspace_id {
-                this.app_command_tx
-                    .send(AppCommand::RenameWorkspace {
-                        workspace_id,
-                        new_name: name,
-                        command_id: next_command_id(),
-                    })
-                    .ok();
+        let command = match self.mode.command(&self.name_input.read(cx).value()) {
+            Ok(command) => command,
+            Err(error) => {
+                window.push_notification(error, cx);
+                return;
+            }
+        };
+        self.target_view.update(cx, |this, cx| {
+            if let Err(error) = this.publish_app_command(command) {
+                window.push_notification(error, cx);
+                return;
             }
             window.close_dialog(cx);
         });
@@ -70,8 +78,6 @@ impl WorkspaceNameDialogView {
 
 impl Render for WorkspaceNameDialogView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let target_view = self.target_view.clone();
-        let name_input = self.name_input.clone();
         let is_create = matches!(self.mode, WorkspaceDialogMode::Create);
 
         v_flex()
@@ -114,34 +120,9 @@ impl Render for WorkspaceNameDialogView {
                             .small()
                             .cursor_pointer()
                             .label(if is_create { "Create" } else { "Rename" })
-                            .on_click(move |_, window, cx| {
-                                let name = name_input.read(cx).value().trim().to_string();
-                                if name.is_empty() {
-                                    window.push_notification("Workspace name cannot be empty.", cx);
-                                    return;
-                                }
-                                let _ = target_view.update(cx, |this, cx| {
-                                    if is_create {
-                                        this.app_command_tx
-                                            .send(AppCommand::CreateWorkspace {
-                                                name,
-                                                command_id: next_command_id(),
-                                            })
-                                            .ok();
-                                    } else if let Some(workspace_id) =
-                                        this.shell.workspace.workspace_id
-                                    {
-                                        this.app_command_tx
-                                            .send(AppCommand::RenameWorkspace {
-                                                workspace_id,
-                                                new_name: name,
-                                                command_id: next_command_id(),
-                                            })
-                                            .ok();
-                                    }
-                                    window.close_dialog(cx);
-                                });
-                            }),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.submit(window, cx);
+                            })),
                     ),
             )
     }
@@ -170,7 +151,7 @@ impl WorkspaceDeleteDialogView {
 
     pub(in crate::ui) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace_id = self.workspace_id;
-        let _ = self.target_view.update(cx, |this, cx| {
+        self.target_view.update(cx, |this, cx| {
             if let Err(error) = this.publish_app_command(AppCommand::DeleteWorkspace {
                 workspace_id,
                 command_id: next_command_id(),
@@ -232,5 +213,44 @@ impl Render for WorkspaceDeleteDialogView {
                             })),
                     ),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppCommand, Ulid, WorkspaceDialogMode};
+
+    #[test]
+    fn rename_command_keeps_the_dialog_workspace_target() {
+        let workspace_id = Ulid::new();
+        let mode = WorkspaceDialogMode::Rename { workspace_id };
+        let command = mode.command("  Renamed workspace  ").expect("valid name");
+        assert!(matches!(command, AppCommand::RenameWorkspace {
+            workspace_id: target,
+            new_name,
+            ..
+        } if target == workspace_id && new_name == "Renamed workspace"));
+    }
+
+    #[test]
+    fn workspace_dialog_rejects_blank_names_for_both_modes() {
+        for mode in [
+            WorkspaceDialogMode::Create,
+            WorkspaceDialogMode::Rename {
+                workspace_id: Ulid::new(),
+            },
+        ] {
+            assert!(mode.command(" \t\n ").is_err());
+        }
+    }
+
+    #[test]
+    fn create_command_trims_the_workspace_name() {
+        let command = WorkspaceDialogMode::Create
+            .command("  New workspace  ")
+            .expect("valid name");
+        assert!(
+            matches!(command, AppCommand::CreateWorkspace { name, .. } if name == "New workspace")
+        );
     }
 }

@@ -22,6 +22,7 @@ rquickjs = { version = "0.9", features = ["chrono"] }
 log = "0.4"
 
 [dev-dependencies]
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "4c061226c249903a4e41d4f0d15cbab849072db2", features = ["test-support"] }
 tempfile = "3.20"
 
 [profile.release]

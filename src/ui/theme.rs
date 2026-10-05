@@ -2,9 +2,9 @@ use gpui_kit::component::input::WrappingIndent;
 use gpui_kit::component::{ActiveTheme, Theme, ThemeMode, ThemeRegistry, WindowExt as _};
 use gpui_kit::*;
 
-use super::BeamView;
 #[cfg(target_os = "macos")]
 use super::actions::build_macos_system_menus;
+use super::{BEAM_TITLE_BAR_HEIGHT, BeamView};
 use crate::assets::embedded_theme_contents;
 use crate::models::{AppFontSize, AppWrappingIndent};
 use crate::paths::BeamPaths;
@@ -52,6 +52,7 @@ impl BeamView {
         let theme = Theme::global_mut(cx);
         theme.font_size = px(font_size.pixels());
         theme.mono_font_size = px(font_size.mono_pixels());
+        theme.sheet.margin_top = BEAM_TITLE_BAR_HEIGHT;
         cx.refresh_windows();
     }
 

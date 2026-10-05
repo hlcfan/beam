@@ -153,9 +153,25 @@ impl BeamView {
         self.open_workspace_name_dialog(WorkspaceDialogMode::Create, String::new(), cx);
     }
 
-    pub(in crate::ui) fn show_rename_workspace_dialog(&mut self, cx: &mut Context<Self>) {
-        let current_name = self.shell.workspace.workspace_name.clone();
-        self.open_workspace_name_dialog(WorkspaceDialogMode::Rename, current_name, cx);
+    pub(in crate::ui) fn show_rename_workspace_dialog(
+        &mut self,
+        workspace_id: Ulid,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self
+            .shell
+            .workspace
+            .all_workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+        else {
+            return;
+        };
+        self.open_workspace_name_dialog(
+            WorkspaceDialogMode::Rename { workspace_id },
+            workspace.name.clone(),
+            cx,
+        );
     }
 
     pub(in crate::ui) fn show_delete_tree_node_dialog(
@@ -208,12 +224,24 @@ impl BeamView {
         cx.notify();
     }
 
-    pub(in crate::ui) fn show_delete_workspace_dialog(&mut self, cx: &mut Context<Self>) {
-        let Some(workspace_id) = self.shell.workspace.workspace_id else {
+    pub(in crate::ui) fn show_delete_workspace_dialog(
+        &mut self,
+        workspace_id: Ulid,
+        cx: &mut Context<Self>,
+    ) {
+        if self.shell.workspace.all_workspaces.len() <= 1 {
+            return;
+        }
+        let Some(workspace) = self
+            .shell
+            .workspace
+            .all_workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)
+        else {
             return;
         };
-
-        let workspace_name = self.shell.workspace.workspace_name.clone();
+        let workspace_name = workspace.name.clone();
         let view = cx.entity();
         cx.defer(move |cx| {
             if let Some(root_window) = cx.active_window().and_then(|w| w.downcast::<Root>()) {
@@ -257,7 +285,7 @@ impl BeamView {
     ) {
         let title = match mode {
             WorkspaceDialogMode::Create => "New Workspace",
-            WorkspaceDialogMode::Rename => "Rename Workspace",
+            WorkspaceDialogMode::Rename { .. } => "Rename Workspace",
         };
         let view = cx.entity();
         cx.defer(move |cx| {
