@@ -32,7 +32,7 @@ impl Render for RowHost {
 }
 
 #[gpui_kit::test]
-fn request_row_action_dismisses_tooltip_on_click(cx: &mut TestAppContext) {
+fn request_row_action_keeps_accessibility_labels_without_tooltips(cx: &mut TestAppContext) {
     cx.update(gpui_kit::init);
     let directory = tempfile::tempdir().expect("fixture directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
@@ -94,6 +94,10 @@ fn request_row_action_dismisses_tooltip_on_click(cx: &mut TestAppContext) {
     let button_id = format!("tree-row-send-{request_id}");
     let spinner_id = format!("tree-row-spinner-{request_id}");
     let stop_id = format!("tree-row-stop-{request_id}");
+    assert_eq!(
+        snapshot(cx, &button_id).label(),
+        Some("Stop request Unknown")
+    );
     let button = snapshot(cx, &button_id).bounds();
     assert_eq!(button.size.width, button.size.height);
     assert!(snapshot(cx, &spinner_id).visible());
@@ -113,9 +117,9 @@ fn request_row_action_dismisses_tooltip_on_click(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(1));
     draw(cx);
-    assert!(tooltip_visible(cx, &button_id));
+    assert!(!tooltip_visible(cx, &button_id));
 
-    // Click while the tooltip is visible and keep the pointer stationary.
+    // Click Stop and keep the pointer stationary.
     cx.simulate_click(button.center(), Modifiers::default());
     draw(cx);
     assert!(!tooltip_visible(cx, &button_id));
@@ -214,9 +218,9 @@ fn request_row_action_dismisses_tooltip_on_click(cx: &mut TestAppContext) {
     cx.executor()
         .advance_clock(std::time::Duration::from_secs(1));
     draw(cx);
-    assert!(tooltip_visible(cx, &button_id));
+    assert!(!tooltip_visible(cx, &button_id));
 
-    // The idle Send action dismisses its tooltip too, even if URL validation fails.
+    // The idle Send action has no tooltip either, even if URL validation fails.
     cx.simulate_click(idle_button.center(), Modifiers::default());
     draw(cx);
     assert!(!tooltip_visible(cx, &button_id));

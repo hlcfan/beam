@@ -82,7 +82,6 @@ impl BeamView {
                 div()
                     .id(format!("tree-row-action-{request_id}"))
                     .flex_shrink_0()
-                    // Let the button dismiss its tooltip before blocking the row's mouse down.
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         Button::new(format!("tree-row-send-{}", request_id))
@@ -134,7 +133,6 @@ impl BeamView {
                                 button.icon(Icon::default().path("icons/play.svg"))
                             })
                             .accessibility_label(format!("{action_label} {label}"))
-                            .tooltip(action_label)
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 if is_sending {
