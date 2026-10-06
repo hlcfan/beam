@@ -1,4 +1,9 @@
 use super::*;
+use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::spinner::Spinner;
+
+#[cfg(test)]
+mod tests;
 
 impl BeamView {
     pub(in crate::ui) fn render_tree_row(
@@ -25,6 +30,7 @@ impl BeamView {
             TreeNodeKind::Request => None,
         };
         let indent = px(tree_depth_inset(row.depth));
+        let row_hover_group: SharedString = format!("tree-row-hover-{}", row.id).into();
 
         let mut row_content = h_flex()
             .w_full()
@@ -62,6 +68,92 @@ impl BeamView {
                 .tooltip(move |window, cx| Tooltip::new(tooltip_label.clone()).build(window, cx))
                 .child(label.clone()),
         );
+        if row.kind == TreeNodeKind::Request {
+            let request_id = row.id;
+            let is_sending = self.is_request_sending(request_id);
+            let action_hover_group: SharedString =
+                format!("tree-row-send-hover-{request_id}").into();
+            let action_label = if is_sending {
+                "Stop request"
+            } else {
+                "Send request"
+            };
+            row_content = row_content.child(
+                div()
+                    .id(format!("tree-row-action-{request_id}"))
+                    .flex_shrink_0()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(
+                        Button::new(format!("tree-row-send-{}", request_id))
+                            .ghost()
+                            .small()
+                            .cursor_pointer()
+                            .when(!is_sending, |button| {
+                                button
+                                    .invisible()
+                                    .group_hover(row_hover_group.clone(), |style| style.visible())
+                            })
+                            .when(is_sending, |button| {
+                                button.w_6().px_0().group(action_hover_group.clone()).child(
+                                    div()
+                                        .relative()
+                                        .size_4()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            div()
+                                                .id(format!("tree-row-spinner-{request_id}"))
+                                                .test_support()
+                                                .group_hover(action_hover_group.clone(), |style| {
+                                                    style.invisible()
+                                                })
+                                                .child(Spinner::new().small()),
+                                        )
+                                        .child(
+                                            div()
+                                                .id(format!("tree-row-stop-{request_id}"))
+                                                .test_support()
+                                                .absolute()
+                                                .inset_0()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .invisible()
+                                                .group_hover(action_hover_group, |style| {
+                                                    style.visible()
+                                                })
+                                                .child(
+                                                    Icon::default().path("icons/stop.svg").small(),
+                                                ),
+                                        ),
+                                )
+                            })
+                            .when(!is_sending, |button| {
+                                button.icon(Icon::default().path("icons/play.svg"))
+                            })
+                            .accessibility_label(format!("{action_label} {label}"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                if is_sending {
+                                    if !this.is_request_sending(request_id) {
+                                        return;
+                                    }
+                                    if this.shell.workspace_tree.selected_request_id()
+                                        == Some(request_id)
+                                    {
+                                        this.cancel_active_request_wait();
+                                    } else {
+                                        this.cancel_request_run_for(request_id);
+                                    }
+                                    cx.notify();
+                                } else if !this.is_request_sending(request_id) {
+                                    this.send_request_from_tree_node(request_id, window, cx);
+                                }
+                            })),
+                    ),
+            );
+        }
 
         let row_data = crate::app_shell::TreeRow {
             id: row.id,
@@ -79,6 +171,7 @@ impl BeamView {
             .cursor_pointer()
             .child(
                 ListItem::new(format!("tree-row-{}", row_id))
+                    .group(row_hover_group)
                     .w_full()
                     .rounded(px(8.0))
                     .py_1()

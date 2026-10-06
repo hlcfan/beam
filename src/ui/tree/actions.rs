@@ -779,6 +779,9 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         self.select_request(request_id, window, cx);
+        if let Err(error) = self.persist_last_opened_request_id(request_id) {
+            window.push_notification(error, cx);
+        }
         self.send_request(window, cx);
     }
 
