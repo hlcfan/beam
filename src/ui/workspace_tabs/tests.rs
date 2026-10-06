@@ -1,6 +1,9 @@
 use super::{WorkspaceMenuDelete, WorkspaceMenuRename, init_workspace_tab_actions};
 use crate::app_shell::{AppCommand, AppEvent, AppShellState, DataSyncRuntime};
-use crate::models::WorkspaceEntry;
+use crate::models::{
+    AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
+    WorkspaceEntry,
+};
 use crate::paths::BeamPaths;
 use crate::ui::BeamView;
 use chrono::Utc;
@@ -109,6 +112,154 @@ fn settle_dialog(cx: &mut VisualTestContext) {
 fn snapshot(cx: &mut VisualTestContext, id: impl Into<SharedString>) -> ElementSnapshot {
     let id = gpui::ElementId::from(id.into());
     cx.update(|window, _| find(window, &[], &id).expect("rendered control"))
+}
+
+#[gpui_kit::test]
+fn workspace_tabs_preserve_independent_tree_scroll_offsets(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 3);
+    let workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    let mut shells: Vec<_> = [100, 80, 3]
+        .into_iter()
+        .enumerate()
+        .map(|(index, count)| tree_workspace(&workspaces, index, count))
+        .collect();
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.shell.workspace_tree = shells[0].workspace_tree.clone();
+            view.shell.shared_store = shells[0].shared_store.clone();
+            cx.notify();
+        });
+    });
+    draw(cx);
+    scroll_workspace_tree(&fixture, cx, -850.);
+    let first_offset = tree_scroll_offset(&fixture, cx);
+    assert!(first_offset.y < px(0.));
+    let scroll_bounds = fixture
+        .view
+        .read_with(cx, |view, _| view.collection_scroll_handle.bounds());
+    let selected_row = shells[0]
+        .workspace_tree
+        .visible_rows()
+        .into_iter()
+        .find_map(|row| {
+            let id = format!("tree-row-{}", row.id);
+            cx.update(|window, _| find(window, &[], &id.into()))
+                .filter(|snapshot| scroll_bounds.contains(&snapshot.bounds().center()))
+                .map(|snapshot| (row.id, snapshot.bounds()))
+        })
+        .expect("visible request row");
+    cx.simulate_click(selected_row.1.center(), Modifiers::default());
+    draw(cx);
+    assert_eq!(
+        fixture.view.read_with(cx, |view, _| view
+            .shell
+            .workspace_tree
+            .selected_request_id()),
+        Some(selected_row.0)
+    );
+    shells[0]
+        .workspace_tree
+        .set_selected_request(Some(selected_row.0));
+
+    confirm_workspace_switch(&fixture, cx, &shells[1]);
+    assert_eq!(tree_scroll_offset(&fixture, cx), point(px(0.), px(0.)));
+    scroll_workspace_tree(&fixture, cx, -430.);
+    let second_offset = tree_scroll_offset(&fixture, cx);
+    assert!(second_offset.y < px(0.));
+    assert_ne!(first_offset, second_offset);
+
+    // A short tree clamps to zero without overwriting either long tree's offset.
+    confirm_workspace_switch(&fixture, cx, &shells[2]);
+    assert_eq!(tree_scroll_offset(&fixture, cx), point(px(0.), px(0.)));
+    confirm_workspace_switch(&fixture, cx, &shells[0]);
+    assert_eq!(tree_scroll_offset(&fixture, cx), first_offset);
+    assert_eq!(
+        snapshot(cx, format!("tree-row-{}", selected_row.0)).bounds(),
+        selected_row.1
+    );
+    confirm_workspace_switch(&fixture, cx, &shells[1]);
+    assert_eq!(tree_scroll_offset(&fixture, cx), second_offset);
+}
+
+fn tree_workspace(workspaces: &[WorkspaceEntry], index: usize, count: usize) -> AppShellState {
+    let mut shell = AppShellState::default();
+    shell.workspace.all_workspaces = workspaces.to_vec();
+    shell.workspace.workspace_id = Some(workspaces[index].workspace_id);
+    shell.workspace.workspace_name = workspaces[index].name.clone();
+    for number in 0..count {
+        let now = Utc::now();
+        shell.insert_request_at_root(
+            None,
+            &RequestFile {
+                meta: RequestMeta {
+                    request_id: Ulid::new(),
+                    name: format!("Request {number}"),
+                    description: None,
+                    created_at: now,
+                    updated_at: now,
+                },
+                request: RequestDefinition {
+                    method: HttpMethod::Get,
+                    url: "https://example.com".to_string(),
+                    headers: vec![],
+                    query_params: vec![],
+                },
+                auth: AuthConfig::None,
+                body: BodyConfig::None,
+                scripts: ScriptConfig::default(),
+                file_path: None,
+            },
+        );
+    }
+    shell
+}
+
+fn scroll_workspace_tree(fixture: &Fixture, cx: &mut VisualTestContext, delta: f32) {
+    let bounds = fixture
+        .view
+        .read_with(cx, |view, _| view.collection_scroll_handle.bounds());
+    cx.simulate_event(ScrollWheelEvent {
+        position: bounds.center(),
+        delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
+        ..Default::default()
+    });
+    draw(cx);
+}
+
+fn tree_scroll_offset(fixture: &Fixture, cx: &mut VisualTestContext) -> gpui::Point<gpui::Pixels> {
+    fixture
+        .view
+        .read_with(cx, |view, _| view.collection_scroll_handle.offset())
+}
+
+fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell: &AppShellState) {
+    let workspace_id = shell.workspace.workspace_id.expect("workspace id");
+    let tab = snapshot(cx, format!("workspace-tab-{workspace_id}"));
+    cx.simulate_click(tab.bounds().center(), Modifiers::default());
+    draw(cx);
+    assert!(matches!(
+        fixture.commands.try_recv(),
+        Ok(AppCommand::SwitchWorkspace { workspace_id: target, .. }) if target == workspace_id
+    ));
+    fixture
+        .events
+        .send(AppEvent::WorkspaceSwitched {
+            workspace_id,
+            workspace_name: shell.workspace.workspace_name.clone(),
+            all_workspaces: shell.workspace.all_workspaces.clone(),
+            workspace_tree: shell.workspace_tree.clone(),
+            shared_store: shell.shared_store.clone(),
+            request_pane_data: shell.request_pane_data.clone(),
+            environments: shell.environments.clone(),
+            environment_selection: shell.environment_selection.clone(),
+            command_id: "tree-scroll-test".to_string(),
+        })
+        .expect("workspace switch event");
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(25));
+    draw(cx);
 }
 
 #[gpui_kit::test]
