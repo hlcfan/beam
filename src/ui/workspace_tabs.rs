@@ -7,6 +7,47 @@ mod tests;
 
 #[derive(Action, Clone, PartialEq)]
 #[action(namespace = beam, no_json)]
+struct SelectWorkspaceTab(usize);
+
+pub(super) fn init_workspace_tab_actions(cx: &mut App) {
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    cx.bind_keys((1..=9).map(|number| {
+        KeyBinding::new(
+            &format!("{modifier}-{number}"),
+            SelectWorkspaceTab(number - 1),
+            None,
+        )
+    }));
+    cx.on_action(|action: &SelectWorkspaceTab, cx: &mut App| {
+        let index = action.0;
+        cx.defer(move |cx| {
+            let Some(window_handle) = cx.active_window() else {
+                return;
+            };
+            let Some(root) = window_handle
+                .downcast::<Root>()
+                .and_then(|handle| handle.read(cx).ok())
+            else {
+                return;
+            };
+            let Ok(view) = root.view().clone().downcast::<BeamView>() else {
+                return;
+            };
+            let _ = window_handle.update(cx, |_, window, cx| {
+                view.update(cx, |view, cx| {
+                    view.select_workspace_tab(index, window, cx);
+                });
+            });
+        });
+    });
+}
+
+#[derive(Action, Clone, PartialEq)]
+#[action(namespace = beam, no_json)]
 pub(in crate::ui) struct WorkspaceMenuRename(Ulid);
 
 #[derive(Action, Clone, PartialEq)]
@@ -183,6 +224,12 @@ impl BeamView {
             Box::new(WorkspaceMenuDelete(workspace_id)),
         );
         menu.show(position, window, cx);
+    }
+
+    fn select_workspace_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.shell.workspace.all_workspaces.get(index) {
+            self.switch_workspace_from_tab(workspace.workspace_id, window, cx);
+        }
     }
 
     pub(in crate::ui) fn switch_workspace_from_tab(
