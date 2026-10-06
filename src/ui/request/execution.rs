@@ -620,8 +620,10 @@ impl BeamView {
                         window,
                         cx,
                         |input, window, cx| {
+                            let scroll_offset = input.scroll_offset();
                             input.set_highlighter(response_language, cx);
                             input.set_value(response_body.clone(), window, cx);
+                            input.set_scroll_offset(scroll_offset, cx);
                         },
                     );
                     this.response_body_language = response_language;
