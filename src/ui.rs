@@ -190,6 +190,7 @@ pub fn run_app(
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-alt-left", SelectPrevRequestInViewHistory, None),
         ]);
+        workspace_tabs::init_workspace_tab_actions(cx);
         cx.on_action(|_: &QuitApp, cx: &mut App| {
             cx.quit();
         });

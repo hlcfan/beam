@@ -1,4 +1,4 @@
-use super::{WorkspaceMenuDelete, WorkspaceMenuRename};
+use super::{WorkspaceMenuDelete, WorkspaceMenuRename, init_workspace_tab_actions};
 use crate::app_shell::{AppCommand, AppEvent, AppShellState, DataSyncRuntime};
 use crate::models::WorkspaceEntry;
 use crate::paths::BeamPaths;
@@ -33,6 +33,7 @@ fn fixture_with_active_workspace(
 ) -> (Fixture, &mut VisualTestContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        init_workspace_tab_actions(cx);
     });
     let directory = tempfile::tempdir().expect("fixture directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
@@ -108,6 +109,81 @@ fn settle_dialog(cx: &mut VisualTestContext) {
 fn snapshot(cx: &mut VisualTestContext, id: impl Into<SharedString>) -> ElementSnapshot {
     let id = gpui::ElementId::from(id.into());
     cx.update(|window, _| find(window, &[], &id).expect("rendered control"))
+}
+
+#[gpui_kit::test]
+fn number_shortcuts_select_workspace_tabs_in_display_order(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_active_workspace(cx, 10, 9);
+    let workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    let modifier = if cfg!(target_os = "macos") {
+        "cmd"
+    } else {
+        "ctrl"
+    };
+    // Shortcuts also work before any editor or tree row has focus.
+    for number in 1..=9 {
+        cx.simulate_keystrokes(&format!("{modifier}-{number}"));
+        draw(cx);
+        assert!(matches!(
+            fixture.commands.try_recv(),
+            Ok(AppCommand::SwitchWorkspace { workspace_id, .. })
+                if workspace_id == workspaces[number - 1].workspace_id
+        ));
+        assert!(
+            fixture.commands.try_recv().is_err(),
+            "one switch per shortcut"
+        );
+    }
+}
+
+#[gpui_kit::test]
+fn workspace_shortcuts_work_with_editor_and_tree_focus(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let (second, input, tree_focus) = fixture.view.read_with(cx, |view, _| {
+        (
+            view.shell.workspace.all_workspaces[1].workspace_id,
+            view.url_input.clone(),
+            view.tree_focus_handle.clone(),
+        )
+    });
+    let shortcut = if cfg!(target_os = "macos") {
+        "cmd-2"
+    } else {
+        "ctrl-2"
+    };
+    for focus_editor in [true, false] {
+        cx.update(|window, cx| {
+            if focus_editor {
+                input.update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                tree_focus.focus(window, cx);
+            }
+        });
+        draw(cx);
+        let focus = cx.update(|window, cx| window.focused(cx));
+        cx.simulate_keystrokes(shortcut);
+        draw(cx);
+        assert!(matches!(
+            fixture.commands.try_recv(),
+            Ok(AppCommand::SwitchWorkspace { workspace_id, .. }) if workspace_id == second
+        ));
+        cx.update(|window, cx| assert_eq!(window.focused(cx), focus));
+    }
+}
+
+#[gpui_kit::test]
+fn workspace_shortcuts_ignore_active_and_missing_tabs(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let shortcuts = if cfg!(target_os = "macos") {
+        "cmd-1 cmd-3 cmd-9"
+    } else {
+        "ctrl-1 ctrl-3 ctrl-9"
+    };
+    cx.simulate_keystrokes(shortcuts);
+    draw(cx);
+    assert!(fixture.commands.try_recv().is_err());
 }
 
 #[gpui_kit::test]
