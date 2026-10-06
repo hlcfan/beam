@@ -175,7 +175,7 @@ impl BeamView {
                     .w_full()
                     .rounded(px(8.0))
                     .py_1()
-                    .pr(px(6.0))
+                    .pr(gpui_kit::base::Scrollbar::width())
                     .pl(indent)
                     .selected(row.selected)
                     .when(
