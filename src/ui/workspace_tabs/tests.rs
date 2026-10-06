@@ -138,7 +138,7 @@ fn workspace_tabs_preserve_independent_tree_scroll_offsets(cx: &mut TestAppConte
     assert!(first_offset.y < px(0.));
     let scroll_bounds = fixture
         .view
-        .read_with(cx, |view, _| view.collection_scroll_handle.bounds());
+        .read_with(cx, |view, _| view.workspace_scroll_handle.bounds());
     let selected_row = shells[0]
         .workspace_tree
         .visible_rows()
@@ -219,7 +219,7 @@ fn tree_workspace(workspaces: &[WorkspaceEntry], index: usize, count: usize) -> 
 fn scroll_workspace_tree(fixture: &Fixture, cx: &mut VisualTestContext, delta: f32) {
     let bounds = fixture
         .view
-        .read_with(cx, |view, _| view.collection_scroll_handle.bounds());
+        .read_with(cx, |view, _| view.workspace_scroll_handle.bounds());
     cx.simulate_event(ScrollWheelEvent {
         position: bounds.center(),
         delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
@@ -231,7 +231,7 @@ fn scroll_workspace_tree(fixture: &Fixture, cx: &mut VisualTestContext, delta: f
 fn tree_scroll_offset(fixture: &Fixture, cx: &mut VisualTestContext) -> gpui::Point<gpui::Pixels> {
     fixture
         .view
-        .read_with(cx, |view, _| view.collection_scroll_handle.offset())
+        .read_with(cx, |view, _| view.workspace_scroll_handle.offset())
 }
 
 fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell: &AppShellState) {

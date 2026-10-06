@@ -707,7 +707,7 @@ impl BeamView {
             return;
         };
 
-        let handle = self.collection_scroll_handle.clone();
+        let handle = self.workspace_scroll_handle.clone();
         self.tree_drag_scroll_task = Some(cx.spawn_in(window, async move |view, cx| {
             loop {
                 let updated = view.update(cx, |_, cx| {

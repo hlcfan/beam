@@ -45,7 +45,7 @@ impl BeamView {
         cx: &mut Context<Self>,
     ) {
         self.clear_tree_drag_hover(cx);
-        self.collection_scroll_handle = workspace_id
+        self.workspace_scroll_handle = workspace_id
             .map(|id| {
                 self.workspace_tree_scroll_handles
                     .entry(id)

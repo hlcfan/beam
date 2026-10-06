@@ -577,7 +577,7 @@ impl BeamView {
                             },
                         )
                         .size_full()
-                        .track_scroll(&self.collection_scroll_handle),
+                        .track_scroll(&self.workspace_scroll_handle),
                     )
                     .on_drag_move(cx.listener(
                         |this, drag: &DragMoveEvent<DraggedRequest>, window, cx| {
@@ -650,7 +650,7 @@ impl BeamView {
                             this.clear_tree_drag_hover(cx);
                         }),
                     )
-                    .vertical_scrollbar(&self.collection_scroll_handle)
+                    .vertical_scrollbar(&self.workspace_scroll_handle)
                     .on_mouse_down(MouseButton::Right, {
                         let view = menu_view;
                         move |ev: &MouseDownEvent, window, cx| {

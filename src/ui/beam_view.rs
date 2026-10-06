@@ -59,7 +59,7 @@ pub(super) struct BeamView {
     pub(super) pending_request_creations: HashSet<String>,
     pub(super) pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     pub(super) _subscriptions: Vec<Subscription>,
-    pub(super) collection_scroll_handle: VirtualListScrollHandle,
+    pub(super) workspace_scroll_handle: VirtualListScrollHandle,
     /// Retains each workspace's tree offset and measurements while another tab is active.
     pub(super) workspace_tree_scroll_handles: HashMap<Ulid, VirtualListScrollHandle>,
     pub(super) collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -180,12 +180,12 @@ impl BeamView {
         let request_file_index = Self::build_request_file_index(&shell);
         let focus_handle = cx.focus_handle();
         let tree_focus_handle = cx.focus_handle();
-        let collection_scroll_handle = VirtualListScrollHandle::new();
+        let workspace_scroll_handle = VirtualListScrollHandle::new();
         let workspace_tree_scroll_handles = shell
             .workspace
             .workspace_id
             .into_iter()
-            .map(|id| (id, collection_scroll_handle.clone()))
+            .map(|id| (id, workspace_scroll_handle.clone()))
             .collect();
         let mut view = Self {
             shell,
@@ -245,7 +245,7 @@ impl BeamView {
             pending_request_creations: HashSet::new(),
             pending_folder_placements: HashMap::new(),
             _subscriptions,
-            collection_scroll_handle,
+            workspace_scroll_handle,
             workspace_tree_scroll_handles,
             collection_context_menu_row: None,
             tree_drag_hover: None,

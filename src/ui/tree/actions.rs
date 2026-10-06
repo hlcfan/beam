@@ -164,9 +164,9 @@ impl BeamView {
         else {
             return;
         };
-        let viewport_height = self.collection_scroll_handle.bounds().size.height;
+        let viewport_height = self.workspace_scroll_handle.bounds().size.height;
         if viewport_height <= px(0.0) {
-            self.collection_scroll_handle
+            self.workspace_scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Top);
             return;
         }
@@ -180,7 +180,7 @@ impl BeamView {
             }
             content_height += tree_item_height(item, i.checked_sub(1).map(|prev| &items[prev]));
         }
-        let mut offset = self.collection_scroll_handle.offset();
+        let mut offset = self.workspace_scroll_handle.offset();
         let Some(target_offset) = tree_selection_scroll_offset(
             row_top,
             tree_item_height(&items[index], index.checked_sub(1).map(|prev| &items[prev])),
@@ -191,7 +191,7 @@ impl BeamView {
             return;
         };
         offset.y = target_offset;
-        self.collection_scroll_handle.set_offset(offset);
+        self.workspace_scroll_handle.set_offset(offset);
     }
 
     /// Expands and reveals a folder without changing the active request or request view history.
@@ -213,7 +213,7 @@ impl BeamView {
             .position(|item| matches!(item, TreeRenderItem::Row(row) if row.id == folder_id))
         {
             // Folder reveals use minimal scrolling to preserve the surrounding tree context.
-            self.collection_scroll_handle
+            self.workspace_scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Top);
         }
         cx.notify();
