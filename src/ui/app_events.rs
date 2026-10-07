@@ -44,6 +44,15 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.clear_tree_drag_hover(cx);
+        self.workspace_scroll_handle = workspace_id
+            .map(|id| {
+                self.workspace_tree_scroll_handles
+                    .entry(id)
+                    .or_insert_with(VirtualListScrollHandle::new)
+                    .clone()
+            })
+            .unwrap_or_else(VirtualListScrollHandle::new);
         self.reveal_active_workspace_tab();
         self.invalidate_env_var_resolved_cache();
         self.request_view_histories
@@ -222,6 +231,7 @@ impl BeamView {
                 } => {
                     let deleted_active = self.shell.workspace.workspace_id == Some(*workspace_id);
                     self.request_view_histories.prune_workspace(*workspace_id);
+                    self.workspace_tree_scroll_handles.remove(workspace_id);
                     self.shell.apply_event(&event);
                     if deleted_active {
                         self.apply_active_workspace_ui_state(*new_active_workspace_id, window, cx);
