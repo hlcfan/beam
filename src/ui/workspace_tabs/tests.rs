@@ -1,11 +1,12 @@
 use super::{WorkspaceMenuDelete, WorkspaceMenuRename, init_workspace_tab_actions};
-use crate::app_shell::{AppCommand, AppEvent, AppShellState, DataSyncRuntime};
+use crate::app_shell::{AppCommand, AppEvent, AppShellState, DataSyncRuntime, RequestPaneData};
 use crate::models::{
     AuthConfig, BodyConfig, HttpMethod, RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
     WorkspaceEntry,
 };
-use crate::paths::BeamPaths;
-use crate::ui::BeamView;
+use crate::paths::{BeamPaths, DataRootPaths};
+use crate::ui::response::persistence::persist_response_snapshot;
+use crate::ui::{BeamView, HttpResponseSnapshot};
 use chrono::Utc;
 use gpui_kit as gpui;
 use gpui_kit::base::test_support::{ElementSnapshot, find};
@@ -181,6 +182,148 @@ fn workspace_tabs_preserve_independent_tree_scroll_offsets(cx: &mut TestAppConte
     );
     confirm_workspace_switch(&fixture, cx, &shells[1]);
     assert_eq!(tree_scroll_offset(&fixture, cx), second_offset);
+}
+
+#[gpui_kit::test]
+fn workspace_tabs_preserve_response_scroll_offsets_for_each_request(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 3);
+    let mut workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    for (index, workspace) in workspaces.iter_mut().enumerate() {
+        workspace.path = fixture
+            ._directory
+            .path()
+            .join(format!("response-workspace-{index}"))
+            .to_string_lossy()
+            .into_owned();
+    }
+    let mut shells: Vec<_> = [3, 1, 1]
+        .into_iter()
+        .enumerate()
+        .map(|(index, count)| tree_workspace(&workspaces, index, count))
+        .collect();
+    let body = (0..300)
+        .map(|line| format!("Line {line}: {}\n", "response value ".repeat(40)))
+        .collect::<String>();
+    for (index, shell) in shells.iter_mut().enumerate() {
+        let paths = DataRootPaths::default_user_config().workspace_paths(&workspaces[index].path);
+        for (&request_id, request) in &shell.shared_store.requests {
+            shell.request_pane_data.insert(
+                request_id,
+                RequestPaneData {
+                    method: request.request.method,
+                    url: request.request.url.clone(),
+                    headers: vec![],
+                    query_params: vec![],
+                    auth: AuthConfig::None,
+                    body: BodyConfig::None,
+                    post_script: None,
+                    response_scroll_offset: point(px(0.), px(0.)),
+                },
+            );
+            persist_response_snapshot(
+                &paths,
+                request_id,
+                &HttpResponseSnapshot {
+                    status: "200 OK".to_string(),
+                    status_code: Some(200),
+                    time: "1 ms".to_string(),
+                    size: "1 KB".to_string(),
+                    timestamp: Utc::now().to_rfc3339(),
+                    body: if index == 2 {
+                        "short".to_string()
+                    } else {
+                        body.clone()
+                    },
+                    headers: "Content-Type: text/plain".to_string(),
+                    content_type: Some("text/plain".to_string()),
+                },
+            )
+            .expect("persist fixture response");
+        }
+        let first = shell.shared_store.root_ids[0];
+        shell.workspace_tree.set_selected_request(Some(first));
+    }
+    cx.update(|window, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.shell = shells[0].clone();
+            view.current_workspace_paths =
+                DataRootPaths::default_user_config().workspace_paths(&workspaces[0].path);
+            view.sync_request_editor_from_selection(window, cx);
+            cx.notify();
+        });
+    });
+    draw(cx);
+    fixture.view.read_with(cx, |view, _| {
+        assert!(view.workspace_response_scroll_offsets.is_empty());
+    });
+    scroll_response_editor(&fixture, cx, -120., -850.);
+    let first_offset = response_scroll_offset(&fixture, cx);
+    assert!(first_offset.x < px(0.) && first_offset.y < px(0.));
+
+    let second_request = shells[0].shared_store.root_ids[1];
+    let row = snapshot(cx, format!("tree-row-{second_request}"));
+    cx.simulate_click(row.bounds().center(), Modifiers::default());
+    draw(cx);
+    assert_eq!(response_scroll_offset(&fixture, cx), point(px(0.), px(0.)));
+    scroll_response_editor(&fixture, cx, -240., -430.);
+    let second_request_offset = response_scroll_offset(&fixture, cx);
+    shells[0]
+        .workspace_tree
+        .set_selected_request(Some(second_request));
+    confirm_workspace_switch(&fixture, cx, &shells[1]);
+    assert_eq!(response_scroll_offset(&fixture, cx), point(px(0.), px(0.)));
+    scroll_response_editor(&fixture, cx, -60., -260.);
+    let other_workspace_offset = response_scroll_offset(&fixture, cx);
+
+    confirm_workspace_switch(&fixture, cx, &shells[2]);
+    assert_eq!(response_scroll_offset(&fixture, cx), point(px(0.), px(0.)));
+    confirm_workspace_switch(&fixture, cx, &shells[0]);
+    assert_eq!(response_scroll_offset(&fixture, cx), second_request_offset);
+    let first_request = shells[0].shared_store.root_ids[0];
+    let row = snapshot(cx, format!("tree-row-{first_request}"));
+    cx.simulate_click(row.bounds().center(), Modifiers::default());
+    draw(cx);
+    assert_eq!(response_scroll_offset(&fixture, cx), first_offset);
+    confirm_workspace_switch(&fixture, cx, &shells[1]);
+    assert_eq!(response_scroll_offset(&fixture, cx), other_workspace_offset);
+    fixture.view.read_with(cx, |view, _| {
+        let first_workspace_offsets =
+            &view.workspace_response_scroll_offsets[&workspaces[0].workspace_id];
+        assert_eq!(first_workspace_offsets.len(), 2);
+        assert!(!first_workspace_offsets.contains_key(&shells[0].shared_store.root_ids[2]));
+        assert_eq!(
+            view.workspace_response_scroll_offsets[&workspaces[1].workspace_id].len(),
+            1
+        );
+        assert!(
+            !view
+                .workspace_response_scroll_offsets
+                .contains_key(&workspaces[2].workspace_id)
+        );
+    });
+}
+
+fn scroll_response_editor(fixture: &Fixture, cx: &mut VisualTestContext, x: f32, y: f32) {
+    let bounds = fixture.view.read_with(cx, |view, cx| {
+        view.response_body_editor.read(cx).input_bounds()
+    });
+    cx.simulate_event(ScrollWheelEvent {
+        position: bounds.center(),
+        delta: ScrollDelta::Pixels(point(px(x), px(y))),
+        ..Default::default()
+    });
+    draw(cx);
+}
+
+fn response_scroll_offset(
+    fixture: &Fixture,
+    cx: &mut VisualTestContext,
+) -> gpui::Point<gpui::Pixels> {
+    fixture.view.read_with(cx, |view, cx| {
+        view.response_body_editor.read(cx).scroll_offset()
+    })
 }
 
 fn tree_workspace(workspaces: &[WorkspaceEntry], index: usize, count: usize) -> AppShellState {

@@ -244,11 +244,19 @@ impl BeamView {
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
             return;
         };
-        let Some(pane_data) = self.shell.request_pane_data.get(&request_id) else {
+        let Some(pane_data) = self.shell.request_pane_data.get_mut(&request_id) else {
             return;
         };
 
-        let response_scroll_offset = pane_data.response_scroll_offset;
+        let response_scroll_offset = self
+            .shell
+            .workspace
+            .workspace_id
+            .and_then(|workspace_id| self.workspace_response_scroll_offsets.get(&workspace_id))
+            .and_then(|offsets| offsets.get(&request_id))
+            .copied()
+            .unwrap_or(pane_data.response_scroll_offset);
+        pane_data.response_scroll_offset = response_scroll_offset;
 
         let previous_focus = window.focused(cx);
         self.response_body_editor.update(cx, |input, cx| {
@@ -262,7 +270,16 @@ impl BeamView {
     fn persist_response_scroll_offset_for_request(&mut self, request_id: Ulid, cx: &App) {
         let response_scroll_offset = self.current_response_scroll_offset(cx);
         if let Some(pane_data) = self.shell.request_pane_data.get_mut(&request_id) {
+            if pane_data.response_scroll_offset == response_scroll_offset {
+                return;
+            }
             pane_data.response_scroll_offset = response_scroll_offset;
+            if let Some(workspace_id) = self.shell.workspace.workspace_id {
+                self.workspace_response_scroll_offsets
+                    .entry(workspace_id)
+                    .or_default()
+                    .insert(request_id, response_scroll_offset);
+            }
         }
     }
 }
