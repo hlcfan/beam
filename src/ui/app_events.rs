@@ -75,6 +75,7 @@ impl BeamView {
         self.request_url_editor_cache_order.clear();
         self.request_file_index = Self::build_request_file_index(&self.shell);
         self.prune_request_execution_states();
+        self.pending_response_scroll_offset_persistence_due_at = None;
         self.sync_request_editor_from_selection(window, cx);
     }
 
@@ -121,6 +122,14 @@ impl BeamView {
                     self.request_url_editor_cache.remove(request_id);
                     self.request_url_editor_cache_order
                         .retain(|id| id != request_id);
+                    if let Some(offsets) = self
+                        .shell
+                        .workspace
+                        .workspace_id
+                        .and_then(|id| self.workspace_response_scroll_offsets.get_mut(&id))
+                    {
+                        offsets.remove(request_id);
+                    }
                     self.shell.apply_event(&event);
                     if deleted_selected {
                         should_sync_editor = true;
@@ -218,6 +227,7 @@ impl BeamView {
                     }
                 }
                 AppEvent::WorkspaceSwitched { workspace_id, .. } => {
+                    self.persist_current_response_scroll_offset(cx);
                     self.shell.apply_event(&event);
                     self.apply_active_workspace_ui_state(Some(*workspace_id), window, cx);
                     self.seed_request_view_history();
@@ -232,6 +242,7 @@ impl BeamView {
                     let deleted_active = self.shell.workspace.workspace_id == Some(*workspace_id);
                     self.request_view_histories.prune_workspace(*workspace_id);
                     self.workspace_tree_scroll_handles.remove(workspace_id);
+                    self.workspace_response_scroll_offsets.remove(workspace_id);
                     self.shell.apply_event(&event);
                     if deleted_active {
                         self.apply_active_workspace_ui_state(*new_active_workspace_id, window, cx);

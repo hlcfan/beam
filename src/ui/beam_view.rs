@@ -43,6 +43,8 @@ pub(super) struct BeamView {
     pub(super) pending_response_scroll_offset_persistence_due_at: Option<Instant>,
     pub(super) response_scroll_offset_persistence_tick_scheduled: bool,
     pub(super) suppress_response_scroll_offset_persistence: bool,
+    /// Retains only changed response offsets, independently of reloaded request data.
+    pub(super) workspace_response_scroll_offsets: HashMap<Ulid, HashMap<Ulid, Point<Pixels>>>,
     pub(super) show_invalid_url_border: bool,
     pub(super) active_request_cache: Option<RequestFile>,
     pub(super) request_file_index: HashMap<Ulid, PathBuf>,
@@ -228,6 +230,7 @@ impl BeamView {
             pending_response_scroll_offset_persistence_due_at: None,
             response_scroll_offset_persistence_tick_scheduled: false,
             suppress_response_scroll_offset_persistence: false,
+            workspace_response_scroll_offsets: HashMap::new(),
             show_invalid_url_border: false,
             active_request_cache: None,
             request_file_index,
