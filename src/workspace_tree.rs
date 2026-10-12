@@ -194,7 +194,7 @@ fn slugify_name(input: &str) -> String {
     let mut out = String::with_capacity(normalized.len());
     let mut prev_dash = false;
     for ch in normalized.chars() {
-        if ch.is_alphanumeric() {
+        if !is_slug_separator(ch) {
             out.extend(ch.to_lowercase());
             prev_dash = false;
         } else if !prev_dash {
@@ -236,6 +236,13 @@ fn slugify_name(input: &str) -> String {
             format!("{}-{}", stem, hash)
         }
     }
+}
+
+/// Whitespace, control characters, and ASCII punctuation separate words.
+/// Everything else is kept, including combining marks (e.g. Devanagari vowel
+/// signs), so distinct names in any script keep distinct slugs.
+fn is_slug_separator(ch: char) -> bool {
+    ch.is_whitespace() || ch.is_control() || ch.is_ascii_punctuation()
 }
 
 fn fnv1a_hex(input: &str, hex_len: usize) -> String {
@@ -498,6 +505,14 @@ mod tests {
         assert_eq!(folder_dir_name("中文"), "中文");
         assert_ne!(folder_dir_name("中文"), folder_dir_name("数码"));
         assert!(folder_dir_name(&"数".repeat(100)).len() <= MAX_SLUG_LEN);
+    }
+
+    #[test]
+    fn slugify_name_keeps_combining_marks() {
+        assert_eq!(folder_dir_name("नमस्ते"), "नमस्ते");
+        assert_ne!(folder_dir_name("नमस्ते"), folder_dir_name("नमसते"));
+        assert_ne!(folder_dir_name("cafe\u{301}"), folder_dir_name("cafe"));
+        assert_eq!(folder_dir_name("Get User!"), "get-user");
     }
 
     #[test]
