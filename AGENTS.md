@@ -242,13 +242,13 @@ $HOME/beam_local/
 | `WorkspacesRegistryFile` | `models.rs` | Top-level `workspaces.toml`; contains `WorkspacesRegistry` + `schema_version = 3` |
 | `WorkspaceEntry` | `models.rs` | One workspace in the registry: `workspace_id`, `name`, `path` (slug), `created_at` |
 | `WorkspaceFile` | `models.rs` | `beam.workspace.toml`; workspace metadata + `items: Vec<ManifestItemRef>` for root ordering |
-| `ManifestItemRef` | `models.rs` | Ordering entry in workspace or folder manifest: `item_id`, `item_type` (`folder`\|`request`), `name`, `order` |
+| `ManifestItemRef` | `models.rs` | Ordering entry in workspace or folder manifest: `item_id`, `item_type` (`folder`\|`request`), `name`, `order`, optional `file` (on-disk leaf name; manifests without it fall back to the name-derived slug via `item_file_name`) |
 | `FolderFile` | `models.rs` | `folder.toml`; folder metadata + `items: Vec<ManifestItemRef>` for child ordering |
 | `RequestFile` | `models.rs` | `{slug}.request.toml`; full request payload including `meta`, `request`, `auth`, `body`, `scripts` |
 | `EnvironmentFile` | `models.rs` | `{slug}.env.toml`; global environment with `variables: Vec<EnvironmentVariable>` |
 | `LocalStateFile` | `models.rs` | `local-state.toml`; active env, last opened request, theme, expanded tree nodes |
 | `SharedStore` | `workspace_tree.rs` | In-memory workspace tree: `nodes`, `requests`, `root_ids`, `name_index`, `environments` |
-| `Node` / `NodeKind` | `workspace_tree.rs` | Tree node; `NodeKind` is `Folder` or `Request` (no Collection) |
+| `Node` / `NodeKind` | `workspace_tree.rs` | Tree node; `NodeKind` is `Folder` or `Request` (no Collection). `Node::file_name` is the on-disk leaf name; paths are built from it, and slugification only picks it when an item is created or renamed |
 | `DataRootPaths` | `paths.rs` | Paths for `$HOME/beam/` + `workspaces.toml` + `$HOME/beam_local/` |
 | `BeamPaths` | `paths.rs` | Per-workspace paths: `root`, `workspace_file`, `environments_dir`, `local_dir`, `local_state_file` |
 | `RegistryRepository` | `storage/registry_repo.rs` | Loads/saves `workspaces.toml`; bootstraps default workspace on first run |
