@@ -194,9 +194,8 @@ fn slugify_name(input: &str) -> String {
     let mut out = String::with_capacity(normalized.len());
     let mut prev_dash = false;
     for ch in normalized.chars() {
-        let lowered = ch.to_ascii_lowercase();
-        if lowered.is_ascii_alphanumeric() {
-            out.push(lowered);
+        if !is_slug_separator(ch) {
+            out.extend(ch.to_lowercase());
             prev_dash = false;
         } else if !prev_dash {
             out.push('-');
@@ -219,7 +218,14 @@ fn slugify_name(input: &str) -> String {
         // distinct long names keep producing distinct on-disk names.
         let hash = fnv1a_hex(&slug, SLUG_HASH_SUFFIX_LEN);
         let stem_budget = MAX_SLUG_LEN - SLUG_HASH_SUFFIX_LEN - 1; // 1 for '-' separator
-        let mut stem: String = slug.chars().take(stem_budget).collect();
+        // The budget is in bytes; take whole chars so multi-byte names stay valid UTF-8.
+        let mut stem = String::new();
+        for ch in slug.chars() {
+            if stem.len() + ch.len_utf8() > stem_budget {
+                break;
+            }
+            stem.push(ch);
+        }
         // Drop any trailing '-' so we don't end up with `...--<hash>`.
         while stem.ends_with('-') {
             stem.pop();
@@ -230,6 +236,13 @@ fn slugify_name(input: &str) -> String {
             format!("{}-{}", stem, hash)
         }
     }
+}
+
+/// Whitespace, control characters, and ASCII punctuation separate words.
+/// Everything else is kept, including combining marks (e.g. Devanagari vowel
+/// signs), so distinct names in any script keep distinct slugs.
+fn is_slug_separator(ch: char) -> bool {
+    ch.is_whitespace() || ch.is_control() || ch.is_ascii_punctuation()
 }
 
 fn fnv1a_hex(input: &str, hex_len: usize) -> String {
@@ -485,6 +498,21 @@ mod tests {
             request_file_path(&paths, &store, request_id).expect("request path"),
             paths.root.join("users").join(request_file_name("Get User"))
         );
+    }
+
+    #[test]
+    fn slugify_name_keeps_unicode_letters_distinct() {
+        assert_eq!(folder_dir_name("中文"), "中文");
+        assert_ne!(folder_dir_name("中文"), folder_dir_name("数码"));
+        assert!(folder_dir_name(&"数".repeat(100)).len() <= MAX_SLUG_LEN);
+    }
+
+    #[test]
+    fn slugify_name_keeps_combining_marks() {
+        assert_eq!(folder_dir_name("नमस्ते"), "नमस्ते");
+        assert_ne!(folder_dir_name("नमस्ते"), folder_dir_name("नमसते"));
+        assert_ne!(folder_dir_name("cafe\u{301}"), folder_dir_name("cafe"));
+        assert_eq!(folder_dir_name("Get User!"), "get-user");
     }
 
     #[test]
