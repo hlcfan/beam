@@ -22,8 +22,8 @@ use crate::storage::{
 };
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, assert_name_unique, ensure_parent_kind, find_unique_name,
-    folder_dir_name, folder_dir_path, item_file_name, node_by_kind, path_leaf_name,
-    request_file_name, request_file_path, scope_key,
+    folder_dir_path, item_file_name, node_by_kind, path_leaf_name, request_file_name,
+    request_file_path, scope_key, unique_folder_dir_name, unique_request_file_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
@@ -211,7 +211,12 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(request_file.meta.updated_at),
                 parent_id,
                 children: Vec::new(),
-                file_name: request_file_name(&request_file.meta.name),
+                file_name: unique_request_file_name(
+                    &self.store,
+                    parent_id,
+                    &request_file.meta.name,
+                    Some(request_id),
+                ),
             },
         );
         self.store
@@ -334,9 +339,11 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         self.store
             .name_index
             .remove(&scope_key(parent_id, &node.name));
+        let file_name =
+            unique_request_file_name(&self.store, parent_id, &unique_name, Some(input.request_id));
         if let Some(request_node) = self.store.nodes.get_mut(&input.request_id) {
             request_node.name = unique_name.clone();
-            request_node.file_name = request_file_name(&unique_name);
+            request_node.file_name = file_name;
             request_node.updated_at = Some(Utc::now());
         }
         self.store
@@ -436,7 +443,12 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(duplicated.meta.updated_at),
                 parent_id,
                 children: Vec::new(),
-                file_name: request_file_name(&duplicated.meta.name),
+                file_name: unique_request_file_name(
+                    &self.store,
+                    parent_id,
+                    &duplicated.meta.name,
+                    Some(duplicated_id),
+                ),
             },
         );
         self.store
@@ -952,7 +964,12 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(now),
                 parent_id,
                 children: Vec::new(),
-                file_name: folder_dir_name(&unique_name),
+                file_name: unique_folder_dir_name(
+                    &self.store,
+                    parent_id,
+                    &unique_name,
+                    Some(folder_id),
+                ),
             },
         );
         self.store
@@ -1147,9 +1164,11 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         self.store
             .name_index
             .remove(&scope_key(parent_id, &old_name));
+        let file_name =
+            unique_folder_dir_name(&self.store, parent_id, &unique_name, Some(folder_id));
         if let Some(folder) = self.store.nodes.get_mut(&folder_id) {
             folder.name = unique_name.clone();
-            folder.file_name = folder_dir_name(&unique_name);
+            folder.file_name = file_name;
             folder.updated_at = Some(Utc::now());
         }
         self.store
@@ -1955,6 +1974,7 @@ mod tests {
     use super::*;
     use crate::paths::BeamPaths;
     use crate::storage::fs_backend::FileSystemStorage;
+    use crate::workspace_tree::folder_dir_name;
     use tempfile::tempdir;
 
     #[test]
@@ -2474,6 +2494,47 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
             request_file_path(reloaded.backend.paths(), &reloaded.store, request_id).unwrap(),
             paths.root.join("custom-name.request.toml")
         );
+    }
+
+    #[test]
+    fn new_request_avoids_file_name_already_used_by_sibling() {
+        use crate::models::HttpMethod;
+
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("initialize workspace");
+
+        let first = storage
+            .create_request(CreateRequestInput {
+                parent: crate::storage::RequestParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Alpha".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+            })
+            .expect("create first request");
+        // A sibling whose stored file name predates the current slug rule.
+        storage
+            .store
+            .nodes
+            .get_mut(&first.meta.request_id)
+            .unwrap()
+            .file_name = "beta.request.toml".to_string();
+
+        let second = storage
+            .create_request(CreateRequestInput {
+                parent: crate::storage::RequestParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Beta".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+            })
+            .expect("create second request");
+
+        let node = storage.store.nodes.get(&second.meta.request_id).unwrap();
+        assert_eq!(node.file_name, "beta-2.request.toml");
     }
 
     #[test]
