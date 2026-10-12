@@ -22,8 +22,8 @@ use crate::storage::{
 };
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, assert_name_unique, ensure_parent_kind, find_unique_name,
-    folder_dir_name, folder_dir_path, node_by_kind, request_file_name, request_file_path,
-    scope_key,
+    folder_dir_name, folder_dir_path, item_file_name, node_by_kind, path_leaf_name,
+    request_file_name, request_file_path, scope_key,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
@@ -1429,6 +1429,7 @@ pub fn write_folder_manifest<B: StorageIoBackend>(
         .enumerate()
         .filter_map(|(i, &child_id)| {
             store.nodes.get(&child_id).map(|child| ManifestItemRef {
+                file: Some(child.file_name.clone()),
                 item_id: child_id,
                 item_type: match child.kind {
                     NodeKind::Folder => ItemType::Folder,
@@ -1499,6 +1500,7 @@ pub fn write_workspace_items<B: StorageIoBackend>(backend: &B, store: &SharedSto
         .enumerate()
         .filter_map(|(i, &id)| {
             store.nodes.get(&id).map(|node| ManifestItemRef {
+                file: Some(node.file_name.clone()),
                 item_id: id,
                 item_type: match node.kind {
                     NodeKind::Folder => ItemType::Folder,
@@ -1676,7 +1678,7 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
     for item_ref in &workspace_file.items {
         match item_ref.item_type {
             ItemType::Folder => {
-                let folder_dir = backend.paths().root.join(folder_dir_name(&item_ref.name));
+                let folder_dir = backend.paths().root.join(item_file_name(&item_ref));
                 if folder_dir.exists() {
                     load_folder_into_store(
                         backend,
@@ -1689,7 +1691,7 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
                 }
             }
             ItemType::Request => {
-                let request_path = backend.paths().root.join(request_file_name(&item_ref.name));
+                let request_path = backend.paths().root.join(item_file_name(&item_ref));
                 if request_path.exists() {
                     if let Ok(request_file) = backend.read_toml_file::<RequestFile>(&request_path) {
                         if request_file.meta.request_id == item_ref.item_id {
@@ -1704,7 +1706,7 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
                                     updated_at: Some(request_file.meta.updated_at),
                                     parent_id: None,
                                     children: Vec::new(),
-                                    file_name: request_file_name(&item_ref.name),
+                                    file_name: item_file_name(&item_ref),
                                 },
                             );
                             store.requests.insert(item_ref.item_id, request_file);
@@ -1763,7 +1765,7 @@ fn load_folder_into_store<B: StorageIoBackend>(
 
         match item_ref.item_type {
             ItemType::Folder => {
-                let subfolder_dir = folder_dir.join(folder_dir_name(&item_ref.name));
+                let subfolder_dir = folder_dir.join(item_file_name(&item_ref));
                 if subfolder_dir.exists() {
                     load_folder_into_store(
                         backend,
@@ -1776,7 +1778,7 @@ fn load_folder_into_store<B: StorageIoBackend>(
                 }
             }
             ItemType::Request => {
-                let request_path = folder_dir.join(request_file_name(&item_ref.name));
+                let request_path = folder_dir.join(item_file_name(&item_ref));
                 if request_path.exists() {
                     if let Ok(request_file) = backend.read_toml_file::<RequestFile>(&request_path) {
                         if request_file.meta.request_id == item_ref.item_id {
@@ -1791,7 +1793,7 @@ fn load_folder_into_store<B: StorageIoBackend>(
                                     updated_at: Some(request_file.meta.updated_at),
                                     parent_id: Some(folder_id),
                                     children: Vec::new(),
-                                    file_name: request_file_name(&item_ref.name),
+                                    file_name: item_file_name(&item_ref),
                                 },
                             );
                             store.requests.insert(item_ref.item_id, request_file);
@@ -1814,7 +1816,7 @@ fn load_folder_into_store<B: StorageIoBackend>(
             updated_at: Some(folder_file.folder.updated_at),
             parent_id,
             children: child_ids,
-            file_name: folder_dir_name(&folder_file.folder.name),
+            file_name: path_leaf_name(folder_dir),
         },
     );
 
@@ -2340,6 +2342,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
                 updated_at: now,
             },
             items: vec![ManifestItemRef {
+                file: None,
                 item_id: folder_id,
                 item_type: ItemType::Folder,
                 name: "Users".to_string(),
@@ -2364,6 +2367,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
                 updated_at: now,
             },
             items: vec![ManifestItemRef {
+                file: None,
                 item_id: request_id,
                 item_type: ItemType::Request,
                 name: "Get User".to_string(),
@@ -2413,6 +2417,62 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
         assert_eq!(
             storage.store.nodes.get(&request_id).unwrap().parent_id,
             Some(folder_id)
+        );
+    }
+
+    #[test]
+    fn stored_file_name_is_used_instead_of_slugified_name_on_reload() {
+        use crate::models::HttpMethod;
+
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths.clone());
+        let mut storage =
+            WorkspaceRepository::new(backend.clone()).expect("load workspace into memory");
+        storage.initialize().expect("initialize workspace");
+
+        let request = storage
+            .create_request(CreateRequestInput {
+                parent: crate::storage::RequestParentRef { folder_id: None },
+                known_parent_manifest_path: None,
+                name: "Get Users".to_string(),
+                method: HttpMethod::Get,
+                url: "https://example.com".to_string(),
+            })
+            .expect("create request");
+        let request_id = request.meta.request_id;
+
+        let mut workspace: WorkspaceFile = backend
+            .read_toml_file(&paths.workspace_file)
+            .expect("read workspace file");
+        let item = workspace
+            .items
+            .iter_mut()
+            .find(|item| item.item_id == request_id)
+            .expect("request in manifest");
+        assert_eq!(item.file.as_deref(), Some("get-users.request.toml"));
+
+        // Simulate a file written under a different slug rule.
+        item.file = Some("custom-name.request.toml".to_string());
+        backend
+            .write_toml_file(&paths.workspace_file, &workspace)
+            .expect("write workspace file");
+        backend
+            .rename(
+                &paths.root.join("get-users.request.toml"),
+                &paths.root.join("custom-name.request.toml"),
+            )
+            .expect("rename request file");
+
+        let reloaded = WorkspaceRepository::new(backend).expect("reload workspace");
+        let node = reloaded.store.nodes.get(&request_id).expect("node loaded");
+        assert_eq!(node.file_name, "custom-name.request.toml");
+        assert!(reloaded.store.requests.contains_key(&request_id));
+
+        // Saving keeps writing to the stored file name.
+        assert_eq!(
+            request_file_path(reloaded.backend.paths(), &reloaded.store, request_id).unwrap(),
+            paths.root.join("custom-name.request.toml")
         );
     }
 

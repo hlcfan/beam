@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
-use crate::models::{EnvironmentFile, RequestFile};
+use crate::models::{EnvironmentFile, ItemType, ManifestItemRef, RequestFile};
 use crate::paths::BeamPaths;
 
 pub type NodeId = Ulid;
@@ -258,6 +258,25 @@ fn fnv1a_hex(input: &str, hex_len: usize) -> String {
 
 pub fn folder_dir_name(name: &str) -> String {
     slugify_name(name)
+}
+
+/// Leaf name recorded in a manifest entry, falling back to the name-derived
+/// one for manifests written before `file` was stored.
+pub fn item_file_name(item: &ManifestItemRef) -> String {
+    if let Some(file) = &item.file {
+        return file.clone();
+    }
+    match item.item_type {
+        ItemType::Folder => folder_dir_name(&item.name),
+        ItemType::Request => request_file_name(&item.name),
+    }
+}
+
+/// Last path component, used to record the name an item actually has on disk.
+pub fn path_leaf_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 pub fn request_file_name(name: &str) -> String {

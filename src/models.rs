@@ -159,6 +159,10 @@ pub struct ManifestItemRef {
     pub item_type: ItemType,
     pub name: String,
     pub order: i32,
+    /// Leaf name on disk (request file or folder directory). Absent in manifests
+    /// written before this field existed; readers then derive it from `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
