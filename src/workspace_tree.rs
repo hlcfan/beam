@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
-use crate::models::{EnvironmentFile, RequestFile};
+use crate::models::{EnvironmentFile, ItemType, ManifestItemRef, RequestFile};
 use crate::paths::BeamPaths;
 
 pub type NodeId = Ulid;
@@ -26,6 +26,8 @@ pub struct Node {
     pub updated_at: Option<DateTime<Utc>>,
     pub parent_id: Option<NodeId>,
     pub children: Vec<NodeId>,
+    /// Leaf name on disk: `<slug>.request.toml` for requests, the directory name for folders.
+    pub file_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -258,6 +260,87 @@ pub fn folder_dir_name(name: &str) -> String {
     slugify_name(name)
 }
 
+/// Leaf name recorded in a manifest entry, falling back to the name-derived
+/// one for manifests written before `file` was stored.
+pub fn item_file_name(item: &ManifestItemRef) -> String {
+    if let Some(file) = &item.file {
+        return file.clone();
+    }
+    match item.item_type {
+        ItemType::Folder => folder_dir_name(&item.name),
+        ItemType::Request => request_file_name(&item.name),
+    }
+}
+
+/// File name for a request under `parent_id` that no sibling already uses.
+/// Slug uniqueness is enforced on names, but a sibling may carry a stored
+/// file name produced by an older slug rule, so check the file names directly.
+pub fn unique_request_file_name(
+    store: &SharedStore,
+    parent_id: Option<NodeId>,
+    name: &str,
+    skip_id: Option<NodeId>,
+) -> String {
+    unique_sibling_file_name(
+        store,
+        parent_id,
+        skip_id,
+        &slugify_name(name),
+        ".request.toml",
+    )
+}
+
+/// Directory name for a folder under `parent_id` that no sibling already uses.
+pub fn unique_folder_dir_name(
+    store: &SharedStore,
+    parent_id: Option<NodeId>,
+    name: &str,
+    skip_id: Option<NodeId>,
+) -> String {
+    unique_sibling_file_name(store, parent_id, skip_id, &slugify_name(name), "")
+}
+
+fn unique_sibling_file_name(
+    store: &SharedStore,
+    parent_id: Option<NodeId>,
+    skip_id: Option<NodeId>,
+    stem: &str,
+    ext: &str,
+) -> String {
+    let siblings: &[NodeId] = match parent_id {
+        Some(pid) => store
+            .nodes
+            .get(&pid)
+            .map(|n| n.children.as_slice())
+            .unwrap_or(&[]),
+        None => &store.root_ids,
+    };
+    // File systems such as the default macOS one are case-insensitive.
+    let taken = |candidate: &str| {
+        siblings.iter().any(|id| {
+            Some(*id) != skip_id
+                && store
+                    .nodes
+                    .get(id)
+                    .is_some_and(|n| n.file_name.to_lowercase() == candidate.to_lowercase())
+        })
+    };
+    let mut candidate = format!("{stem}{ext}");
+    let mut suffix = 2;
+    while taken(&candidate) {
+        candidate = format!("{stem}-{suffix}{ext}");
+        suffix += 1;
+    }
+    candidate
+}
+
+/// Last path component, used to record the name an item actually has on disk.
+pub fn path_leaf_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 pub fn request_file_name(name: &str) -> String {
     format!("{}.request.toml", slugify_name(name))
 }
@@ -271,10 +354,8 @@ pub fn folder_dir_path(
 ) -> Result<PathBuf> {
     let folder = node_by_kind(store, folder_id, NodeKind::Folder)?;
     match folder.parent_id {
-        None => Ok(paths.root.join(folder_dir_name(&folder.name))),
-        Some(parent_id) => {
-            Ok(node_dir_path(paths, store, parent_id)?.join(folder_dir_name(&folder.name)))
-        }
+        None => Ok(paths.root.join(&folder.file_name)),
+        Some(parent_id) => Ok(node_dir_path(paths, store, parent_id)?.join(&folder.file_name)),
     }
 }
 
@@ -312,7 +393,7 @@ pub fn request_file_path(
             }
         }
     };
-    Ok(request_dir.join(request_file_name(&request.name)))
+    Ok(request_dir.join(&request.file_name))
 }
 
 pub fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
@@ -425,6 +506,7 @@ mod tests {
                         updated_at: None,
                         parent_id: Some(parent_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("Get User"),
                     },
                 ),
                 (
@@ -438,6 +520,7 @@ mod tests {
                         updated_at: None,
                         parent_id: Some(parent_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("get-user"),
                     },
                 ),
             ]),
@@ -471,6 +554,7 @@ mod tests {
                         updated_at: None,
                         parent_id: None,
                         children: vec![request_id],
+                        file_name: crate::workspace_tree::folder_dir_name("Users"),
                     },
                 ),
                 (
@@ -484,6 +568,7 @@ mod tests {
                         updated_at: None,
                         parent_id: Some(folder_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("Get User"),
                     },
                 ),
             ]),
@@ -554,6 +639,7 @@ mod tests {
                     updated_at: None,
                     parent_id: None,
                     children: Vec::new(),
+                    file_name: crate::workspace_tree::request_file_name("Health Check"),
                 },
             )]),
             requests: HashMap::new(),

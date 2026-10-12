@@ -32,7 +32,8 @@ use crate::storage::{
     MoveRequestInput, RenameRequestInput, WorkspaceStorage,
 };
 use crate::workspace_tree::{
-    Node, NodeKind, SharedStore, folder_dir_name, request_file_name, scope_key,
+    Node, NodeKind, SharedStore, folder_dir_name, item_file_name, path_leaf_name,
+    request_file_name, scope_key,
 };
 
 const MIN_SPLIT_RATIO: f32 = 0.1;
@@ -838,6 +839,7 @@ impl AppShellState {
             .and_then(|node| node.parent_id);
         if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
             node.name = request.meta.name.clone();
+            node.file_name = request_file_name(&request.meta.name);
             node.description = request.meta.description.clone();
             node.created_at = Some(request.meta.created_at);
             node.updated_at = Some(request.meta.updated_at);
@@ -855,6 +857,7 @@ impl AppShellState {
                     updated_at: Some(request.meta.updated_at),
                     parent_id: Some(parent_id),
                     children: Vec::new(),
+                    file_name: request_file_name(&request.meta.name),
                 },
             );
         }
@@ -940,6 +943,7 @@ impl AppShellState {
                 updated_at: Some(request.meta.updated_at),
                 parent_id: None,
                 children: Vec::new(),
+                file_name: request_file_name(&request.meta.name),
             },
         );
         self.shared_store.root_ids.retain(|id| *id != request_id);
@@ -1171,6 +1175,7 @@ impl AppShellState {
                 }
                 if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
                     node.name = request.meta.name.clone();
+                    node.file_name = request_file_name(&request.meta.name);
                     node.description = request.meta.description.clone();
                     node.updated_at = Some(request.meta.updated_at);
                 }
@@ -1236,6 +1241,7 @@ impl AppShellState {
                     .insert(request.meta.request_id, request.clone());
                 if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
                     node.name = request.meta.name.clone();
+                    node.file_name = request_file_name(&request.meta.name);
                 }
                 match new_parent_id {
                     Some(parent_id) => {
@@ -1347,6 +1353,7 @@ impl AppShellState {
                 let parent_id = folder.parent_folder_id;
                 if let Some(node) = self.shared_store.nodes.get_mut(&folder_id) {
                     node.name = folder.name.clone();
+                    node.file_name = folder_dir_name(&folder.name);
                     node.description = folder.description.clone();
                     node.updated_at = Some(folder.updated_at);
                 } else {
@@ -1361,6 +1368,7 @@ impl AppShellState {
                             updated_at: Some(folder.updated_at),
                             parent_id,
                             children: Vec::new(),
+                            file_name: folder_dir_name(&folder.name),
                         },
                     );
                     if let Some(pid) = parent_id {
@@ -3342,7 +3350,7 @@ fn load_shared_tree(paths: &BeamPaths, warnings: &mut Vec<String>) -> LoadedShar
     for item_ref in &workspace_file.items {
         match item_ref.item_type {
             ItemType::Folder => {
-                let folder_dir = paths.root.join(folder_dir_name(&item_ref.name));
+                let folder_dir = paths.root.join(item_file_name(item_ref));
                 if folder_dir.exists() {
                     load_folder_from_manifest(
                         &mut loaded,
@@ -3359,7 +3367,7 @@ fn load_shared_tree(paths: &BeamPaths, warnings: &mut Vec<String>) -> LoadedShar
                 }
             }
             ItemType::Request => {
-                let request_path = paths.root.join(request_file_name(&item_ref.name));
+                let request_path = paths.root.join(item_file_name(item_ref));
                 load_root_request(
                     &mut loaded,
                     &request_path,
@@ -3407,6 +3415,7 @@ fn load_folder_from_manifest(
             updated_at: Some(folder_file.folder.updated_at),
             parent_id,
             children: Vec::new(),
+            file_name: path_leaf_name(folder_dir),
         },
         Some(&manifest_path),
         &manifest_path,
@@ -3419,7 +3428,7 @@ fn load_folder_from_manifest(
     for item_ref in &folder_file.items {
         match item_ref.item_type {
             ItemType::Folder => {
-                let subfolder_dir = folder_dir.join(folder_dir_name(&item_ref.name));
+                let subfolder_dir = folder_dir.join(item_file_name(item_ref));
                 if subfolder_dir.exists() {
                     load_folder_from_manifest(
                         loaded,
@@ -3434,7 +3443,7 @@ fn load_folder_from_manifest(
                 }
             }
             ItemType::Request => {
-                let request_path = folder_dir.join(request_file_name(&item_ref.name));
+                let request_path = folder_dir.join(item_file_name(item_ref));
                 if load_folder_request(
                     loaded,
                     &request_path,
@@ -3503,6 +3512,7 @@ fn load_root_request(
             updated_at: Some(request_file.meta.updated_at),
             parent_id: None,
             children: Vec::new(),
+            file_name: path_leaf_name(request_path),
         },
         None,
         request_path,
@@ -3572,6 +3582,7 @@ fn load_folder_request(
             updated_at: Some(request_file.meta.updated_at),
             parent_id: Some(parent_id),
             children: Vec::new(),
+            file_name: path_leaf_name(request_path),
         },
         None,
         request_path,
@@ -4192,6 +4203,7 @@ mod tests {
                 updated_at: Some(now),
                 parent_id: None,
                 children: vec![first_request_id],
+                file_name: crate::workspace_tree::folder_dir_name("Folder"),
             },
         );
         state.shared_store.root_ids.push(folder_id);
@@ -4206,6 +4218,7 @@ mod tests {
                 updated_at: Some(now),
                 parent_id: Some(folder_id),
                 children: Vec::new(),
+                file_name: crate::workspace_tree::request_file_name("First Request"),
             },
         );
         let first_request = sample_request_file(
@@ -4846,6 +4859,7 @@ mod tests {
                 updated_at: Some(now),
                 parent_id: None,
                 children: Vec::new(),
+                file_name: crate::workspace_tree::request_file_name("Next Request"),
             },
         );
         next_shared_store.root_ids.push(next_request_id);
@@ -5114,6 +5128,7 @@ mod tests {
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5127,6 +5142,7 @@ mod tests {
             folder_id,
             "Sample",
             vec![ManifestItemRef {
+                file: None,
                 item_id: nested_folder_id,
                 item_type: ItemType::Folder,
                 name: "Nested".to_string(),
@@ -5139,6 +5155,7 @@ mod tests {
             nested_folder_id,
             "Nested",
             vec![ManifestItemRef {
+                file: None,
                 item_id: request_id,
                 item_type: ItemType::Request,
                 name: "Get Data".to_string(),
@@ -5237,12 +5254,14 @@ mod tests {
             &paths,
             vec![
                 ManifestItemRef {
+                    file: None,
                     item_id: first_request_id,
                     item_type: ItemType::Request,
                     name: "First".to_string(),
                     order: 0,
                 },
                 ManifestItemRef {
+                    file: None,
                     item_id: second_request_id,
                     item_type: ItemType::Request,
                     name: "Second".to_string(),
@@ -5389,6 +5408,7 @@ expanded_item_ids = ["{folder_id}"]
             folder_id,
             "Sample Collection",
             vec![ManifestItemRef {
+                file: None,
                 item_id: request_id,
                 item_type: ItemType::Request,
                 name: "Manifest Name".to_string(),
@@ -5515,6 +5535,7 @@ post_response = "console.log(response.status)"
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: top_folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5526,6 +5547,7 @@ post_response = "console.log(response.status)"
             top_folder_id,
             "Sample",
             vec![ManifestItemRef {
+                file: None,
                 item_id: nested_folder_id,
                 item_type: ItemType::Folder,
                 name: "Nested".to_string(),
@@ -5599,6 +5621,7 @@ updated_at = "2026-01-01T00:00:00Z"
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: top_folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5610,6 +5633,7 @@ updated_at = "2026-01-01T00:00:00Z"
             top_folder_id,
             "Sample",
             vec![ManifestItemRef {
+                file: None,
                 item_id: nested_folder_id,
                 item_type: ItemType::Folder,
                 name: "Nested".to_string(),
@@ -5660,6 +5684,7 @@ updated_at = "2026-01-01T00:00:00Z"
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5709,12 +5734,14 @@ expanded_item_ids = ["{folder_id}"]
             &paths,
             vec![
                 ManifestItemRef {
+                    file: None,
                     item_id: second_id,
                     item_type: ItemType::Folder,
                     name: "Second".to_string(),
                     order: 0,
                 },
                 ManifestItemRef {
+                    file: None,
                     item_id: first_id,
                     item_type: ItemType::Folder,
                     name: "First".to_string(),
@@ -5764,6 +5791,7 @@ expanded_item_ids = ["{folder_id}"]
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5775,6 +5803,7 @@ expanded_item_ids = ["{folder_id}"]
             folder_id,
             "Sample",
             vec![ManifestItemRef {
+                file: None,
                 item_id: request_id,
                 item_type: ItemType::Request,
                 name: "Broken Request".to_string(),
@@ -5819,6 +5848,7 @@ expanded_item_ids = ["{folder_id}"]
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5831,18 +5861,21 @@ expanded_item_ids = ["{folder_id}"]
             "Sample",
             vec![
                 ManifestItemRef {
+                    file: None,
                     item_id: good_request_id,
                     item_type: ItemType::Request,
                     name: "Good Request".to_string(),
                     order: 0,
                 },
                 ManifestItemRef {
+                    file: None,
                     item_id: missing_request_id,
                     item_type: ItemType::Request,
                     name: "Missing Request".to_string(),
                     order: 1,
                 },
                 ManifestItemRef {
+                    file: None,
                     item_id: mismatched_request_id,
                     item_type: ItemType::Request,
                     name: "Wrong Id Request".to_string(),
@@ -5909,6 +5942,7 @@ expanded_item_ids = ["{folder_id}"]
         write_workspace_file(
             &paths,
             vec![ManifestItemRef {
+                file: None,
                 item_id: folder_id,
                 item_type: ItemType::Folder,
                 name: "Sample".to_string(),
@@ -5921,12 +5955,14 @@ expanded_item_ids = ["{folder_id}"]
             "Sample",
             vec![
                 ManifestItemRef {
+                    file: None,
                     item_id: duplicate_id,
                     item_type: ItemType::Request,
                     name: "First".to_string(),
                     order: 0,
                 },
                 ManifestItemRef {
+                    file: None,
                     item_id: duplicate_id,
                     item_type: ItemType::Request,
                     name: "Second".to_string(),
@@ -5989,12 +6025,14 @@ expanded_item_ids = ["{folder_id}"]
             &paths,
             vec![
                 ManifestItemRef {
+                    file: None,
                     item_id: valid_folder_id,
                     item_type: ItemType::Folder,
                     name: "Valid".to_string(),
                     order: 0,
                 },
                 ManifestItemRef {
+                    file: None,
                     item_id: broken_folder_id,
                     item_type: ItemType::Folder,
                     name: "Broken".to_string(),
