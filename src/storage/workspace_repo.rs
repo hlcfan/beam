@@ -129,6 +129,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(now),
                 parent_id: None,
                 children: Vec::new(),
+                file_name: request_file_name("Sample Request"),
             },
         );
         self.store.requests.insert(
@@ -210,6 +211,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(request_file.meta.updated_at),
                 parent_id,
                 children: Vec::new(),
+                file_name: request_file_name(&request_file.meta.name),
             },
         );
         self.store
@@ -283,6 +285,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(request_file.meta.updated_at),
                 parent_id,
                 children: Vec::new(),
+                file_name: request_file_name(&request_file.meta.name),
             },
         );
         self.store
@@ -333,6 +336,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             .remove(&scope_key(parent_id, &node.name));
         if let Some(request_node) = self.store.nodes.get_mut(&input.request_id) {
             request_node.name = unique_name.clone();
+            request_node.file_name = request_file_name(&unique_name);
             request_node.updated_at = Some(Utc::now());
         }
         self.store
@@ -432,6 +436,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(duplicated.meta.updated_at),
                 parent_id,
                 children: Vec::new(),
+                file_name: request_file_name(&duplicated.meta.name),
             },
         );
         self.store
@@ -947,6 +952,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 updated_at: Some(now),
                 parent_id,
                 children: Vec::new(),
+                file_name: folder_dir_name(&unique_name),
             },
         );
         self.store
@@ -1143,6 +1149,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             .remove(&scope_key(parent_id, &old_name));
         if let Some(folder) = self.store.nodes.get_mut(&folder_id) {
             folder.name = unique_name.clone();
+            folder.file_name = folder_dir_name(&unique_name);
             folder.updated_at = Some(Utc::now());
         }
         self.store
@@ -1587,7 +1594,7 @@ fn persist_folder_subtree<B: StorageIoBackend>(
         if let Some(child_node) = store.nodes.get(&child_id) {
             match child_node.kind {
                 NodeKind::Folder => {
-                    let child_dir = folder_dir.join(folder_dir_name(&child_node.name));
+                    let child_dir = folder_dir.join(&child_node.file_name);
                     persist_folder_subtree(backend, store, child_id, &child_dir)?;
                 }
                 NodeKind::Request => {
@@ -1697,6 +1704,7 @@ fn load_full_shared_store<B: StorageIoBackend>(backend: &B) -> Result<SharedStor
                                     updated_at: Some(request_file.meta.updated_at),
                                     parent_id: None,
                                     children: Vec::new(),
+                                    file_name: request_file_name(&item_ref.name),
                                 },
                             );
                             store.requests.insert(item_ref.item_id, request_file);
@@ -1783,6 +1791,7 @@ fn load_folder_into_store<B: StorageIoBackend>(
                                     updated_at: Some(request_file.meta.updated_at),
                                     parent_id: Some(folder_id),
                                     children: Vec::new(),
+                                    file_name: request_file_name(&item_ref.name),
                                 },
                             );
                             store.requests.insert(item_ref.item_id, request_file);
@@ -1805,6 +1814,7 @@ fn load_folder_into_store<B: StorageIoBackend>(
             updated_at: Some(folder_file.folder.updated_at),
             parent_id,
             children: child_ids,
+            file_name: folder_dir_name(&folder_file.folder.name),
         },
     );
 
@@ -2245,6 +2255,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
                         updated_at: Some(now),
                         parent_id: None,
                         children: vec![request_id],
+                        file_name: crate::workspace_tree::folder_dir_name("Users"),
                     },
                 ),
                 (
@@ -2258,6 +2269,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
                         updated_at: Some(now),
                         parent_id: Some(folder_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("Get Users"),
                     },
                 ),
             ]),

@@ -838,6 +838,7 @@ impl AppShellState {
             .and_then(|node| node.parent_id);
         if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
             node.name = request.meta.name.clone();
+            node.file_name = request_file_name(&request.meta.name);
             node.description = request.meta.description.clone();
             node.created_at = Some(request.meta.created_at);
             node.updated_at = Some(request.meta.updated_at);
@@ -855,6 +856,7 @@ impl AppShellState {
                     updated_at: Some(request.meta.updated_at),
                     parent_id: Some(parent_id),
                     children: Vec::new(),
+                    file_name: request_file_name(&request.meta.name),
                 },
             );
         }
@@ -940,6 +942,7 @@ impl AppShellState {
                 updated_at: Some(request.meta.updated_at),
                 parent_id: None,
                 children: Vec::new(),
+                file_name: request_file_name(&request.meta.name),
             },
         );
         self.shared_store.root_ids.retain(|id| *id != request_id);
@@ -1171,6 +1174,7 @@ impl AppShellState {
                 }
                 if let Some(node) = self.shared_store.nodes.get_mut(&request_id) {
                     node.name = request.meta.name.clone();
+                    node.file_name = request_file_name(&request.meta.name);
                     node.description = request.meta.description.clone();
                     node.updated_at = Some(request.meta.updated_at);
                 }
@@ -1236,6 +1240,7 @@ impl AppShellState {
                     .insert(request.meta.request_id, request.clone());
                 if let Some(node) = self.shared_store.nodes.get_mut(&request.meta.request_id) {
                     node.name = request.meta.name.clone();
+                    node.file_name = request_file_name(&request.meta.name);
                 }
                 match new_parent_id {
                     Some(parent_id) => {
@@ -1347,6 +1352,7 @@ impl AppShellState {
                 let parent_id = folder.parent_folder_id;
                 if let Some(node) = self.shared_store.nodes.get_mut(&folder_id) {
                     node.name = folder.name.clone();
+                    node.file_name = folder_dir_name(&folder.name);
                     node.description = folder.description.clone();
                     node.updated_at = Some(folder.updated_at);
                 } else {
@@ -1361,6 +1367,7 @@ impl AppShellState {
                             updated_at: Some(folder.updated_at),
                             parent_id,
                             children: Vec::new(),
+                            file_name: folder_dir_name(&folder.name),
                         },
                     );
                     if let Some(pid) = parent_id {
@@ -3407,6 +3414,7 @@ fn load_folder_from_manifest(
             updated_at: Some(folder_file.folder.updated_at),
             parent_id,
             children: Vec::new(),
+            file_name: folder_dir_name(&folder_file.folder.name),
         },
         Some(&manifest_path),
         &manifest_path,
@@ -3503,6 +3511,7 @@ fn load_root_request(
             updated_at: Some(request_file.meta.updated_at),
             parent_id: None,
             children: Vec::new(),
+            file_name: request_file_name(&request_file.meta.name),
         },
         None,
         request_path,
@@ -3572,6 +3581,7 @@ fn load_folder_request(
             updated_at: Some(request_file.meta.updated_at),
             parent_id: Some(parent_id),
             children: Vec::new(),
+            file_name: request_file_name(&request_file.meta.name),
         },
         None,
         request_path,
@@ -4192,6 +4202,7 @@ mod tests {
                 updated_at: Some(now),
                 parent_id: None,
                 children: vec![first_request_id],
+                file_name: crate::workspace_tree::folder_dir_name("Folder"),
             },
         );
         state.shared_store.root_ids.push(folder_id);
@@ -4206,6 +4217,7 @@ mod tests {
                 updated_at: Some(now),
                 parent_id: Some(folder_id),
                 children: Vec::new(),
+                file_name: crate::workspace_tree::request_file_name("First Request"),
             },
         );
         let first_request = sample_request_file(
@@ -4846,6 +4858,7 @@ mod tests {
                 updated_at: Some(now),
                 parent_id: None,
                 children: Vec::new(),
+                file_name: crate::workspace_tree::request_file_name("Next Request"),
             },
         );
         next_shared_store.root_ids.push(next_request_id);

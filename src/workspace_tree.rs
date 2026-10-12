@@ -26,6 +26,8 @@ pub struct Node {
     pub updated_at: Option<DateTime<Utc>>,
     pub parent_id: Option<NodeId>,
     pub children: Vec<NodeId>,
+    /// Leaf name on disk: `<slug>.request.toml` for requests, the directory name for folders.
+    pub file_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -271,10 +273,8 @@ pub fn folder_dir_path(
 ) -> Result<PathBuf> {
     let folder = node_by_kind(store, folder_id, NodeKind::Folder)?;
     match folder.parent_id {
-        None => Ok(paths.root.join(folder_dir_name(&folder.name))),
-        Some(parent_id) => {
-            Ok(node_dir_path(paths, store, parent_id)?.join(folder_dir_name(&folder.name)))
-        }
+        None => Ok(paths.root.join(&folder.file_name)),
+        Some(parent_id) => Ok(node_dir_path(paths, store, parent_id)?.join(&folder.file_name)),
     }
 }
 
@@ -312,7 +312,7 @@ pub fn request_file_path(
             }
         }
     };
-    Ok(request_dir.join(request_file_name(&request.name)))
+    Ok(request_dir.join(&request.file_name))
 }
 
 pub fn node_by_id(store: &SharedStore, node_id: NodeId) -> Result<&Node> {
@@ -425,6 +425,7 @@ mod tests {
                         updated_at: None,
                         parent_id: Some(parent_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("Get User"),
                     },
                 ),
                 (
@@ -438,6 +439,7 @@ mod tests {
                         updated_at: None,
                         parent_id: Some(parent_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("get-user"),
                     },
                 ),
             ]),
@@ -471,6 +473,7 @@ mod tests {
                         updated_at: None,
                         parent_id: None,
                         children: vec![request_id],
+                        file_name: crate::workspace_tree::folder_dir_name("Users"),
                     },
                 ),
                 (
@@ -484,6 +487,7 @@ mod tests {
                         updated_at: None,
                         parent_id: Some(folder_id),
                         children: Vec::new(),
+                        file_name: crate::workspace_tree::request_file_name("Get User"),
                     },
                 ),
             ]),
@@ -554,6 +558,7 @@ mod tests {
                     updated_at: None,
                     parent_id: None,
                     children: Vec::new(),
+                    file_name: crate::workspace_tree::request_file_name("Health Check"),
                 },
             )]),
             requests: HashMap::new(),
