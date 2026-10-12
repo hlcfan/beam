@@ -6,23 +6,9 @@ Keep all LLM replies concise and accurate. Prefer the short response that fully 
 
 ## Project Overview
 
-Beam is a fast, lightweight HTTP client built with Rust and the gpui GUI framework. It provides features similar to Postman or Insomnia, including multi-workspace support, environment variables, authentication methods, and post-request scripting.
+Beam is a fast, lightweight HTTP client built with Rust and the gpui GUI framework. See [README.md](README.md#features) for supported features.
 
 The hierarchy is: **Workspace → Folders → Requests**. Collections have been removed. Only global environments exist (no collection-scoped environments).
-
-## Supported Features
-
-- HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, QUERY
-- Auth: Bearer, Basic, API Key (header or query)
-- Body types: JSON, XML, Text, GraphQL, Form URL-Encoded, Multipart
-- Global environments with `{{variable}}` interpolation
-- Post-response JavaScript scripting
-- Multi-workspace organization with folders
-- Import Postman collections/environments and Insomnia JSON or v5 YAML exports
-- Paste cURL commands into the URL field to populate the current request
-- Command palette for searching requests and folders and running common commands
-- Response history view (next to Headers in response pane)
-- Theme support (light/dark), font size settings, response auto-format
 
 ## Architecture
 

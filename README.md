@@ -8,6 +8,7 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 
 - Native, local-first, no telemetry
 - Multi-workspace organization with folders and requests
+- Drag and drop requests to reorder them or move them between folders
 - HTTP request with common methods (GET, POST, PUT, DELETE, PATCH, HEAD, QUERY, and OPTIONS)
 - Authentication support for Bearer, Basic, and API Key (header or query)
 - Request body formats for JSON, XML, Text, GraphQL, Form URL-Encoded, and Multipart
@@ -18,7 +19,8 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 - Command palette for quickly opening requests, revealing folders, and running common commands
 - Response history view in the response pane
 - Persistent TOML-based storage for workspaces, requests, environments, local history, and script results on your machine
-- Theme support with light/dark mode and a clean desktop interface
+- Theme support with light/dark mode and font size settings
+- Editor auto-format, soft wrap, wrapping indent settings
 
 ## Importing
 
