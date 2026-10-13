@@ -141,5 +141,12 @@ pub(super) fn build_macos_system_menus(cx: &App) -> Vec<Menu> {
             items: vec![MenuItem::action("Focus URL", FocusUrlInput)],
             disabled: false,
         },
+        // gpui registers a menu named "Window" as NSApp's windowsMenu, which lets
+        // macOS add its Move & Resize items and enable the fn+ctrl tiling shortcuts.
+        Menu {
+            name: "Window".into(),
+            items: vec![],
+            disabled: false,
+        },
     ]
 }
