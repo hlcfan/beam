@@ -178,6 +178,13 @@ impl BeamView {
                     .pr(gpui_kit::base::Scrollbar::width())
                     .pl(indent)
                     .selected(row.selected)
+                    .border_1()
+                    .border_color(if row.selected {
+                        cx.theme().list_active_border
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .when(row.selected, |this| this.bg(cx.theme().list_active))
                     .when(
                         drag_hover
                             .is_some_and(|(id, p)| id == row_id && p == TreeDropPlacement::Into)
