@@ -6,6 +6,7 @@
 //! the input's own `set_selected_range` and `replace`.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use gpui_kit::Focusable;
 use gpui_kit::component::input::{Escape, MoveDown, MoveUp, Rope};
@@ -14,18 +15,47 @@ use super::super::*;
 use super::completion::{
     VariableCandidate, load_environment_variables, token_at_cursor, variable_candidates,
 };
+use crate::models::EnvironmentVariable;
 
 /// Height at which the list starts to scroll.
 const MAX_LIST_HEIGHT: Pixels = px(240.);
 
-/// The candidates offered for the token under the cursor.
+/// The variables available for the `{{` token under the cursor, and the ones
+/// matching what has been typed of it.
+///
+/// The environment is read once, when the token is opened. Typing more of the
+/// same token only filters `variables` again, so it does no file access.
 pub(in crate::ui) struct UrlCompletion {
+    /// Where the `{{` token starts. A different start is a different token.
+    token_start: usize,
+    variables: Arc<Vec<EnvironmentVariable>>,
     /// Cursor offset the candidates were computed for. The popup is shown only
     /// while the cursor is still there, so moving it away hides a stale list.
     cursor: usize,
     candidates: Vec<VariableCandidate>,
     selected: usize,
     scroll_handle: ScrollHandle,
+}
+
+impl UrlCompletion {
+    fn new(token_start: usize, variables: Arc<Vec<EnvironmentVariable>>) -> Self {
+        Self {
+            token_start,
+            variables,
+            cursor: token_start,
+            candidates: Vec::new(),
+            selected: 0,
+            scroll_handle: ScrollHandle::new(),
+        }
+    }
+
+    /// Recomputes the candidates for `prefix` from the loaded variables.
+    fn refilter(&mut self, cursor: usize, prefix: &str) {
+        self.cursor = cursor;
+        self.candidates = variable_candidates(prefix, &self.variables);
+        self.selected = 0;
+        self.scroll_handle = ScrollHandle::new();
+    }
 }
 
 impl BeamView {
@@ -35,7 +65,6 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.url_completion_task = None;
         let input = self.url_input.read(cx);
         if !input.focus_handle(cx).is_focused(window) {
             self.dismiss_url_completion(cx);
@@ -46,30 +75,55 @@ impl BeamView {
             self.dismiss_url_completion(cx);
             return;
         };
+
+        // The same token as the open popup: filter what is already loaded.
+        if let Some(completion) = self.url_completion.as_mut()
+            && completion.token_start == token.start
+        {
+            completion.refilter(cursor, &token.prefix);
+            cx.notify();
+            return;
+        }
+        // The same token is still loading; its result is built from the text
+        // as it is when the load finishes.
+        if self
+            .url_completion_task
+            .as_ref()
+            .is_some_and(|(start, _)| *start == token.start)
+        {
+            return;
+        }
+
+        // A new token: read the environment once.
+        self.dismiss_url_completion(cx);
+        let start = token.start;
         let path = self
             .selected_environment_id_for_view()
             .and_then(|id| self.environment_file_path_from_shell(id));
-        let prefix = token.prefix;
-        let candidates = cx.background_spawn(async move {
-            let variables = load_environment_variables(path);
-            variable_candidates(&prefix, &variables)
-        });
-        self.url_completion_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let candidates = candidates.await;
+        let variables =
+            cx.background_spawn(async move { Arc::new(load_environment_variables(path)) });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let variables = variables.await;
             let _ = this.update_in(cx, |this, window, cx| {
+                this.url_completion_task = None;
                 let input = this.url_input.read(cx);
-                if input.cursor() != cursor || !input.focus_handle(cx).is_focused(window) {
+                if !input.focus_handle(cx).is_focused(window) {
                     return;
                 }
-                this.url_completion = (!candidates.is_empty()).then_some(UrlCompletion {
-                    cursor,
-                    candidates,
-                    selected: 0,
-                    scroll_handle: ScrollHandle::new(),
-                });
+                let cursor = input.cursor();
+                let Some(token) = token_at_cursor(input.text(), cursor) else {
+                    return;
+                };
+                if token.start != start {
+                    return;
+                }
+                let mut completion = UrlCompletion::new(start, variables);
+                completion.refilter(cursor, &token.prefix);
+                this.url_completion = Some(completion);
                 cx.notify();
             });
-        }));
+        });
+        self.url_completion_task = Some((start, task));
     }
 
     pub(in crate::ui) fn dismiss_url_completion(&mut self, cx: &mut Context<Self>) {
@@ -81,9 +135,10 @@ impl BeamView {
 
     /// Whether the popup is showing, and so owns Up, Down, Escape and Enter.
     pub(in crate::ui) fn url_completion_active(&self, cx: &App) -> bool {
-        self.url_completion
-            .as_ref()
-            .is_some_and(|completion| completion.cursor == self.url_input.read(cx).cursor())
+        self.url_completion.as_ref().is_some_and(|completion| {
+            !completion.candidates.is_empty()
+                && completion.cursor == self.url_input.read(cx).cursor()
+        })
     }
 
     /// Replaces the typed token with the selected (or clicked) candidate.
@@ -120,6 +175,9 @@ impl BeamView {
             return;
         };
         let count = completion.candidates.len() as isize;
+        if count == 0 {
+            return;
+        }
         completion.selected = (completion.selected as isize + step).rem_euclid(count) as usize;
         completion.scroll_handle.scroll_to_item(completion.selected);
         cx.notify();
@@ -359,9 +417,12 @@ fn replacement_range(text: &Rope, cursor: usize) -> Range<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use gpui_kit::component::input::Rope;
 
-    use super::replacement_range;
+    use super::{UrlCompletion, replacement_range};
+    use crate::models::EnvironmentVariable;
     use crate::ui::request::completion::VariableCandidate;
 
     fn apply(text: &str, cursor: usize, name: &str) -> String {
@@ -385,6 +446,41 @@ mod tests {
             apply("https://{{ho}}/v1/users", 12, "host"),
             "https://{{host}}/v1/users"
         );
+    }
+
+    #[test]
+    fn typing_more_of_a_token_filters_the_loaded_variables() {
+        let variables = Arc::new(vec![
+            EnvironmentVariable {
+                name: "host".into(),
+                value: "example.com".into(),
+                enabled: true,
+                description: None,
+            },
+            EnvironmentVariable {
+                name: "port".into(),
+                value: "8080".into(),
+                enabled: true,
+                description: None,
+            },
+        ]);
+        let mut completion = UrlCompletion::new(8, variables);
+        let names = |completion: &UrlCompletion| -> Vec<String> {
+            completion
+                .candidates
+                .iter()
+                .map(|candidate| candidate.name.clone())
+                .collect()
+        };
+
+        completion.refilter(10, "ho");
+        assert_eq!(names(&completion), ["host"]);
+        completion.refilter(11, "hox");
+        assert!(names(&completion).is_empty());
+        // Backspacing restores matches without anything being reloaded.
+        completion.refilter(10, "ho");
+        assert_eq!(names(&completion), ["host"]);
+        assert_eq!(completion.cursor, 10);
     }
 
     #[test]
