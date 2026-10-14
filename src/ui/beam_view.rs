@@ -81,6 +81,8 @@ pub(super) struct BeamView {
     pub(super) request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
     pub(super) request_url_editor_cache_order: Vec<Ulid>,
     pub(super) request_url_editor_change_sub: Option<Subscription>,
+    pub(super) url_completion: Option<request::url_completion::UrlCompletion>,
+    pub(super) url_completion_task: Option<Task<()>>,
 }
 
 impl BeamView {
@@ -264,6 +266,8 @@ impl BeamView {
             request_url_editor_cache: HashMap::new(),
             request_url_editor_cache_order: Vec::new(),
             request_url_editor_change_sub: None,
+            url_completion: None,
+            url_completion_task: None,
         };
         view.resubscribe_request_body_editor(window, cx);
         view.resubscribe_request_url_editor(window, cx);
