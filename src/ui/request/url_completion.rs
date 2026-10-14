@@ -165,75 +165,182 @@ impl BeamView {
             return None;
         }
         let completion = self.url_completion.as_ref()?;
-        let rows = completion
+        let selected = completion.selected;
+        let rows: Vec<(usize, String, &'static str)> = completion
             .candidates
             .iter()
             .enumerate()
             .skip(completion.first_visible)
             .take(VISIBLE_ROWS)
-            .map(|(index, candidate)| {
-                let selected = index == completion.selected;
-                h_flex()
-                    .id(("url-completion-row", index))
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .gap_3()
-                    .justify_between()
-                    .text_xs()
-                    .rounded(cx.theme().radius)
-                    .cursor_pointer()
-                    .when(selected, |row| {
-                        row.bg(cx.theme().accent)
-                            .text_color(cx.theme().accent_foreground)
-                    })
-                    .when(!selected, |row| {
-                        row.hover(|row| row.bg(cx.theme().accent.opacity(0.5)))
-                    })
-                    .child(candidate.name.clone())
-                    .child(
-                        div()
-                            .italic()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(candidate.detail),
-                    )
-                    // Mouse down, not click: it lands before the input could lose focus.
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, _, window, cx| {
-                            this.accept_url_completion(Some(index), window, cx);
-                            cx.stop_propagation();
-                        }),
-                    )
-            });
+            .map(|(index, candidate)| (index, candidate.name.clone(), candidate.detail))
+            .collect();
+        let view = cx.entity();
 
-        // Caret position in window coordinates, from the input's last paint.
-        // The menu's left edge sits under the caret, one line below it.
-        let caret = self.url_input.read(cx).prepaint_caret_geometry()?;
-        let bounds = caret.cursor_bounds();
-        let position = point(
-            bounds.origin.x,
-            bounds.origin.y + caret.scroll_offset().y + caret.line_height() + px(4.),
-        );
-
+        // The content is built in prepaint, once the caret position of this
+        // frame is known; see `CaretAnchored`.
         Some(
-            deferred(
-                anchored()
-                    .snap_to_window_with_margin(px(8.))
-                    .anchor(gpui_kit::Anchor::TopLeft)
-                    .position(position)
-                    .child(
-                        v_flex()
-                            .occlude()
-                            .popover_style(cx)
-                            .min_w(px(240.))
-                            .p_1()
-                            .children(rows),
-                    ),
-            )
+            deferred(CaretAnchored::new(
+                self.url_input.downgrade(),
+                move |window, cx| {
+                    let rows = rows.iter().map(|(index, name, detail)| {
+                        let index = *index;
+                        h_flex()
+                            .id(("url-completion-row", index))
+                            .px_2()
+                            .py_1()
+                            .gap_3()
+                            .justify_between()
+                            .text_xs()
+                            .rounded(cx.theme().radius)
+                            .cursor_pointer()
+                            .when(index == selected, |row| {
+                                row.bg(cx.theme().accent)
+                                    .text_color(cx.theme().accent_foreground)
+                            })
+                            .when(index != selected, |row| {
+                                row.hover(|row| row.bg(cx.theme().accent.opacity(0.5)))
+                            })
+                            .child(name.clone())
+                            .child(
+                                div()
+                                    .italic()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(*detail),
+                            )
+                            // Mouse down, not click: it lands before the input could lose focus.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                window.listener_for(&view, move |this, _, window, cx| {
+                                    this.accept_url_completion(Some(index), window, cx);
+                                    cx.stop_propagation();
+                                }),
+                            )
+                    });
+                    v_flex()
+                        .occlude()
+                        .items_stretch()
+                        .popover_style(cx)
+                        .min_w(px(240.))
+                        .p_1()
+                        .children(rows)
+                        .into_any_element()
+                },
+            ))
             .with_priority(2)
             .into_any_element(),
         )
+    }
+}
+
+/// A popup placed under the caret from this frame's layout.
+///
+/// The input records where its caret is while it prepaints. Reading that in
+/// `render` would use the previous frame's position, so a menu that opens as
+/// the user types would appear one keystroke behind and then jump. Inside
+/// `deferred`, this element's prepaint runs after the input's, so the position
+/// is current, and the content is built and laid out there.
+type BuildContent = Box<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+
+struct CaretAnchored {
+    input: WeakEntity<InputState>,
+    build: BuildContent,
+    content: Option<AnyElement>,
+}
+
+impl CaretAnchored {
+    fn new(
+        input: WeakEntity<InputState>,
+        build: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        Self {
+            input,
+            build: Box::new(build),
+            content: None,
+        }
+    }
+}
+
+impl Element for CaretAnchored {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        (window.request_layout(Style::default(), [], cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(input) = self.input.upgrade() else {
+            return;
+        };
+        let Some(caret) = input.read(cx).prepaint_caret_geometry() else {
+            return;
+        };
+        let bounds = caret.cursor_bounds();
+        let viewport = window.viewport_size();
+        let mut content = (self.build)(window, cx);
+        let size = content.layout_as_root(
+            Size {
+                width: AvailableSpace::Definite(viewport.width),
+                height: AvailableSpace::Definite(viewport.height),
+            },
+            window,
+            cx,
+        );
+        // Left edge under the caret, one line below it, kept inside the window.
+        let margin = px(8.);
+        let x = bounds
+            .origin
+            .x
+            .min(viewport.width - size.width - margin)
+            .max(margin);
+        let y = bounds.origin.y + caret.scroll_offset().y + caret.line_height() + px(4.);
+        content.prepaint_at(point(x, y), window, cx);
+        self.content = Some(content);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _request_layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(content) = self.content.as_mut() {
+            content.paint(window, cx);
+        }
+    }
+}
+
+impl IntoElement for CaretAnchored {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
     }
 }
 
