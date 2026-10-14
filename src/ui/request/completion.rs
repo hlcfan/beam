@@ -30,11 +30,7 @@ impl BeamView {
         let prefix = token.prefix.clone();
         let start = token.start;
         let items = cx.background_spawn(async move {
-            let variables = path
-                .and_then(|path| std::fs::read_to_string(path).ok())
-                .and_then(|content| toml::from_str::<EnvironmentFile>(&content).ok())
-                .map(|file| file.variables)
-                .unwrap_or_default();
+            let variables = load_environment_variables(path);
             completion_items(&token, &variables)
         });
         self.request_body_completion_task = Some(cx.spawn_in(window, async move |_, cx| {
@@ -60,13 +56,15 @@ impl BeamView {
 // Longer variable names can still be entered and resolved normally.
 const MAX_TOKEN_BYTES: usize = 4096;
 
-struct VariableToken {
-    start: usize,
-    prefix: String,
+pub(super) struct VariableToken {
+    pub(super) start: usize,
+    /// End of the token to replace, including a closing `}}` that is already typed.
+    pub(super) end: usize,
+    pub(super) prefix: String,
     range: lsp_types::Range,
 }
 
-fn token_at_cursor(rope: &Rope, offset: usize) -> Option<VariableToken> {
+pub(super) fn token_at_cursor(rope: &Rope, offset: usize) -> Option<VariableToken> {
     if offset > rope.len() || !rope.is_char_boundary(offset) {
         return None;
     }
@@ -128,6 +126,7 @@ fn token_at_cursor(rope: &Rope, offset: usize) -> Option<VariableToken> {
     }
     Some(VariableToken {
         start,
+        end,
         prefix: rope
             .slice(start + 2..offset)
             .to_string()
@@ -148,10 +147,26 @@ fn completion_position(rope: &Rope, offset: usize) -> lsp_types::Position {
     lsp_types::Position::new(point.row as u32, column as u32)
 }
 
-fn completion_items(
-    token: &VariableToken,
+/// A variable the user can insert, as the completion UIs list it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct VariableCandidate {
+    pub(super) name: String,
+    pub(super) detail: &'static str,
+}
+
+impl VariableCandidate {
+    /// The text that replaces the typed token.
+    pub(super) fn insertion(&self) -> String {
+        format!("{{{{{}}}}}", self.name)
+    }
+}
+
+/// Variables whose name starts with `prefix`, sorted by name. Environment
+/// variables shadow dynamic ones of the same name.
+pub(super) fn variable_candidates(
+    prefix: &str,
     variables: &[EnvironmentVariable],
-) -> Vec<CompletionItem> {
+) -> Vec<VariableCandidate> {
     let mut names = BTreeMap::new();
     for name in DYNAMIC_VARIABLE_NAMES {
         names.insert(name, "Dynamic variable");
@@ -164,15 +179,38 @@ fn completion_items(
     }
     names
         .into_iter()
-        .filter(|(name, _)| name.starts_with(&token.prefix))
-        .map(|(name, detail)| CompletionItem {
-            label: name.to_string(),
+        .filter(|(name, _)| name.starts_with(prefix))
+        .map(|(name, detail)| VariableCandidate {
+            name: name.to_string(),
+            detail,
+        })
+        .collect()
+}
+
+/// Reads the enabled variables of the environment stored at `path`.
+pub(super) fn load_environment_variables(
+    path: Option<std::path::PathBuf>,
+) -> Vec<EnvironmentVariable> {
+    path.and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|content| toml::from_str::<EnvironmentFile>(&content).ok())
+        .map(|file| file.variables)
+        .unwrap_or_default()
+}
+
+fn completion_items(
+    token: &VariableToken,
+    variables: &[EnvironmentVariable],
+) -> Vec<CompletionItem> {
+    variable_candidates(&token.prefix, variables)
+        .into_iter()
+        .map(|candidate| CompletionItem {
+            label: candidate.name.clone(),
             kind: Some(CompletionItemKind::VARIABLE),
-            detail: Some(detail.to_string()),
+            detail: Some(candidate.detail.to_string()),
             filter_text: Some(token.prefix.clone()),
             text_edit: Some(CompletionTextEdit::Edit(TextEdit {
                 range: token.range,
-                new_text: format!("{{{{{name}}}}}"),
+                new_text: candidate.insertion(),
             })),
             ..Default::default()
         })

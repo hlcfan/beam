@@ -358,38 +358,40 @@ impl BeamView {
                             )
                             .child({
                                 let url_entity = self.url_input.clone();
-                                div()
-                                    .id("env-hover-url")
-                                    .flex_1()
-                                    .on_mouse_move(cx.listener(
-                                        move |this, event: &MouseMoveEvent, _, cx| {
-                                            this.update_env_var_hover_for_input(
-                                                &url_entity,
-                                                event.position,
-                                                cx,
-                                            );
-                                        },
-                                    ))
-                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                        if !hovered {
-                                            this.clear_env_var_hover(cx);
-                                        }
-                                    }))
-                                    .child(
-                                        Input::new(&self.url_input)
-                                            .flex_1()
-                                            .small()
-                                            .appearance(false)
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    build_text_edit_context_menu(
-                                                        menu,
-                                                        url_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
+                                self.capture_url_completion_keys(
+                                    div().id("env-hover-url").flex_1(),
+                                    cx,
+                                )
+                                .on_mouse_move(cx.listener(
+                                    move |this, event: &MouseMoveEvent, _, cx| {
+                                        this.update_env_var_hover_for_input(
+                                            &url_entity,
+                                            event.position,
+                                            cx,
+                                        );
+                                    },
+                                ))
+                                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                    if !hovered {
+                                        this.clear_env_var_hover(cx);
+                                    }
+                                }))
+                                .child(
+                                    Input::new(&self.url_input)
+                                        .flex_1()
+                                        .small()
+                                        .appearance(false)
+                                        .context_menu({
+                                            move |menu, _, cx| {
+                                                build_text_edit_context_menu(
+                                                    menu,
+                                                    url_has_selection,
+                                                    cx.theme().muted_foreground,
+                                                )
+                                            }
+                                        }),
+                                )
+                                .children(self.render_url_completion(cx))
                             })
                             .child(
                                 Button::new("send-request")
@@ -417,10 +419,10 @@ impl BeamView {
                 Button::new("environment-dropdown")
                     .ghost()
                     .small()
-                    .h(px(36.0))
+                    .h(px(38.0))
                     .min_w(px(180.0))
                     .px_2()
-                    .rounded(px(8.0))
+                    .rounded(px(10.0))
                     .border_1()
                     .border_color(cx.theme().border)
                     .bg(cx.theme().background)

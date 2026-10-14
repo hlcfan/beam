@@ -58,11 +58,13 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_url_completion(cx);
         let editor = self.url_input.clone();
         self.request_url_editor_change_sub = Some(cx.subscribe_in(
             &editor,
             window,
             move |this, _, ev: &InputEvent, window, cx| match ev {
+                InputEvent::Blur => this.dismiss_url_completion(cx),
                 InputEvent::Change => {
                     let value = this.url_input.read(cx).value().to_string();
                     if this.import_curl_from_url_input(&value, window, cx) {
@@ -71,9 +73,15 @@ impl BeamView {
                     this.request.url = value;
                     this.show_invalid_url_border = false;
                     this.schedule_request_save(cx);
+                    this.update_url_completion(window, cx);
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => {
+                    // Enter belongs to the popup while it is showing; otherwise it sends.
+                    if this.url_completion_active(cx) {
+                        this.accept_url_completion(None, window, cx);
+                        return;
+                    }
                     let value = this.url_input.read(cx).value().to_string();
                     if this.import_curl_from_url_input(&value, window, cx) {
                         return;

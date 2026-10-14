@@ -666,6 +666,7 @@ impl Render for EnvironmentManagerDialogView {
             h_flex().w_full().items_center().gap_2().child(
                 Input::new(&self.environment_name_input)
                     .w_full()
+                    .focus_bordered(false)
                     .context_menu({
                         move |menu, _, cx| {
                             build_text_edit_context_menu(
@@ -901,7 +902,6 @@ impl Render for EnvironmentManagerDialogView {
                                                             .min_w_0()
                                                             .flex_1()
                                                             .text_sm()
-                                                            .line_height(relative(1.0))
                                                             .truncate()
                                                             .child(label),
                                                     );
