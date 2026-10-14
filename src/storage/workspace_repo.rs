@@ -23,7 +23,7 @@ use crate::storage::{
 use crate::workspace_tree::{
     Node, NodeKind, SharedStore, assert_name_unique, ensure_parent_kind, find_unique_name,
     folder_dir_path, item_file_name, node_by_kind, path_leaf_name, request_file_name,
-    request_file_path, scope_key, unique_folder_dir_name, unique_request_file_name,
+    request_file_path, scope_key, slugify_name, unique_folder_dir_name, unique_request_file_name,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, Default)]
@@ -1918,7 +1918,7 @@ fn environment_file_path_for_name<B: StorageIoBackend>(
     environment_name: &str,
     exclude_path: Option<&Path>,
 ) -> Result<std::path::PathBuf> {
-    let preferred_stem = slugify(environment_name);
+    let preferred_stem = slugify_name(environment_name);
     let excluded = exclude_path.and_then(|path| path.file_name().map(|name| name.to_owned()));
     let mut used_names = HashSet::new();
     for path in backend.read_dir(dir)? {
@@ -1971,27 +1971,6 @@ where
         }
     }
     Ok(())
-}
-
-fn slugify(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut prev_dash = false;
-    for ch in input.chars() {
-        let lowered = ch.to_ascii_lowercase();
-        if lowered.is_ascii_alphanumeric() {
-            out.push(lowered);
-            prev_dash = false;
-        } else if !prev_dash {
-            out.push('-');
-            prev_dash = true;
-        }
-    }
-    let normalized = out.trim_matches('-').to_string();
-    if normalized.is_empty() {
-        "request".to_string()
-    } else {
-        normalized
-    }
 }
 
 fn path_has_ancestor(store: &SharedStore, start_id: Ulid, ancestor_id: Ulid) -> bool {
@@ -2946,5 +2925,31 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
             .expect_err("unknown environment");
 
         assert!(matches!(error, BeamError::NotFound { .. }));
+    }
+
+    #[test]
+    fn environment_file_names_keep_unicode_characters() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace");
+
+        let first = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "中文".to_string(),
+            })
+            .expect("create first");
+        let second = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "数码".to_string(),
+            })
+            .expect("create second");
+        let copy = storage
+            .duplicate_environment(first.environment.environment_id)
+            .expect("duplicate");
+
+        assert_eq!(first.environment.file_name, "中文.env.toml");
+        assert_eq!(second.environment.file_name, "数码.env.toml");
+        assert_eq!(copy.environment.file_name, "中文-copy.env.toml");
+        assert_eq!(second.environment.name, "数码");
     }
 }

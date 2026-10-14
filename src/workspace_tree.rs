@@ -191,7 +191,7 @@ fn normalize_name(name: &str) -> String {
 const MAX_SLUG_LEN: usize = 80;
 const SLUG_HASH_SUFFIX_LEN: usize = 8;
 
-fn slugify_name(input: &str) -> String {
+pub fn slugify_name(input: &str) -> String {
     let normalized = normalize_name(input);
     let mut out = String::with_capacity(normalized.len());
     let mut prev_dash = false;
