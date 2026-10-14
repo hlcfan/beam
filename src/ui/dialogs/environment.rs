@@ -901,7 +901,6 @@ impl Render for EnvironmentManagerDialogView {
                                                             .min_w_0()
                                                             .flex_1()
                                                             .text_sm()
-                                                            .line_height(relative(1.0))
                                                             .truncate()
                                                             .child(label),
                                                     );
