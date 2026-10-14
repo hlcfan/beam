@@ -15,7 +15,8 @@ use super::completion::{
     VariableCandidate, load_environment_variables, token_at_cursor, variable_candidates,
 };
 
-const VISIBLE_ROWS: usize = 8;
+/// Height at which the list starts to scroll.
+const MAX_LIST_HEIGHT: Pixels = px(240.);
 
 /// The candidates offered for the token under the cursor.
 pub(in crate::ui) struct UrlCompletion {
@@ -24,7 +25,7 @@ pub(in crate::ui) struct UrlCompletion {
     cursor: usize,
     candidates: Vec<VariableCandidate>,
     selected: usize,
-    first_visible: usize,
+    scroll_handle: ScrollHandle,
 }
 
 impl BeamView {
@@ -64,7 +65,7 @@ impl BeamView {
                     cursor,
                     candidates,
                     selected: 0,
-                    first_visible: 0,
+                    scroll_handle: ScrollHandle::new(),
                 });
                 cx.notify();
             });
@@ -120,11 +121,7 @@ impl BeamView {
         };
         let count = completion.candidates.len() as isize;
         completion.selected = (completion.selected as isize + step).rem_euclid(count) as usize;
-        if completion.selected < completion.first_visible {
-            completion.first_visible = completion.selected;
-        } else if completion.selected >= completion.first_visible + VISIBLE_ROWS {
-            completion.first_visible = completion.selected + 1 - VISIBLE_ROWS;
-        }
+        completion.scroll_handle.scroll_to_item(completion.selected);
         cx.notify();
     }
 
@@ -166,12 +163,11 @@ impl BeamView {
         }
         let completion = self.url_completion.as_ref()?;
         let selected = completion.selected;
+        let scroll_handle = completion.scroll_handle.clone();
         let rows: Vec<(usize, String, &'static str)> = completion
             .candidates
             .iter()
             .enumerate()
-            .skip(completion.first_visible)
-            .take(VISIBLE_ROWS)
             .map(|(index, candidate)| (index, candidate.name.clone(), candidate.detail))
             .collect();
         let view = cx.entity();
@@ -218,11 +214,20 @@ impl BeamView {
                     });
                     v_flex()
                         .occlude()
-                        .items_stretch()
+                        .relative()
                         .popover_style(cx)
                         .min_w(px(240.))
                         .p_1()
-                        .children(rows)
+                        .child(
+                            v_flex()
+                                .id("url-completion-list")
+                                .items_stretch()
+                                .max_h(MAX_LIST_HEIGHT)
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll_handle)
+                                .children(rows),
+                        )
+                        .vertical_scrollbar(&scroll_handle)
                         .into_any_element()
                 },
             ))
