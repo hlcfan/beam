@@ -359,7 +359,7 @@ impl BeamView {
                             .child({
                                 let url_entity = self.url_input.clone();
                                 self.capture_url_completion_keys(
-                                    div().id("env-hover-url").relative().flex_1(),
+                                    div().id("env-hover-url").flex_1(),
                                     cx,
                                 )
                                 .on_mouse_move(cx.listener(

@@ -156,7 +156,7 @@ impl BeamView {
             }))
     }
 
-    /// The popup, anchored below the URL field, when there is something to show.
+    /// The popup, with its left edge under the caret, when there is something to show.
     pub(in crate::ui) fn render_url_completion(
         &self,
         cx: &mut Context<Self>,
@@ -193,6 +193,7 @@ impl BeamView {
                     .child(candidate.name.clone())
                     .child(
                         div()
+                            .italic()
                             .text_color(cx.theme().muted_foreground)
                             .child(candidate.detail),
                     )
@@ -206,16 +207,29 @@ impl BeamView {
                     )
             });
 
+        // Caret position in window coordinates, from the input's last paint.
+        // The menu's left edge sits under the caret, one line below it.
+        let caret = self.url_input.read(cx).prepaint_caret_geometry()?;
+        let bounds = caret.cursor_bounds();
+        let position = point(
+            bounds.origin.x,
+            bounds.origin.y + caret.scroll_offset().y + caret.line_height() + px(4.),
+        );
+
         Some(
             deferred(
-                div().absolute().top(relative(1.)).left_0().pt_1().child(
-                    v_flex()
-                        .occlude()
-                        .popover_style(cx)
-                        .min_w(px(240.))
-                        .p_1()
-                        .children(rows),
-                ),
+                anchored()
+                    .snap_to_window_with_margin(px(8.))
+                    .anchor(gpui_kit::Anchor::TopLeft)
+                    .position(position)
+                    .child(
+                        v_flex()
+                            .occlude()
+                            .popover_style(cx)
+                            .min_w(px(240.))
+                            .p_1()
+                            .children(rows),
+                    ),
             )
             .with_priority(2)
             .into_any_element(),
