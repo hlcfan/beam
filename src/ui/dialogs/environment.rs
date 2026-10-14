@@ -274,6 +274,38 @@ impl EnvironmentManagerDialogView {
         cx.notify();
     }
 
+    fn duplicate_selected_environment(&mut self, cx: &mut Context<Self>) {
+        let Some(environment_id) = self.selected_id else {
+            self.error = Some("No environment selected.".to_string());
+            cx.notify();
+            return;
+        };
+        // Queue unsaved edits first so the copy reflects what the dialog shows.
+        if self.pending_variables_save_due_at.is_some() {
+            self.pending_variables_save_due_at = Some(Instant::now());
+            self.process_pending_variables_save(cx);
+        }
+        let command_id = next_command_id();
+        let command = AppCommand::DuplicateEnvironment {
+            environment_id,
+            command_id: command_id.clone(),
+        };
+        let send_result = self
+            .beam_view
+            .update(cx, move |this, _| this.publish_app_command(command));
+        match send_result {
+            Ok(()) => {
+                self.pending_new_environment_command_id = Some(command_id);
+                self.error = None;
+            }
+            Err(error) => {
+                self.pending_new_environment_command_id = None;
+                self.error = Some(format!("Failed to queue environment duplication: {error}"));
+            }
+        }
+        cx.notify();
+    }
+
     fn focus_environment_name_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.environment_name_input.update(cx, |input, cx| {
             input.focus(window, cx);
@@ -601,15 +633,33 @@ impl Render for EnvironmentManagerDialogView {
                         selected_label.unwrap_or_else(|| "No environment selected".to_string()),
                     ))
                     .child(
-                        Button::new("delete-selected-environment")
-                            .small()
-                            .ghost()
-                            .cursor_pointer()
-                            .label("Delete")
-                            .disabled(self.selected_id.is_none())
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.delete_selected_environment(window, cx);
-                            })),
+                        h_flex()
+                            .items_center()
+                            .gap_1()
+                            .when(self.show_environment_selector, |actions| {
+                                actions.child(
+                                    Button::new("duplicate-selected-environment")
+                                        .small()
+                                        .ghost()
+                                        .cursor_pointer()
+                                        .label("Duplicate")
+                                        .disabled(self.selected_id.is_none())
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.duplicate_selected_environment(cx);
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new("delete-selected-environment")
+                                    .small()
+                                    .ghost()
+                                    .cursor_pointer()
+                                    .label("Delete")
+                                    .disabled(self.selected_id.is_none())
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.delete_selected_environment(window, cx);
+                                    })),
+                            ),
                     ),
             );
         variables_panel = variables_panel.child(
