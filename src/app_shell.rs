@@ -1519,6 +1519,7 @@ fn sort_environments(environments: &mut [EnvironmentMeta]) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppOperation {
     CreateEnvironment,
+    DuplicateEnvironment,
     RenameEnvironment,
     UpdateEnvironmentVariables,
     DeleteEnvironment,
@@ -1546,6 +1547,7 @@ impl AppOperation {
     pub fn as_str(self) -> &'static str {
         match self {
             AppOperation::CreateEnvironment => "create_environment",
+            AppOperation::DuplicateEnvironment => "duplicate_environment",
             AppOperation::RenameEnvironment => "rename_environment",
             AppOperation::UpdateEnvironmentVariables => "update_environment_variables",
             AppOperation::DeleteEnvironment => "delete_environment",
@@ -1575,6 +1577,10 @@ impl AppOperation {
 pub enum AppCommand {
     CreateEnvironment {
         name: String,
+        command_id: String,
+    },
+    DuplicateEnvironment {
+        environment_id: Ulid,
         command_id: String,
     },
     RenameEnvironment {
@@ -1672,6 +1678,7 @@ impl AppCommand {
     pub fn command_id(&self) -> &str {
         match self {
             AppCommand::CreateEnvironment { command_id, .. }
+            | AppCommand::DuplicateEnvironment { command_id, .. }
             | AppCommand::RenameEnvironment { command_id, .. }
             | AppCommand::UpdateEnvironmentVariables { command_id, .. }
             | AppCommand::DeleteEnvironment { command_id, .. }
@@ -1699,6 +1706,7 @@ impl AppCommand {
     pub fn operation(&self) -> AppOperation {
         match self {
             AppCommand::CreateEnvironment { .. } => AppOperation::CreateEnvironment,
+            AppCommand::DuplicateEnvironment { .. } => AppOperation::DuplicateEnvironment,
             AppCommand::RenameEnvironment { .. } => AppOperation::RenameEnvironment,
             AppCommand::UpdateEnvironmentVariables { .. } => {
                 AppOperation::UpdateEnvironmentVariables
@@ -2119,7 +2127,8 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
                 return Err("Workspace name cannot be empty.".to_string());
             }
         }
-        AppCommand::DeleteEnvironment { .. }
+        AppCommand::DuplicateEnvironment { .. }
+        | AppCommand::DeleteEnvironment { .. }
         | AppCommand::DeleteRequest { .. }
         | AppCommand::MoveRequest { .. }
         | AppCommand::MoveFolder { .. }
@@ -2147,6 +2156,18 @@ fn handle_command<B: StorageIoBackend>(
         AppCommand::CreateEnvironment { name, command_id } => {
             let created = storage
                 .create_environment(CreateEnvironmentInput { name })
+                .map_err(|error| error.to_string())?;
+            Ok(vec![AppEvent::EnvironmentUpserted {
+                environment: created.environment,
+                command_id,
+            }])
+        }
+        AppCommand::DuplicateEnvironment {
+            environment_id,
+            command_id,
+        } => {
+            let created = storage
+                .duplicate_environment(environment_id)
                 .map_err(|error| error.to_string())?;
             Ok(vec![AppEvent::EnvironmentUpserted {
                 environment: created.environment,
@@ -4561,6 +4582,71 @@ mod tests {
         assert_eq!(
             state.environment_selection.active_global_environment_id,
             None
+        );
+    }
+
+    #[test]
+    fn duplicate_environment_command_emits_upsert_without_changing_active_environment() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let backend = FileSystemStorage::new(paths);
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+        storage.initialize().expect("init storage");
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut state = AppShellState::default();
+
+        let create_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::CreateEnvironment {
+                name: "Staging".to_string(),
+                command_id: create_command_id.clone(),
+            })
+            .expect("queue create environment");
+        let create_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &create_command_id);
+        let source = create_events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::EnvironmentUpserted { environment, .. } => Some(environment.clone()),
+                _ => None,
+            })
+            .expect("create should emit EnvironmentUpserted");
+        state.environment_selection.active_global_environment_id = Some(source.environment_id);
+
+        let duplicate_command_id = next_command_id();
+        runtime
+            .command_tx
+            .send(AppCommand::DuplicateEnvironment {
+                environment_id: source.environment_id,
+                command_id: duplicate_command_id.clone(),
+            })
+            .expect("queue duplicate environment");
+        let duplicate_events =
+            apply_events_for_command(&mut state, &runtime.event_rx, &duplicate_command_id);
+        let copy = duplicate_events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::EnvironmentUpserted {
+                    environment,
+                    command_id,
+                } if command_id == &duplicate_command_id => Some(environment.clone()),
+                _ => None,
+            })
+            .expect("duplicate should emit EnvironmentUpserted");
+
+        assert_ne!(copy.environment_id, source.environment_id);
+        assert_eq!(copy.name, "Staging copy");
+        assert!(
+            state
+                .environments
+                .iter()
+                .any(|entry| entry.environment_id == copy.environment_id)
+        );
+        assert_eq!(
+            state.environment_selection.active_global_environment_id,
+            Some(source.environment_id)
         );
     }
 

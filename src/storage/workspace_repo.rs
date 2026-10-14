@@ -802,6 +802,59 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         Ok(environment_file)
     }
 
+    pub fn duplicate_environment(&mut self, environment_id: Ulid) -> Result<EnvironmentFile> {
+        let source = self
+            .store
+            .environments
+            .get(&environment_id)
+            .cloned()
+            .ok_or_else(|| BeamError::NotFound {
+                entity: "environment",
+                id: environment_id.to_string(),
+            })?;
+
+        let name = next_duplicate_environment_name(
+            self.store.environments.values(),
+            &source.environment.name,
+        );
+        self.backend
+            .create_dir_all(&self.backend.paths().environments_dir)?;
+        let file_path = environment_file_path_for_name(
+            &self.backend,
+            &self.backend.paths().environments_dir,
+            &name,
+            None,
+        )?;
+        let file_name = file_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let now = Utc::now();
+        let environment_file = EnvironmentFile {
+            schema_version: SCHEMA_VERSION_V1,
+            environment: EnvironmentMeta {
+                environment_id: Ulid::new(),
+                scope: source.environment.scope,
+                name,
+                file_name,
+                description: source.environment.description.clone(),
+                created_at: now,
+                updated_at: now,
+            },
+            variables: source.variables.clone(),
+            file_path: None,
+        }
+        .with_file_path(&file_path);
+        self.backend
+            .write_toml_file(&file_path, &environment_file)?;
+        self.store.environments.insert(
+            environment_file.environment.environment_id,
+            environment_file.clone(),
+        );
+        Ok(environment_file)
+    }
+
     pub fn rename_environment(
         &mut self,
         environment_id: Ulid,
@@ -1842,6 +1895,23 @@ fn load_folder_into_store<B: StorageIoBackend>(
     Ok(())
 }
 
+fn next_duplicate_environment_name<'a>(
+    environments: impl Iterator<Item = &'a EnvironmentFile>,
+    source_name: &str,
+) -> String {
+    let existing: HashSet<String> = environments
+        .map(|environment| environment.environment.name.to_lowercase())
+        .collect();
+    let base_name = format!("{} copy", source_name.trim());
+    if !existing.contains(&base_name.to_lowercase()) {
+        return base_name;
+    }
+    (2_u32..)
+        .map(|suffix| format!("{base_name} {suffix}"))
+        .find(|candidate| !existing.contains(&candidate.to_lowercase()))
+        .expect("infinite numeric suffix space must eventually produce a unique name")
+}
+
 fn environment_file_path_for_name<B: StorageIoBackend>(
     backend: &B,
     dir: &Path,
@@ -2792,5 +2862,89 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
                 .filter_map(|id| storage.store.nodes.get(id))
                 .all(|node| node.name != "Rejected Copy")
         );
+    }
+
+    #[test]
+    fn duplicate_environment_copies_variables_under_a_new_id_and_name() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let mut storage = WorkspaceRepository::new(backend.clone()).expect("load workspace");
+        let source = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "Staging".to_string(),
+            })
+            .expect("create environment");
+        let variables = vec![EnvironmentVariable {
+            name: "host".to_string(),
+            value: "https://staging.example.com".to_string(),
+            enabled: false,
+            description: Some("api host".to_string()),
+        }];
+        storage
+            .update_environment_variables(source.environment.environment_id, variables.clone())
+            .expect("update variables");
+
+        let copy = storage
+            .duplicate_environment(source.environment.environment_id)
+            .expect("duplicate environment");
+
+        assert_ne!(
+            copy.environment.environment_id,
+            source.environment.environment_id
+        );
+        assert_eq!(copy.environment.name, "Staging copy");
+        assert_eq!(copy.variables, variables);
+        let copy_path = copy.file_path.clone().expect("copy file path");
+        assert!(copy_path.exists());
+        assert_ne!(Some(copy_path.clone()), source.file_path);
+        let reloaded: EnvironmentFile = backend.read_toml_file(&copy_path).expect("read copy");
+        assert_eq!(reloaded.variables, variables);
+        assert!(
+            storage
+                .store
+                .environments
+                .contains_key(&copy.environment.environment_id)
+        );
+    }
+
+    #[test]
+    fn duplicate_environment_picks_unique_names_for_repeated_copies() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace");
+        let source = storage
+            .create_environment(CreateEnvironmentInput {
+                name: "Staging".to_string(),
+            })
+            .expect("create environment");
+        let source_id = source.environment.environment_id;
+
+        let first = storage
+            .duplicate_environment(source_id)
+            .expect("first copy");
+        let second = storage
+            .duplicate_environment(source_id)
+            .expect("second copy");
+        let third = storage
+            .duplicate_environment(first.environment.environment_id)
+            .expect("copy of copy");
+
+        assert_eq!(first.environment.name, "Staging copy");
+        assert_eq!(second.environment.name, "Staging copy 2");
+        assert_eq!(third.environment.name, "Staging copy copy");
+        assert_ne!(first.environment.file_name, second.environment.file_name);
+    }
+
+    #[test]
+    fn duplicate_environment_rejects_unknown_environment() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let mut storage = WorkspaceRepository::new(backend).expect("load workspace");
+
+        let error = storage
+            .duplicate_environment(Ulid::new())
+            .expect_err("unknown environment");
+
+        assert!(matches!(error, BeamError::NotFound { .. }));
     }
 }
