@@ -4,3 +4,4 @@ pub(super) mod curl;
 pub(super) mod editor;
 pub(super) mod execution;
 pub(super) mod persistence;
+pub(super) mod url_completion;
