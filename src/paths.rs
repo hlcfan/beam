@@ -152,22 +152,6 @@ fn default_logs_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("./beam_logs"))
 }
 
-pub fn slugify(name: &str) -> String {
-    let raw: String = name
-        .chars()
-        .map(|c| match c {
-            'A'..='Z' => c.to_ascii_lowercase(),
-            'a'..='z' | '0'..='9' => c,
-            _ => '-',
-        })
-        .collect();
-
-    raw.split('-')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("-")
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -176,7 +160,7 @@ mod tests {
 
     use super::{
         APP_SETTINGS_FILE_NAME, BeamPaths, DataRootPaths, default_logs_root,
-        default_root_from_home_dir, slugify,
+        default_root_from_home_dir,
     };
 
     #[test]
@@ -282,14 +266,5 @@ mod tests {
                 .join("logs")
         };
         assert_eq!(default_logs_root(), expected);
-    }
-
-    #[test]
-    fn slugify_replaces_spaces_and_specials_with_hyphens() {
-        assert_eq!(slugify("My Workspace"), "my-workspace");
-        assert_eq!(slugify("Work/API"), "work-api");
-        assert_eq!(slugify("hello world!"), "hello-world");
-        assert_eq!(slugify("  spaces  "), "spaces");
-        assert_eq!(slugify("already-slugified"), "already-slugified");
     }
 }
