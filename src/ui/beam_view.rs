@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::component::Colorize;
+use gpui_kit::component::{Colorize, button::ButtonCustomVariant};
 
 pub(super) struct BeamView {
     pub(super) shell: AppShellState,
@@ -309,7 +309,7 @@ impl BeamView {
                     .child(
                         Button::new("add-workspace")
                             .small()
-                            .ghost()
+                            .custom(title_bar_button_variant(cx))
                             .h_full()
                             .w_auto()
                             .aspect_ratio(1.)
@@ -329,11 +329,11 @@ impl BeamView {
                     .flex_shrink_0()
                     .h_full()
                     .py_1()
-                    .occlude()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         Button::new("title-bar-environment-sheet")
                             .small()
-                            .ghost()
+                            .custom(title_bar_button_variant(cx))
                             .cursor_pointer()
                             .h_full()
                             .px_1()
@@ -460,6 +460,13 @@ impl BeamView {
                     ),
             )
     }
+}
+
+/// Matches the workspace tab hover; the ghost hover color is nearly the title bar color.
+fn title_bar_button_variant(cx: &App) -> ButtonCustomVariant {
+    ButtonCustomVariant::new(cx)
+        .hover(cx.theme().secondary)
+        .active(cx.theme().secondary_active)
 }
 
 impl Focusable for BeamView {

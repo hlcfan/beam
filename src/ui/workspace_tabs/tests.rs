@@ -883,3 +883,41 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
         )
     });
 }
+
+#[gpui_kit::test]
+fn title_bar_buttons_show_hover_background(cx: &mut TestAppContext) {
+    let (_fixture, cx) = fixture(cx, 2);
+    for id in ["title-bar-environment-sheet", "add-workspace"] {
+        assert_button_hover(cx, id);
+    }
+}
+
+fn assert_button_hover(cx: &mut VisualTestContext, id: &str) {
+    let button = snapshot(cx, id.to_string()).bounds();
+    let hovered_background = |cx: &mut VisualTestContext| {
+        cx.update(|window, _| {
+            let bounds = button.scale(window.scale_factor());
+            window
+                .painted_quads()
+                .into_iter()
+                .filter(|quad| quad.bounds == bounds)
+                .last()
+                .map(|quad| quad.background)
+        })
+    };
+    for mode in [ThemeMode::Light, ThemeMode::Dark] {
+        cx.update(|_, cx| Theme::change(mode, None, cx));
+        cx.simulate_mouse_move(point(px(1.), px(1.)), None, Modifiers::default());
+        draw(cx);
+        let idle = hovered_background(cx);
+        cx.simulate_mouse_move(button.center(), None, Modifiers::default());
+        draw(cx);
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        draw(cx);
+        let hovered = hovered_background(cx);
+        assert_ne!(idle, hovered, "hover paints a background in {mode:?}");
+        assert!(hovered.is_some_and(
+            |background| background != gpui::Background::from(gpui::Hsla::transparent_black())
+        ));
+    }
+}
