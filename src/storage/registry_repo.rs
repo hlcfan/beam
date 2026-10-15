@@ -6,8 +6,9 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{WorkspaceEntry, WorkspacesRegistryFile};
-use crate::paths::{BeamPaths, DataRootPaths, slugify};
+use crate::paths::{BeamPaths, DataRootPaths};
 use crate::schema::validate_workspaces_registry_version;
+use crate::workspace_tree::slugify_name;
 
 pub struct RegistryRepository {
     data_root: DataRootPaths,
@@ -214,12 +215,7 @@ impl RegistryRepository {
     }
 
     fn unique_workspace_slug(&self, registry: &WorkspacesRegistryFile, name: &str) -> String {
-        let base = slugify(name);
-        let base = if base.is_empty() {
-            "workspace".to_string()
-        } else {
-            base
-        };
+        let base = slugify_name(name);
 
         let existing_paths: std::collections::HashSet<&str> = registry
             .registry
@@ -324,6 +320,21 @@ mod tests {
             .expect("create 2");
         assert_ne!(e1.path, e2.path);
         assert_eq!(e2.path, "work-2");
+    }
+
+    #[test]
+    fn create_workspace_keeps_unicode_slugs() {
+        let dir = tempdir().expect("tempdir");
+        let repo = make_repo(dir.path());
+        let (mut registry, _) = repo.initialize().expect("init");
+        let e1 = repo
+            .create_workspace(&mut registry, "中文")
+            .expect("create 1");
+        let e2 = repo
+            .create_workspace(&mut registry, "数码")
+            .expect("create 2");
+        assert_eq!(e1.path, "中文");
+        assert_eq!(e2.path, "数码");
     }
 
     #[test]
