@@ -34,8 +34,8 @@ use request::execution::{
     response_summary_for_selected_request,
 };
 use response::history::{
-    ResponseHistoryEntry, StoredResponseSnapshot, load_response_history_entries,
-    load_response_snapshot_for_history_entry,
+    ResponseHistoryEntry, StoredResponseSnapshot, format_relative_timestamp,
+    load_response_history_entries, load_response_snapshot_for_history_entry,
 };
 use response::persistence::{
     PersistedScriptResult, clear_script_result_for_request, load_script_result,

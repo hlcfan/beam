@@ -190,6 +190,27 @@ pub(in crate::ui) fn load_response_history_entries(
         .collect()
 }
 
+/// Compact relative text ("just now", "5m ago", "3h ago", "2d ago"), falling
+/// back to the absolute date for entries older than a week.
+pub(in crate::ui) fn format_relative_timestamp(timestamp: &str) -> String {
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+        return timestamp.to_string();
+    };
+    let elapsed = Local::now().signed_duration_since(parsed);
+    let seconds = elapsed.num_seconds();
+    if seconds < 60 {
+        "just now".to_string()
+    } else if seconds < 3600 {
+        format!("{}m ago", elapsed.num_minutes())
+    } else if seconds < 86_400 {
+        format!("{}h ago", elapsed.num_hours())
+    } else if elapsed.num_days() < 7 {
+        format!("{}d ago", elapsed.num_days())
+    } else {
+        parsed.with_timezone(&Local).format("%Y-%m-%d").to_string()
+    }
+}
+
 fn format_human_timestamp(timestamp: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .map(|parsed| {
