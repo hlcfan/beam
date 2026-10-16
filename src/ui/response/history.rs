@@ -193,10 +193,14 @@ pub(in crate::ui) fn load_response_history_entries(
 /// Compact relative text ("just now", "5m ago", "3h ago", "2d ago"), falling
 /// back to the absolute date for entries older than a week.
 pub(in crate::ui) fn format_relative_timestamp(timestamp: &str) -> String {
+    format_relative_timestamp_at(timestamp, Local::now())
+}
+
+fn format_relative_timestamp_at(timestamp: &str, now: chrono::DateTime<Local>) -> String {
     let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
         return timestamp.to_string();
     };
-    let elapsed = Local::now().signed_duration_since(parsed);
+    let elapsed = now.signed_duration_since(parsed);
     let seconds = elapsed.num_seconds();
     if seconds < 60 {
         "just now".to_string()
@@ -233,7 +237,7 @@ mod tests {
 
     use super::{
         RequestHistoryExecution, RequestHistoryFile, RequestHistoryHeader,
-        RequestHistoryResponseSummary, load_response_history_entries,
+        RequestHistoryResponseSummary, format_relative_timestamp_at, load_response_history_entries,
         response_snapshot_from_history_execution,
     };
 
@@ -322,5 +326,50 @@ mod tests {
         assert_eq!(snapshot.body, "{\"ok\":true}");
         assert_eq!(snapshot.headers_raw, "Content-Type: application/json");
         assert_eq!(snapshot.content_type.as_deref(), Some("application/json"));
+    }
+
+    #[test]
+    fn relative_timestamp_buckets_elapsed_time() {
+        use chrono::{Duration, Local};
+
+        let now = Local::now();
+        let at = |delta: Duration| (now - delta).to_rfc3339();
+
+        assert_eq!(
+            format_relative_timestamp_at(&at(Duration::seconds(30)), now),
+            "just now"
+        );
+        assert_eq!(
+            format_relative_timestamp_at(&at(Duration::minutes(5)), now),
+            "5m ago"
+        );
+        assert_eq!(
+            format_relative_timestamp_at(&at(Duration::hours(3)), now),
+            "3h ago"
+        );
+        assert_eq!(
+            format_relative_timestamp_at(&at(Duration::days(2)), now),
+            "2d ago"
+        );
+    }
+
+    #[test]
+    fn relative_timestamp_falls_back_to_date_after_a_week() {
+        use chrono::{Duration, Local};
+
+        let now = Local::now();
+        let old = now - Duration::days(10);
+        assert_eq!(
+            format_relative_timestamp_at(&old.to_rfc3339(), now),
+            old.format("%Y-%m-%d").to_string()
+        );
+    }
+
+    #[test]
+    fn relative_timestamp_returns_invalid_input_unchanged() {
+        assert_eq!(
+            format_relative_timestamp_at("not a timestamp", chrono::Local::now()),
+            "not a timestamp"
+        );
     }
 }
