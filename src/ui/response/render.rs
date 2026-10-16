@@ -26,6 +26,13 @@ impl BeamView {
         let response_histories = self.response_history_entries.clone();
         let selected_response_history_index = self.selected_response_history_index;
         let response_history_view = cx.entity();
+        let current_entry = self
+            .selected_response_history_index
+            .and_then(|index| self.response_history_entries.get(index));
+        let timestamp_label = current_entry
+            .and_then(|entry| entry.execution.timestamp.as_deref())
+            .map(format_relative_timestamp);
+        let timestamp_tooltip = current_entry.map(|entry| entry.timestamp_text.clone());
         tabs = tabs.child(
             Button::new("response-history-dropdown")
                 .small()
@@ -39,6 +46,12 @@ impl BeamView {
                         .size(px(14.0))
                         .text_color(cx.theme().muted_foreground),
                 )
+                .when_some(timestamp_label, |button, label| {
+                    button.label(label).text_color(cx.theme().muted_foreground)
+                })
+                .when_some(timestamp_tooltip, |button, text| {
+                    button.tooltip(text)
+                })
                 .dropdown_menu(move |menu, _window, menu_cx| {
                     let list_width_px = 180.0;
                     let mut menu = menu.min_w(px(list_width_px));
