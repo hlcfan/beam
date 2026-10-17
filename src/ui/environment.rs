@@ -298,6 +298,9 @@ impl BeamView {
                 .child(
                     div()
                         .flex_shrink_0()
+                        .max_w(px(ENV_VAR_HOVER_MAX_NAME_WIDTH))
+                        .text_ellipsis()
+                        .line_clamp(ENV_VAR_HOVER_MAX_LINES)
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("{}:", var_name)),
@@ -352,6 +355,7 @@ impl BeamView {
 }
 
 const ENV_VAR_HOVER_MAX_WIDTH: f32 = 420.;
+const ENV_VAR_HOVER_MAX_NAME_WIDTH: f32 = 160.;
 const ENV_VAR_HOVER_MAX_LINES: usize = 6;
 
 pub(super) fn environment_file_path_for_workspace(
