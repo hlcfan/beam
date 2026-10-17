@@ -1,5 +1,9 @@
 use super::*;
 
+const ENV_VAR_HOVER_MAX_WIDTH: f32 = 420.;
+const ENV_VAR_HOVER_MAX_NAME_WIDTH: f32 = 160.;
+const ENV_VAR_HOVER_MAX_LINES: usize = 6;
+
 #[derive(Clone, Debug)]
 pub(super) struct EnvVarHoverInfo {
     var_name: String,
@@ -353,10 +357,6 @@ impl BeamView {
         elements
     }
 }
-
-const ENV_VAR_HOVER_MAX_WIDTH: f32 = 420.;
-const ENV_VAR_HOVER_MAX_NAME_WIDTH: f32 = 160.;
-const ENV_VAR_HOVER_MAX_LINES: usize = 6;
 
 pub(super) fn environment_file_path_for_workspace(
     workspace_paths: &BeamPaths,
