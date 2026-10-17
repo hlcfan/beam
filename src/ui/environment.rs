@@ -294,14 +294,20 @@ impl BeamView {
 
             let content = h_flex()
                 .gap_1p5()
+                .items_start()
                 .child(
                     div()
+                        .flex_shrink_0()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("{}:", var_name)),
                 )
                 .child(match &resolved_value {
                     Some(val) => div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_ellipsis()
+                        .line_clamp(ENV_VAR_HOVER_MAX_LINES)
                         .text_sm()
                         .font_weight(gpui_kit::FontWeight::MEDIUM)
                         .child(val.clone())
@@ -330,6 +336,7 @@ impl BeamView {
                             div()
                                 .occlude()
                                 .popover_style(cx)
+                                .max_w(px(ENV_VAR_HOVER_MAX_WIDTH))
                                 .px_2()
                                 .py_1p5()
                                 .child(content),
@@ -343,6 +350,9 @@ impl BeamView {
         elements
     }
 }
+
+const ENV_VAR_HOVER_MAX_WIDTH: f32 = 420.;
+const ENV_VAR_HOVER_MAX_LINES: usize = 6;
 
 pub(super) fn environment_file_path_for_workspace(
     workspace_paths: &BeamPaths,
