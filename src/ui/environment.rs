@@ -74,16 +74,40 @@ impl BeamView {
         label
     }
 
-    pub(in crate::ui) fn set_selected_environment_for_view(&mut self, environment_id: Ulid) {
+    pub(in crate::ui) fn set_selected_environment_for_view(
+        &mut self,
+        environment_id: Ulid,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .shell
+            .environment_selection
+            .active_global_environment_id
+            == Some(environment_id)
+        {
+            return;
+        }
         self.shell
             .environment_selection
             .active_global_environment_id = Some(environment_id);
+        self.invalidate_environment_variable_caches();
+        self.dismiss_environment_variable_overlays(cx);
     }
 
-    pub(in crate::ui) fn clear_selected_environment_for_view(&mut self) {
+    pub(in crate::ui) fn clear_selected_environment_for_view(&mut self, cx: &mut Context<Self>) {
+        if self
+            .shell
+            .environment_selection
+            .active_global_environment_id
+            .is_none()
+        {
+            return;
+        }
         self.shell
             .environment_selection
             .active_global_environment_id = None;
+        self.invalidate_environment_variable_caches();
+        self.dismiss_environment_variable_overlays(cx);
     }
 
     pub(in crate::ui) fn open_environment_variables_sheet(
@@ -211,8 +235,18 @@ impl BeamView {
         });
     }
 
-    pub(in crate::ui) fn invalidate_env_var_resolved_cache(&mut self) {
+    pub(in crate::ui) fn invalidate_environment_variable_caches(&mut self) {
         self.env_var_resolved_cache = None;
+        self.completion_environment_variables = None;
+        self.completion_environment_task = None;
+        self.request_body_completion_pending = false;
+        self.url_completion_pending = false;
+    }
+
+    pub(in crate::ui) fn dismiss_environment_variable_overlays(&mut self, cx: &mut Context<Self>) {
+        self.clear_env_var_hover(cx);
+        self.dismiss_request_body_completion(cx);
+        self.dismiss_url_completion(cx);
     }
 
     pub(in crate::ui) fn environment_file_path_from_shell(

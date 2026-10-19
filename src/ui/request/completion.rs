@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use gpui_kit::component::input::{Rope, RopeExt};
 use gpui_kit::{AppContext, Context, Focusable, Window};
@@ -14,38 +15,86 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.dismiss_request_body_completion(cx);
         let editor = self.request_body_editor.read(cx);
         if !editor.focus_handle(cx).is_focused(window) {
+            self.dismiss_request_body_completion(cx);
             return;
         }
         let offset = editor.cursor();
         let Some(token) = token_at_cursor(editor.text(), offset) else {
+            self.dismiss_request_body_completion(cx);
             return;
         };
-        let path = self
-            .selected_environment_id_for_view()
-            .and_then(|id| self.environment_file_path_from_shell(id));
-        let editor = self.request_body_editor.downgrade();
-        let prefix = token.prefix.clone();
-        let start = token.start;
-        let items = cx.background_spawn(async move {
-            let variables = load_environment_variables(path);
-            completion_items(&token, &variables)
+
+        let Some(variables) = self.load_completion_environment_variables(window, cx) else {
+            self.dismiss_request_body_completion(cx);
+            self.request_body_completion_pending = true;
+            return;
+        };
+        self.request_body_completion_pending = false;
+        let items = completion_items(&token, &variables);
+        self.request_body_editor.update(cx, |editor, cx| {
+            editor.present_completion_items(token.start, token.prefix, items, cx);
         });
-        self.request_body_completion_task = Some(cx.spawn_in(window, async move |_, cx| {
-            let items = items.await;
-            let _ = editor.update_in(cx, |editor, window, cx| {
-                if editor.cursor() == offset && editor.focus_handle(cx).is_focused(window) {
-                    // Each result owns its token range; no document-prefix query is constructed.
-                    editor.present_completion_items(start, prefix, items, cx);
-                }
-            });
-        }));
     }
 
-    pub(super) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
-        self.request_body_completion_task = None;
+    /// Loads one environment snapshot for both completion UIs. Menu dismissal
+    /// only cancels presentation; the snapshot and its load survive token changes.
+    pub(in crate::ui) fn load_completion_environment_variables(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<Vec<EnvironmentVariable>>> {
+        let environment_id = self.selected_environment_id_for_view();
+        if let Some((cached_id, variables)) = &self.completion_environment_variables
+            && *cached_id == environment_id
+        {
+            return Some(variables.clone());
+        }
+        if self
+            .completion_environment_task
+            .as_ref()
+            .is_some_and(|(pending_id, _)| *pending_id == environment_id)
+        {
+            return None;
+        }
+
+        self.completion_environment_variables = None;
+        self.completion_environment_task = None;
+        let path = environment_id.and_then(|id| self.environment_file_path_from_shell(id));
+        let variables = cx.background_spawn(async move { load_environment_variables(path) });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let variables = variables.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.completion_environment_task = None;
+                let body_pending = std::mem::take(&mut this.request_body_completion_pending);
+                let url_pending = std::mem::take(&mut this.url_completion_pending);
+                if this.selected_environment_id_for_view() != environment_id {
+                    return;
+                }
+                let load_failed = variables.is_none();
+                // An empty snapshot lets both editors present built-ins on failure.
+                this.completion_environment_variables =
+                    Some((environment_id, Arc::new(variables.unwrap_or_default())));
+                // Each editor rechecks its focus and current token before presenting.
+                if body_pending {
+                    this.update_request_body_completion(window, cx);
+                }
+                if url_pending {
+                    this.update_url_completion(window, cx);
+                }
+                // Keep the fallback only for presentation; the next edit retries the file.
+                if load_failed {
+                    this.completion_environment_variables = None;
+                }
+            });
+        });
+        self.completion_environment_task = Some((environment_id, task));
+        None
+    }
+
+    pub(in crate::ui) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
+        self.request_body_completion_pending = false;
         self.request_body_editor.update(cx, |editor, cx| {
             editor.dismiss_completion_overlay(cx);
         });
@@ -187,14 +236,17 @@ pub(super) fn variable_candidates(
         .collect()
 }
 
-/// Reads the enabled variables of the environment stored at `path`.
-pub(super) fn load_environment_variables(
+/// `None` means an environment file was selected but could not be read or parsed.
+fn load_environment_variables(
     path: Option<std::path::PathBuf>,
-) -> Vec<EnvironmentVariable> {
-    path.and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|content| toml::from_str::<EnvironmentFile>(&content).ok())
+) -> Option<Vec<EnvironmentVariable>> {
+    let Some(path) = path else {
+        return Some(Vec::new());
+    };
+    let content = std::fs::read_to_string(path).ok()?;
+    toml::from_str::<EnvironmentFile>(&content)
+        .ok()
         .map(|file| file.variables)
-        .unwrap_or_default()
 }
 
 fn completion_items(
@@ -379,3 +431,7 @@ mod tests {
         assert!(completion_items(&token, &variables).is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "completion/tests.rs"]
+mod cache_tests;

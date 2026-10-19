@@ -446,7 +446,7 @@ impl BeamView {
                             .on_click(window.listener_for(
                                 &environment_view,
                                 move |this, _, window, cx| {
-                                    this.clear_selected_environment_for_view();
+                                    this.clear_selected_environment_for_view(cx);
                                     if let Err(error) = this.persist_environment_selection_state() {
                                         window.push_notification(error, cx);
                                     }
@@ -466,7 +466,7 @@ impl BeamView {
                                 .on_click(window.listener_for(
                                     &item_view,
                                     move |this, _, window, cx| {
-                                        this.set_selected_environment_for_view(environment_id);
+                                        this.set_selected_environment_for_view(environment_id, cx);
                                         if let Err(error) =
                                             this.persist_environment_selection_state()
                                         {
