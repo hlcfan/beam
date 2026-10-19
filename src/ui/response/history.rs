@@ -237,8 +237,8 @@ mod tests {
 
     use super::{
         RequestHistoryExecution, RequestHistoryFile, RequestHistoryHeader,
-        RequestHistoryResponseSummary, format_relative_timestamp_at, load_response_history_entries,
-        response_snapshot_from_history_execution,
+        RequestHistoryResponseSummary, format_human_timestamp, format_relative_timestamp_at,
+        load_response_history_entries, response_snapshot_from_history_execution,
     };
 
     #[test]
@@ -326,6 +326,24 @@ mod tests {
         assert_eq!(snapshot.body, "{\"ok\":true}");
         assert_eq!(snapshot.headers_raw, "Content-Type: application/json");
         assert_eq!(snapshot.content_type.as_deref(), Some("application/json"));
+    }
+
+    #[test]
+    fn human_timestamp_includes_seconds_in_local_time() {
+        let timestamp = "2026-01-02T03:04:56+05:30";
+        let local = chrono::DateTime::parse_from_rfc3339(timestamp)
+            .expect("valid timestamp")
+            .with_timezone(&chrono::Local);
+
+        assert_eq!(
+            format_human_timestamp(timestamp),
+            format!("{} {}", local.date_naive(), local.time())
+        );
+    }
+
+    #[test]
+    fn human_timestamp_returns_invalid_input_unchanged() {
+        assert_eq!(format_human_timestamp("not a timestamp"), "not a timestamp");
     }
 
     #[test]
