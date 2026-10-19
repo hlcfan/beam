@@ -111,6 +111,28 @@ fn dismissing_body_completion_retains_a_pending_environment_load(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn discarded_environment_load_clears_pending_presentations(cx: &mut TestAppContext) {
+    let (view, _, _directory, cx) = fixture(cx);
+    type_body(&view, "{{ho", cx);
+    type_url(&view, "{{ho", cx);
+    view.update(cx, |view, _| {
+        assert!(view.request_body_completion_pending);
+        assert!(view.url_completion_pending);
+        // Bypass explicit invalidation to exercise the callback's stale-result guard.
+        view.shell
+            .environment_selection
+            .active_global_environment_id = None;
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| {
+        assert!(!view.request_body_completion_pending);
+        assert!(!view.url_completion_pending);
+        assert!(view.completion_environment_task.is_none());
+        assert!(view.completion_environment_variables.is_none());
+    });
+}
+
+#[gpui_kit::test]
 fn replacing_the_body_editor_keeps_the_environment_snapshot(cx: &mut TestAppContext) {
     let (view, environment_path, _directory, cx) = fixture(cx);
     type_body(&view, "{{ho", cx);
@@ -255,11 +277,14 @@ fn reselecting_the_environment_keeps_loaded_variables(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn saving_the_environment_invalidates_completion_for_the_same_file(cx: &mut TestAppContext) {
+fn saving_the_environment_invalidates_cache_without_closing_body_completion(
+    cx: &mut TestAppContext,
+) {
     let (view, environment_path, _directory, cx) = fixture(cx);
     type_body(&view, "{{", cx);
     cx.run_until_parked();
-    assert!(completion_names(&view, cx).contains(&"host".into()));
+    let names = completion_names(&view, cx);
+    assert!(names.contains(&"host".into()));
 
     let content = std::fs::read_to_string(&environment_path).expect("read environment");
     let mut file: EnvironmentFile = toml::from_str(&content).expect("environment TOML");
@@ -274,11 +299,37 @@ fn saving_the_environment_invalidates_completion_for_the_same_file(cx: &mut Test
         },
         cx,
     );
-    assert!(completion_names(&view, cx).is_empty());
+    assert_eq!(completion_names(&view, cx), names);
+    view.read_with(cx, |view, _| {
+        assert!(view.completion_environment_variables.is_none())
+    });
 
     type_body(&view, "po", cx);
     cx.run_until_parked();
     assert_eq!(completion_names(&view, cx), ["port"]);
+}
+
+#[gpui_kit::test]
+fn saving_the_environment_keeps_url_completion_open(cx: &mut TestAppContext) {
+    let (view, _, _directory, cx) = fixture(cx);
+    type_url(&view, "{{ho", cx);
+    cx.run_until_parked();
+    let environment = view.read_with(cx, |view, cx| {
+        assert!(view.url_completion_active(cx));
+        view.shell.environments[0].clone()
+    });
+    apply_environment_event(
+        &view,
+        AppEvent::EnvironmentUpserted {
+            environment,
+            command_id: "url-completion-save-test".into(),
+        },
+        cx,
+    );
+    view.read_with(cx, |view, cx| {
+        assert!(view.url_completion_active(cx));
+        assert!(view.completion_environment_variables.is_none());
+    });
 }
 
 #[gpui_kit::test]

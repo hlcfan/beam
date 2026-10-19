@@ -67,21 +67,21 @@ impl BeamView {
             let variables = variables.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.completion_environment_task = None;
+                let body_pending = std::mem::take(&mut this.request_body_completion_pending);
+                let url_pending = std::mem::take(&mut this.url_completion_pending);
                 if this.selected_environment_id_for_view() != environment_id {
                     return;
                 }
                 // A failed read is not cached, so the next keystroke retries it.
                 let Some(variables) = variables else {
-                    this.request_body_completion_pending = false;
-                    this.url_completion_pending = false;
                     return;
                 };
                 this.completion_environment_variables = Some((environment_id, Arc::new(variables)));
                 // Each editor rechecks its focus and current token before presenting.
-                if this.request_body_completion_pending {
+                if body_pending {
                     this.update_request_body_completion(window, cx);
                 }
-                if this.url_completion_pending {
+                if url_pending {
                     this.update_url_completion(window, cx);
                 }
             });

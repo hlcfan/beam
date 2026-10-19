@@ -54,7 +54,8 @@ impl BeamView {
             })
             .unwrap_or_else(VirtualListScrollHandle::new);
         self.reveal_active_workspace_tab();
-        self.invalidate_environment_variable_caches(cx);
+        self.invalidate_environment_variable_caches();
+        self.dismiss_environment_variable_overlays(cx);
         self.request_view_histories
             .set_active_workspace(workspace_id);
         let data_root = DataRootPaths::default_user_config();
@@ -182,7 +183,7 @@ impl BeamView {
                 } => {
                     self.shell.apply_event(&event);
                     if self.selected_environment_id_for_view() == Some(environment.environment_id) {
-                        self.invalidate_environment_variable_caches(cx);
+                        self.invalidate_environment_variable_caches();
                     }
                     self.refresh_environment_manager_dialog_if_open(
                         Some((environment.environment_id, command_id.clone())),
@@ -194,7 +195,8 @@ impl BeamView {
                     let selected = self.selected_environment_id_for_view() == Some(*environment_id);
                     self.shell.apply_event(&event);
                     if selected {
-                        self.invalidate_environment_variable_caches(cx);
+                        self.invalidate_environment_variable_caches();
+                        self.dismiss_environment_variable_overlays(cx);
                     }
                     if let Err(error) = self.persist_environment_selection_state() {
                         window.push_notification(error, cx);
