@@ -6,29 +6,22 @@
 //! the input's own `set_selected_range` and `replace`.
 
 use std::ops::Range;
-use std::sync::Arc;
 
 use gpui_kit::Focusable;
 use gpui_kit::component::input::{Escape, MoveDown, MoveUp, Rope};
 
 use super::super::*;
-use super::completion::{
-    VariableCandidate, load_environment_variables, token_at_cursor, variable_candidates,
-};
+use super::completion::{VariableCandidate, token_at_cursor, variable_candidates};
 use crate::models::EnvironmentVariable;
 
 /// Height at which the list starts to scroll.
 const MAX_LIST_HEIGHT: Pixels = px(240.);
 
-/// The variables available for the `{{` token under the cursor, and the ones
-/// matching what has been typed of it.
-///
-/// The environment is read once, when the token is opened. Typing more of the
-/// same token only filters `variables` again, so it does no file access.
+/// Candidates and navigation for the `{{` token under the cursor.
+/// Variables come from the shared environment cache whenever the token changes.
 pub(in crate::ui) struct UrlCompletion {
     /// Where the `{{` token starts. A different start is a different token.
     token_start: usize,
-    variables: Arc<Vec<EnvironmentVariable>>,
     /// Cursor offset the candidates were computed for. The popup is shown only
     /// while the cursor is still there, so moving it away hides a stale list.
     cursor: usize,
@@ -38,10 +31,9 @@ pub(in crate::ui) struct UrlCompletion {
 }
 
 impl UrlCompletion {
-    fn new(token_start: usize, variables: Arc<Vec<EnvironmentVariable>>) -> Self {
+    fn new(token_start: usize) -> Self {
         Self {
             token_start,
-            variables,
             cursor: token_start,
             candidates: Vec::new(),
             selected: 0,
@@ -50,9 +42,9 @@ impl UrlCompletion {
     }
 
     /// Recomputes the candidates for `prefix` from the loaded variables.
-    fn refilter(&mut self, cursor: usize, prefix: &str) {
+    fn refilter(&mut self, cursor: usize, prefix: &str, variables: &[EnvironmentVariable]) {
         self.cursor = cursor;
-        self.candidates = variable_candidates(prefix, &self.variables);
+        self.candidates = variable_candidates(prefix, variables);
         self.selected = 0;
         self.scroll_handle = ScrollHandle::new();
     }
@@ -76,58 +68,26 @@ impl BeamView {
             return;
         };
 
-        // The same token as the open popup: filter what is already loaded.
+        let Some(variables) = self.load_completion_environment_variables(window, cx) else {
+            self.dismiss_url_completion(cx);
+            self.url_completion_pending = true;
+            return;
+        };
+        self.url_completion_pending = false;
         if let Some(completion) = self.url_completion.as_mut()
             && completion.token_start == token.start
         {
-            completion.refilter(cursor, &token.prefix);
-            cx.notify();
-            return;
+            completion.refilter(cursor, &token.prefix, &variables);
+        } else {
+            let mut completion = UrlCompletion::new(token.start);
+            completion.refilter(cursor, &token.prefix, &variables);
+            self.url_completion = Some(completion);
         }
-        // The same token is still loading; its result is built from the text
-        // as it is when the load finishes.
-        if self
-            .url_completion_task
-            .as_ref()
-            .is_some_and(|(start, _)| *start == token.start)
-        {
-            return;
-        }
-
-        // A new token: read the environment once.
-        self.dismiss_url_completion(cx);
-        let start = token.start;
-        let path = self
-            .selected_environment_id_for_view()
-            .and_then(|id| self.environment_file_path_from_shell(id));
-        let variables =
-            cx.background_spawn(async move { Arc::new(load_environment_variables(path)) });
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let variables = variables.await;
-            let _ = this.update_in(cx, |this, window, cx| {
-                this.url_completion_task = None;
-                let input = this.url_input.read(cx);
-                if !input.focus_handle(cx).is_focused(window) {
-                    return;
-                }
-                let cursor = input.cursor();
-                let Some(token) = token_at_cursor(input.text(), cursor) else {
-                    return;
-                };
-                if token.start != start {
-                    return;
-                }
-                let mut completion = UrlCompletion::new(start, variables);
-                completion.refilter(cursor, &token.prefix);
-                this.url_completion = Some(completion);
-                cx.notify();
-            });
-        });
-        self.url_completion_task = Some((start, task));
+        cx.notify();
     }
 
     pub(in crate::ui) fn dismiss_url_completion(&mut self, cx: &mut Context<Self>) {
-        self.url_completion_task = None;
+        self.url_completion_pending = false;
         if self.url_completion.take().is_some() {
             cx.notify();
         }
@@ -151,7 +111,7 @@ impl BeamView {
         let Some(completion) = self.url_completion.take() else {
             return;
         };
-        self.url_completion_task = None;
+        self.url_completion_pending = false;
         let Some(candidate) = completion
             .candidates
             .get(index.unwrap_or(completion.selected))
@@ -417,8 +377,6 @@ fn replacement_range(text: &Rope, cursor: usize) -> Range<usize> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use gpui_kit::component::input::Rope;
 
     use super::{UrlCompletion, replacement_range};
@@ -450,7 +408,7 @@ mod tests {
 
     #[test]
     fn typing_more_of_a_token_filters_the_loaded_variables() {
-        let variables = Arc::new(vec![
+        let variables = vec![
             EnvironmentVariable {
                 name: "host".into(),
                 value: "example.com".into(),
@@ -463,8 +421,8 @@ mod tests {
                 enabled: true,
                 description: None,
             },
-        ]);
-        let mut completion = UrlCompletion::new(8, variables);
+        ];
+        let mut completion = UrlCompletion::new(8);
         let names = |completion: &UrlCompletion| -> Vec<String> {
             completion
                 .candidates
@@ -473,12 +431,12 @@ mod tests {
                 .collect()
         };
 
-        completion.refilter(10, "ho");
+        completion.refilter(10, "ho", &variables);
         assert_eq!(names(&completion), ["host"]);
-        completion.refilter(11, "hox");
+        completion.refilter(11, "hox", &variables);
         assert!(names(&completion).is_empty());
         // Backspacing restores matches without anything being reloaded.
-        completion.refilter(10, "ho");
+        completion.refilter(10, "ho", &variables);
         assert_eq!(names(&completion), ["host"]);
         assert_eq!(completion.cursor, 10);
     }

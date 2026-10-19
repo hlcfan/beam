@@ -72,21 +72,21 @@ pub(super) struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     pub(super) env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
+    /// Environment snapshot shared by URL and body completion, independent of the active token.
+    pub(super) completion_environment_variables:
+        Option<(Option<Ulid>, Arc<Vec<EnvironmentVariable>>)>,
+    pub(super) completion_environment_task: Option<(Option<Ulid>, Task<()>)>,
     /// In-memory sequence of requests the user has selected across all workspaces.
     pub(super) request_view_histories: WorkspaceRequestViewHistories,
     pub(super) request_body_editor_cache: HashMap<Ulid, Entity<EditorState>>,
     pub(super) request_body_editor_cache_order: Vec<Ulid>,
     pub(super) request_body_editor_change_sub: Option<Subscription>,
-    /// Variables loaded for the current `{{` token and environment file, retained while its prefix changes.
-    pub(super) request_body_completion_variables:
-        Option<(usize, Option<PathBuf>, Vec<EnvironmentVariable>)>,
-    pub(super) request_body_completion_task: Option<(usize, Option<PathBuf>, Task<()>)>,
+    pub(super) request_body_completion_pending: bool,
     pub(super) request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
     pub(super) request_url_editor_cache_order: Vec<Ulid>,
     pub(super) request_url_editor_change_sub: Option<Subscription>,
     pub(super) url_completion: Option<request::url_completion::UrlCompletion>,
-    /// The token start being loaded, and the load.
-    pub(super) url_completion_task: Option<(usize, Task<()>)>,
+    pub(super) url_completion_pending: bool,
 }
 
 impl BeamView {
@@ -262,17 +262,18 @@ impl BeamView {
             tree_drag_scroll_task: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
+            completion_environment_variables: None,
+            completion_environment_task: None,
             request_view_histories: WorkspaceRequestViewHistories::default(),
             request_body_editor_cache: HashMap::new(),
             request_body_editor_cache_order: Vec::new(),
             request_body_editor_change_sub: None,
-            request_body_completion_variables: None,
-            request_body_completion_task: None,
+            request_body_completion_pending: false,
             request_url_editor_cache: HashMap::new(),
             request_url_editor_cache_order: Vec::new(),
             request_url_editor_change_sub: None,
             url_completion: None,
-            url_completion_task: None,
+            url_completion_pending: false,
         };
         view.resubscribe_request_body_editor(window, cx);
         view.resubscribe_request_url_editor(window, cx);

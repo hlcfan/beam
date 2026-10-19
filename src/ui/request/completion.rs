@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use gpui_kit::component::input::{Rope, RopeExt};
 use gpui_kit::{AppContext, Context, Focusable, Window};
@@ -25,66 +26,72 @@ impl BeamView {
             return;
         };
 
-        let path = self
-            .selected_environment_id_for_view()
-            .and_then(|id| self.environment_file_path_from_shell(id));
-
-        if let Some((start, cached_path, variables)) = &self.request_body_completion_variables
-            && *start == token.start
-            && *cached_path == path
-        {
-            let items = completion_items(&token, variables);
-            self.request_body_editor.update(cx, |editor, cx| {
-                editor.present_completion_items(token.start, token.prefix, items, cx);
-            });
+        let Some(variables) = self.load_completion_environment_variables(window, cx) else {
+            self.dismiss_request_body_completion(cx);
+            self.request_body_completion_pending = true;
             return;
+        };
+        self.request_body_completion_pending = false;
+        let items = completion_items(&token, &variables);
+        self.request_body_editor.update(cx, |editor, cx| {
+            editor.present_completion_items(token.start, token.prefix, items, cx);
+        });
+    }
+
+    /// Loads one environment snapshot for both completion UIs. Menu dismissal
+    /// only cancels presentation; the snapshot and its load survive token changes.
+    pub(in crate::ui) fn load_completion_environment_variables(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<Vec<EnvironmentVariable>>> {
+        let environment_id = self.selected_environment_id_for_view();
+        if let Some((cached_id, variables)) = &self.completion_environment_variables
+            && *cached_id == environment_id
+        {
+            return Some(variables.clone());
         }
-        // Keep the current load; its result uses the token as it is when it finishes.
         if self
-            .request_body_completion_task
+            .completion_environment_task
             .as_ref()
-            .is_some_and(|(start, pending_path, _)| *start == token.start && *pending_path == path)
+            .is_some_and(|(pending_id, _)| *pending_id == environment_id)
         {
-            return;
+            return None;
         }
 
-        self.dismiss_request_body_completion(cx);
-        let start = token.start;
-        let task_path = path.clone();
-        let cache_path = path.clone();
-        let variables = cx.background_spawn(async move { try_load_environment_variables(path) });
+        self.completion_environment_variables = None;
+        self.completion_environment_task = None;
+        let path = environment_id.and_then(|id| self.environment_file_path_from_shell(id));
+        let variables = cx.background_spawn(async move { load_environment_variables(path) });
         let task = cx.spawn_in(window, async move |this, cx| {
             let variables = variables.await;
             let _ = this.update_in(cx, |this, window, cx| {
-                this.request_body_completion_task = None;
-                let editor = this.request_body_editor.read(cx);
-                if !editor.focus_handle(cx).is_focused(window) {
-                    return;
-                }
-                let Some(token) = token_at_cursor(editor.text(), editor.cursor()) else {
-                    return;
-                };
-                if token.start != start {
+                this.completion_environment_task = None;
+                if this.selected_environment_id_for_view() != environment_id {
                     return;
                 }
                 // A failed read is not cached, so the next keystroke retries it.
                 let Some(variables) = variables else {
+                    this.request_body_completion_pending = false;
+                    this.url_completion_pending = false;
                     return;
                 };
-                let items = completion_items(&token, &variables);
-                this.request_body_completion_variables = Some((start, cache_path, variables));
-                this.request_body_editor.update(cx, |editor, cx| {
-                    // Each result owns its current token range, including any closing braces.
-                    editor.present_completion_items(start, token.prefix, items, cx);
-                });
+                this.completion_environment_variables = Some((environment_id, Arc::new(variables)));
+                // Each editor rechecks its focus and current token before presenting.
+                if this.request_body_completion_pending {
+                    this.update_request_body_completion(window, cx);
+                }
+                if this.url_completion_pending {
+                    this.update_url_completion(window, cx);
+                }
             });
         });
-        self.request_body_completion_task = Some((start, task_path, task));
+        self.completion_environment_task = Some((environment_id, task));
+        None
     }
 
-    pub(super) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
-        self.request_body_completion_task = None;
-        self.request_body_completion_variables = None;
+    pub(in crate::ui) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
+        self.request_body_completion_pending = false;
         self.request_body_editor.update(cx, |editor, cx| {
             editor.dismiss_completion_overlay(cx);
         });
@@ -226,15 +233,8 @@ pub(super) fn variable_candidates(
         .collect()
 }
 
-/// Reads the enabled variables of the environment stored at `path`.
-pub(super) fn load_environment_variables(
-    path: Option<std::path::PathBuf>,
-) -> Vec<EnvironmentVariable> {
-    try_load_environment_variables(path).unwrap_or_default()
-}
-
 /// `None` means an environment file was selected but could not be read or parsed.
-fn try_load_environment_variables(
+fn load_environment_variables(
     path: Option<std::path::PathBuf>,
 ) -> Option<Vec<EnvironmentVariable>> {
     let Some(path) = path else {
