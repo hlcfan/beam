@@ -220,7 +220,7 @@ fn format_human_timestamp(timestamp: &str) -> String {
         .map(|parsed| {
             parsed
                 .with_timezone(&Local)
-                .format("%Y-%m-%d %H:%M")
+                .format("%Y-%m-%d %H:%M:%S")
                 .to_string()
         })
         .unwrap_or_else(|_| timestamp.to_string())
