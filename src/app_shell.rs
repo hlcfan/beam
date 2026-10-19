@@ -17,7 +17,8 @@ use crate::importers::ImportPlan;
 use crate::models::{
     AppFontSize, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
     EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    QueryParamField, RequestFile, WorkspaceEntry, WorkspaceFile, WorkspacesRegistryFile,
+    QueryParamField, RequestFile, UpdateChannel, WorkspaceEntry, WorkspaceFile,
+    WorkspacesRegistryFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
 #[cfg(test)]
@@ -774,6 +775,7 @@ pub struct AppShellState {
     pub environments: Vec<EnvironmentMeta>,
     pub environment_selection: LocalEnvironmentSelectionState,
     pub theme: LocalThemeState,
+    pub update_channel: UpdateChannel,
     pub workspace: WorkspaceState,
     pub sync_lifecycle: SyncLifecycleState,
 }
@@ -789,6 +791,7 @@ impl Default for AppShellState {
             environments: Vec::new(),
             environment_selection: LocalEnvironmentSelectionState::default(),
             theme: LocalThemeState::default(),
+            update_channel: UpdateChannel::default(),
             workspace: WorkspaceState::default(),
             sync_lifecycle: SyncLifecycleState::default(),
         }
@@ -3244,6 +3247,7 @@ where
 
     StartupLoad::Ready {
         state: AppShellState {
+            update_channel: app_settings.app_settings.update_channel,
             workspace_tree,
             shared_store,
             request_pane_data,
@@ -5484,6 +5488,7 @@ expanded_item_ids = ["{folder_id}"]
                     auto_format_response: true,
                     wrap_body_editor: false,
                     wrapping_indent: AppWrappingIndent::None,
+                    update_channel: UpdateChannel::Nightly,
                     updated_at: Utc::now(),
                 },
             })
@@ -5590,6 +5595,7 @@ post_response = "console.log(response.status)"
         assert!(state.theme.auto_format_response);
         assert!(!state.theme.wrap_body_editor);
         assert_eq!(state.theme.wrapping_indent, AppWrappingIndent::None);
+        assert_eq!(state.update_channel, UpdateChannel::Nightly);
         assert_eq!(
             state
                 .shared_store
