@@ -77,7 +77,9 @@ pub(super) struct BeamView {
     pub(super) request_body_editor_cache: HashMap<Ulid, Entity<EditorState>>,
     pub(super) request_body_editor_cache_order: Vec<Ulid>,
     pub(super) request_body_editor_change_sub: Option<Subscription>,
-    pub(super) request_body_completion_task: Option<Task<()>>,
+    /// Variables loaded for the current `{{` token, retained while its prefix changes.
+    pub(super) request_body_completion_variables: Option<(usize, Vec<EnvironmentVariable>)>,
+    pub(super) request_body_completion_task: Option<(usize, Task<()>)>,
     pub(super) request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
     pub(super) request_url_editor_cache_order: Vec<Ulid>,
     pub(super) request_url_editor_change_sub: Option<Subscription>,
@@ -263,6 +265,7 @@ impl BeamView {
             request_body_editor_cache: HashMap::new(),
             request_body_editor_cache_order: Vec::new(),
             request_body_editor_change_sub: None,
+            request_body_completion_variables: None,
             request_body_completion_task: None,
             request_url_editor_cache: HashMap::new(),
             request_url_editor_cache_order: Vec::new(),

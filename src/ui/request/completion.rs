@@ -14,38 +14,69 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.dismiss_request_body_completion(cx);
         let editor = self.request_body_editor.read(cx);
         if !editor.focus_handle(cx).is_focused(window) {
+            self.dismiss_request_body_completion(cx);
             return;
         }
         let offset = editor.cursor();
         let Some(token) = token_at_cursor(editor.text(), offset) else {
+            self.dismiss_request_body_completion(cx);
             return;
         };
+
+        if let Some((start, variables)) = &self.request_body_completion_variables
+            && *start == token.start
+        {
+            let items = completion_items(&token, variables);
+            self.request_body_editor.update(cx, |editor, cx| {
+                editor.present_completion_items(token.start, token.prefix, items, cx);
+            });
+            return;
+        }
+        // Keep the current load; its result uses the token as it is when it finishes.
+        if self
+            .request_body_completion_task
+            .as_ref()
+            .is_some_and(|(start, _)| *start == token.start)
+        {
+            return;
+        }
+
+        self.dismiss_request_body_completion(cx);
+        let start = token.start;
         let path = self
             .selected_environment_id_for_view()
             .and_then(|id| self.environment_file_path_from_shell(id));
-        let editor = self.request_body_editor.downgrade();
-        let prefix = token.prefix.clone();
-        let start = token.start;
-        let items = cx.background_spawn(async move {
-            let variables = load_environment_variables(path);
-            completion_items(&token, &variables)
-        });
-        self.request_body_completion_task = Some(cx.spawn_in(window, async move |_, cx| {
-            let items = items.await;
-            let _ = editor.update_in(cx, |editor, window, cx| {
-                if editor.cursor() == offset && editor.focus_handle(cx).is_focused(window) {
-                    // Each result owns its token range; no document-prefix query is constructed.
-                    editor.present_completion_items(start, prefix, items, cx);
+        let variables = cx.background_spawn(async move { load_environment_variables(path) });
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let variables = variables.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.request_body_completion_task = None;
+                let editor = this.request_body_editor.read(cx);
+                if !editor.focus_handle(cx).is_focused(window) {
+                    return;
                 }
+                let Some(token) = token_at_cursor(editor.text(), editor.cursor()) else {
+                    return;
+                };
+                if token.start != start {
+                    return;
+                }
+                let items = completion_items(&token, &variables);
+                this.request_body_completion_variables = Some((start, variables));
+                this.request_body_editor.update(cx, |editor, cx| {
+                    // Each result owns its current token range, including any closing braces.
+                    editor.present_completion_items(start, token.prefix, items, cx);
+                });
             });
-        }));
+        });
+        self.request_body_completion_task = Some((start, task));
     }
 
     pub(super) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
         self.request_body_completion_task = None;
+        self.request_body_completion_variables = None;
         self.request_body_editor.update(cx, |editor, cx| {
             editor.dismiss_completion_overlay(cx);
         });
@@ -216,6 +247,10 @@ fn completion_items(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "completion/tests.rs"]
+mod cache_tests;
 
 #[cfg(test)]
 mod tests {
