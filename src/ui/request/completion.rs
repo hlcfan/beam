@@ -72,17 +72,20 @@ impl BeamView {
                 if this.selected_environment_id_for_view() != environment_id {
                     return;
                 }
-                // A failed read is not cached, so the next keystroke retries it.
-                let Some(variables) = variables else {
-                    return;
-                };
-                this.completion_environment_variables = Some((environment_id, Arc::new(variables)));
+                let load_failed = variables.is_none();
+                // An empty snapshot lets both editors present built-ins on failure.
+                this.completion_environment_variables =
+                    Some((environment_id, Arc::new(variables.unwrap_or_default())));
                 // Each editor rechecks its focus and current token before presenting.
                 if body_pending {
                     this.update_request_body_completion(window, cx);
                 }
                 if url_pending {
                     this.update_url_completion(window, cx);
+                }
+                // Keep the fallback only for presentation; the next edit retries the file.
+                if load_failed {
+                    this.completion_environment_variables = None;
                 }
             });
         });

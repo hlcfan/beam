@@ -399,6 +399,55 @@ fn clearing_the_environment_cancels_pending_url_completion(cx: &mut TestAppConte
 }
 
 #[gpui_kit::test]
+fn body_completion_keeps_builtins_when_the_environment_file_is_missing(cx: &mut TestAppContext) {
+    let (view, environment_path, _directory, cx) = fixture(cx);
+    let content = std::fs::read_to_string(&environment_path).expect("read environment");
+    std::fs::remove_file(&environment_path).expect("remove environment");
+    type_body(&view, "{{$g", cx);
+    cx.run_until_parked();
+    assert_eq!(completion_names(&view, cx), ["$guid"]);
+    view.read_with(cx, |view, _| {
+        assert!(view.completion_environment_variables.is_none());
+        assert!(view.completion_environment_task.is_none());
+    });
+
+    std::fs::write(&environment_path, content).expect("restore environment");
+    type_body(&view, "}} {{ho", cx);
+    cx.run_until_parked();
+    assert_eq!(completion_names(&view, cx), ["host"]);
+}
+
+#[gpui_kit::test]
+fn url_completion_keeps_builtins_when_the_environment_file_is_malformed(cx: &mut TestAppContext) {
+    let (view, environment_path, _directory, cx) = fixture(cx);
+    let content = std::fs::read_to_string(&environment_path).expect("read environment");
+    std::fs::write(&environment_path, "invalid TOML").expect("malformed environment");
+    type_url(&view, "{{$g", cx);
+    cx.run_until_parked();
+    view.read_with(cx, |view, cx| {
+        assert!(view.url_completion_active(cx));
+        assert!(view.completion_environment_variables.is_none());
+        assert!(view.completion_environment_task.is_none());
+    });
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| view.accept_url_completion(None, window, cx));
+    });
+    view.read_with(cx, |view, cx| {
+        assert_eq!(view.url_input.read(cx).value().as_ref(), "{{$guid}}");
+    });
+
+    std::fs::write(&environment_path, content).expect("restore environment");
+    type_url(&view, "{{ho", cx);
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| view.accept_url_completion(None, window, cx));
+    });
+    view.read_with(cx, |view, cx| {
+        assert_eq!(view.url_input.read(cx).value().as_ref(), "{{host}}");
+    });
+}
+
+#[gpui_kit::test]
 fn body_completion_retries_after_a_failed_load(cx: &mut TestAppContext) {
     let (view, environment_path, _directory, cx) = fixture(cx);
     let content = std::fs::read_to_string(&environment_path).expect("read environment");
