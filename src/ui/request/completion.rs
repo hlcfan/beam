@@ -25,8 +25,13 @@ impl BeamView {
             return;
         };
 
-        if let Some((start, variables)) = &self.request_body_completion_variables
+        let path = self
+            .selected_environment_id_for_view()
+            .and_then(|id| self.environment_file_path_from_shell(id));
+
+        if let Some((start, cached_path, variables)) = &self.request_body_completion_variables
             && *start == token.start
+            && *cached_path == path
         {
             let items = completion_items(&token, variables);
             self.request_body_editor.update(cx, |editor, cx| {
@@ -38,17 +43,16 @@ impl BeamView {
         if self
             .request_body_completion_task
             .as_ref()
-            .is_some_and(|(start, _)| *start == token.start)
+            .is_some_and(|(start, pending_path, _)| *start == token.start && *pending_path == path)
         {
             return;
         }
 
         self.dismiss_request_body_completion(cx);
         let start = token.start;
-        let path = self
-            .selected_environment_id_for_view()
-            .and_then(|id| self.environment_file_path_from_shell(id));
-        let variables = cx.background_spawn(async move { load_environment_variables(path) });
+        let task_path = path.clone();
+        let cache_path = path.clone();
+        let variables = cx.background_spawn(async move { try_load_environment_variables(path) });
         let task = cx.spawn_in(window, async move |this, cx| {
             let variables = variables.await;
             let _ = this.update_in(cx, |this, window, cx| {
@@ -63,15 +67,19 @@ impl BeamView {
                 if token.start != start {
                     return;
                 }
+                // A failed read is not cached, so the next keystroke retries it.
+                let Some(variables) = variables else {
+                    return;
+                };
                 let items = completion_items(&token, &variables);
-                this.request_body_completion_variables = Some((start, variables));
+                this.request_body_completion_variables = Some((start, cache_path, variables));
                 this.request_body_editor.update(cx, |editor, cx| {
                     // Each result owns its current token range, including any closing braces.
                     editor.present_completion_items(start, token.prefix, items, cx);
                 });
             });
         });
-        self.request_body_completion_task = Some((start, task));
+        self.request_body_completion_task = Some((start, task_path, task));
     }
 
     pub(super) fn dismiss_request_body_completion(&mut self, cx: &mut Context<Self>) {
@@ -222,10 +230,20 @@ pub(super) fn variable_candidates(
 pub(super) fn load_environment_variables(
     path: Option<std::path::PathBuf>,
 ) -> Vec<EnvironmentVariable> {
-    path.and_then(|path| std::fs::read_to_string(path).ok())
-        .and_then(|content| toml::from_str::<EnvironmentFile>(&content).ok())
+    try_load_environment_variables(path).unwrap_or_default()
+}
+
+/// `None` means an environment file was selected but could not be read or parsed.
+fn try_load_environment_variables(
+    path: Option<std::path::PathBuf>,
+) -> Option<Vec<EnvironmentVariable>> {
+    let Some(path) = path else {
+        return Some(Vec::new());
+    };
+    let content = std::fs::read_to_string(path).ok()?;
+    toml::from_str::<EnvironmentFile>(&content)
+        .ok()
         .map(|file| file.variables)
-        .unwrap_or_default()
 }
 
 fn completion_items(
@@ -247,10 +265,6 @@ fn completion_items(
         })
         .collect()
 }
-
-#[cfg(test)]
-#[path = "completion/tests.rs"]
-mod cache_tests;
 
 #[cfg(test)]
 mod tests {
@@ -414,3 +428,7 @@ mod tests {
         assert!(completion_items(&token, &variables).is_empty());
     }
 }
+
+#[cfg(test)]
+#[path = "completion/tests.rs"]
+mod cache_tests;

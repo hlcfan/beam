@@ -61,6 +61,64 @@ fn body_completion_uses_the_latest_prefix_when_the_load_finishes(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn body_completion_reloads_variables_when_the_environment_changes(cx: &mut TestAppContext) {
+    let (view, _, directory, cx) = fixture(cx);
+    type_body(&view, "{{ho", cx);
+    cx.run_until_parked();
+    assert_eq!(completion_names(&view, cx), ["host"]);
+
+    let other = EnvironmentMeta {
+        environment_id: Ulid::new(),
+        scope: EnvironmentScope::Global,
+        name: "Other".into(),
+        file_name: "other.env.toml".into(),
+        description: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    let file = EnvironmentFile {
+        schema_version: crate::schema::SCHEMA_VERSION_V1,
+        environment: other.clone(),
+        variables: vec![EnvironmentVariable {
+            name: "port".into(),
+            value: "80".into(),
+            enabled: true,
+            description: None,
+        }],
+        file_path: None,
+    };
+    std::fs::write(
+        directory.path().join("environments").join(&other.file_name),
+        toml::to_string(&file).expect("TOML"),
+    )
+    .expect("environment file");
+    view.update(cx, |view, _| {
+        view.shell
+            .environment_selection
+            .active_global_environment_id = Some(other.environment_id);
+        view.shell.environments.push(other);
+    });
+    type_body(&view, "{{po", cx);
+    cx.run_until_parked();
+    assert_eq!(completion_names(&view, cx), ["port"]);
+}
+
+#[gpui_kit::test]
+fn body_completion_retries_after_a_failed_load(cx: &mut TestAppContext) {
+    let (view, environment_path, _directory, cx) = fixture(cx);
+    let content = std::fs::read_to_string(&environment_path).expect("read environment");
+    std::fs::remove_file(&environment_path).expect("remove environment");
+    type_body(&view, "{{ho", cx);
+    cx.run_until_parked();
+    assert!(completion_names(&view, cx).is_empty());
+
+    std::fs::write(&environment_path, content).expect("restore environment");
+    type_body(&view, "{{h", cx);
+    cx.run_until_parked();
+    assert_eq!(completion_names(&view, cx), ["host"]);
+}
+
+#[gpui_kit::test]
 fn body_completion_clears_loaded_variables_on_blur_event(cx: &mut TestAppContext) {
     let (view, environment_path, _directory, cx) = fixture(cx);
     type_body(&view, "{{", cx);
