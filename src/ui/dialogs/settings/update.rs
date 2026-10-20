@@ -18,18 +18,24 @@ impl SettingsDialogView {
             updater
                 .release
                 .as_ref()
-                .map(|release| release.version().to_string())
+                .map(|release| {
+                    if phase == UpdatePhase::Idle && !available {
+                        format!("{} (up to date)", release.version())
+                    } else {
+                        release.version().to_string()
+                    }
+                })
                 .unwrap_or_else(|| "Unavailable".into())
         };
         let status = match phase {
-            UpdatePhase::ChangingChannel => "Saving channel…",
-            UpdatePhase::Checking => "Checking for updates…",
-            UpdatePhase::Installing => "Downloading and installing the update…",
-            UpdatePhase::Installed => "Update installed. Restart to use the new version.",
-            UpdatePhase::Restarting => "Saving changes before restarting…",
-            UpdatePhase::Idle if available => "An update is available.",
-            UpdatePhase::Idle if updater.release.is_some() => "You are up to date on this channel.",
-            UpdatePhase::Idle => "Check for updates to try again.",
+            UpdatePhase::ChangingChannel => Some("Saving channel…"),
+            UpdatePhase::Checking => Some("Checking for updates…"),
+            UpdatePhase::Installing => Some("Downloading and installing the update…"),
+            UpdatePhase::Installed => Some("Update installed. Restart to use the new version."),
+            UpdatePhase::Restarting => Some("Saving changes before restarting…"),
+            UpdatePhase::Idle if available => Some("An update is available."),
+            UpdatePhase::Idle if updater.release.is_some() => None,
+            UpdatePhase::Idle => Some("Check for updates to try again."),
         };
         let error = updater.error.clone();
         v_flex()
@@ -144,12 +150,14 @@ impl SettingsDialogView {
                         )
                     }),
             )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(status),
-            )
+            .when_some(status, |panel, status| {
+                panel.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(status),
+                )
+            })
             .when_some(error, |panel, error| {
                 panel.child(div().text_sm().text_color(cx.theme().danger).child(error))
             })
