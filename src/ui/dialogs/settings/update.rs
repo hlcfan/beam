@@ -34,8 +34,7 @@ impl SettingsDialogView {
             UpdatePhase::Installed => Some("Update installed. Restart to use the new version."),
             UpdatePhase::Restarting => Some("Saving changes before restarting…"),
             UpdatePhase::Idle if available => Some("An update is available."),
-            UpdatePhase::Idle if updater.release.is_some() => None,
-            UpdatePhase::Idle => Some("Check for updates to try again."),
+            UpdatePhase::Idle => None,
         };
         let error = updater.error.clone();
         v_flex()
@@ -97,14 +96,6 @@ impl SettingsDialogView {
                             ),
                     ),
             )
-            .when(updater.channel == UpdateChannel::Nightly, |panel| {
-                panel.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Nightly builds contain the latest changes and may be unstable."),
-                )
-            })
             .child(
                 h_flex()
                     .gap_2()
