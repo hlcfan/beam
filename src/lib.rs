@@ -13,4 +13,5 @@ pub mod storage;
 pub mod template_variables;
 pub mod tree_dnd;
 pub mod ui;
+mod updater;
 pub mod workspace_tree;

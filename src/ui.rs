@@ -9,6 +9,7 @@ mod response;
 mod text_edit_menu;
 mod theme;
 mod tree;
+mod update;
 mod workspace_tabs;
 
 use beam_view::BeamView;
@@ -492,6 +493,10 @@ pub fn run_app(
                     cx,
                 )
             });
+            view.read(cx)
+                .updater
+                .clone()
+                .update(cx, |updater, cx| updater.check(cx));
             cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
         })
         .expect("Failed to open Beam window");

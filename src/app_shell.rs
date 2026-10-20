@@ -17,7 +17,8 @@ use crate::importers::ImportPlan;
 use crate::models::{
     AppFontSize, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
     EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    QueryParamField, RequestFile, WorkspaceEntry, WorkspaceFile, WorkspacesRegistryFile,
+    QueryParamField, RequestFile, UpdateChannel, WorkspaceEntry, WorkspaceFile,
+    WorkspacesRegistryFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
 #[cfg(test)]
@@ -774,6 +775,7 @@ pub struct AppShellState {
     pub environments: Vec<EnvironmentMeta>,
     pub environment_selection: LocalEnvironmentSelectionState,
     pub theme: LocalThemeState,
+    pub update_channel: UpdateChannel,
     pub workspace: WorkspaceState,
     pub sync_lifecycle: SyncLifecycleState,
 }
@@ -789,6 +791,7 @@ impl Default for AppShellState {
             environments: Vec::new(),
             environment_selection: LocalEnvironmentSelectionState::default(),
             theme: LocalThemeState::default(),
+            update_channel: UpdateChannel::default(),
             workspace: WorkspaceState::default(),
             sync_lifecycle: SyncLifecycleState::default(),
         }
@@ -1518,6 +1521,7 @@ fn sort_environments(environments: &mut [EnvironmentMeta]) {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppOperation {
+    Flush,
     CreateEnvironment,
     DuplicateEnvironment,
     RenameEnvironment,
@@ -1546,6 +1550,7 @@ pub enum AppOperation {
 impl AppOperation {
     pub fn as_str(self) -> &'static str {
         match self {
+            AppOperation::Flush => "flush",
             AppOperation::CreateEnvironment => "create_environment",
             AppOperation::DuplicateEnvironment => "duplicate_environment",
             AppOperation::RenameEnvironment => "rename_environment",
@@ -1575,6 +1580,9 @@ impl AppOperation {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppCommand {
+    Flush {
+        command_id: String,
+    },
     CreateEnvironment {
         name: String,
         command_id: String,
@@ -1677,7 +1685,8 @@ pub enum AppCommand {
 impl AppCommand {
     pub fn command_id(&self) -> &str {
         match self {
-            AppCommand::CreateEnvironment { command_id, .. }
+            AppCommand::Flush { command_id }
+            | AppCommand::CreateEnvironment { command_id, .. }
             | AppCommand::DuplicateEnvironment { command_id, .. }
             | AppCommand::RenameEnvironment { command_id, .. }
             | AppCommand::UpdateEnvironmentVariables { command_id, .. }
@@ -1705,6 +1714,7 @@ impl AppCommand {
 
     pub fn operation(&self) -> AppOperation {
         match self {
+            AppCommand::Flush { .. } => AppOperation::Flush,
             AppCommand::CreateEnvironment { .. } => AppOperation::CreateEnvironment,
             AppCommand::DuplicateEnvironment { .. } => AppOperation::DuplicateEnvironment,
             AppCommand::RenameEnvironment { .. } => AppOperation::RenameEnvironment,
@@ -2039,6 +2049,21 @@ fn command_coalesce_key(command: &AppCommand) -> Option<CommandCoalesceKey> {
 /// - Only the most recent mutation per entity/field key is executed in this batch.
 /// - Non-coalescable commands (create/delete/rename, etc.) are always preserved.
 fn coalesce_commands(commands: Vec<AppCommand>) -> Vec<AppCommand> {
+    let mut result = Vec::new();
+    let mut segment = Vec::new();
+    for command in commands {
+        if matches!(command, AppCommand::Flush { .. }) {
+            result.extend(coalesce_command_segment(std::mem::take(&mut segment)));
+            result.push(command);
+        } else {
+            segment.push(command);
+        }
+    }
+    result.extend(coalesce_command_segment(segment));
+    result
+}
+
+fn coalesce_command_segment(commands: Vec<AppCommand>) -> Vec<AppCommand> {
     let mut latest_indices: HashMap<CommandCoalesceKey, usize> = HashMap::new();
     for (index, command) in commands.iter().enumerate() {
         if let Some(key) = command_coalesce_key(command) {
@@ -2127,7 +2152,8 @@ fn validate_command_payload(command: &AppCommand) -> std::result::Result<(), Str
                 return Err("Workspace name cannot be empty.".to_string());
             }
         }
-        AppCommand::DuplicateEnvironment { .. }
+        AppCommand::Flush { .. }
+        | AppCommand::DuplicateEnvironment { .. }
         | AppCommand::DeleteEnvironment { .. }
         | AppCommand::DeleteRequest { .. }
         | AppCommand::MoveRequest { .. }
@@ -2153,6 +2179,7 @@ fn handle_command<B: StorageIoBackend>(
     command: AppCommand,
 ) -> std::result::Result<Vec<AppEvent>, String> {
     match command {
+        AppCommand::Flush { .. } => Ok(vec![]),
         AppCommand::CreateEnvironment { name, command_id } => {
             let created = storage
                 .create_environment(CreateEnvironmentInput { name })
@@ -3244,6 +3271,7 @@ where
 
     StartupLoad::Ready {
         state: AppShellState {
+            update_channel: app_settings.app_settings.update_channel,
             workspace_tree,
             shared_store,
             request_pane_data,
@@ -4328,6 +4356,72 @@ mod tests {
                     && request_file.meta.name == "Latest Save"
                     && request_file.request.method == HttpMethod::Post
         ));
+    }
+
+    #[test]
+    fn flush_preserves_saves_on_both_sides_of_the_barrier() {
+        let request_file =
+            sample_request_file(Ulid::new(), "Save", HttpMethod::Get, "https://example.com");
+        let before = AppCommand::SaveRequest {
+            request_file: request_file.clone(),
+            command_id: "before".into(),
+        };
+        let barrier = AppCommand::Flush {
+            command_id: "flush".into(),
+        };
+        let after = AppCommand::SaveRequest {
+            request_file,
+            command_id: "after".into(),
+        };
+        let commands = vec![before, barrier, after];
+        assert_eq!(coalesce_commands(commands.clone()), commands);
+    }
+
+    #[test]
+    fn flush_completes_after_queued_changes_are_on_disk() {
+        let dir = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(dir.path().join("beam"));
+        let mut storage =
+            WorkspaceRepository::new(FileSystemStorage::new(paths.clone())).expect("repo");
+        storage.initialize().expect("initialize");
+        let (registry, registry_repo) = test_registry_for_dir(dir.path());
+        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        runtime
+            .command_tx
+            .send(AppCommand::CreateEnvironment {
+                name: "Before restart".into(),
+                command_id: "save".into(),
+            })
+            .expect("queue save");
+        runtime
+            .command_tx
+            .send(AppCommand::Flush {
+                command_id: "flush".into(),
+            })
+            .expect("queue flush");
+        let events =
+            apply_events_for_command(&mut AppShellState::default(), &runtime.event_rx, "flush");
+        assert!(events.iter().any(|event| matches!(event, AppEvent::SyncCompleted { command_id, .. } if command_id == "save")));
+        assert!(matches!(
+            events.last(),
+            Some(AppEvent::SyncCompleted {
+                operation: AppOperation::Flush,
+                ..
+            })
+        ));
+        let path = events
+            .iter()
+            .find_map(|event| match event {
+                AppEvent::EnvironmentUpserted { environment, .. } => {
+                    Some(paths.environments_dir.join(&environment.file_name))
+                }
+                _ => None,
+            })
+            .expect("environment path");
+        let saved: crate::models::EnvironmentFile =
+            toml::from_str(&fs::read_to_string(path).expect("persisted environment"))
+                .expect("environment TOML");
+        assert_eq!(saved.environment.name, "Before restart");
     }
 
     #[test]
@@ -5484,6 +5578,7 @@ expanded_item_ids = ["{folder_id}"]
                     auto_format_response: true,
                     wrap_body_editor: false,
                     wrapping_indent: AppWrappingIndent::None,
+                    update_channel: UpdateChannel::Nightly,
                     updated_at: Utc::now(),
                 },
             })
@@ -5590,6 +5685,7 @@ post_response = "console.log(response.status)"
         assert!(state.theme.auto_format_response);
         assert!(!state.theme.wrap_body_editor);
         assert_eq!(state.theme.wrapping_indent, AppWrappingIndent::None);
+        assert_eq!(state.update_channel, UpdateChannel::Nightly);
         assert_eq!(
             state
                 .shared_store

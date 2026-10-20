@@ -16,6 +16,7 @@ pub(super) use environment::EnvironmentManagerDialogView;
 pub(super) use import::ImportDialogView;
 pub(super) use key_bindings::KeyBindingsDialogView;
 pub(super) use settings::SettingsDialogView;
+use settings::SettingsSection;
 pub(super) use tree::{TreeNodeDeleteDialogView, TreeRenameDialogView};
 pub(super) use workspace::{
     WorkspaceDeleteDialogView, WorkspaceDialogMode, WorkspaceNameDialogView,
@@ -80,10 +81,28 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_settings_section(SettingsSection::Theme, window, cx);
+    }
+
+    pub(in crate::ui) fn open_update_settings_dialog(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_settings_section(SettingsSection::Update, window, cx);
+    }
+
+    fn open_settings_section(
+        &mut self,
+        section: SettingsSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let beam_view = cx.entity();
         window.defer(cx, move |window, cx| {
             // Construct outside a BeamView update so the dialog can read its settings.
             let settings_view = cx.new(|cx| SettingsDialogView::new(beam_view.clone(), window, cx));
+            settings_view.update(cx, |settings, cx| settings.set_section(section, cx));
             beam_view.update(cx, |this, cx| {
                 this.settings_dialog_view = Some(settings_view.clone());
                 cx.notify();

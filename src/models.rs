@@ -382,7 +382,26 @@ pub struct AppSettings {
     pub wrap_body_editor: bool,
     #[serde(default)]
     pub wrapping_indent: AppWrappingIndent,
+    #[serde(default)]
+    pub update_channel: UpdateChannel,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    #[default]
+    Release,
+    Nightly,
+}
+
+impl UpdateChannel {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Release => "Normal release",
+            Self::Nightly => "Nightly",
+        }
+    }
 }
 
 const fn default_auto_format_response() -> bool {
@@ -436,6 +455,7 @@ impl Default for AppSettingsFile {
                 auto_format_response: default_auto_format_response(),
                 wrap_body_editor: false,
                 wrapping_indent: AppWrappingIndent::default(),
+                update_channel: UpdateChannel::default(),
                 updated_at: Utc::now(),
             },
         }

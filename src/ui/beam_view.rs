@@ -1,5 +1,9 @@
+use super::update::UpdatePhase;
 use super::*;
 use gpui_kit::component::{Colorize, button::ButtonCustomVariant};
+
+#[cfg(test)]
+mod tests;
 
 pub(super) struct BeamView {
     pub(super) shell: AppShellState,
@@ -50,6 +54,8 @@ pub(super) struct BeamView {
     pub(super) request_file_index: HashMap<Ulid, PathBuf>,
     pub(super) environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     pub(super) settings_dialog_view: Option<Entity<SettingsDialogView>>,
+    pub(super) updater: Entity<super::update::AppUpdater>,
+    pub(super) update_restart_command: Option<String>,
     pub(super) key_bindings_dialog_view: Option<Entity<KeyBindingsDialogView>>,
     pub(super) import_dialog_view: Option<Entity<ImportDialogView>>,
     pub(super) command_palette_dialog_view: Option<Entity<CommandPaletteDialogView>>,
@@ -166,7 +172,7 @@ impl BeamView {
         let request_auth_api_key_value_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("API key value"));
 
-        let _subscriptions = vec![
+        let mut _subscriptions = vec![
             cx.subscribe_in(&post_script_editor, window, {
                 let post_script_editor = post_script_editor.clone();
                 move |this, _, ev: &InputEvent, _, cx| {
@@ -195,6 +201,9 @@ impl BeamView {
             .into_iter()
             .map(|id| (id, workspace_scroll_handle.clone()))
             .collect();
+        let updater = cx
+            .new(|_| super::update::AppUpdater::new(shell.update_channel, workspace_paths.clone()));
+        _subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
         let mut view = Self {
             shell,
             focus_handle,
@@ -242,6 +251,8 @@ impl BeamView {
             request_file_index,
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
+            updater,
+            update_restart_command: None,
             key_bindings_dialog_view: None,
             import_dialog_view: None,
             command_palette_dialog_view: None,
@@ -374,6 +385,20 @@ impl BeamView {
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
+        let update_version = {
+            let updater = self.updater.read(cx);
+            updater
+                .release
+                .as_ref()
+                .filter(|release| {
+                    release.is_available()
+                        && !matches!(
+                            updater.phase,
+                            UpdatePhase::Installed | UpdatePhase::Restarting
+                        )
+                })
+                .map(|release| release.version().to_string())
+        };
         h_flex()
             .items_center()
             .w_full()
@@ -440,6 +465,35 @@ impl BeamView {
                     )
             })
             .child(div().flex_1())
+            .when_some(update_version, |bar, version| {
+                let background = cx.theme().blue;
+                let foreground = if cx.theme().mode.is_dark() {
+                    cx.theme().foreground
+                } else {
+                    cx.theme().background
+                };
+                bar.child(
+                    Button::new("status-bar-update")
+                        .xsmall()
+                        .custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(background)
+                                .foreground(foreground)
+                                .hover(background)
+                                .active(background),
+                        )
+                        // Override the custom variant's automatic background dimming at rest.
+                        .bg(background)
+                        .rounded(cx.theme().radius_full())
+                        .border_0()
+                        .px_2()
+                        .cursor_pointer()
+                        .label(format!("Update to {version}"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_update_settings_dialog(window, cx);
+                        })),
+                )
+            })
             .child(
                 Button::new("status-bar-key-bindings-modal")
                     .small()

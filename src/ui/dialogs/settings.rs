@@ -1,4 +1,9 @@
 use super::super::*;
+use crate::models::UpdateChannel;
+use crate::ui::update::{AppUpdater, UpdatePhase};
+#[cfg(test)]
+mod tests;
+mod update;
 use gpui_kit::component::{
     IndexPath, Size, StyleSized,
     combobox::{Combobox, ComboboxEvent, ComboboxState},
@@ -7,9 +12,10 @@ use gpui_kit::component::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SettingsSection {
+pub(super) enum SettingsSection {
     Theme,
     Editor,
+    Update,
 }
 
 pub(in crate::ui) struct SettingsDialogView {
@@ -18,6 +24,8 @@ pub(in crate::ui) struct SettingsDialogView {
     theme_combobox: Entity<ComboboxState<SearchableVec<SharedString>>>,
     font_size_select: Entity<SelectState<Vec<SharedString>>>,
     wrapping_indent_select: Entity<SelectState<Vec<SharedString>>>,
+    updater: Entity<AppUpdater>,
+    update_channel_select: Entity<SelectState<Vec<SharedString>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -121,19 +129,78 @@ impl SettingsDialogView {
                 }
             },
         );
+        let updater = beam_view.read(cx).updater.clone();
+        let update_channel = updater.read(cx).channel;
+        let update_channel_select = cx.new(|cx| {
+            SelectState::new(
+                [UpdateChannel::Release, UpdateChannel::Nightly]
+                    .into_iter()
+                    .map(|channel| SharedString::from(channel.label()))
+                    .collect::<Vec<_>>(),
+                Some(
+                    IndexPath::default().row(usize::from(update_channel == UpdateChannel::Nightly)),
+                ),
+                window,
+                cx,
+            )
+        });
+        let channel_subscription =
+            cx.subscribe_in(&update_channel_select, window, |this, _, event, _, cx| {
+                let SelectEvent::Confirm(Some(value)) = event else {
+                    return;
+                };
+                if let Some(channel) = [UpdateChannel::Release, UpdateChannel::Nightly]
+                    .into_iter()
+                    .find(|channel| channel.label() == value.as_ref())
+                {
+                    this.updater
+                        .update(cx, |updater, cx| updater.select_channel(channel, cx));
+                }
+            });
+        let updater_subscription = cx.observe_in(&updater, window, |this, _, window, cx| {
+            let channel = this.updater.read(cx).channel;
+            if this
+                .update_channel_select
+                .read(cx)
+                .selected_value()
+                .map(|value| value.as_ref())
+                != Some(channel.label())
+            {
+                this.update_channel_select.update(cx, |state, cx| {
+                    state.set_selected_index(
+                        Some(
+                            IndexPath::default()
+                                .row(usize::from(channel == UpdateChannel::Nightly)),
+                        ),
+                        window,
+                        cx,
+                    );
+                });
+            }
+            cx.notify();
+        });
         Self {
             theme_combobox,
             font_size_select,
             wrapping_indent_select,
+            updater,
+            update_channel_select,
             _subscriptions: vec![
                 theme_subscription,
                 theme_observer,
                 font_size_subscription,
                 subscription,
+                channel_subscription,
+                updater_subscription,
             ],
             beam_view,
             selected_section: SettingsSection::Theme,
         }
+    }
+
+    pub(super) fn set_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.selected_section = section;
+        cx.notify();
     }
 }
 
@@ -148,6 +215,9 @@ impl Render for SettingsDialogView {
         };
         let mut right_panel = v_flex().w_full().h_full().gap_3();
         match self.selected_section {
+            SettingsSection::Update => {
+                right_panel = right_panel.child(self.render_update_panel(cx));
+            }
             SettingsSection::Theme => {
                 right_panel = right_panel
                     .child(div().text_sm().font_semibold().child("Theme"))
@@ -332,6 +402,21 @@ impl Render for SettingsDialogView {
                                         cx.notify();
                                     }))
                                     .child("Editor"),
+                            )
+                            .child(
+                                ListItem::new("settings-section-update")
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .rounded_md()
+                                    .px_2()
+                                    .py_1()
+                                    .selected(self.selected_section == SettingsSection::Update)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.selected_section = SettingsSection::Update;
+                                        this.updater.update(cx, |updater, cx| updater.check(cx));
+                                        cx.notify();
+                                    }))
+                                    .child("Update"),
                             ),
                     )
                     .child(

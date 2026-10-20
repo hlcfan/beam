@@ -86,6 +86,7 @@ impl BeamView {
         let mut selected_request_to_persist = None;
 
         while let Ok(event) = self.app_event_rx.try_recv() {
+            self.handle_update_restart_event(&event, cx);
             did_apply_any = true;
             match &event {
                 AppEvent::RequestUpserted {

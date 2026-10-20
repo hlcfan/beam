@@ -10,7 +10,7 @@ use crate::models::{
     AppFontSize, AppSettingsFile, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile,
     EnvironmentMeta, EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField,
     HttpMethod, ItemType, LocalStateFile, ManifestItemRef, QueryParamField, RequestDefinition,
-    RequestFile, RequestMeta, ScriptConfig, WorkspaceFile,
+    RequestFile, RequestMeta, ScriptConfig, UpdateChannel, WorkspaceFile,
 };
 use crate::paths::FOLDER_MANIFEST_FILE_NAME;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
@@ -1438,6 +1438,16 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         self.save_app_settings(&app_settings)
     }
 
+    pub fn persist_update_channel(&self, channel: UpdateChannel) -> Result<()> {
+        let mut settings = self.load_app_settings()?;
+        if settings.app_settings.update_channel == channel {
+            return Ok(());
+        }
+        settings.app_settings.update_channel = channel;
+        settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&settings)
+    }
+
     fn seed_app_settings_file(&self) -> Result<AppSettingsFile> {
         let mut app_settings = AppSettingsFile::default();
         let local_state_path = &self.backend.paths().local_state_file;
@@ -2193,6 +2203,34 @@ mod tests {
             .join("\n");
         let loaded: AppSettingsFile = toml::from_str(&text).expect("read existing settings");
         assert_eq!(loaded.app_settings.wrapping_indent, AppWrappingIndent::Same);
+    }
+
+    #[test]
+    fn update_channel_persists_without_changing_other_settings() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace");
+        storage.persist_theme_state("One Dark").expect("save theme");
+        for channel in [UpdateChannel::Nightly, UpdateChannel::Release] {
+            storage
+                .persist_update_channel(channel)
+                .expect("save channel");
+            let loaded = storage.load_app_settings().expect("load settings");
+            assert_eq!(loaded.app_settings.update_channel, channel);
+            assert_eq!(loaded.app_settings.theme_name.as_deref(), Some("One Dark"));
+        }
+    }
+
+    #[test]
+    fn settings_without_update_channel_default_to_release() {
+        let text = toml::to_string(&AppSettingsFile::default()).expect("serialize settings");
+        let text = text
+            .lines()
+            .filter(|line| !line.starts_with("update_channel ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let loaded: AppSettingsFile = toml::from_str(&text).expect("read existing settings");
+        assert_eq!(loaded.app_settings.update_channel, UpdateChannel::Release);
     }
 
     #[test]
