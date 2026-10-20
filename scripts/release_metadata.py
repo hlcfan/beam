@@ -40,10 +40,49 @@ def release_metadata(version, environment, archive=None):
     return result
 
 
+def prepare_build_version(manifest_path, lock_path, version):
+    manifest = manifest_path.read_text(encoding="utf-8")
+    lock = lock_path.read_text(encoding="utf-8")
+    name = tomllib.loads(manifest)["package"]["name"]
+    manifest = with_package_version(manifest, "[package]", name, version)
+    lock = with_package_version(lock, "[[package]]", name, version)
+    manifest_path.write_text(manifest, encoding="utf-8")
+    lock_path.write_text(lock, encoding="utf-8")
+
+
+def with_package_version(text, header, name, version):
+    matches = 0
+
+    def replace(block):
+        nonlocal matches
+        package = tomllib.loads(block.group())["package"]
+        if isinstance(package, list):
+            package = package[0]
+        if package["name"] != name:
+            return block.group()
+        matches += 1
+        updated, count = re.subn(
+            r'''(?m)^(version[ \t]*=[ \t]*)(["'])[^"'\n]+\2''',
+            lambda match: f"{match[1]}{match[2]}{version}{match[2]}",
+            block.group(),
+            count=1,
+        )
+        if count != 1:
+            raise ValueError(f"Expected an explicit version for {name}.")
+        return updated
+
+    pattern = rf"(?ms)^{re.escape(header)}[ \t]*\n.*?(?=^\[|\Z)"
+    updated = re.sub(pattern, replace, text)
+    if matches != 1:
+        raise ValueError(f"Expected exactly one {name} package in {header}.")
+    return updated
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive")
     parser.add_argument("--require-key", action="store_true")
+    parser.add_argument("--prepare-build", action="store_true")
     args = parser.parse_args()
     if args.require_key and not re.fullmatch(
         r"[0-9a-fA-F]{64}", os.environ.get("BEAM_UPDATE_PUBLIC_KEY", "")
@@ -53,13 +92,13 @@ def main():
         version = tomllib.load(manifest)["package"]["version"]
     try:
         metadata = release_metadata(version, os.environ, args.archive)
+        if args.prepare_build:
+            prepare_build_version(Path("Cargo.toml"), Path("Cargo.lock"), metadata["build_version"])
     except (KeyError, ValueError) as error:
         parser.error(str(error))
     with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         for key, value in metadata.items():
             output.write(f"{key}={value}\n")
-    with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as output:
-        output.write(f"BEAM_BUILD_VERSION={metadata['build_version']}\n")
 
 
 if __name__ == "__main__":

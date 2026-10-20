@@ -8,10 +8,7 @@ use serde::Deserialize;
 
 use crate::models::UpdateChannel;
 
-pub(crate) const CURRENT_VERSION: &str = match option_env!("BEAM_BUILD_VERSION") {
-    Some(version) => version,
-    None => env!("CARGO_PKG_VERSION"),
-};
+pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Debug)]
 pub(crate) struct AvailableUpdate {

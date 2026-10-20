@@ -140,7 +140,7 @@ jobs:
         shell: bash
         env:
           ARCHIVE_NAME: ${{ matrix.archive_name }}
-        run: python scripts/release_metadata.py --require-key --archive "$ARCHIVE_NAME"
+        run: python scripts/release_metadata.py --require-key --prepare-build --archive "$ARCHIVE_NAME"
 
       - name: Build release binary
         # Uses the shared size optimizations in Cargo.toml's release profile.

@@ -2,14 +2,69 @@
 
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
-from release_metadata import release_metadata
+from release_metadata import prepare_build_version, release_metadata
 from sign_release import sign_release
 
 
 class ReleaseTests(unittest.TestCase):
+    def test_nightly_prepares_cargo_version_without_changing_dependencies(self):
+        manifest_text = '''# Package settings
+[package]
+name = "beam"
+version = '0.8.0' # Keep this comment
+edition = "2024"
+
+[dependencies]
+other = "0.8.0"
+'''
+        lock_text = '''version = 4
+
+[[package]]
+name = "other"
+version = "0.8.0"
+
+[[package]]
+name = "beam"
+version = "0.8.0"
+dependencies = ["other"]
+'''
+        version = "0.8.0-nightly.123.1"
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, lock = Path(directory) / "Cargo.toml", Path(directory) / "Cargo.lock"
+            manifest.write_text(manifest_text)
+            lock.write_text(lock_text)
+            prepare_build_version(manifest, lock, version)
+            self.assertEqual(tomllib.loads(manifest.read_text())["package"]["version"], version)
+            packages = tomllib.loads(lock.read_text())["package"]
+            self.assertEqual([package["version"] for package in packages], ["0.8.0", version])
+            self.assertEqual(manifest.read_text(), manifest_text.replace("version = '0.8.0'", f"version = '{version}'"))
+            self.assertEqual(lock.read_text(), lock_text.replace('name = "beam"\nversion = "0.8.0"', f'name = "beam"\nversion = "{version}"'))
+
+    def test_missing_lock_entry_does_not_change_the_manifest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, lock = Path(directory) / "Cargo.toml", Path(directory) / "Cargo.lock"
+            manifest_text = '[package]\nname = "beam"\nversion = "0.8.0"\n'
+            manifest.write_text(manifest_text)
+            lock.write_text('version = 4\n')
+            with self.assertRaises(ValueError):
+                prepare_build_version(manifest, lock, "0.8.0-nightly.123.1")
+            self.assertEqual(manifest.read_text(), manifest_text)
+
+    def test_normal_release_keeps_cargo_files_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, lock = Path(directory) / "Cargo.toml", Path(directory) / "Cargo.lock"
+            manifest_text = '[package]\nname = "beam"\nversion = "0.8.0"\n'
+            lock_text = 'version = 4\n\n[[package]]\nname = "beam"\nversion = "0.8.0"\n'
+            manifest.write_text(manifest_text)
+            lock.write_text(lock_text)
+            prepare_build_version(manifest, lock, "0.8.0")
+            self.assertEqual(manifest.read_bytes(), manifest_text.encode())
+            self.assertEqual(lock.read_bytes(), lock_text.encode())
+
     def test_stable_tags_must_match_the_compiled_version(self):
         environment = {"GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0.8.0"}
         metadata = release_metadata("0.8.0", environment, "beam-windows-x86_64.zip")
