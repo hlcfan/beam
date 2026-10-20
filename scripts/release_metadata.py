@@ -20,8 +20,11 @@ def release_metadata(version, environment, archive=None):
         attempt = environment["GITHUB_RUN_ATTEMPT"]
         if not run_id.isdecimal() or not attempt.isdecimal():
             raise ValueError("Nightly builds require numeric run and attempt identifiers.")
+        commit_sha = environment.get("GITHUB_SHA", "")
+        if not re.fullmatch(r"[0-9a-fA-F]{40}", commit_sha):
+            raise ValueError("Nightly builds require a full Git commit SHA in GITHUB_SHA.")
         base_version = version.split("-", 1)[0].split("+", 1)[0]
-        build_version = f"{base_version}-nightly.{run_id}.{attempt}"
+        build_version = f"{base_version}-nightly.{run_id}.{attempt}+g{commit_sha[:12].lower()}"
         tag = "nightly"
         title = f"Nightly {build_version}"
         nightly = True

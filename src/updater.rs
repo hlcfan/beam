@@ -185,11 +185,11 @@ fn prepare_update(
     // Opting into nightly permits the nightly of the installed stable version.
     let mut stable_remote = remote.clone();
     stable_remote.pre = semver::Prerelease::EMPTY;
-    let available = remote > current
+    let available = remote.cmp_precedence(&current).is_gt()
         || (channel == UpdateChannel::Release && current.pre.as_str().starts_with("nightly."))
         || (channel == UpdateChannel::Nightly
             && current.pre.is_empty()
-            && stable_remote >= current);
+            && stable_remote.cmp_precedence(&current).is_ge());
     let release = Release::builder()
         .version(remote.to_string())
         .asset(asset.clone())
@@ -390,6 +390,31 @@ mod tests {
             .expect("nightly");
             assert_eq!(update.is_available(), available, "{current}");
             assert_eq!(update.version(), "0.8.0-nightly.123.1");
+        }
+    }
+
+    #[test]
+    fn nightly_commit_metadata_preserves_build_order_and_archive_selection() {
+        let version = "0.8.0-nightly.123.1+g0123456789ab";
+        let archive = "beam-linux-x86_64-0.8.0-nightly.123.1+g0123456789ab.tar.gz";
+        let release = release(version, &format!("Nightly {version}"), &[archive]);
+        for (current, available) in [
+            ("0.8.0-nightly.122.1+gffffffffffff", true),
+            ("0.8.0-nightly.123.1+g0123456789ab", false),
+            ("0.8.0-nightly.123.1+g000000000000", false),
+            ("0.8.0-nightly.123.1+gffffffffffff", false),
+            ("0.8.0-nightly.124.1+g000000000000", false),
+        ] {
+            let update = prepare_update(
+                UpdateChannel::Nightly,
+                release.clone(),
+                Platform::LinuxX64,
+                current,
+            )
+            .expect("nightly with commit SHA");
+            assert_eq!(update.is_available(), available, "{current}");
+            assert_eq!(update.version(), version);
+            assert_eq!(update.release.assets()[0].name(), archive);
         }
     }
 

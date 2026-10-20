@@ -32,7 +32,7 @@ name = "beam"
 version = "0.8.0"
 dependencies = ["other"]
 '''
-        version = "0.8.0-nightly.123.1"
+        version = "0.8.0-nightly.123.1+g0123456789ab"
         with tempfile.TemporaryDirectory() as directory:
             manifest, lock = Path(directory) / "Cargo.toml", Path(directory) / "Cargo.lock"
             manifest.write_text(manifest_text)
@@ -75,14 +75,22 @@ dependencies = ["other"]
             release_metadata("0.9.0", environment)
 
     def test_nightly_reruns_use_distinct_versions_and_asset_names(self):
-        environment = {"GITHUB_REF_TYPE": "branch", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
+        environment = {"GITHUB_REF_TYPE": "branch", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": "0123456789abcdef0123456789abcdef01234567"}
         for archive, extension in [("beam-macos-aarch64.tar.gz", ".tar.gz"), ("beam-windows-x86_64.zip", ".zip")]:
             first = release_metadata("0.8.0", environment, archive)
             second = release_metadata("0.8.0", dict(environment, GITHUB_RUN_ATTEMPT="2"), archive)
             self.assertNotEqual(first["archive_name"], second["archive_name"])
+            self.assertEqual(first["build_version"], "0.8.0-nightly.123.1+g0123456789ab")
+            self.assertEqual(second["build_version"], "0.8.0-nightly.123.2+g0123456789ab")
             self.assertTrue(first["archive_name"].endswith(f"-{first['build_version']}{extension}"))
             self.assertEqual(first["release_name"], f"Nightly {first['build_version']}")
             self.assertEqual(first["release_tag"], "nightly")
+
+    def test_nightly_requires_a_valid_commit_sha(self):
+        environment = {"GITHUB_REF_TYPE": "branch", "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1"}
+        for sha in [None, "", "a" * 39, "g" * 40]:
+            with self.subTest(sha=sha), self.assertRaises(ValueError):
+                release_metadata("0.8.0", environment if sha is None else dict(environment, GITHUB_SHA=sha))
 
     def test_prerelease_tags_remain_prereleases(self):
         metadata = release_metadata("0.9.0-beta.1", {"GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0.9.0-beta.1"})
