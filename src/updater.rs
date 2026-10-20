@@ -168,7 +168,7 @@ fn prepare_update(
         UpdateChannel::Release if !remote.pre.is_empty() => {
             return Err("The normal release channel returned a prerelease.".into());
         }
-        UpdateChannel::Nightly if !remote.pre.as_str().starts_with("nightly.") => {
+        UpdateChannel::Nightly if !is_nightly(&remote) => {
             return Err("The nightly release does not contain a nightly build version.".into());
         }
         _ => {}
@@ -182,14 +182,15 @@ fn prepare_update(
     if !asset.download_url().starts_with("https://") {
         return Err("The update download must use HTTPS.".into());
     }
-    // Opting into nightly permits the nightly of the installed stable version.
-    let mut stable_remote = remote.clone();
-    stable_remote.pre = semver::Prerelease::EMPTY;
-    let available = remote.cmp_precedence(&current).is_gt()
-        || (channel == UpdateChannel::Release && current.pre.as_str().starts_with("nightly."))
-        || (channel == UpdateChannel::Nightly
-            && current.pre.is_empty()
-            && stable_remote.cmp_precedence(&current).is_ge());
+    let available = match channel {
+        UpdateChannel::Release => remote.cmp_precedence(&current).is_gt() || is_nightly(&current),
+        UpdateChannel::Nightly => {
+            // The rolling release identifies the latest commit. SHAs have no chronological order.
+            let remote_base = (remote.major, remote.minor, remote.patch);
+            let current_base = (current.major, current.minor, current.patch);
+            remote_base > current_base || (remote_base == current_base && remote != current)
+        }
+    };
     let release = Release::builder()
         .version(remote.to_string())
         .asset(asset.clone())
@@ -200,6 +201,11 @@ fn prepare_update(
         platform,
         available,
     })
+}
+
+fn is_nightly(version: &Version) -> bool {
+    let prerelease = version.pre.as_str();
+    prerelease == "nightly" || prerelease.starts_with("nightly.")
 }
 
 fn verification_key(value: Option<&str>) -> Result<self_update::VerifyingKey, String> {
@@ -311,19 +317,19 @@ mod tests {
 
     #[test]
     fn rolling_nightly_metadata_becomes_a_pinned_semver_release() {
-        let json = r#"{"tag_name":"nightly","name":"Nightly 0.8.0-nightly.123.1","draft":false,"prerelease":true,"assets":[{"name":"beam-linux-x86_64-0.8.0-nightly.123.1.tar.gz","browser_download_url":"https://example.com/beam.tar.gz","digest":"sha256:abc"}]}"#;
+        let json = r#"{"tag_name":"nightly","name":"Nightly 0.8.0-nightly+g0123456789ab","draft":false,"prerelease":true,"assets":[{"name":"beam-linux-x86_64-0.8.0-nightly+g0123456789ab.tar.gz","browser_download_url":"https://example.com/beam.tar.gz","digest":"sha256:abc"}]}"#;
         let release: GitHubRelease = serde_json::from_str(json).expect("metadata");
         let release = release
             .into_release(UpdateChannel::Nightly)
             .expect("nightly");
-        assert_eq!(release.version(), "0.8.0-nightly.123.1");
+        assert_eq!(release.version(), "0.8.0-nightly+g0123456789ab");
         assert_eq!(release.assets()[0].digest(), Some("sha256:abc"));
         assert_eq!(
             PinnedRelease(release)
-                .get_release_version("0.8.0-nightly.123.1")
+                .get_release_version("0.8.0-nightly+g0123456789ab")
                 .expect("pinned release")
                 .version(),
-            "0.8.0-nightly.123.1"
+            "0.8.0-nightly+g0123456789ab"
         );
     }
 
@@ -368,42 +374,18 @@ mod tests {
     }
 
     #[test]
-    fn nightly_distinguishes_builds_and_allows_opting_in_from_stable() {
-        let release = release(
-            "0.8.0",
-            "Nightly 0.8.0-nightly.123.1",
-            &["beam-linux-x86_64-0.8.0-nightly.123.1.tar.gz"],
-        );
-        for (current, available) in [
-            ("0.8.0", true),
-            ("0.8.0-nightly.122.1", true),
-            ("0.8.0-nightly.123.1", false),
-            ("0.8.0-nightly.124.1", false),
-            ("0.9.0", false),
-        ] {
-            let update = prepare_update(
-                UpdateChannel::Nightly,
-                release.clone(),
-                Platform::LinuxX64,
-                current,
-            )
-            .expect("nightly");
-            assert_eq!(update.is_available(), available, "{current}");
-            assert_eq!(update.version(), "0.8.0-nightly.123.1");
-        }
-    }
-
-    #[test]
-    fn nightly_commit_metadata_preserves_build_order_and_archive_selection() {
-        let version = "0.8.0-nightly.123.1+g0123456789ab";
-        let archive = "beam-linux-x86_64-0.8.0-nightly.123.1+g0123456789ab.tar.gz";
+    fn nightly_updates_compare_base_version_and_commit_identity() {
+        let version = "0.8.0-nightly+g0123456789ab";
+        let archive = "beam-linux-x86_64-0.8.0-nightly+g0123456789ab.tar.gz";
         let release = release(version, &format!("Nightly {version}"), &[archive]);
         for (current, available) in [
-            ("0.8.0-nightly.122.1+gffffffffffff", true),
-            ("0.8.0-nightly.123.1+g0123456789ab", false),
-            ("0.8.0-nightly.123.1+g000000000000", false),
-            ("0.8.0-nightly.123.1+gffffffffffff", false),
-            ("0.8.0-nightly.124.1+g000000000000", false),
+            ("0.8.0", true),
+            ("0.7.0-nightly+gffffffffffff", true),
+            ("0.8.0-nightly+g0123456789ab", false),
+            ("0.8.0-nightly+g000000000000", true),
+            ("0.8.0-nightly+gffffffffffff", true),
+            ("0.9.0", false),
+            ("0.9.0-nightly+g000000000000", false),
         ] {
             let update = prepare_update(
                 UpdateChannel::Nightly,
@@ -426,7 +408,7 @@ mod tests {
                 UpdateChannel::Release,
                 release,
                 Platform::LinuxX64,
-                "0.9.0-nightly.123.1"
+                "0.9.0-nightly+g0123456789ab"
             )
             .expect("normal release")
             .is_available()
