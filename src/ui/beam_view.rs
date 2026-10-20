@@ -1,5 +1,12 @@
+use super::update::UpdatePhase;
 use super::*;
-use gpui_kit::component::{Colorize, button::ButtonCustomVariant};
+use gpui_kit::component::{
+    Colorize,
+    button::{ButtonCustomVariant, ButtonRounded},
+};
+
+#[cfg(test)]
+mod tests;
 
 pub(super) struct BeamView {
     pub(super) shell: AppShellState,
@@ -168,7 +175,7 @@ impl BeamView {
         let request_auth_api_key_value_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("API key value"));
 
-        let _subscriptions = vec![
+        let mut _subscriptions = vec![
             cx.subscribe_in(&post_script_editor, window, {
                 let post_script_editor = post_script_editor.clone();
                 move |this, _, ev: &InputEvent, _, cx| {
@@ -199,6 +206,7 @@ impl BeamView {
             .collect();
         let updater = cx
             .new(|_| super::update::AppUpdater::new(shell.update_channel, workspace_paths.clone()));
+        _subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
         let mut view = Self {
             shell,
             focus_handle,
@@ -380,6 +388,20 @@ impl BeamView {
     }
 
     fn render_status_bar(&mut self, cx: &mut Context<Self>) -> Div {
+        let update_version = {
+            let updater = self.updater.read(cx);
+            updater
+                .release
+                .as_ref()
+                .filter(|release| {
+                    release.is_available()
+                        && !matches!(
+                            updater.phase,
+                            UpdatePhase::Installed | UpdatePhase::Restarting
+                        )
+                })
+                .map(|release| release.version().to_string())
+        };
         h_flex()
             .items_center()
             .w_full()
@@ -446,6 +468,19 @@ impl BeamView {
                     )
             })
             .child(div().flex_1())
+            .when_some(update_version, |bar, version| {
+                bar.child(
+                    Button::new("status-bar-update")
+                        .xsmall()
+                        .info()
+                        .rounded(ButtonRounded::Large)
+                        .cursor_pointer()
+                        .label(format!("Update to {version}…"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_update_settings_dialog(window, cx);
+                        })),
+                )
+            })
             .child(
                 Button::new("status-bar-key-bindings-modal")
                     .small()

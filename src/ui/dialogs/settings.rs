@@ -12,7 +12,7 @@ use gpui_kit::component::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SettingsSection {
+pub(super) enum SettingsSection {
     Theme,
     Editor,
     Update,
@@ -196,6 +196,11 @@ impl SettingsDialogView {
             beam_view,
             selected_section: SettingsSection::Theme,
         }
+    }
+
+    pub(super) fn set_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.selected_section = section;
+        cx.notify();
     }
 }
 

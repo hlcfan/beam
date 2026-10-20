@@ -25,6 +25,18 @@ impl AvailableUpdate {
     pub(crate) fn is_available(&self) -> bool {
         self.available
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_release(version: &str, available: bool) -> Self {
+        Self {
+            release: Release::builder()
+                .version(version)
+                .build()
+                .expect("test release"),
+            platform: Platform::LinuxX64,
+            available,
+        }
+    }
 }
 
 pub(crate) fn check(channel: UpdateChannel) -> Result<AvailableUpdate, String> {
