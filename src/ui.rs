@@ -9,6 +9,7 @@ mod response;
 mod text_edit_menu;
 mod theme;
 mod tree;
+mod update;
 mod workspace_tabs;
 
 use beam_view::BeamView;

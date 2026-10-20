@@ -50,6 +50,8 @@ pub(super) struct BeamView {
     pub(super) request_file_index: HashMap<Ulid, PathBuf>,
     pub(super) environment_manager_dialog_view: Option<Entity<EnvironmentManagerDialogView>>,
     pub(super) settings_dialog_view: Option<Entity<SettingsDialogView>>,
+    pub(super) updater: Entity<super::update::AppUpdater>,
+    pub(super) update_restart_command: Option<String>,
     pub(super) key_bindings_dialog_view: Option<Entity<KeyBindingsDialogView>>,
     pub(super) import_dialog_view: Option<Entity<ImportDialogView>>,
     pub(super) command_palette_dialog_view: Option<Entity<CommandPaletteDialogView>>,
@@ -195,6 +197,8 @@ impl BeamView {
             .into_iter()
             .map(|id| (id, workspace_scroll_handle.clone()))
             .collect();
+        let updater = cx
+            .new(|_| super::update::AppUpdater::new(shell.update_channel, workspace_paths.clone()));
         let mut view = Self {
             shell,
             focus_handle,
@@ -242,6 +246,8 @@ impl BeamView {
             request_file_index,
             environment_manager_dialog_view: None,
             settings_dialog_view: None,
+            updater,
+            update_restart_command: None,
             key_bindings_dialog_view: None,
             import_dialog_view: None,
             command_palette_dialog_view: None,

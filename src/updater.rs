@@ -65,6 +65,7 @@ pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
         .current_version(CURRENT_VERSION)
         // Pin the release the user saw, including an explicitly selected nightly.
         .release_tag(update.version())
+        .asset_matcher(|assets| assets.first().cloned())
         .verifying_keys([key])
         .check_install_path_writable(true)
         .timeout(Duration::from_secs(300))
@@ -90,6 +91,10 @@ pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
         return Err("The update was not installed. Check for updates and try again.".into());
     }
     Ok(())
+}
+
+pub(crate) fn installation_error() -> Option<String> {
+    verification_key(option_env!("BEAM_UPDATE_PUBLIC_KEY")).err()
 }
 
 // The GitHub backend in self_update requires semver tags. Parse the rolling
@@ -184,6 +189,7 @@ fn prepare_update(
     let mut stable_remote = remote.clone();
     stable_remote.pre = semver::Prerelease::EMPTY;
     let available = remote > current
+        || (channel == UpdateChannel::Release && current.pre.as_str().starts_with("nightly."))
         || (channel == UpdateChannel::Nightly
             && current.pre.is_empty()
             && stable_remote >= current);
@@ -388,6 +394,21 @@ mod tests {
             assert_eq!(update.is_available(), available, "{current}");
             assert_eq!(update.version(), "0.8.0-nightly.123.1");
         }
+    }
+
+    #[test]
+    fn switching_from_nightly_offers_the_latest_normal_release() {
+        let release = release("0.8.0", "v0.8.0", &["beam-linux-x86_64.tar.gz"]);
+        assert!(
+            prepare_update(
+                UpdateChannel::Release,
+                release,
+                Platform::LinuxX64,
+                "0.9.0-nightly.123.1"
+            )
+            .expect("normal release")
+            .is_available()
+        );
     }
 
     #[test]
