@@ -12,12 +12,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref_type == 'tag' && github.ref_name || 'nightly' }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
   APP_NAME: Beam
+  BEAM_UPDATE_PUBLIC_KEY: ${{ vars.BEAM_UPDATE_PUBLIC_KEY }}
 
 jobs:
   verify:
@@ -129,6 +130,18 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set build metadata
+        id: metadata
+        shell: bash
+        env:
+          ARCHIVE_NAME: ${{ matrix.archive_name }}
+        run: python scripts/release_metadata.py --require-key --archive "$ARCHIVE_NAME"
+
       - name: Build release binary
         # Uses the shared size optimizations in Cargo.toml's release profile.
         run: cargo build --release --locked --bin beam --target ${{ matrix.target }}
@@ -159,8 +172,7 @@ jobs:
 
           mkdir -p dist/${{ matrix.package_dir }}
           cp -R "target/${{ matrix.target }}/release/bundle/osx/${APP_NAME}.app" "dist/${{ matrix.package_dir }}/${APP_NAME}.app"
-          tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
-          shasum -a 256 "dist/${{ matrix.archive_name }}" > "dist/${{ matrix.archive_name }}.sha256"
+          tar -C dist -czf "dist/${{ steps.metadata.outputs.archive_name }}" "${{ matrix.package_dir }}"
 
       - name: Package Linux binary
         if: runner.os == 'Linux'
@@ -168,8 +180,7 @@ jobs:
         run: |
           mkdir -p dist/${{ matrix.package_dir }}
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
-          tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
-          shasum -a 256 "dist/${{ matrix.archive_name }}" > "dist/${{ matrix.archive_name }}.sha256"
+          tar -C dist -czf "dist/${{ steps.metadata.outputs.archive_name }}" "${{ matrix.package_dir }}"
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
@@ -177,17 +188,25 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "dist/${{ matrix.package_dir }}" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
-          Compress-Archive -Path "dist/${{ matrix.package_dir }}\*" -DestinationPath "dist/${{ matrix.archive_name }}" -Force
-          $hash = (Get-FileHash "dist/${{ matrix.archive_name }}" -Algorithm SHA256).Hash.ToLower()
-          Set-Content -Path "dist/${{ matrix.archive_name }}.sha256" -Value "$hash  ${{ matrix.archive_name }}"
+          Compress-Archive -Path "dist/${{ matrix.package_dir }}\*" -DestinationPath "dist/${{ steps.metadata.outputs.archive_name }}" -Force
+
+      - name: Install archive signer
+        run: cargo install zipsign --version 0.2.2 --locked
+
+      - name: Sign and verify update archive
+        shell: bash
+        env:
+          BEAM_UPDATE_SIGNING_KEY: ${{ secrets.BEAM_UPDATE_SIGNING_KEY }}
+          ARCHIVE_NAME: ${{ steps.metadata.outputs.archive_name }}
+        run: python scripts/sign_release.py "dist/$ARCHIVE_NAME"
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            dist/${{ matrix.archive_name }}
-            dist/${{ matrix.archive_name }}.sha256
+            dist/${{ steps.metadata.outputs.archive_name }}
+            dist/${{ steps.metadata.outputs.archive_name }}.sha256
 
   publish-release:
     name: Publish Release
@@ -202,22 +221,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Set release metadata
         id: meta
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-            if [[ "${{ github.ref_name }}" == *-* ]]; then
-              echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
-            fi
-            echo "is_tip=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "release_tag=nightly" >> "$GITHUB_OUTPUT"
-            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
-            echo "is_tip=true" >> "$GITHUB_OUTPUT"
-          fi
+        run: python scripts/release_metadata.py
 
       - name: Force-push nightly tag
         if: steps.meta.outputs.is_tip == 'true'
@@ -236,6 +247,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
+          name: ${{ steps.meta.outputs.release_name }}
           files: dist/*
           generate_release_notes: ${{ steps.meta.outputs.is_tip != 'true' }}
           prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}

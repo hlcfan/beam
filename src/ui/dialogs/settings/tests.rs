@@ -22,8 +22,10 @@ fn fixture(
     let (command_tx, _) = sync_channel(32);
     let (_, event_rx) = channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
-        let mut shell = AppShellState::default();
-        shell.update_channel = UpdateChannel::Nightly;
+        let shell = AppShellState {
+            update_channel: UpdateChannel::Nightly,
+            ..AppShellState::default()
+        };
         let beam = cx.new(|cx| {
             BeamView::new(
                 shell,

@@ -213,7 +213,7 @@ fn verification_key(value: Option<&str>) -> Result<self_update::VerifyingKey, St
         return Err("The update verification key is invalid.".into());
     }
     let mut key = [0; 32];
-    for (byte, hex) in key.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
+    for (byte, hex) in key.iter_mut().zip(value.as_bytes().as_chunks::<2>().0) {
         let hex = std::str::from_utf8(hex).map_err(|error| error.to_string())?;
         *byte = u8::from_str_radix(hex, 16)
             .map_err(|_| "The update verification key is invalid.".to_string())?;
