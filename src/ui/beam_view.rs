@@ -1,9 +1,6 @@
 use super::update::UpdatePhase;
 use super::*;
-use gpui_kit::component::{
-    Colorize,
-    button::{ButtonCustomVariant, ButtonRounded},
-};
+use gpui_kit::component::{Colorize, button::ButtonCustomVariant};
 
 #[cfg(test)]
 mod tests;
@@ -469,13 +466,29 @@ impl BeamView {
             })
             .child(div().flex_1())
             .when_some(update_version, |bar, version| {
+                let background = cx.theme().blue;
+                let foreground = if cx.theme().mode.is_dark() {
+                    cx.theme().foreground
+                } else {
+                    cx.theme().background
+                };
                 bar.child(
                     Button::new("status-bar-update")
                         .xsmall()
-                        .info()
-                        .rounded(ButtonRounded::Large)
+                        .custom(
+                            ButtonCustomVariant::new(cx)
+                                .color(background)
+                                .foreground(foreground)
+                                .hover(background)
+                                .active(background),
+                        )
+                        // Override the custom variant's automatic background dimming at rest.
+                        .bg(background)
+                        .rounded(cx.theme().radius_full())
+                        .border_0()
+                        .px_2()
                         .cursor_pointer()
-                        .label(format!("Update to {version}…"))
+                        .label(format!("Update to {version}"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_update_settings_dialog(window, cx);
                         })),

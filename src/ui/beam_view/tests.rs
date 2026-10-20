@@ -132,7 +132,7 @@ fn update_button_tracks_available_versions_and_installation(cx: &mut TestAppCont
             if let Some(button) = button {
                 assert_eq!(
                     button.label(),
-                    Some(format!("Update to {}…", version.expect("version")).as_str())
+                    Some(format!("Update to {}", version.expect("version")).as_str())
                 );
             }
         });
