@@ -10,11 +10,15 @@ use crate::models::UpdateChannel;
 
 pub(crate) const CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
 // Set only by nightly CI builds, which identify themselves by commit.
-const BUILD_COMMIT: Option<&str> = option_env!("BEAM_BUILD_COMMIT");
+const BUILD_COMMIT_ENV: Option<&str> = option_env!("BEAM_BUILD_COMMIT");
 
 /// The version shown for this build: the short commit SHA for nightlies.
 pub(crate) fn current_version() -> &'static str {
-    BUILD_COMMIT.map_or(CARGO_VERSION, short_sha)
+    build_commit().map_or(CARGO_VERSION, short_sha)
+}
+
+fn build_commit() -> Option<&'static str> {
+    BUILD_COMMIT_ENV.filter(|commit| !commit.is_empty())
 }
 
 fn short_sha(sha: &str) -> &str {
@@ -75,7 +79,7 @@ pub(crate) fn check(channel: UpdateChannel) -> Result<AvailableUpdate, String> {
         .and_then(|mut response| response.body_mut().read_json::<GitHubRelease>())
         .map_err(|error| format!("Could not check for updates: {error}"))?
         .into_release(channel)?;
-    prepare_update(channel, release, platform, CARGO_VERSION, BUILD_COMMIT)
+    prepare_update(channel, release, platform, CARGO_VERSION, build_commit())
 }
 
 pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
