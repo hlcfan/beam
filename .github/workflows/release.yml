@@ -135,14 +135,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Set build metadata
-        id: metadata
+      - name: Check update verification key
         shell: bash
-        env:
-          ARCHIVE_NAME: ${{ matrix.archive_name }}
-        run: python scripts/release_metadata.py --require-key --prepare-build --archive "$ARCHIVE_NAME"
+        run: |
+          if ! [[ "$BEAM_UPDATE_PUBLIC_KEY" =~ ^[0-9a-fA-F]{64}$ ]]; then
+            echo "Set the BEAM_UPDATE_PUBLIC_KEY repository variable to the public key hex." >&2
+            exit 1
+          fi
 
       - name: Build release binary
+        env:
+          # Nightly builds identify themselves by commit; releases use the Cargo version.
+          BEAM_BUILD_COMMIT: ${{ github.ref_type != 'tag' && github.sha || '' }}
         # Uses the shared size optimizations in Cargo.toml's release profile.
         run: cargo build --release --locked --bin beam --target ${{ matrix.target }}
 
@@ -172,7 +176,7 @@ jobs:
 
           mkdir -p dist/${{ matrix.package_dir }}
           cp -R "target/${{ matrix.target }}/release/bundle/osx/${APP_NAME}.app" "dist/${{ matrix.package_dir }}/${APP_NAME}.app"
-          tar -C dist -czf "dist/${{ steps.metadata.outputs.archive_name }}" "${{ matrix.package_dir }}"
+          tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
 
       - name: Package Linux binary
         if: runner.os == 'Linux'
@@ -180,7 +184,7 @@ jobs:
         run: |
           mkdir -p dist/${{ matrix.package_dir }}
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
-          tar -C dist -czf "dist/${{ steps.metadata.outputs.archive_name }}" "${{ matrix.package_dir }}"
+          tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
 
       - name: Package Windows binary
         if: runner.os == 'Windows'
@@ -188,7 +192,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "dist/${{ matrix.package_dir }}" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
-          Compress-Archive -Path "dist/${{ matrix.package_dir }}\*" -DestinationPath "dist/${{ steps.metadata.outputs.archive_name }}" -Force
+          Compress-Archive -Path "dist/${{ matrix.package_dir }}\*" -DestinationPath "dist/${{ matrix.archive_name }}" -Force
 
       - name: Install archive signer
         run: cargo install zipsign --version 0.2.2 --locked
@@ -197,7 +201,7 @@ jobs:
         shell: bash
         env:
           BEAM_UPDATE_SIGNING_KEY: ${{ secrets.BEAM_UPDATE_SIGNING_KEY }}
-          ARCHIVE_NAME: ${{ steps.metadata.outputs.archive_name }}
+          ARCHIVE_NAME: ${{ matrix.archive_name }}
         run: python scripts/sign_release.py "dist/$ARCHIVE_NAME"
 
       - name: Upload release artifact
@@ -205,8 +209,8 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: |
-            dist/${{ steps.metadata.outputs.archive_name }}
-            dist/${{ steps.metadata.outputs.archive_name }}.sha256
+            dist/${{ matrix.archive_name }}
+            dist/${{ matrix.archive_name }}.sha256
 
   publish-release:
     name: Publish Release
@@ -221,14 +225,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
       - name: Set release metadata
         id: meta
-        run: python scripts/release_metadata.py
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "release_tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "release_name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.ref_name }}" == *-* ]]; then
+              echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "is_tip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "release_name=Nightly" >> "$GITHUB_OUTPUT"
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "is_tip=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Force-push nightly tag
         if: steps.meta.outputs.is_tip == 'true'
@@ -248,6 +262,8 @@ jobs:
         with:
           tag_name: ${{ steps.meta.outputs.release_tag }}
           name: ${{ steps.meta.outputs.release_name }}
+          # The app reads the nightly's commit from this line.
+          body: ${{ steps.meta.outputs.is_tip == 'true' && format('Commit: {0}', github.sha) || '' }}
           files: dist/*
           generate_release_notes: ${{ steps.meta.outputs.is_tip != 'true' }}
           prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}

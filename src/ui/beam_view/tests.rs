@@ -91,28 +91,28 @@ fn update_button_tracks_available_versions_and_installation(cx: &mut TestAppCont
         (
             UpdateChannel::Nightly,
             UpdatePhase::Idle,
-            Some("0.8.0-nightly+g0123456789ab"),
+            Some("0123456"),
             true,
             true,
         ),
         (
             UpdateChannel::Nightly,
             UpdatePhase::Installing,
-            Some("0.8.0-nightly+g0123456789ab"),
+            Some("0123456"),
             true,
             true,
         ),
         (
             UpdateChannel::Nightly,
             UpdatePhase::Installed,
-            Some("0.8.0-nightly+g0123456789ab"),
+            Some("0123456"),
             true,
             false,
         ),
         (
             UpdateChannel::Nightly,
             UpdatePhase::Restarting,
-            Some("0.8.0-nightly+g0123456789ab"),
+            Some("0123456"),
             true,
             false,
         ),
@@ -145,10 +145,7 @@ fn update_button_precedes_key_bindings_and_opens_update_settings(cx: &mut TestAp
     let updater = beam.read_with(cx, |beam, _| beam.updater.clone());
     updater.update(cx, |updater, cx| {
         updater.channel = UpdateChannel::Nightly;
-        updater.release = Some(AvailableUpdate::test_release(
-            "0.8.0-nightly+g0123456789ab",
-            true,
-        ));
+        updater.release = Some(AvailableUpdate::test_release("0123456", true));
         cx.notify();
     });
     for mode in [ThemeMode::Light, ThemeMode::Dark] {
