@@ -263,7 +263,7 @@ jobs:
           tag_name: ${{ steps.meta.outputs.release_tag }}
           name: ${{ steps.meta.outputs.release_name }}
           # The app reads the nightly's commit from this line.
-          body: ${{ steps.meta.outputs.is_tip == 'true' && format('Commit: {0}', github.sha) || '' }}
+          body: "${{ steps.meta.outputs.is_tip == 'true' && format('Commit: {0}', github.sha) || '' }}"
           files: dist/*
           generate_release_notes: ${{ steps.meta.outputs.is_tip != 'true' }}
           prerelease: ${{ steps.meta.outputs.is_prerelease == 'true' }}
