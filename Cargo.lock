@@ -611,7 +611,6 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "ulid",
- "ureq",
  "uuid",
  "winresource",
  "zipsign-api",
@@ -5881,6 +5880,7 @@ checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "http",

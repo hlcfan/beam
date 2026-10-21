@@ -65,18 +65,20 @@ pub(crate) fn check(channel: UpdateChannel) -> Result<AvailableUpdate, String> {
         UpdateChannel::Release => "latest",
         UpdateChannel::Nightly => "tags/nightly",
     };
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
+    let release = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .user_agent("Beam-Updater")
         .build()
-        .into();
-    let release = agent
-        .get(format!(
-            "https://api.github.com/repos/hlcfan/beam/releases/{endpoint}"
-        ))
-        .header("User-Agent", "Beam-Updater")
-        .header("Accept", "application/vnd.github+json")
-        .call()
-        .and_then(|mut response| response.body_mut().read_json::<GitHubRelease>())
+        .and_then(|client| {
+            client
+                .get(format!(
+                    "https://api.github.com/repos/hlcfan/beam/releases/{endpoint}"
+                ))
+                .header("Accept", "application/vnd.github+json")
+                .send()?
+                .error_for_status()?
+                .json::<GitHubRelease>()
+        })
         .map_err(|error| format!("Could not check for updates: {error}"))?
         .into_release(channel)?;
     prepare_update(channel, release, platform, CARGO_VERSION, build_commit())
