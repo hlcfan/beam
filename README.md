@@ -69,22 +69,6 @@ tar -xzf beam-linux-x86_64.tar.gz
 ./beam
 ```
 
-## Updating
-
-Open **Settings > Update** and choose **Normal release** or **Nightly**. Beam
-checks the selected channel and shows the available version beside the dropdown.
-Select **Update** to download and install it, then **Restart** to use the new
-version. Beam saves pending request edits before restarting.
-
-The channel is shared across workspaces and stored in
-`$HOME/beam_local/app-settings.toml`. Nightly builds may be unstable. Choosing
-normal releases from a nightly allows returning to the latest stable release.
-
-In-app installation requires an official build with an update verification key
-and a signed release archive. Install the first updater-enabled release manually.
-Release publishing requires the `BEAM_UPDATE_SIGNING_KEY` repository secret
-and the `BEAM_UPDATE_PUBLIC_KEY` repository variable.
-
 ## Development
 
 ### Prerequisites

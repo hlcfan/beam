@@ -196,9 +196,8 @@ fn prepare_update(
                 return Err("The normal release channel returned a prerelease.".into());
             }
             let current = Version::parse(current).map_err(|error| error.to_string())?;
-            // A nightly build may return to the latest normal release.
-            let available = remote.cmp_precedence(&current).is_gt() || current_commit.is_some();
-            (available, remote.to_string())
+            // A nightly is built from main, at or ahead of the latest release.
+            (remote.cmp_precedence(&current).is_gt(), remote.to_string())
         }
         UpdateChannel::Nightly => {
             let commit = release_commit(release.body().unwrap_or_default())
@@ -451,19 +450,19 @@ mod tests {
     }
 
     #[test]
-    fn switching_from_nightly_offers_the_latest_normal_release() {
+    fn nightly_builds_are_not_offered_the_same_or_older_normal_release() {
         let release = release("0.8.0", "v0.8.0", &["beam-linux-x86_64.tar.gz"]);
-        assert!(
-            prepare_update(
+        for (current, available) in [("0.8.0", false), ("0.7.0", true)] {
+            let update = prepare_update(
                 UpdateChannel::Release,
-                release,
+                release.clone(),
                 Platform::LinuxX64,
-                "0.8.0",
-                Some(SHA)
+                current,
+                Some(SHA),
             )
-            .expect("normal release")
-            .is_available()
-        );
+            .expect("normal release");
+            assert_eq!(update.is_available(), available, "{current}");
+        }
     }
 
     #[test]
