@@ -8,18 +8,33 @@ use serde::Deserialize;
 
 use crate::models::UpdateChannel;
 
-pub(crate) const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const CARGO_VERSION: &str = env!("CARGO_PKG_VERSION");
+// Set only by nightly CI builds, which identify themselves by commit.
+const BUILD_COMMIT: Option<&str> = option_env!("BEAM_BUILD_COMMIT");
+
+/// The version shown for this build: the short commit SHA for nightlies.
+pub(crate) fn current_version() -> &'static str {
+    BUILD_COMMIT.map_or(CARGO_VERSION, short_sha)
+}
+
+fn short_sha(sha: &str) -> &str {
+    sha.get(..SHORT_SHA_LEN).unwrap_or(sha)
+}
+
+const SHORT_SHA_LEN: usize = 7;
 
 #[derive(Clone, Debug)]
 pub(crate) struct AvailableUpdate {
     release: Release,
     platform: Platform,
     available: bool,
+    display_version: String,
 }
 
 impl AvailableUpdate {
+    /// The version users see: the release version, or the short commit SHA for nightlies.
     pub(crate) fn version(&self) -> &str {
-        self.release.version()
+        &self.display_version
     }
 
     pub(crate) fn is_available(&self) -> bool {
@@ -30,11 +45,12 @@ impl AvailableUpdate {
     pub(crate) fn test_release(version: &str, available: bool) -> Self {
         Self {
             release: Release::builder()
-                .version(version)
+                .version("0.0.0")
                 .build()
                 .expect("test release"),
             platform: Platform::LinuxX64,
             available,
+            display_version: version.to_string(),
         }
     }
 }
@@ -59,7 +75,7 @@ pub(crate) fn check(channel: UpdateChannel) -> Result<AvailableUpdate, String> {
         .and_then(|mut response| response.body_mut().read_json::<GitHubRelease>())
         .map_err(|error| format!("Could not check for updates: {error}"))?
         .into_release(channel)?;
-    prepare_update(channel, release, platform, CURRENT_VERSION)
+    prepare_update(channel, release, platform, CARGO_VERSION, BUILD_COMMIT)
 }
 
 pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
@@ -71,9 +87,9 @@ pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
     builder
         .source(PinnedRelease(update.release.clone()))
         .bin_name("beam")
-        .current_version(CURRENT_VERSION)
+        .current_version(CARGO_VERSION)
         // Pin the release the user saw, including an explicitly selected nightly.
-        .release_tag(update.version())
+        .release_tag(update.release.version())
         .asset_matcher(|assets| assets.first().cloned())
         .verifying_keys([key])
         .check_install_path_writable(true)
@@ -112,6 +128,7 @@ pub(crate) fn installation_error() -> Option<String> {
 struct GitHubRelease {
     tag_name: String,
     name: Option<String>,
+    body: Option<String>,
     draft: bool,
     prerelease: bool,
     assets: Vec<GitHubAsset>,
@@ -125,16 +142,16 @@ impl GitHubRelease {
         {
             return Err("The release does not match the selected channel.".into());
         }
-        let name = self.name.unwrap_or_default();
         let version = match channel {
             UpdateChannel::Release => self.tag_name.trim_start_matches('v'),
-            UpdateChannel::Nightly => name
-                .strip_prefix("Nightly ")
-                .ok_or("This nightly predates in-app updates. Wait for a new nightly build.")?,
+            // The nightly tag is not semver. The commit travels in `body`.
+            UpdateChannel::Nightly => "0.0.0",
         };
+        let body = self.body.unwrap_or_default();
         Release::builder()
             .version(version)
-            .name(&name)
+            .name(self.name.as_deref().unwrap_or_default())
+            .body(&body)
             .assets(
                 self.assets
                     .into_iter()
@@ -165,27 +182,29 @@ fn prepare_update(
     release: Release,
     platform: Platform,
     current: &str,
+    current_commit: Option<&str>,
 ) -> Result<AvailableUpdate, String> {
-    let version = match channel {
-        UpdateChannel::Release => release.version(),
-        UpdateChannel::Nightly => release
-            .name()
-            .strip_prefix("Nightly ")
-            .ok_or("This nightly predates in-app updates. Wait for a new nightly build.")?,
+    let (available, display_version) = match channel {
+        UpdateChannel::Release => {
+            let remote = Version::parse(release.version())
+                .map_err(|_| "The release does not contain a valid update version.".to_string())?;
+            if !remote.pre.is_empty() {
+                return Err("The normal release channel returned a prerelease.".into());
+            }
+            let current = Version::parse(current).map_err(|error| error.to_string())?;
+            // A nightly build may return to the latest normal release.
+            let available = remote.cmp_precedence(&current).is_gt() || current_commit.is_some();
+            (available, remote.to_string())
+        }
+        UpdateChannel::Nightly => {
+            let commit = release_commit(release.body().unwrap_or_default())
+                .ok_or("This nightly does not list its commit. Wait for a new nightly build.")?;
+            // The rolling release names the latest commit. SHAs have no chronological order.
+            let available = current_commit.is_none_or(|current| current != commit);
+            (available, short_sha(&commit).to_string())
+        }
     };
-    let remote = Version::parse(version)
-        .map_err(|_| "The release does not contain a valid update version.".to_string())?;
-    let current = Version::parse(current).map_err(|error| error.to_string())?;
-    match channel {
-        UpdateChannel::Release if !remote.pre.is_empty() => {
-            return Err("The normal release channel returned a prerelease.".into());
-        }
-        UpdateChannel::Nightly if !is_nightly(&remote) => {
-            return Err("The nightly release does not contain a nightly build version.".into());
-        }
-        _ => {}
-    }
-    let expected = platform.archive_name(channel, &remote);
+    let expected = platform.archive_name();
     let asset = release
         .assets()
         .iter()
@@ -194,17 +213,8 @@ fn prepare_update(
     if !asset.download_url().starts_with("https://") {
         return Err("The update download must use HTTPS.".into());
     }
-    let available = match channel {
-        UpdateChannel::Release => remote.cmp_precedence(&current).is_gt() || is_nightly(&current),
-        UpdateChannel::Nightly => {
-            // The rolling release identifies the latest commit. SHAs have no chronological order.
-            let remote_base = (remote.major, remote.minor, remote.patch);
-            let current_base = (current.major, current.minor, current.patch);
-            remote_base > current_base || (remote_base == current_base && remote != current)
-        }
-    };
     let release = Release::builder()
-        .version(remote.to_string())
+        .version(release.version())
         .asset(asset.clone())
         .build()
         .map_err(|error| error.to_string())?;
@@ -212,12 +222,18 @@ fn prepare_update(
         release,
         platform,
         available,
+        display_version,
     })
 }
 
-fn is_nightly(version: &Version) -> bool {
-    let prerelease = version.pre.as_str();
-    prerelease == "nightly" || prerelease.starts_with("nightly.")
+/// Reads the full commit SHA from the `Commit: <sha>` line of the nightly release body.
+fn release_commit(body: &str) -> Option<String> {
+    let sha = body
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Commit:"))?
+        .trim();
+    (sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| sha.to_ascii_lowercase())
 }
 
 fn verification_key(value: Option<&str>) -> Result<self_update::VerifyingKey, String> {
@@ -261,15 +277,11 @@ impl Platform {
         }
     }
 
-    fn archive_name(self, channel: UpdateChannel, version: &Version) -> String {
-        let (name, extension) = match self {
-            Self::MacArm => ("beam-macos-aarch64", "tar.gz"),
-            Self::LinuxX64 => ("beam-linux-x86_64", "tar.gz"),
-            Self::WindowsX64 => ("beam-windows-x86_64", "zip"),
-        };
-        match channel {
-            UpdateChannel::Release => format!("{name}.{extension}"),
-            UpdateChannel::Nightly => format!("{name}-{version}.{extension}"),
+    fn archive_name(self) -> &'static str {
+        match self {
+            Self::MacArm => "beam-macos-aarch64.tar.gz",
+            Self::LinuxX64 => "beam-linux-x86_64.tar.gz",
+            Self::WindowsX64 => "beam-windows-x86_64.zip",
         }
     }
 
@@ -327,28 +339,40 @@ mod tests {
         assert!(self_update::verify_signature(&path, &[key]).is_err());
     }
 
+    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
     #[test]
-    fn rolling_nightly_metadata_becomes_a_pinned_semver_release() {
-        let json = r#"{"tag_name":"nightly","name":"Nightly 0.8.0-nightly+g0123456789ab","draft":false,"prerelease":true,"assets":[{"name":"beam-linux-x86_64-0.8.0-nightly+g0123456789ab.tar.gz","browser_download_url":"https://example.com/beam.tar.gz","digest":"sha256:abc"}]}"#;
-        let release: GitHubRelease = serde_json::from_str(json).expect("metadata");
+    fn rolling_nightly_metadata_becomes_a_pinned_release() {
+        let json = format!(
+            r#"{{"tag_name":"nightly","name":"Nightly","body":"Commit: {SHA}","draft":false,"prerelease":true,"assets":[{{"name":"beam-linux-x86_64.tar.gz","browser_download_url":"https://example.com/beam.tar.gz","digest":"sha256:abc"}}]}}"#
+        );
+        let release: GitHubRelease = serde_json::from_str(&json).expect("metadata");
         let release = release
             .into_release(UpdateChannel::Nightly)
             .expect("nightly");
-        assert_eq!(release.version(), "0.8.0-nightly+g0123456789ab");
+        assert_eq!(
+            release_commit(release.body().unwrap_or_default()).as_deref(),
+            Some(SHA)
+        );
         assert_eq!(release.assets()[0].digest(), Some("sha256:abc"));
         assert_eq!(
             PinnedRelease(release)
-                .get_release_version("0.8.0-nightly+g0123456789ab")
+                .get_release_version("0.0.0")
                 .expect("pinned release")
                 .version(),
-            "0.8.0-nightly+g0123456789ab"
+            "0.0.0"
         );
     }
 
     fn release(version: &str, name: &str, assets: &[&str]) -> Release {
+        release_with_body(version, name, "", assets)
+    }
+
+    fn release_with_body(version: &str, name: &str, body: &str, assets: &[&str]) -> Release {
         Release::builder()
             .version(version)
             .name(name)
+            .body(body)
             .assets(
                 assets
                     .iter()
@@ -371,43 +395,53 @@ mod tests {
                 "v0.9.0",
                 &["beam-linux-x86_64.tar.gz.sha256", archive],
             );
-            let newer = prepare_update(UpdateChannel::Release, release.clone(), platform, "0.8.0")
-                .expect("newer");
+            let newer = prepare_update(
+                UpdateChannel::Release,
+                release.clone(),
+                platform,
+                "0.8.0",
+                None,
+            )
+            .expect("newer");
             assert!(newer.is_available());
             assert_eq!(newer.release.assets()[0].name(), archive);
+            assert_eq!(newer.version(), "0.9.0");
             for current in ["0.9.0", "1.0.0"] {
                 assert!(
-                    !prepare_update(UpdateChannel::Release, release.clone(), platform, current)
-                        .expect("check")
-                        .is_available()
+                    !prepare_update(
+                        UpdateChannel::Release,
+                        release.clone(),
+                        platform,
+                        current,
+                        None
+                    )
+                    .expect("check")
+                    .is_available()
                 );
             }
         }
     }
 
     #[test]
-    fn nightly_updates_compare_base_version_and_commit_identity() {
-        let version = "0.8.0-nightly+g0123456789ab";
-        let archive = "beam-linux-x86_64-0.8.0-nightly+g0123456789ab.tar.gz";
-        let release = release(version, &format!("Nightly {version}"), &[archive]);
+    fn nightly_updates_compare_commit_identity() {
+        let archive = "beam-linux-x86_64.tar.gz";
+        let release =
+            release_with_body("0.0.0", "Nightly", &format!("Commit: {SHA}\n"), &[archive]);
         for (current, available) in [
-            ("0.8.0", true),
-            ("0.7.0-nightly+gffffffffffff", true),
-            ("0.8.0-nightly+g0123456789ab", false),
-            ("0.8.0-nightly+g000000000000", true),
-            ("0.8.0-nightly+gffffffffffff", true),
-            ("0.9.0", false),
-            ("0.9.0-nightly+g000000000000", false),
+            (None, true),
+            (Some(SHA), false),
+            (Some("ffffffffffffffffffffffffffffffffffffffff"), true),
         ] {
             let update = prepare_update(
                 UpdateChannel::Nightly,
                 release.clone(),
                 Platform::LinuxX64,
+                "0.8.0",
                 current,
             )
-            .expect("nightly with commit SHA");
-            assert_eq!(update.is_available(), available, "{current}");
-            assert_eq!(update.version(), version);
+            .expect("nightly");
+            assert_eq!(update.is_available(), available, "{current:?}");
+            assert_eq!(update.version(), "0123456");
             assert_eq!(update.release.assets()[0].name(), archive);
         }
     }
@@ -420,7 +454,8 @@ mod tests {
                 UpdateChannel::Release,
                 release,
                 Platform::LinuxX64,
-                "0.9.0-nightly+g0123456789ab"
+                "0.8.0",
+                Some(SHA)
             )
             .expect("normal release")
             .is_available()
@@ -431,12 +466,41 @@ mod tests {
     fn rejects_missing_archives_and_wrong_channel_metadata() {
         let stable = release("0.9.0", "v0.9.0", &["beam-linux-x86_64.tar.gz.sha256"]);
         assert!(
-            prepare_update(UpdateChannel::Release, stable, Platform::LinuxX64, "0.8.0").is_err()
+            prepare_update(
+                UpdateChannel::Release,
+                stable,
+                Platform::LinuxX64,
+                "0.8.0",
+                None
+            )
+            .is_err()
         );
-        let nightly = release("0.9.0-beta.1", "Nightly", &["beam-linux-x86_64.tar.gz"]);
-        for channel in [UpdateChannel::Release, UpdateChannel::Nightly] {
-            assert!(prepare_update(channel, nightly.clone(), Platform::LinuxX64, "0.8.0").is_err());
-        }
+        let prerelease = release(
+            "0.9.0-beta.1",
+            "v0.9.0-beta.1",
+            &["beam-linux-x86_64.tar.gz"],
+        );
+        assert!(
+            prepare_update(
+                UpdateChannel::Release,
+                prerelease,
+                Platform::LinuxX64,
+                "0.8.0",
+                None
+            )
+            .is_err()
+        );
+        let no_commit = release("0.0.0", "Nightly", &["beam-linux-x86_64.tar.gz"]);
+        assert!(
+            prepare_update(
+                UpdateChannel::Nightly,
+                no_commit,
+                Platform::LinuxX64,
+                "0.8.0",
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]

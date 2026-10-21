@@ -1,5 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=BEAM_UPDATE_PUBLIC_KEY");
+    println!("cargo:rerun-if-env-changed=BEAM_BUILD_COMMIT");
     #[cfg(windows)]
     embed_windows_resources();
 }

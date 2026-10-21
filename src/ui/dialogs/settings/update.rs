@@ -48,7 +48,7 @@ impl SettingsDialogView {
                     .text_color(cx.theme().muted_foreground)
                     .child(format!(
                         "Installed version: {}",
-                        crate::updater::CURRENT_VERSION
+                        crate::updater::current_version()
                     )),
             )
             .child(
