@@ -15,9 +15,9 @@ use ulid::Ulid;
 use crate::error::{BeamError, Result};
 use crate::importers::ImportPlan;
 use crate::models::{
-    AppFontSize, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile, EnvironmentMeta,
-    EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType, LocalStateFile,
-    QueryParamField, RequestFile, UpdateChannel, WorkspaceEntry, WorkspaceFile,
+    AppFontSize, AppHtmlResponseView, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile,
+    EnvironmentMeta, EnvironmentVariable, FolderFile, HeaderField, HttpMethod, ItemType,
+    LocalStateFile, QueryParamField, RequestFile, UpdateChannel, WorkspaceEntry, WorkspaceFile,
     WorkspacesRegistryFile,
 };
 use crate::paths::{BeamPaths, FOLDER_MANIFEST_FILE_NAME};
@@ -743,6 +743,7 @@ pub struct LocalThemeState {
     pub auto_format_response: bool,
     pub wrap_body_editor: bool,
     pub wrapping_indent: AppWrappingIndent,
+    pub html_response_view: AppHtmlResponseView,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -3285,6 +3286,7 @@ where
                 auto_format_response: app_settings.app_settings.auto_format_response,
                 wrap_body_editor: app_settings.app_settings.wrap_body_editor,
                 wrapping_indent: app_settings.app_settings.wrapping_indent,
+                html_response_view: app_settings.app_settings.html_response_view,
             },
             workspace: WorkspaceState {
                 workspace_id: workspace_entry.map(|e| e.workspace_id),
@@ -5578,6 +5580,7 @@ expanded_item_ids = ["{folder_id}"]
                     auto_format_response: true,
                     wrap_body_editor: false,
                     wrapping_indent: AppWrappingIndent::None,
+                    html_response_view: AppHtmlResponseView::Webview,
                     update_channel: UpdateChannel::Nightly,
                     updated_at: Utc::now(),
                 },
@@ -5685,6 +5688,7 @@ post_response = "console.log(response.status)"
         assert!(state.theme.auto_format_response);
         assert!(!state.theme.wrap_body_editor);
         assert_eq!(state.theme.wrapping_indent, AppWrappingIndent::None);
+        assert_eq!(state.theme.html_response_view, AppHtmlResponseView::Webview);
         assert_eq!(state.update_channel, UpdateChannel::Nightly);
         assert_eq!(
             state
