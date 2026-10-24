@@ -6,7 +6,7 @@ use gpui_kit::*;
 use super::actions::build_macos_system_menus;
 use super::{BEAM_TITLE_BAR_HEIGHT, BeamView};
 use crate::assets::embedded_theme_contents;
-use crate::models::{AppFontSize, AppWrappingIndent};
+use crate::models::{AppFontSize, AppHtmlResponseView, AppWrappingIndent};
 use crate::paths::BeamPaths;
 use crate::storage::fs_backend::FileSystemStorage;
 use crate::storage::workspace_repo::WorkspaceRepository;
@@ -122,6 +122,19 @@ impl BeamView {
         cx.notify();
     }
 
+    pub(super) fn apply_html_response_view_setting(
+        &mut self,
+        html_response_view: AppHtmlResponseView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.shell.theme.html_response_view = html_response_view;
+        if let Err(error) = self.persist_html_response_view_state(html_response_view) {
+            window.push_notification(error, cx);
+        }
+        cx.notify();
+    }
+
     pub(super) fn editor_wrapping_indent(indent: AppWrappingIndent) -> WrappingIndent {
         match indent {
             AppWrappingIndent::Same => WrappingIndent::Same,
@@ -186,6 +199,18 @@ impl BeamView {
             .map_err(|error| format!("Failed to load workspace: {error}"))?;
         storage
             .persist_wrapping_indent_state(wrapping_indent)
+            .map_err(|error| format!("Failed to save local state: {error}"))
+    }
+
+    fn persist_html_response_view_state(
+        &self,
+        html_response_view: AppHtmlResponseView,
+    ) -> Result<(), String> {
+        let backend = FileSystemStorage::new(self.current_workspace_paths.clone());
+        let storage = WorkspaceRepository::new(backend)
+            .map_err(|error| format!("Failed to load workspace: {error}"))?;
+        storage
+            .persist_html_response_view_state(html_response_view)
             .map_err(|error| format!("Failed to save local state: {error}"))
     }
 

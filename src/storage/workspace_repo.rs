@@ -7,10 +7,11 @@ use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
 use crate::models::{
-    AppFontSize, AppSettingsFile, AppWrappingIndent, AuthConfig, BodyConfig, EnvironmentFile,
-    EnvironmentMeta, EnvironmentScope, EnvironmentVariable, FolderFile, FolderMeta, HeaderField,
-    HttpMethod, ItemType, LocalStateFile, ManifestItemRef, QueryParamField, RequestDefinition,
-    RequestFile, RequestMeta, ScriptConfig, UpdateChannel, WorkspaceFile,
+    AppFontSize, AppHtmlResponseView, AppSettingsFile, AppWrappingIndent, AuthConfig, BodyConfig,
+    EnvironmentFile, EnvironmentMeta, EnvironmentScope, EnvironmentVariable, FolderFile,
+    FolderMeta, HeaderField, HttpMethod, ItemType, LocalStateFile, ManifestItemRef,
+    QueryParamField, RequestDefinition, RequestFile, RequestMeta, ScriptConfig, UpdateChannel,
+    WorkspaceFile,
 };
 use crate::paths::FOLDER_MANIFEST_FILE_NAME;
 use crate::schema::{SCHEMA_VERSION_V1, SchemaKind, validate_schema_version};
@@ -1438,6 +1439,21 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         self.save_app_settings(&app_settings)
     }
 
+    pub fn persist_html_response_view_state(
+        &self,
+        html_response_view: AppHtmlResponseView,
+    ) -> Result<()> {
+        let mut app_settings = self.load_app_settings().unwrap_or_default();
+
+        if app_settings.app_settings.html_response_view == html_response_view {
+            return Ok(());
+        }
+
+        app_settings.app_settings.html_response_view = html_response_view;
+        app_settings.app_settings.updated_at = Utc::now();
+        self.save_app_settings(&app_settings)
+    }
+
     pub fn persist_update_channel(&self, channel: UpdateChannel) -> Result<()> {
         let mut settings = self.load_app_settings()?;
         if settings.app_settings.update_channel == channel {
@@ -2172,6 +2188,31 @@ mod tests {
         let loaded = storage.load_app_settings().expect("load app settings");
 
         assert!(!loaded.app_settings.auto_format_response);
+    }
+
+    #[test]
+    fn persist_html_response_view_state_updates_app_settings() {
+        let dir = tempdir().expect("tempdir");
+        let backend = FileSystemStorage::new(BeamPaths::from_root(dir.path().to_path_buf()));
+        let storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
+
+        assert_eq!(
+            storage
+                .load_app_settings()
+                .expect("load app settings")
+                .app_settings
+                .html_response_view,
+            AppHtmlResponseView::Code
+        );
+        storage
+            .persist_html_response_view_state(AppHtmlResponseView::Webview)
+            .expect("persist html response view");
+        let loaded = storage.load_app_settings().expect("load app settings");
+
+        assert_eq!(
+            loaded.app_settings.html_response_view,
+            AppHtmlResponseView::Webview
+        );
     }
 
     #[test]

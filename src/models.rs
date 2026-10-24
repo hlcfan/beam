@@ -70,6 +70,39 @@ impl std::str::FromStr for AppWrappingIndent {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AppHtmlResponseView {
+    Webview,
+    #[default]
+    Code,
+}
+
+impl AppHtmlResponseView {
+    pub const ALL: [Self; 2] = [Self::Webview, Self::Code];
+}
+
+impl std::fmt::Display for AppHtmlResponseView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Webview => "Webview",
+            Self::Code => "HTML code",
+        })
+    }
+}
+
+impl std::str::FromStr for AppHtmlResponseView {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "Webview" => Ok(Self::Webview),
+            "HTML code" => Ok(Self::Code),
+            _ => Err("Expected Webview or HTML code for HTML response view"),
+        }
+    }
+}
+
 impl AppFontSize {
     pub fn from_pixels_value(font_size: f32) -> Self {
         if font_size <= 15.0 {
@@ -383,6 +416,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub wrapping_indent: AppWrappingIndent,
     #[serde(default)]
+    pub html_response_view: AppHtmlResponseView,
+    #[serde(default)]
     pub update_channel: UpdateChannel,
     pub updated_at: DateTime<Utc>,
 }
@@ -455,6 +490,7 @@ impl Default for AppSettingsFile {
                 auto_format_response: default_auto_format_response(),
                 wrap_body_editor: false,
                 wrapping_indent: AppWrappingIndent::default(),
+                html_response_view: AppHtmlResponseView::default(),
                 update_channel: UpdateChannel::default(),
                 updated_at: Utc::now(),
             },
