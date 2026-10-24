@@ -205,7 +205,11 @@ fn prepare_update(
             let commit = release_commit(release.body().unwrap_or_default())
                 .ok_or("This nightly does not list its commit. Wait for a new nightly build.")?;
             // The rolling release names the latest commit. SHAs have no chronological order.
-            let available = current_commit.is_none_or(|current| current != commit);
+            // Local debug builds carry no commit; don't nag developers about it.
+            let available = match current_commit {
+                Some(current) => current != commit,
+                None => !cfg!(debug_assertions),
+            };
             (available, short_sha(&commit).to_string())
         }
     };
@@ -433,7 +437,7 @@ mod tests {
         let release =
             release_with_body("0.0.0", "Nightly", &format!("Commit: {SHA}\n"), &[archive]);
         for (current, available) in [
-            (None, true),
+            (None, !cfg!(debug_assertions)),
             (Some(SHA), false),
             (Some("ffffffffffffffffffffffffffffffffffffffff"), true),
         ] {
