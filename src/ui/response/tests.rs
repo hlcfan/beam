@@ -370,3 +370,13 @@ fn draw(cx: &mut VisualTestContext) {
         cx.update(|window, cx| window.draw(cx).clear(cx));
     }
 }
+
+#[test]
+fn html_content_types_are_detected_ignoring_parameters_and_case() {
+    assert!(BeamView::is_html_content_type(Some(
+        "Text/HTML; charset=utf-8"
+    )));
+    assert!(BeamView::is_html_content_type(Some("application/xhtml+xml")));
+    assert!(!BeamView::is_html_content_type(Some("application/json")));
+    assert!(!BeamView::is_html_content_type(None));
+}

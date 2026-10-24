@@ -108,6 +108,9 @@ fn settle_dialog(cx: &mut VisualTestContext) {
         *gpui_kit::component::dialog::ANIMATION_DURATION + std::time::Duration::from_millis(10),
     );
     draw(cx);
+    // GPUI Fast only advances the entrance animation on a frame callback.
+    cx.update(|window, cx| window.simulate_next_frame(cx));
+    draw(cx);
 }
 
 fn snapshot(cx: &mut VisualTestContext, id: impl Into<SharedString>) -> ElementSnapshot {

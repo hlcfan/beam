@@ -16,6 +16,7 @@ pub(super) struct BeamView {
     pub(super) url_input: Entity<InputState>,
     pub(super) request_body_editor: Entity<EditorState>,
     pub(super) response_body_editor: Entity<EditorState>,
+    pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
     pub(super) response_headers_raw: String,
     pub(super) response_content_type: Option<String>,
     pub(super) response_body_language: &'static str,
@@ -214,6 +215,8 @@ impl BeamView {
             url_input,
             request_body_editor,
             response_body_editor,
+            html_response_preview: cx
+                .new(|_| super::response::html_preview::HtmlResponsePreview::new()),
             response_headers_raw: String::new(),
             response_content_type: None,
             response_body_language: "text",
