@@ -368,7 +368,11 @@ pub fn run_app(
                 };
                 let _ = window_handle.update(cx, |_root_view, window, cx| {
                     beam_view.update(cx, |beam_view, cx| {
-                        beam_view.open_environment_variables_sheet(window, cx);
+                        beam_view.on_action_open_environment_variables(
+                            &OpenEnvironmentVariables,
+                            window,
+                            cx,
+                        );
                     });
                 });
             });
