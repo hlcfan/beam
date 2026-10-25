@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 const TIMESTAMP: &str = "$timestamp";
@@ -11,20 +11,20 @@ const RANDOM_UUID: &str = "$randomUUID";
 pub const DYNAMIC_VARIABLE_NAMES: [&str; 4] = [TIMESTAMP, ISO_TIMESTAMP, GUID, RANDOM_UUID];
 
 pub struct DynamicVariableContext {
-    timestamp: DateTime<Utc>,
+    timestamp: OffsetDateTime,
 }
 
 impl DynamicVariableContext {
     pub fn new() -> Self {
         Self {
-            timestamp: Utc::now(),
+            timestamp: OffsetDateTime::now_utc(),
         }
     }
 
     pub fn resolve(&self, name: &str) -> Option<String> {
         match name {
-            "$timestamp" => Some(self.timestamp.timestamp().to_string()),
-            "$isoTimestamp" => Some(self.timestamp.to_rfc3339_opts(SecondsFormat::Millis, true)),
+            "$timestamp" => Some(self.timestamp.unix_timestamp().to_string()),
+            "$isoTimestamp" => Some(crate::timestamps::format_iso_millis(self.timestamp)),
             "$guid" | "$randomUUID" => Some(Uuid::new_v4().to_string()),
             _ => None,
         }
@@ -81,13 +81,12 @@ fn template_variable_names(input: &str) -> impl Iterator<Item = &str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use time::format_description::well_known::Rfc3339;
 
     #[test]
     fn resolves_common_dynamic_variables() {
         let context = DynamicVariableContext {
-            timestamp: DateTime::parse_from_rfc3339("2020-06-09T21:10:36.177Z")
-                .unwrap()
-                .with_timezone(&Utc),
+            timestamp: OffsetDateTime::parse("2020-06-09T21:10:36.177Z", &Rfc3339).unwrap(),
         };
         let resolved = resolve_template_variables(
             "{{$timestamp}} {{$isoTimestamp}} {{$guid}} {{$randomUUID}}",

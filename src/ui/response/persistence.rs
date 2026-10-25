@@ -111,7 +111,9 @@ pub(in crate::ui) fn persist_response_snapshot(
     history_file.meta = Some(RequestHistoryMeta {
         request_id: request_id.to_string(),
         schema_version: Some(1),
-        updated_at: Some(chrono::Utc::now().to_rfc3339()),
+        updated_at: Some(crate::timestamps::format_timestamp(
+            time::OffsetDateTime::now_utc(),
+        )),
     });
     history_file.executions.push(RequestHistoryExecution {
         timestamp: Some(response.timestamp.clone()),

@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use chrono::Local;
+use crate::timestamps;
 use log::{LevelFilter, Log, Metadata, Record};
 
 const MAX_LOG_FILE_BYTES: u64 = 10 * 1024 * 1024;
@@ -122,7 +122,8 @@ impl Log for BeamLogger {
             return;
         }
 
-        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let timestamp =
+            timestamps::format_local(time::OffsetDateTime::now_utc(), timestamps::LOG_FORMAT);
         let line = format!(
             "{timestamp} [{:<5}] {}: {}",
             record.level(),

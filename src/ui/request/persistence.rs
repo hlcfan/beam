@@ -368,7 +368,7 @@ impl BeamView {
         request_file.auth = pane_data.auth;
         request_file.body = pane_data.body;
         request_file.scripts.post_response = pane_data.post_script;
-        request_file.meta.updated_at = Utc::now();
+        request_file.meta.updated_at = OffsetDateTime::now_utc();
         self.active_request_cache = Some(request_file.clone());
         Ok(request_file)
     }

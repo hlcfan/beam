@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
@@ -22,8 +22,8 @@ pub struct Node {
     pub name: String,
     pub kind: NodeKind,
     pub description: Option<String>,
-    pub created_at: Option<DateTime<Utc>>,
-    pub updated_at: Option<DateTime<Utc>>,
+    pub created_at: Option<OffsetDateTime>,
+    pub updated_at: Option<OffsetDateTime>,
     pub parent_id: Option<NodeId>,
     pub children: Vec<NodeId>,
     /// Leaf name on disk: `<slug>.request.toml` for requests, the directory name for folders.

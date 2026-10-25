@@ -8,8 +8,8 @@ use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::thread;
 use std::time::Instant;
 
-use chrono::Utc;
 use gpui_kit::{Pixels, Point, point, px};
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
@@ -2788,7 +2788,7 @@ fn run_import_job(
         // Replay the planned request payload (headers/query/auth/body/scripts)
         // on top of the freshly created file, then persist.
         let mut request_file = created;
-        request_file.meta.updated_at = Utc::now();
+        request_file.meta.updated_at = OffsetDateTime::now_utc();
         request_file.request.headers = planned_request.headers.clone();
         request_file.request.query_params = planned_request.query.clone();
         request_file.auth = planned_request.auth.clone();
@@ -2845,7 +2845,7 @@ fn run_import_job(
         match ws_repo.load_local_state() {
             Ok(mut local_state) => {
                 local_state.local_state.active_global_environment_id = Some(env_id);
-                local_state.local_state.updated_at = Utc::now();
+                local_state.local_state.updated_at = OffsetDateTime::now_utc();
                 if let Err(error) = ws_repo.save_local_state(&local_state) {
                     log::error!("import: save_local_state failed: {error}");
                     return ImportResult::Failed {
@@ -2960,7 +2960,7 @@ fn run_import_environments_only(
             .is_none()
     {
         local_state.local_state.active_global_environment_id = Some(env_id);
-        local_state.local_state.updated_at = Utc::now();
+        local_state.local_state.updated_at = OffsetDateTime::now_utc();
         if let Err(error) = storage.save_local_state(&local_state) {
             log::error!("import: save_local_state failed: {error}");
         }
@@ -3090,7 +3090,7 @@ fn run_import_into_current(
             }
         };
         let mut request_file = created;
-        request_file.meta.updated_at = Utc::now();
+        request_file.meta.updated_at = OffsetDateTime::now_utc();
         request_file.request.headers = planned_request.headers.clone();
         request_file.request.query_params = planned_request.query.clone();
         request_file.auth = planned_request.auth.clone();
@@ -3172,7 +3172,7 @@ fn run_import_into_current(
             .is_none()
     {
         local_state.local_state.active_global_environment_id = Some(env_id);
-        local_state.local_state.updated_at = Utc::now();
+        local_state.local_state.updated_at = OffsetDateTime::now_utc();
         if let Err(error) = storage.save_local_state(&local_state) {
             log::error!("import: save_local_state failed: {error}");
         }
@@ -3780,7 +3780,7 @@ mod tests {
     use crate::storage::fs_backend::FileSystemStorage;
     use crate::storage::registry_repo::RegistryRepository;
     use crate::storage::workspace_repo::WorkspaceRepository;
-    use chrono::Utc;
+    use time::OffsetDateTime;
 
     /// Create a minimal registry + repo for tests that need start_data_sync_worker.
     fn test_registry_for_dir(dir: &Path) -> (WorkspacesRegistryFile, RegistryRepository) {
@@ -4122,7 +4122,7 @@ mod tests {
         method: HttpMethod,
         url: &str,
     ) -> RequestFile {
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         RequestFile {
             meta: RequestMeta {
                 request_id,
@@ -4151,8 +4151,8 @@ mod tests {
                 workspace_id: Ulid::new(),
                 name: "Test".to_string(),
                 description: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                created_at: OffsetDateTime::now_utc(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             items,
         };
@@ -4168,7 +4168,7 @@ mod tests {
         items: Vec<ManifestItemRef>,
     ) -> PathBuf {
         fs::create_dir_all(folder_dir).expect("create folder dir");
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let folder_file = FolderFile {
             folder: FolderMeta {
                 folder_id,
@@ -4242,7 +4242,7 @@ mod tests {
         let first_request_id = Ulid::new();
         let second_request_id = Ulid::new();
         let mut state = AppShellState::default();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         state.shared_store.nodes.insert(
             folder_id,
             Node {
@@ -4491,7 +4491,7 @@ mod tests {
         let mut state = AppShellState::default();
         let global_env_id = Ulid::new();
         let other_env_id = Ulid::new();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let global_environment = EnvironmentMeta {
             environment_id: global_env_id,
             scope: EnvironmentScope::Global,
@@ -4539,7 +4539,7 @@ mod tests {
         let mut state = AppShellState::default();
         let request_id = Ulid::new();
         let global_env_id = Ulid::new();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         state.workspace_tree.nodes.insert(
             request_id,
             TreeNode {
@@ -4962,7 +4962,7 @@ mod tests {
         let next_workspace_id = Ulid::new();
         let deleted_request_id = Ulid::new();
         let next_request_id = Ulid::new();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
 
         let mut state = AppShellState::default();
         state.workspace.workspace_id = Some(deleted_workspace_id);
@@ -5357,7 +5357,7 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(request_id),
-                updated_at: Utc::now(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             tree_state: TreeState::default(),
         };
@@ -5397,7 +5397,7 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(Ulid::new()),
-                updated_at: Utc::now(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             tree_state: TreeState::default(),
         };
@@ -5471,7 +5471,7 @@ mod tests {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: Some(Ulid::new()),
-                updated_at: Utc::now(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             tree_state: TreeState::default(),
         };
@@ -5582,7 +5582,7 @@ expanded_item_ids = ["{folder_id}"]
                     wrapping_indent: AppWrappingIndent::None,
                     html_response_view: AppHtmlResponseView::Webview,
                     update_channel: UpdateChannel::Nightly,
-                    updated_at: Utc::now(),
+                    updated_at: OffsetDateTime::now_utc(),
                 },
             })
             .expect("save app settings");
@@ -5833,7 +5833,7 @@ updated_at = "2026-01-01T00:00:00Z"
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
-                updated_at: Utc::now(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             tree_state: TreeState {
                 expanded_item_ids: vec![top_folder_id, nested_folder_id],
@@ -7264,7 +7264,7 @@ expanded_item_ids = ["{folder_id}"]
             workspace_id,
             name: "My Workspace".to_string(),
             path: "my-workspace".to_string(),
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
         };
         let registry = WorkspacesRegistryFile {
             schema_version: crate::schema::SCHEMA_VERSION_V1,
@@ -7402,7 +7402,7 @@ expanded_item_ids = ["{folder_id}"]
             workspace_id,
             name: "My Workspace".to_string(),
             path: workspace_slug.to_string(),
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
         };
         let registry = WorkspacesRegistryFile {
             schema_version: crate::schema::SCHEMA_VERSION_V1,

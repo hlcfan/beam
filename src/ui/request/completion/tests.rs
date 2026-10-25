@@ -1,9 +1,9 @@
 use std::sync::mpsc::{channel, sync_channel};
 
-use chrono::Utc;
 use gpui_kit::component::Root;
 use gpui_kit::component::input::InputEvent;
 use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::app_shell::{AppEvent, AppShellState, DataSyncRuntime};
@@ -165,8 +165,8 @@ fn body_completion_reloads_variables_when_the_environment_changes(cx: &mut TestA
         name: "Other".into(),
         file_name: "other.env.toml".into(),
         description: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: OffsetDateTime::now_utc(),
+        updated_at: OffsetDateTime::now_utc(),
     };
     let file = EnvironmentFile {
         schema_version: crate::schema::SCHEMA_VERSION_V1,
@@ -509,8 +509,8 @@ fn fixture(
         name: "Test".into(),
         file_name: "test.env.toml".into(),
         description: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
+        created_at: OffsetDateTime::now_utc(),
+        updated_at: OffsetDateTime::now_utc(),
     };
     let environment_path = paths.environments_dir.join(&environment.file_name);
     let file = EnvironmentFile {

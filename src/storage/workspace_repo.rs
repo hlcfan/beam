@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
@@ -93,7 +93,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             let mut local_state = created_local_state.unwrap_or_default();
             local_state.local_state.active_global_environment_id =
                 Some(default_environment.environment.environment_id);
-            local_state.local_state.updated_at = Utc::now();
+            local_state.local_state.updated_at = OffsetDateTime::now_utc();
             self.backend
                 .write_toml_file(&self.backend.paths().local_state_file, &local_state)?;
             report.created_default_environment = true;
@@ -114,7 +114,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             return Ok(());
         }
 
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let request_id = Ulid::new();
         self.store.root_ids.push(request_id);
         self.store.nodes.insert(
@@ -345,7 +345,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         if let Some(request_node) = self.store.nodes.get_mut(&input.request_id) {
             request_node.name = unique_name.clone();
             request_node.file_name = file_name;
-            request_node.updated_at = Some(Utc::now());
+            request_node.updated_at = Some(OffsetDateTime::now_utc());
         }
         self.store
             .name_index
@@ -361,7 +361,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             })?
             .clone();
         request_file.meta.name = unique_name.clone();
-        request_file.meta.updated_at = Utc::now();
+        request_file.meta.updated_at = OffsetDateTime::now_utc();
         self.store
             .requests
             .insert(input.request_id, request_file.clone());
@@ -398,7 +398,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             })?
             .clone();
 
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let mut duplicated = source.clone();
         duplicated.meta.request_id = Ulid::new();
         duplicated.meta.name = unique_name;
@@ -743,8 +743,12 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 }),
                 name: folder_node.name,
                 description: folder_node.description,
-                created_at: folder_node.created_at.unwrap_or_else(Utc::now),
-                updated_at: folder_node.updated_at.unwrap_or_else(Utc::now),
+                created_at: folder_node
+                    .created_at
+                    .unwrap_or_else(OffsetDateTime::now_utc),
+                updated_at: folder_node
+                    .updated_at
+                    .unwrap_or_else(OffsetDateTime::now_utc),
             },
             items: Vec::new(),
             manifest_path: Some(manifest_path),
@@ -787,8 +791,8 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 name: name.to_string(),
                 file_name,
                 description: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                created_at: OffsetDateTime::now_utc(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             variables: Vec::new(),
             file_path: None,
@@ -831,7 +835,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             .and_then(|name| name.to_str())
             .unwrap_or_default()
             .to_string();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let environment_file = EnvironmentFile {
             schema_version: SCHEMA_VERSION_V1,
             environment: EnvironmentMeta {
@@ -888,7 +892,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 })?;
 
         environment_file.environment.name = next_name.to_string();
-        environment_file.environment.updated_at = Utc::now();
+        environment_file.environment.updated_at = OffsetDateTime::now_utc();
         if environment_file.environment.file_name.trim().is_empty() {
             environment_file.environment.file_name = existing_path
                 .file_name()
@@ -949,7 +953,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                     id: environment_id.to_string(),
                 })?;
 
-        environment_file.environment.updated_at = Utc::now();
+        environment_file.environment.updated_at = OffsetDateTime::now_utc();
         environment_file.variables = variables;
         if environment_file.environment.file_name.trim().is_empty() {
             environment_file.environment.file_name = existing_path
@@ -994,7 +998,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         let parent_id = input.parent.folder_id;
         let unique_name = find_unique_name(&self.store.name_index, parent_id, name, None);
 
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         let folder_id = Ulid::new();
 
         match parent_id {
@@ -1223,7 +1227,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         if let Some(folder) = self.store.nodes.get_mut(&folder_id) {
             folder.name = unique_name.clone();
             folder.file_name = file_name;
-            folder.updated_at = Some(Utc::now());
+            folder.updated_at = Some(OffsetDateTime::now_utc());
         }
         self.store
             .name_index
@@ -1260,13 +1264,13 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                     .nodes
                     .get(&folder_id)
                     .and_then(|n| n.created_at)
-                    .unwrap_or_else(Utc::now),
+                    .unwrap_or_else(OffsetDateTime::now_utc),
                 updated_at: self
                     .store
                     .nodes
                     .get(&folder_id)
                     .and_then(|n| n.updated_at)
-                    .unwrap_or_else(Utc::now),
+                    .unwrap_or_else(OffsetDateTime::now_utc),
             },
             items: Vec::new(),
             manifest_path: Some(manifest_path),
@@ -1378,7 +1382,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         app_settings.app_settings.theme_name = Some(theme_name.to_string());
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&app_settings)
     }
 
@@ -1393,7 +1397,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         app_settings.app_settings.font_size = font_size;
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&app_settings)
     }
 
@@ -1408,7 +1412,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         app_settings.app_settings.auto_format_response = auto_format_response;
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&app_settings)
     }
 
@@ -1423,7 +1427,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         app_settings.app_settings.wrap_body_editor = wrap_body_editor;
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&app_settings)
     }
 
@@ -1435,7 +1439,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         app_settings.app_settings.wrapping_indent = wrapping_indent;
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&app_settings)
     }
 
@@ -1450,7 +1454,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
         }
 
         app_settings.app_settings.html_response_view = html_response_view;
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&app_settings)
     }
 
@@ -1460,7 +1464,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
             return Ok(());
         }
         settings.app_settings.update_channel = channel;
-        settings.app_settings.updated_at = Utc::now();
+        settings.app_settings.updated_at = OffsetDateTime::now_utc();
         self.save_app_settings(&settings)
     }
 
@@ -1480,7 +1484,7 @@ impl<B: StorageIoBackend> WorkspaceRepository<B> {
                 app_settings.app_settings.font_size = font_size;
             }
         }
-        app_settings.app_settings.updated_at = Utc::now();
+        app_settings.app_settings.updated_at = OffsetDateTime::now_utc();
         Ok(app_settings)
     }
 }
@@ -1539,7 +1543,7 @@ pub fn write_folder_manifest<B: StorageIoBackend>(
         })
         .collect();
 
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     let folder_file = FolderFile {
         folder: FolderMeta {
             folder_id,
@@ -1730,7 +1734,7 @@ pub fn create_required_dirs<B: StorageIoBackend>(backend: &B) -> Result<()> {
 }
 
 fn default_request_file(name: &str, method: HttpMethod, url: String) -> RequestFile {
-    let now = Utc::now();
+    let now = OffsetDateTime::now_utc();
     RequestFile {
         meta: RequestMeta {
             request_id: Ulid::new(),
@@ -2318,7 +2322,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
 
     #[test]
     fn request_toml_uses_explicit_auth_type_and_body_mode() {
-        use chrono::Utc;
+        use time::OffsetDateTime;
         use ulid::Ulid;
 
         let request = RequestFile {
@@ -2326,8 +2330,8 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
                 request_id: Ulid::new(),
                 name: "Get User".to_string(),
                 description: None,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                created_at: OffsetDateTime::now_utc(),
+                updated_at: OffsetDateTime::now_utc(),
             },
             request: RequestDefinition {
                 method: HttpMethod::Get,
@@ -2364,14 +2368,14 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
             ScriptConfig,
         };
         use crate::workspace_tree::{Node, NodeKind, request_file_name};
-        use chrono::Utc;
+        use time::OffsetDateTime;
 
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
         let backend = FileSystemStorage::new(paths.clone());
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
 
         let request_file = RequestFile {
             meta: RequestMeta {
@@ -2466,7 +2470,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
             AuthConfig, BodyConfig, HttpMethod, ItemType, ManifestItemRef, RequestDefinition,
             RequestFile, RequestMeta, ScriptConfig,
         };
-        use chrono::Utc;
+        use time::OffsetDateTime;
 
         let dir = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(dir.path().join("beam"));
@@ -2477,7 +2481,7 @@ updated_at = "2026-05-01T03:42:36.157016+00:00"
 
         let folder_id = Ulid::new();
         let request_id = Ulid::new();
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
 
         // Create workspace file with root items
         let workspace_file = WorkspaceFile {

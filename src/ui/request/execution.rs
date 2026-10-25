@@ -3,9 +3,9 @@ use std::fs;
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use chrono::Utc;
 use gpui_kit::{Context, Window};
 use reqwest::{Client, Method};
+use time::OffsetDateTime;
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
 use tokio::sync::oneshot;
 use ulid::Ulid;
@@ -43,6 +43,42 @@ pub(in crate::ui) enum RequestExecutionStatus {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_client_preserves_query_and_form_encoding() {
+        let request = shared_http_client()
+            .expect("TLS client initializes")
+            .post("https://example.com/submit")
+            .query(&[("search", "a b&c")])
+            .form(&[("message", "x+y z")])
+            .build()
+            .expect("build form request");
+        assert_eq!(request.url().query(), Some("search=a+b%26c"));
+        assert_eq!(
+            request.headers()["content-type"],
+            "application/x-www-form-urlencoded"
+        );
+        assert_eq!(
+            request.body().and_then(reqwest::Body::as_bytes),
+            Some(b"message=x%2By+z".as_slice())
+        );
+    }
+
+    #[test]
+    fn http_client_preserves_multipart_requests() {
+        let request = shared_http_client()
+            .expect("TLS client initializes")
+            .post("https://example.com/submit")
+            .multipart(reqwest::multipart::Form::new().text("message", "hello"))
+            .build()
+            .expect("build multipart request");
+        assert!(
+            request.headers()["content-type"]
+                .to_str()
+                .expect("content type")
+                .starts_with("multipart/form-data; boundary=")
+        );
+    }
 
     fn ready_request() -> RequestAuthoringState {
         RequestAuthoringState {
@@ -824,13 +860,13 @@ fn to_persisted_script_result(
                     ConsoleLevel::Debug => "debug".to_string(),
                 },
                 message: entry.message.clone(),
-                timestamp: entry.timestamp.to_rfc3339(),
+                timestamp: crate::timestamps::format_timestamp(entry.timestamp),
             })
             .collect(),
         test_results: result.test_results.clone(),
         environment_diff: result.environment_diff.clone(),
         no_environment_selected_with_env_writes,
-        updated_at: Utc::now().to_rfc3339(),
+        updated_at: crate::timestamps::format_timestamp(OffsetDateTime::now_utc()),
     }
 }
 
@@ -852,11 +888,12 @@ fn shared_http_runtime() -> Result<&'static TokioRuntime, String> {
 }
 
 fn shared_http_client() -> Result<&'static Client, String> {
+    crate::tls::init_provider();
     HTTP_CLIENT
         .get_or_init(|| {
             Client::builder()
                 .user_agent(default_user_agent())
-                .danger_accept_invalid_certs(true)
+                .tls_danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|error| format!("Failed to initialize HTTP client: {error}"))
         })
@@ -1066,7 +1103,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 status_code: None,
                 time: "—".to_string(),
                 size: "—".to_string(),
-                timestamp: Utc::now().to_rfc3339(),
+                timestamp: crate::timestamps::format_timestamp(OffsetDateTime::now_utc()),
                 body: error,
                 headers: String::new(),
                 content_type: None,
@@ -1205,7 +1242,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
-            let completed_at = Utc::now().to_rfc3339();
+            let completed_at = crate::timestamps::format_timestamp(OffsetDateTime::now_utc());
             match response.bytes().await {
                 Ok(bytes) => HttpResponseSnapshot {
                     status: status_text,
@@ -1234,7 +1271,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
             status_code: None,
             time: format!("{} ms", start.elapsed().as_millis()),
             size: "—".to_string(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: crate::timestamps::format_timestamp(OffsetDateTime::now_utc()),
             body: format!("Request failed: {error}"),
             headers: String::new(),
             content_type: None,

@@ -57,7 +57,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf};
 
-use chrono::{Local, Utc};
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Placement, Root, Selectable, Sizable, StyledExt, Theme,
     ThemeRegistry, ThemeStyled, TitleBar, VirtualListScrollHandle, WindowExt as _,
@@ -78,6 +77,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::app_shell::next_command_id;

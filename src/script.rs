@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use chrono::{DateTime, Utc};
 use rquickjs::{CatchResultExt, Context, Object, Runtime, function::Func};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 use crate::models::EnvironmentVariable;
 
@@ -20,7 +20,8 @@ pub enum ConsoleLevel {
 pub struct ConsoleMessage {
     pub level: ConsoleLevel,
     pub message: String,
-    pub timestamp: DateTime<Utc>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub timestamp: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -398,7 +399,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Log,
                     message: msg,
-                    timestamp: Utc::now(),
+                    timestamp: OffsetDateTime::now_utc(),
                 });
             }
         });
@@ -411,7 +412,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Error,
                     message: msg,
-                    timestamp: Utc::now(),
+                    timestamp: OffsetDateTime::now_utc(),
                 });
             }
         });
@@ -424,7 +425,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Warn,
                     message: msg,
-                    timestamp: Utc::now(),
+                    timestamp: OffsetDateTime::now_utc(),
                 });
             }
         });
@@ -437,7 +438,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Info,
                     message: msg,
-                    timestamp: Utc::now(),
+                    timestamp: OffsetDateTime::now_utc(),
                 });
             }
         });
@@ -450,7 +451,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Debug,
                     message: msg,
-                    timestamp: Utc::now(),
+                    timestamp: OffsetDateTime::now_utc(),
                 });
             }
         });
@@ -924,4 +925,30 @@ fn setup_global_objects(
     )?;
     let _ = ctx.globals().remove("__recordTest");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn javascript_dates_work_without_host_date_conversions() {
+        let response = ScriptRuntimeResponse {
+            status: 200,
+            status_text: "OK".into(),
+            headers: Vec::new(),
+            body: String::new(),
+            response_time_ms: 1,
+            body_size_bytes: 0,
+        };
+        let result = execute_post_request_script(
+            r#"console.log(new Date("2020-06-09T21:10:36.177Z").toISOString());"#,
+            &response,
+            &[],
+            false,
+        );
+        assert!(result.success, "{:?}", result.error_message);
+        assert_eq!(result.console_output.len(), 1);
+        assert_eq!(result.console_output[0].message, "2020-06-09T21:10:36.177Z");
+    }
 }

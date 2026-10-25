@@ -1,6 +1,8 @@
 use std::fs;
 
-use chrono::Local;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
+use crate::timestamps;
 use serde::{Deserialize, Serialize};
 use ulid::Ulid;
 
@@ -193,37 +195,30 @@ pub(in crate::ui) fn load_response_history_entries(
 /// Compact relative text ("just now", "5m ago", "3h ago", "2d ago"), falling
 /// back to the absolute date for entries older than a week.
 pub(in crate::ui) fn format_relative_timestamp(timestamp: &str) -> String {
-    format_relative_timestamp_at(timestamp, Local::now())
+    format_relative_timestamp_at(timestamp, OffsetDateTime::now_utc())
 }
 
-fn format_relative_timestamp_at(timestamp: &str, now: chrono::DateTime<Local>) -> String {
-    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+fn format_relative_timestamp_at(timestamp: &str, now: OffsetDateTime) -> String {
+    let Ok(parsed) = OffsetDateTime::parse(timestamp, &Rfc3339) else {
         return timestamp.to_string();
     };
-    let elapsed = now.signed_duration_since(parsed);
-    let seconds = elapsed.num_seconds();
+    let elapsed = now - parsed;
+    let seconds = elapsed.whole_seconds();
     if seconds < 60 {
         "just now".to_string()
     } else if seconds < 3600 {
-        format!("{}m ago", elapsed.num_minutes())
+        format!("{}m ago", elapsed.whole_minutes())
     } else if seconds < 86_400 {
-        format!("{}h ago", elapsed.num_hours())
-    } else if elapsed.num_days() < 7 {
-        format!("{}d ago", elapsed.num_days())
+        format!("{}h ago", elapsed.whole_hours())
+    } else if elapsed.whole_days() < 7 {
+        format!("{}d ago", elapsed.whole_days())
     } else {
-        parsed.with_timezone(&Local).format("%Y-%m-%d").to_string()
+        timestamps::format_local(parsed, timestamps::DATE_FORMAT)
     }
 }
 
 fn format_human_timestamp(timestamp: &str) -> String {
-    chrono::DateTime::parse_from_rfc3339(timestamp)
-        .map(|parsed| {
-            parsed
-                .with_timezone(&Local)
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string()
-        })
-        .unwrap_or_else(|_| timestamp.to_string())
+    timestamps::format_local_input(timestamp, timestamps::DATE_TIME_FORMAT)
 }
 
 #[cfg(test)]
@@ -231,9 +226,11 @@ mod tests {
     use std::fs;
 
     use tempfile::tempdir;
+    use time::{OffsetDateTime, format_description::well_known::Rfc3339};
     use ulid::Ulid;
 
     use crate::paths::BeamPaths;
+    use crate::timestamps;
 
     use super::{
         RequestHistoryExecution, RequestHistoryFile, RequestHistoryHeader,
@@ -331,13 +328,15 @@ mod tests {
     #[test]
     fn human_timestamp_includes_seconds_in_local_time() {
         let timestamp = "2026-01-02T03:04:56+05:30";
-        let local = chrono::DateTime::parse_from_rfc3339(timestamp)
-            .expect("valid timestamp")
-            .with_timezone(&chrono::Local);
+        let local = timestamps::local_time(
+            OffsetDateTime::parse(timestamp, &Rfc3339).expect("valid timestamp"),
+        );
 
         assert_eq!(
             format_human_timestamp(timestamp),
-            format!("{} {}", local.date_naive(), local.time())
+            local
+                .format(timestamps::DATE_TIME_FORMAT)
+                .expect("format time")
         );
     }
 
@@ -348,10 +347,10 @@ mod tests {
 
     #[test]
     fn relative_timestamp_buckets_elapsed_time() {
-        use chrono::{Duration, Local};
+        use time::Duration;
 
-        let now = Local::now();
-        let at = |delta: Duration| (now - delta).to_rfc3339();
+        let now = OffsetDateTime::now_utc();
+        let at = |delta: Duration| timestamps::format_timestamp(now - delta);
 
         assert_eq!(
             format_relative_timestamp_at(&at(Duration::seconds(30)), now),
@@ -373,20 +372,20 @@ mod tests {
 
     #[test]
     fn relative_timestamp_falls_back_to_date_after_a_week() {
-        use chrono::{Duration, Local};
+        use time::Duration;
 
-        let now = Local::now();
+        let now = OffsetDateTime::now_utc();
         let old = now - Duration::days(10);
         assert_eq!(
-            format_relative_timestamp_at(&old.to_rfc3339(), now),
-            old.format("%Y-%m-%d").to_string()
+            format_relative_timestamp_at(&timestamps::format_timestamp(old), now),
+            timestamps::format_local(old, timestamps::DATE_FORMAT)
         );
     }
 
     #[test]
     fn relative_timestamp_returns_invalid_input_unchanged() {
         assert_eq!(
-            format_relative_timestamp_at("not a timestamp", chrono::Local::now()),
+            format_relative_timestamp_at("not a timestamp", OffsetDateTime::now_utc()),
             "not a timestamp"
         );
     }

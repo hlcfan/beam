@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use chrono::Utc;
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::error::{BeamError, Result};
@@ -93,7 +93,7 @@ impl RegistryRepository {
             workspace_id: Ulid::new(),
             name: name.to_string(),
             path: slug,
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
         };
         registry.registry.workspaces.push(entry.clone());
         self.save(registry)?;

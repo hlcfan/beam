@@ -7,7 +7,6 @@ use crate::models::{
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::ui::response::persistence::persist_response_snapshot;
 use crate::ui::{BeamView, HttpResponseSnapshot};
-use chrono::Utc;
 use gpui_kit as gpui;
 use gpui_kit::base::test_support::{ElementSnapshot, find};
 use gpui_kit::component::{Root, Theme, ThemeMode};
@@ -17,6 +16,7 @@ use gpui_kit::{
 };
 use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
 use tempfile::TempDir;
+use time::OffsetDateTime;
 use ulid::Ulid;
 
 struct Fixture {
@@ -47,7 +47,7 @@ fn fixture_with_active_workspace(
             workspace_id: Ulid::new(),
             name: format!("Workspace {index}"),
             path: format!("workspace-{index}"),
-            created_at: Utc::now(),
+            created_at: OffsetDateTime::now_utc(),
         })
         .collect();
     shell.workspace.workspace_id = shell
@@ -233,7 +233,7 @@ fn workspace_tabs_preserve_response_scroll_offsets_for_each_request(cx: &mut Tes
                     status_code: Some(200),
                     time: "1 ms".to_string(),
                     size: "1 KB".to_string(),
-                    timestamp: Utc::now().to_rfc3339(),
+                    timestamp: crate::timestamps::format_timestamp(OffsetDateTime::now_utc()),
                     body: if index == 2 {
                         "short".to_string()
                     } else {
@@ -335,7 +335,7 @@ fn tree_workspace(workspaces: &[WorkspaceEntry], index: usize, count: usize) -> 
     shell.workspace.workspace_id = Some(workspaces[index].workspace_id);
     shell.workspace.workspace_name = workspaces[index].name.clone();
     for number in 0..count {
-        let now = Utc::now();
+        let now = OffsetDateTime::now_utc();
         shell.insert_request_at_root(
             None,
             &RequestFile {
