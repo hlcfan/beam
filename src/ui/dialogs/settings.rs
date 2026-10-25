@@ -24,6 +24,7 @@ pub(in crate::ui) struct SettingsDialogView {
     theme_combobox: Entity<ComboboxState<SearchableVec<SharedString>>>,
     font_size_select: Entity<SelectState<Vec<SharedString>>>,
     wrapping_indent_select: Entity<SelectState<Vec<SharedString>>>,
+    html_response_view_select: Entity<SelectState<Vec<SharedString>>>,
     updater: Entity<AppUpdater>,
     update_channel_select: Entity<SelectState<Vec<SharedString>>>,
     _subscriptions: Vec<Subscription>,
@@ -129,6 +130,36 @@ impl SettingsDialogView {
                 }
             },
         );
+        let html_response_view = beam_view.read(cx).shell.theme.html_response_view;
+        let html_response_view_select = cx.new(|cx| {
+            SelectState::new(
+                AppHtmlResponseView::ALL
+                    .into_iter()
+                    .map(|option| SharedString::from(option.to_string()))
+                    .collect::<Vec<_>>(),
+                AppHtmlResponseView::ALL
+                    .iter()
+                    .position(|option| *option == html_response_view)
+                    .map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        let html_response_view_subscription = cx.subscribe_in(
+            &html_response_view_select,
+            window,
+            |this, _, event, window, cx| {
+                let SelectEvent::Confirm(Some(value)) = event else {
+                    return;
+                };
+                if let Ok(view) = value.parse::<AppHtmlResponseView>() {
+                    this.beam_view.update(cx, |this, cx| {
+                        this.apply_html_response_view_setting(view, window, cx);
+                    });
+                    cx.notify();
+                }
+            },
+        );
         let updater = beam_view.read(cx).updater.clone();
         let update_channel = updater.read(cx).channel;
         let update_channel_select = cx.new(|cx| {
@@ -183,6 +214,7 @@ impl SettingsDialogView {
             theme_combobox,
             font_size_select,
             wrapping_indent_select,
+            html_response_view_select,
             updater,
             update_channel_select,
             _subscriptions: vec![
@@ -190,6 +222,7 @@ impl SettingsDialogView {
                 theme_observer,
                 font_size_subscription,
                 subscription,
+                html_response_view_subscription,
                 channel_subscription,
                 updater_subscription,
             ],
@@ -350,6 +383,30 @@ impl Render for SettingsDialogView {
                                             );
                                         });
                                     })),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .mt_4()
+                            .gap_1()
+                            .child(div().text_sm().font_semibold().child("HTML response"))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Choose how to display responses that return HTML."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w(px(320.0))
+                            .input_h(Size::Medium)
+                            .flex_shrink_0()
+                            .child(
+                                Select::new(&self.html_response_view_select)
+                                    .w_full()
+                                    .cursor_pointer()
+                                    .accessibility_label("HTML response"),
                             ),
                     );
             }

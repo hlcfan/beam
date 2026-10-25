@@ -200,12 +200,29 @@ impl BeamView {
     }
 
     fn render_response_editor_surface(&self, cx: &mut Context<Self>) -> AnyElement {
+        let show_html_preview = self.active_response_tab == ResponseTab::Body
+            && self.shell.theme.html_response_view == AppHtmlResponseView::Webview
+            && Self::is_html_content_type(self.response_content_type.as_deref());
+        if !show_html_preview {
+            self.html_response_preview
+                .update(cx, |preview, cx| preview.release(cx));
+        }
         match self.active_response_tab {
             ResponseTab::Body => {
                 let response_body_text = self.response_body_editor.read(cx).value().to_string();
                 let trimmed_body = response_body_text.trim();
                 if trimmed_body.is_empty() {
+                    self.html_response_preview
+                        .update(cx, |preview, cx| preview.release(cx));
                     return self.render_response_body_shortcuts_empty_state(cx);
+                }
+                if show_html_preview {
+                    self.html_response_preview
+                        .update(cx, |preview, cx| preview.set_html(&response_body_text, cx));
+                    return div()
+                        .size_full()
+                        .child(self.html_response_preview.clone())
+                        .into_any_element();
                 }
                 let response_body_has_selection = !self
                     .response_body_editor
@@ -239,6 +256,14 @@ impl BeamView {
             }
             ResponseTab::Headers => self.render_response_headers_table(cx),
         }
+    }
+
+    pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {
+        content_type.is_some_and(|value| {
+            let media_type = value.split(';').next().unwrap_or("").trim();
+            media_type.eq_ignore_ascii_case("text/html")
+                || media_type.eq_ignore_ascii_case("application/xhtml+xml")
+        })
     }
 
     fn command_key_icon_path() -> &'static str {
