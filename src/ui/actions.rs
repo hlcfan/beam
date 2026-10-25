@@ -12,6 +12,7 @@ actions!(
         FocusUrlInput,
         OpenSettings,
         OpenCommandPalette,
+        OpenEnvironmentVariables,
         SelectNextRequestInTree,
         SelectPrevRequestInTree,
         ToggleSelectedFolder,
