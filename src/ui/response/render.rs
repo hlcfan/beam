@@ -49,9 +49,6 @@ impl BeamView {
                 .when_some(timestamp_label, |button, label| {
                     button.label(label).text_color(cx.theme().muted_foreground)
                 })
-                .when_some(timestamp_tooltip, |button, text| {
-                    button.tooltip(text)
-                })
                 .dropdown_menu(move |menu, _window, menu_cx| {
                     let list_width_px = 180.0;
                     let mut menu = menu.min_w(px(list_width_px));
@@ -193,6 +190,22 @@ impl BeamView {
                     );
 
                     menu
+                })
+                .map(|button| match timestamp_tooltip {
+                    Some(text) => HoverCard::new("response-timestamp")
+                        .anchor(gpui_kit::Anchor::BottomCenter)
+                        .appearance(false)
+                        .open_delay(Duration::ZERO)
+                        .close_delay(Duration::from_millis(150))
+                        .trigger(button)
+                        .content(move |_, window, cx| {
+                            Tooltip::new(text.clone())
+                                .m_0()
+                                .shadow_none()
+                                .build(window, cx)
+                        })
+                        .into_any_element(),
+                    None => button.into_any_element(),
                 }),
         );
 
@@ -542,32 +555,28 @@ impl BeamView {
         let trigger = h_flex()
             .items_center()
             .gap_1()
+            .when(status_text.is_some(), |trigger| trigger.cursor_pointer())
             .child("Status:")
             .child(
                 div()
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(status_color)
-                    .when(status_text.is_some(), |div| div.cursor_pointer())
                     .child(status_code),
-            )
-            .cursor_pointer();
+            );
 
         match status_text {
             Some(status_text) => HoverCard::new("response-status-summary")
-                .anchor(gpui_kit::Anchor::BottomRight)
+                .anchor(gpui_kit::Anchor::BottomCenter)
                 .appearance(false)
                 .open_delay(Duration::from_millis(100))
                 .close_delay(Duration::from_millis(150))
                 .trigger(trigger)
-                .child(
-                    div()
-                        .occlude()
-                        .popover_style(cx)
-                        .px_2()
-                        .py_0()
-                        .text_sm()
-                        .child(status_text),
-                )
+                .content(move |_, window, cx| {
+                    Tooltip::new(status_text.clone())
+                        .m_0()
+                        .shadow_none()
+                        .build(window, cx)
+                })
                 .into_any_element(),
             None => trigger.into_any_element(),
         }
