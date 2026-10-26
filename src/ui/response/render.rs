@@ -552,13 +552,19 @@ impl BeamView {
         let (status_code, status_text) =
             Self::response_status_code_and_text(&self.response_status, self.response_status_code);
         let status_color = Self::status_code_in_color(self.response_status_code, cx);
-        let trigger = div()
-            .font_weight(gpui_kit::FontWeight::MEDIUM)
-            .text_color(status_color)
-            .when(status_text.is_some(), |div| div.cursor_pointer())
-            .child(status_code);
+        let trigger = h_flex()
+            .items_center()
+            .gap_1()
+            .when(status_text.is_some(), |trigger| trigger.cursor_pointer())
+            .child("Status:")
+            .child(
+                div()
+                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                    .text_color(status_color)
+                    .child(status_code),
+            );
 
-        let status = match status_text {
+        match status_text {
             Some(status_text) => HoverCard::new("response-status-summary")
                 .anchor(gpui_kit::Anchor::BottomCenter)
                 .appearance(false)
@@ -573,14 +579,7 @@ impl BeamView {
                 })
                 .into_any_element(),
             None => trigger.into_any_element(),
-        };
-
-        h_flex()
-            .items_center()
-            .gap_1()
-            .child("Status:")
-            .child(status)
-            .into_any_element()
+        }
     }
 
     fn response_status_code_and_text(
