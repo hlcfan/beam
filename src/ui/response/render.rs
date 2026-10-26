@@ -49,9 +49,6 @@ impl BeamView {
                 .when_some(timestamp_label, |button, label| {
                     button.label(label).text_color(cx.theme().muted_foreground)
                 })
-                .when_some(timestamp_tooltip, |button, text| {
-                    button.tooltip(text)
-                })
                 .dropdown_menu(move |menu, _window, menu_cx| {
                     let list_width_px = 180.0;
                     let mut menu = menu.min_w(px(list_width_px));
@@ -193,6 +190,25 @@ impl BeamView {
                     );
 
                     menu
+                })
+                .map(|button| match timestamp_tooltip {
+                    Some(text) => HoverCard::new("response-timestamp")
+                        .anchor(gpui_kit::Anchor::BottomRight)
+                        .appearance(false)
+                        .open_delay(Duration::ZERO)
+                        .close_delay(Duration::from_millis(150))
+                        .trigger(button)
+                        .child(
+                            div()
+                                .occlude()
+                                .popover_style(cx)
+                                .px_2()
+                                .py_0()
+                                .text_sm()
+                                .child(text),
+                        )
+                        .into_any_element(),
+                    None => button.into_any_element(),
                 }),
         );
 
