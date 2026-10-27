@@ -151,6 +151,8 @@ pub fn run_app(
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-p", OpenCommandPalette, None),
             #[cfg(target_os = "macos")]
+            KeyBinding::new("cmd-e", OpenEnvironmentVariables, None),
+            #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-d", DuplicateActiveRequest, None),
             #[cfg(target_os = "macos")]
             KeyBinding::new("cmd-backspace", DeleteSelectedTreeNode, None),
@@ -169,6 +171,8 @@ pub fn run_app(
             KeyBinding::new("ctrl-,", OpenSettings, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-p", OpenCommandPalette, None),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            KeyBinding::new("ctrl-e", OpenEnvironmentVariables, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
             KeyBinding::new("ctrl-d", DuplicateActiveRequest, None),
             #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -346,6 +350,31 @@ pub fn run_app(
                         }
                     }
                 }
+            });
+        });
+        cx.on_action(|_: &OpenEnvironmentVariables, cx: &mut App| {
+            cx.defer(move |cx| {
+                let Some(window_handle) = cx.active_window() else {
+                    return;
+                };
+                let Some(root) = window_handle
+                    .downcast::<Root>()
+                    .and_then(|h| h.read(cx).ok())
+                else {
+                    return;
+                };
+                let Ok(beam_view) = root.view().clone().downcast::<BeamView>() else {
+                    return;
+                };
+                let _ = window_handle.update(cx, |_root_view, window, cx| {
+                    beam_view.update(cx, |beam_view, cx| {
+                        beam_view.on_action_open_environment_variables(
+                            &OpenEnvironmentVariables,
+                            window,
+                            cx,
+                        );
+                    });
+                });
             });
         });
         cx.on_action(|_: &SelectNextRequestInTree, cx: &mut App| {

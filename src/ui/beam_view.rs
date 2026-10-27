@@ -353,6 +353,11 @@ impl BeamView {
                         Button::new("title-bar-environment-sheet")
                             .small()
                             .custom(title_bar_button_variant(cx))
+                            .tooltip_with_action(
+                                "Open environment variables",
+                                &OpenEnvironmentVariables,
+                                None,
+                            )
                             .cursor_pointer()
                             .h_full()
                             .px_1()
@@ -556,6 +561,7 @@ impl Render for BeamView {
             .on_action(cx.listener(Self::on_action_delete_selected_tree_node))
             .on_action(cx.listener(Self::on_action_toggle_selected_folder))
             .on_action(cx.listener(Self::on_action_focus_url_input))
+            .on_action(cx.listener(Self::on_action_open_environment_variables))
             .on_action(cx.listener(Self::on_action_format_request_body))
             .on_action(cx.listener(Self::on_action_format_response_body))
             .on_action(cx.listener(Self::on_action_tree_menu_send_request))

@@ -110,6 +110,19 @@ impl BeamView {
         self.dismiss_environment_variable_overlays(cx);
     }
 
+    pub(in crate::ui) fn on_action_open_environment_variables(
+        &mut self,
+        _: &OpenEnvironmentVariables,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.has_active_sheet(cx) {
+            window.close_sheet(cx);
+            return;
+        }
+        self.open_environment_variables_sheet(window, cx);
+    }
+
     pub(in crate::ui) fn open_environment_variables_sheet(
         &mut self,
         window: &mut Window,
