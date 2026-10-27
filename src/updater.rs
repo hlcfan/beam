@@ -79,9 +79,21 @@ pub(crate) fn check(channel: UpdateChannel) -> Result<AvailableUpdate, String> {
                 .error_for_status()?
                 .json::<GitHubRelease>()
         })
-        .map_err(|error| format!("Could not check for updates: {error}"))?
+        .map_err(|error| format!("Could not check for updates: {}", error_chain(&error)))?
         .into_release(channel)?;
     prepare_update(channel, release, platform, CARGO_VERSION, build_commit())
+}
+
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
+
+    message
 }
 
 pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
