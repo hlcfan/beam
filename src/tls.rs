@@ -1,4 +1,6 @@
 //! TLS initialization shared by HTTP requests and update downloads.
+//!
+//! `run_app` calls `init_provider` once at startup, before any client is built.
 
 #[cfg(not(target_os = "macos"))]
 use std::sync::Once;

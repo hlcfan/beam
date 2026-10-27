@@ -5,11 +5,20 @@ pub(in crate::ui) const URL_EDITOR_CACHE_CAP: usize = 32;
 
 impl BeamView {
     pub(in crate::ui) fn format_human_timestamp(timestamp: &str) -> String {
-        crate::timestamps::format_local_input(timestamp, crate::timestamps::MINUTE_FORMAT)
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|parsed| {
+                parsed
+                    .with_timezone(&Local)
+                    .format("%Y-%m-%d %H:%M")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| timestamp.to_string())
     }
 
     pub(in crate::ui) fn format_human_time(timestamp: &str) -> String {
-        crate::timestamps::format_local_input(timestamp, crate::timestamps::TIME_FORMAT)
+        chrono::DateTime::parse_from_rfc3339(timestamp)
+            .map(|parsed| parsed.with_timezone(&Local).format("%H:%M:%S").to_string())
+            .unwrap_or_else(|_| timestamp.to_string())
     }
 
     pub(in crate::ui) fn method_label(method: HttpMethod) -> &'static str {

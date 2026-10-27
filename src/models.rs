@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 use ulid::Ulid;
 
 use crate::schema::SCHEMA_VERSION_V1;
@@ -159,15 +159,13 @@ pub struct WorkspaceMeta {
     pub workspace_id: Ulid,
     pub name: String,
     pub description: Option<String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 impl WorkspaceFile {
     pub fn new(name: impl Into<String>) -> Self {
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         Self {
             schema_version: SCHEMA_VERSION_V1,
             workspace: WorkspaceMeta {
@@ -215,10 +213,8 @@ pub struct FolderMeta {
     pub parent_folder_id: Option<Ulid>,
     pub name: String,
     pub description: Option<String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -238,10 +234,8 @@ pub struct RequestMeta {
     pub request_id: Ulid,
     pub name: String,
     pub description: Option<String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,10 +341,8 @@ pub struct EnvironmentMeta {
     #[serde(default)]
     pub file_name: String,
     pub description: Option<String>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,8 +366,7 @@ pub struct LocalStateFile {
 pub struct LocalState {
     pub active_global_environment_id: Option<Ulid>,
     pub last_opened_request_id: Option<Ulid>,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -403,8 +394,7 @@ pub struct WorkspaceEntry {
     pub name: String,
     /// Directory name relative to the data root (slugified from name).
     pub path: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub created_at: OffsetDateTime,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -429,8 +419,7 @@ pub struct AppSettings {
     pub html_response_view: AppHtmlResponseView,
     #[serde(default)]
     pub update_channel: UpdateChannel,
-    #[serde(with = "time::serde::rfc3339")]
-    pub updated_at: OffsetDateTime,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -470,7 +459,7 @@ impl WorkspacesRegistryFile {
                     workspace_id,
                     name,
                     path,
-                    created_at: OffsetDateTime::now_utc(),
+                    created_at: Utc::now(),
                 }],
             },
         }
@@ -484,7 +473,7 @@ impl Default for LocalStateFile {
             local_state: LocalState {
                 active_global_environment_id: None,
                 last_opened_request_id: None,
-                updated_at: OffsetDateTime::now_utc(),
+                updated_at: Utc::now(),
             },
             tree_state: TreeState::default(),
         }
@@ -503,7 +492,7 @@ impl Default for AppSettingsFile {
                 wrapping_indent: AppWrappingIndent::default(),
                 html_response_view: AppHtmlResponseView::default(),
                 update_channel: UpdateChannel::default(),
-                updated_at: OffsetDateTime::now_utc(),
+                updated_at: Utc::now(),
             },
         }
     }
@@ -537,8 +526,8 @@ mod tests {
         RequestDefinition, RequestFile, RequestMeta, ScriptConfig,
     };
     use crate::schema::SCHEMA_VERSION_V1;
+    use chrono::Utc;
     use std::path::PathBuf;
-    use time::OffsetDateTime;
     use ulid::Ulid;
 
     #[test]
@@ -627,7 +616,7 @@ mod tests {
 
     #[test]
     fn request_file_runtime_path_is_not_serialized() {
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let request = RequestFile {
             meta: RequestMeta {
                 request_id: Ulid::new(),
@@ -654,7 +643,7 @@ mod tests {
 
     #[test]
     fn folder_and_environment_runtime_paths_are_not_serialized() {
-        let now = OffsetDateTime::now_utc();
+        let now = Utc::now();
         let environment = EnvironmentFile {
             schema_version: SCHEMA_VERSION_V1,
             environment: EnvironmentMeta {

@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use chrono::{DateTime, Utc};
 use rquickjs::{CatchResultExt, Context, Object, Runtime, function::Func};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
 
 use crate::models::EnvironmentVariable;
 
@@ -20,8 +20,7 @@ pub enum ConsoleLevel {
 pub struct ConsoleMessage {
     pub level: ConsoleLevel,
     pub message: String,
-    #[serde(with = "time::serde::rfc3339")]
-    pub timestamp: OffsetDateTime,
+    pub timestamp: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,7 +398,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Log,
                     message: msg,
-                    timestamp: OffsetDateTime::now_utc(),
+                    timestamp: Utc::now(),
                 });
             }
         });
@@ -412,7 +411,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Error,
                     message: msg,
-                    timestamp: OffsetDateTime::now_utc(),
+                    timestamp: Utc::now(),
                 });
             }
         });
@@ -425,7 +424,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Warn,
                     message: msg,
-                    timestamp: OffsetDateTime::now_utc(),
+                    timestamp: Utc::now(),
                 });
             }
         });
@@ -438,7 +437,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Info,
                     message: msg,
-                    timestamp: OffsetDateTime::now_utc(),
+                    timestamp: Utc::now(),
                 });
             }
         });
@@ -451,7 +450,7 @@ fn setup_global_objects(
                 output.push(ConsoleMessage {
                     level: ConsoleLevel::Debug,
                     message: msg,
-                    timestamp: OffsetDateTime::now_utc(),
+                    timestamp: Utc::now(),
                 });
             }
         });

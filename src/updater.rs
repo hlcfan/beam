@@ -65,7 +65,6 @@ pub(crate) fn check(channel: UpdateChannel) -> Result<AvailableUpdate, String> {
         UpdateChannel::Release => "latest",
         UpdateChannel::Nightly => "tags/nightly",
     };
-    crate::tls::init_provider();
     let release = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .user_agent("Beam-Updater")
@@ -102,7 +101,6 @@ pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
         return Err("This version is already up to date.".into());
     }
     let key = verification_key(option_env!("BEAM_UPDATE_PUBLIC_KEY"))?;
-    crate::tls::init_provider();
     let mut builder = self_update::backends::custom::Update::configure();
     builder
         .source(PinnedRelease(update.release.clone()))

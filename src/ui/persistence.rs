@@ -18,7 +18,7 @@ impl BeamView {
         }
 
         local_state.local_state.last_opened_request_id = Some(request_id);
-        local_state.local_state.updated_at = OffsetDateTime::now_utc();
+        local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
             .map_err(|error| format!("Failed to save local state: {error}"))
@@ -46,7 +46,7 @@ impl BeamView {
         }
 
         local_state.tree_state.expanded_item_ids = expanded_item_ids;
-        local_state.local_state.updated_at = OffsetDateTime::now_utc();
+        local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
             .map_err(|error| format!("Failed to save local state: {error}"))
@@ -70,7 +70,7 @@ impl BeamView {
         }
 
         local_state.local_state.active_global_environment_id = active_global_environment_id;
-        local_state.local_state.updated_at = OffsetDateTime::now_utc();
+        local_state.local_state.updated_at = Utc::now();
         storage
             .save_local_state(&local_state)
             .map_err(|error| format!("Failed to save local state: {error}"))
