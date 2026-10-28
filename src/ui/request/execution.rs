@@ -44,6 +44,44 @@ pub(in crate::ui) enum RequestExecutionStatus {
 mod tests {
     use super::*;
 
+    #[test]
+    fn http_client_preserves_query_and_form_encoding() {
+        crate::tls::init_provider();
+        let request = shared_http_client()
+            .expect("TLS client initializes")
+            .post("https://example.com/submit")
+            .query(&[("search", "a b&c")])
+            .form(&[("message", "x+y z")])
+            .build()
+            .expect("build form request");
+        assert_eq!(request.url().query(), Some("search=a+b%26c"));
+        assert_eq!(
+            request.headers()["content-type"],
+            "application/x-www-form-urlencoded"
+        );
+        assert_eq!(
+            request.body().and_then(reqwest::Body::as_bytes),
+            Some(b"message=x%2By+z".as_slice())
+        );
+    }
+
+    #[test]
+    fn http_client_preserves_multipart_requests() {
+        crate::tls::init_provider();
+        let request = shared_http_client()
+            .expect("TLS client initializes")
+            .post("https://example.com/submit")
+            .multipart(reqwest::multipart::Form::new().text("message", "hello"))
+            .build()
+            .expect("build multipart request");
+        assert!(
+            request.headers()["content-type"]
+                .to_str()
+                .expect("content type")
+                .starts_with("multipart/form-data; boundary=")
+        );
+    }
+
     fn ready_request() -> RequestAuthoringState {
         RequestAuthoringState {
             url: "https://example.com".to_string(),
@@ -856,7 +894,7 @@ fn shared_http_client() -> Result<&'static Client, String> {
         .get_or_init(|| {
             Client::builder()
                 .user_agent(default_user_agent())
-                .danger_accept_invalid_certs(true)
+                .tls_danger_accept_invalid_certs(true)
                 .build()
                 .map_err(|error| format!("Failed to initialize HTTP client: {error}"))
         })

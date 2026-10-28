@@ -925,3 +925,29 @@ fn setup_global_objects(
     let _ = ctx.globals().remove("__recordTest");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn javascript_dates_work_without_host_date_conversions() {
+        let response = ScriptRuntimeResponse {
+            status: 200,
+            status_text: "OK".into(),
+            headers: Vec::new(),
+            body: String::new(),
+            response_time_ms: 1,
+            body_size_bytes: 0,
+        };
+        let result = execute_post_request_script(
+            r#"console.log(new Date("2020-06-09T21:10:36.177Z").toISOString());"#,
+            &response,
+            &[],
+            false,
+        );
+        assert!(result.success, "{:?}", result.error_message);
+        assert_eq!(result.console_output.len(), 1);
+        assert_eq!(result.console_output[0].message, "2020-06-09T21:10:36.177Z");
+    }
+}

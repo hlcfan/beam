@@ -122,6 +122,7 @@ pub fn run_app(
     sync_runtime: DataSyncRuntime,
     workspace_paths: BeamPaths,
 ) {
+    crate::tls::init_provider();
     let app = gpui_kit::application().with_assets(Assets);
     app.run(move |cx| {
         gpui_kit::init(cx);
