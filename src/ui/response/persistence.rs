@@ -229,6 +229,7 @@ impl BeamView {
         cx: &mut Context<Self>,
         update: impl FnOnce(&mut EditorState, &mut Window, &mut Context<EditorState>),
     ) {
+        self.response_body_format_task = None;
         self.suppress_response_scroll_offset_persistence = true;
         self.response_body_editor.update(cx, |input, cx| {
             update(input, window, cx);

@@ -10,18 +10,23 @@ mod tests;
 struct SelectWorkspaceTab(usize);
 
 pub(super) fn init_workspace_tab_actions(cx: &mut App) {
-    let modifier = if cfg!(target_os = "macos") {
-        "cmd"
+    // KeyBinding::new requires static keystrokes.
+    let keystrokes: [&'static str; 9] = if cfg!(target_os = "macos") {
+        [
+            "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
+        ]
     } else {
-        "ctrl"
+        [
+            "ctrl-1", "ctrl-2", "ctrl-3", "ctrl-4", "ctrl-5", "ctrl-6", "ctrl-7", "ctrl-8",
+            "ctrl-9",
+        ]
     };
-    cx.bind_keys((1..=9).map(|number| {
-        KeyBinding::new(
-            &format!("{modifier}-{number}"),
-            SelectWorkspaceTab(number - 1),
-            None,
-        )
-    }));
+    cx.bind_keys(
+        keystrokes
+            .into_iter()
+            .enumerate()
+            .map(|(index, keystroke)| KeyBinding::new(keystroke, SelectWorkspaceTab(index), None)),
+    );
     cx.on_action(|action: &SelectWorkspaceTab, cx: &mut App| {
         let index = action.0;
         cx.defer(move |cx| {

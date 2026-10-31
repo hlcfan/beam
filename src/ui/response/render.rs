@@ -166,7 +166,8 @@ impl BeamView {
                                                                     &history_entry,
                                                                 );
                                                             this.apply_response_snapshot(
-                                                                &snapshot,
+                                                                snapshot,
+                                                                false,
                                                                 window,
                                                                 cx,
                                                             );

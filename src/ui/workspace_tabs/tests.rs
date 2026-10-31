@@ -12,7 +12,7 @@ use gpui_kit as gpui;
 use gpui_kit::base::test_support::{ElementSnapshot, find};
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::{
-    AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollWheelEvent, SharedString,
+    AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollEvent, SharedString,
     TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
 use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
@@ -312,7 +312,7 @@ fn scroll_response_editor(fixture: &Fixture, cx: &mut VisualTestContext, x: f32,
     let bounds = fixture.view.read_with(cx, |view, cx| {
         view.response_body_editor.read(cx).input_bounds()
     });
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: bounds.center(),
         delta: ScrollDelta::Pixels(point(px(x), px(y))),
         ..Default::default()
@@ -366,7 +366,7 @@ fn scroll_workspace_tree(fixture: &Fixture, cx: &mut VisualTestContext, delta: f
     let bounds = fixture
         .view
         .read_with(cx, |view, _| view.workspace_scroll_handle.bounds());
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: bounds.center(),
         delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
         ..Default::default()
@@ -654,7 +654,7 @@ fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
         snapshot(cx, "beam-title-bar").bounds()
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll.bounds().center(),
         delta: ScrollDelta::Lines(point(0., -3.)),
         ..Default::default()
@@ -665,7 +665,7 @@ fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
         "ordinary mouse wheel scrolls horizontally"
     );
     let mouse_offset = scroll.offset().x;
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll.bounds().center(),
         delta: ScrollDelta::Pixels(point(px(-80.), px(0.))),
         touch_phase: TouchPhase::Started,
