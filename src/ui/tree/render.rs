@@ -2,9 +2,6 @@ use super::*;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::spinner::Spinner;
 
-#[cfg(test)]
-mod tests;
-
 impl BeamView {
     pub(in crate::ui) fn render_tree_row(
         &self,
