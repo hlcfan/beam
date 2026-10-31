@@ -32,6 +32,15 @@ jobs:
       - name: Check out Beam
         uses: actions/checkout@v6
 
+      - name: Require tag to match the Cargo version
+        if: github.ref_type == 'tag'
+        run: |
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n1)"
+          if [[ "${GITHUB_REF_NAME}" != "v${cargo_version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match Cargo.toml version ${cargo_version}."
+            exit 1
+          fi
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
