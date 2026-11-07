@@ -48,6 +48,74 @@ pub(in crate::ui) enum RequestExecutionStatus {
 mod tests {
     use super::*;
 
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::RgbaImage::new(width, height)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        bytes
+    }
+
+    fn snapshot(body: String, image: Option<Vec<u8>>) -> HttpResponseSnapshot {
+        HttpResponseSnapshot {
+            status: "OK".to_string(),
+            status_code: Some(200),
+            time: "5 ms".to_string(),
+            size: String::new(),
+            timestamp: String::new(),
+            body,
+            headers: "Content-Type: image/png".to_string(),
+            content_type: Some("image/png".to_string()),
+            image,
+        }
+    }
+
+    #[test]
+    fn script_sees_real_byte_length_for_image_responses() {
+        let bytes = png_bytes(4, 4);
+        let (body, image) = response_body_and_image(Some("image/png"), &bytes);
+
+        let runtime = script_runtime_response(&snapshot(body, image));
+
+        assert_eq!(runtime.body_size_bytes, bytes.len());
+    }
+
+    #[test]
+    fn script_sees_text_length_for_text_responses() {
+        let runtime = script_runtime_response(&snapshot("hello".to_string(), None));
+
+        assert_eq!(runtime.body_size_bytes, 5);
+        assert_eq!(runtime.body, "hello");
+    }
+
+    #[test]
+    fn text_served_as_image_stays_readable() {
+        let (body, image) = response_body_and_image(Some("image/png"), b"{\"error\":\"missing\"}");
+
+        assert_eq!(body, "{\"error\":\"missing\"}");
+        assert_eq!(image, None);
+    }
+
+    #[test]
+    fn binary_data_that_is_not_a_readable_image_gets_a_note() {
+        let (body, image) = response_body_and_image(Some("image/png"), &[0xff, 0xfe, 0x00, 0x80]);
+
+        assert!(body.contains("could not be read"), "{body}");
+        assert_eq!(image, None);
+    }
+
+    #[test]
+    fn previewable_image_keeps_bytes_and_shows_placeholder() {
+        let bytes = png_bytes(2, 2);
+        let (body, image) = response_body_and_image(Some("image/png"), &bytes);
+
+        assert_eq!(body, image_placeholder_body(bytes.len()));
+        assert_eq!(image, Some(bytes));
+    }
+
     #[test]
     fn http_client_preserves_query_and_form_encoding() {
         crate::tls::init_provider();
@@ -767,17 +835,7 @@ async fn execute_request_with_script(
         };
     }
 
-    let runtime_response = ScriptRuntimeResponse {
-        status: response.status_code.unwrap_or(0),
-        status_text: response.status.clone(),
-        headers: parse_response_headers(&response.headers),
-        body: response.body.clone(),
-        response_time_ms: parse_response_duration_ms(&response.time).unwrap_or(0),
-        body_size_bytes: response
-            .image
-            .as_ref()
-            .map_or(response.body.len(), Vec::len),
-    };
+    let runtime_response = script_runtime_response(&response);
     let script_exec_result = execute_post_request_script(
         &script_text,
         &runtime_response,
@@ -1260,18 +1318,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
             let completed_at = Utc::now().to_rfc3339();
             match response.bytes().await {
                 Ok(bytes) => {
-                    let (body, image) =
-                        match classify_image_preview(content_type.as_deref(), &bytes) {
-                            ImagePreview::NotImage => {
-                                (String::from_utf8_lossy(&bytes).to_string(), None)
-                            }
-                            ImagePreview::Ready => {
-                                (image_placeholder_body(bytes.len()), Some(bytes.to_vec()))
-                            }
-                            ImagePreview::Unavailable(message) => {
-                                (unavailable_image_body(&bytes, message), None)
-                            }
-                        };
+                    let (body, image) = response_body_and_image(content_type.as_deref(), &bytes);
                     HttpResponseSnapshot {
                         status: status_text,
                         status_code: Some(status.as_u16()),
@@ -1308,6 +1355,28 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
             content_type: None,
             image: None,
         },
+    }
+}
+
+fn script_runtime_response(response: &HttpResponseSnapshot) -> ScriptRuntimeResponse {
+    ScriptRuntimeResponse {
+        status: response.status_code.unwrap_or(0),
+        status_text: response.status.clone(),
+        headers: parse_response_headers(&response.headers),
+        body: response.body.clone(),
+        response_time_ms: parse_response_duration_ms(&response.time).unwrap_or(0),
+        body_size_bytes: response
+            .image
+            .as_ref()
+            .map_or(response.body.len(), Vec::len),
+    }
+}
+
+fn response_body_and_image(content_type: Option<&str>, bytes: &[u8]) -> (String, Option<Vec<u8>>) {
+    match classify_image_preview(content_type, bytes) {
+        ImagePreview::NotImage => (String::from_utf8_lossy(bytes).to_string(), None),
+        ImagePreview::Ready => (image_placeholder_body(bytes.len()), Some(bytes.to_vec())),
+        ImagePreview::Unavailable(message) => (unavailable_image_body(bytes, message), None),
     }
 }
 
