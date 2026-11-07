@@ -236,3 +236,10 @@ pub(super) fn response_image_from_bytes(
 pub(super) fn image_placeholder_body(len: usize) -> String {
     format!("[Image, {}]", format_bytes(len))
 }
+
+/// Body shown for an image type that cannot be previewed. Text served under an
+/// image content type (an error page, for example) stays readable; binary data
+/// falls back to the explanatory note.
+pub(super) fn unavailable_image_body(bytes: &[u8], note: String) -> String {
+    std::str::from_utf8(bytes).map_or(note, str::to_owned)
+}

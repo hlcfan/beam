@@ -29,6 +29,7 @@ use super::super::response::persistence::{
 };
 use super::super::response::{
     ImagePreview, classify_image_preview, image_placeholder_body, response_image_from_bytes,
+    unavailable_image_body,
 };
 use super::super::response_body_editor_language;
 
@@ -1267,7 +1268,9 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                             ImagePreview::Ready => {
                                 (image_placeholder_body(bytes.len()), Some(bytes.to_vec()))
                             }
-                            ImagePreview::Unavailable(message) => (message, None),
+                            ImagePreview::Unavailable(message) => {
+                                (unavailable_image_body(&bytes, message), None)
+                            }
                         };
                     HttpResponseSnapshot {
                         status: status_text,
