@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::fs;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use chrono::Utc;
-use gpui_kit::{Context, Window};
+use gpui_kit::{Context, Window, gpui};
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
 use tokio::sync::oneshot;
@@ -27,6 +27,10 @@ use super::super::response::persistence::{
     ConsoleMessageView, PersistedScriptResult, clear_script_result_for_request,
     persist_response_snapshot, persist_script_result,
 };
+use super::super::response::{
+    ImagePreview, classify_image_preview, image_placeholder_body, response_image_from_bytes,
+    unavailable_image_body,
+};
 use super::super::response_body_editor_language;
 
 pub(in crate::ui) const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
@@ -43,6 +47,77 @@ pub(in crate::ui) enum RequestExecutionStatus {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::RgbaImage::new(width, height)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        bytes
+    }
+
+    fn snapshot(body: String, image: Option<Arc<gpui::Image>>) -> HttpResponseSnapshot {
+        HttpResponseSnapshot {
+            status: "OK".to_string(),
+            status_code: Some(200),
+            time: "5 ms".to_string(),
+            size: String::new(),
+            timestamp: String::new(),
+            body,
+            headers: "Content-Type: image/png".to_string(),
+            content_type: Some("image/png".to_string()),
+            image,
+        }
+    }
+
+    #[test]
+    fn script_sees_real_byte_length_for_image_responses() {
+        let bytes = png_bytes(4, 4);
+        let (body, image) = response_body_and_image(Some("image/png"), &bytes);
+
+        let runtime = script_runtime_response(&snapshot(body, image));
+
+        assert_eq!(runtime.body_size_bytes, bytes.len());
+    }
+
+    #[test]
+    fn script_sees_text_length_for_text_responses() {
+        let runtime = script_runtime_response(&snapshot("hello".to_string(), None));
+
+        assert_eq!(runtime.body_size_bytes, 5);
+        assert_eq!(runtime.body, "hello");
+    }
+
+    #[test]
+    fn text_served_as_image_stays_readable() {
+        let (body, image) = response_body_and_image(Some("image/png"), b"{\"error\":\"missing\"}");
+
+        assert_eq!(body, "{\"error\":\"missing\"}");
+        assert_eq!(image, None);
+    }
+
+    #[test]
+    fn binary_data_that_is_not_a_readable_image_gets_a_note() {
+        let (body, image) = response_body_and_image(Some("image/png"), &[0xff, 0xfe, 0x00, 0x80]);
+
+        assert!(body.contains("could not be read"), "{body}");
+        assert_eq!(image, None);
+    }
+
+    #[test]
+    fn previewable_image_keeps_bytes_and_shows_placeholder() {
+        let bytes = png_bytes(2, 2);
+        let (body, image) = response_body_and_image(Some("image/png"), &bytes);
+
+        assert_eq!(body, image_placeholder_body(bytes.len()));
+        assert_eq!(
+            image.as_ref().map(|image| image.bytes()),
+            Some(bytes.as_slice())
+        );
+    }
 
     #[test]
     fn http_client_preserves_query_and_form_encoding() {
@@ -405,6 +480,8 @@ pub(in crate::ui) struct HttpResponseSnapshot {
     pub(in crate::ui) body: String,
     pub(in crate::ui) headers: String,
     pub(in crate::ui) content_type: Option<String>,
+    /// Decodable image, kept only for previewable images (`body` holds a placeholder).
+    pub(in crate::ui) image: Option<Arc<gpui::Image>>,
 }
 
 struct RequestExecutionOutcome {
@@ -667,6 +744,7 @@ impl BeamView {
                     this.response_body_language = response_language;
                     this.response_headers_raw = response.headers.clone();
                     this.response_content_type = response.content_type.clone();
+                    this.set_response_image(response.image.clone(), window, cx);
                     this.script_result = outcome.script_result.clone();
                 }
                 if let (Some(environment_id), Some(variables)) = (
@@ -757,14 +835,7 @@ async fn execute_request_with_script(
         };
     }
 
-    let runtime_response = ScriptRuntimeResponse {
-        status: response.status_code.unwrap_or(0),
-        status_text: response.status.clone(),
-        headers: parse_response_headers(&response.headers),
-        body: response.body.clone(),
-        response_time_ms: parse_response_duration_ms(&response.time).unwrap_or(0),
-        body_size_bytes: response.body.len(),
-    };
+    let runtime_response = script_runtime_response(&response);
     let script_exec_result = execute_post_request_script(
         &script_text,
         &runtime_response,
@@ -1108,6 +1179,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 body: error,
                 headers: String::new(),
                 content_type: None,
+                image: None,
             };
         }
     };
@@ -1245,16 +1317,20 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 .join("\n");
             let completed_at = Utc::now().to_rfc3339();
             match response.bytes().await {
-                Ok(bytes) => HttpResponseSnapshot {
-                    status: status_text,
-                    status_code: Some(status.as_u16()),
-                    time: format!("{} ms", start.elapsed().as_millis()),
-                    size: format_bytes(bytes.len()),
-                    timestamp: completed_at,
-                    body: String::from_utf8_lossy(&bytes).to_string(),
-                    headers,
-                    content_type,
-                },
+                Ok(bytes) => {
+                    let (body, image) = response_body_and_image(content_type.as_deref(), &bytes);
+                    HttpResponseSnapshot {
+                        status: status_text,
+                        status_code: Some(status.as_u16()),
+                        time: format!("{} ms", start.elapsed().as_millis()),
+                        size: format_bytes(bytes.len()),
+                        timestamp: completed_at,
+                        body,
+                        headers,
+                        content_type,
+                        image,
+                    }
+                }
                 Err(error) => HttpResponseSnapshot {
                     status: status_text,
                     status_code: Some(status.as_u16()),
@@ -1264,6 +1340,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                     body: format!("Failed to read response body: {error}"),
                     headers,
                     content_type,
+                    image: None,
                 },
             }
         }
@@ -1276,7 +1353,36 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
             body: format!("Request failed: {error}"),
             headers: String::new(),
             content_type: None,
+            image: None,
         },
+    }
+}
+
+fn script_runtime_response(response: &HttpResponseSnapshot) -> ScriptRuntimeResponse {
+    ScriptRuntimeResponse {
+        status: response.status_code.unwrap_or(0),
+        status_text: response.status.clone(),
+        headers: parse_response_headers(&response.headers),
+        body: response.body.clone(),
+        response_time_ms: parse_response_duration_ms(&response.time).unwrap_or(0),
+        body_size_bytes: response
+            .image
+            .as_ref()
+            .map_or(response.body.len(), |image| image.bytes().len()),
+    }
+}
+
+fn response_body_and_image(
+    content_type: Option<&str>,
+    bytes: &[u8],
+) -> (String, Option<Arc<gpui::Image>>) {
+    match classify_image_preview(content_type, bytes) {
+        ImagePreview::NotImage => (String::from_utf8_lossy(bytes).to_string(), None),
+        ImagePreview::Ready => (
+            image_placeholder_body(bytes.len()),
+            response_image_from_bytes(content_type, bytes.to_vec()),
+        ),
+        ImagePreview::Unavailable(message) => (unavailable_image_body(bytes, message), None),
     }
 }
 

@@ -212,7 +212,11 @@ impl BeamView {
         tabs
     }
 
-    fn render_response_editor_surface(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_response_editor_surface(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let show_html_preview = self.active_response_tab == ResponseTab::Body
             && self.shell.theme.html_response_view == AppHtmlResponseView::Webview
             && Self::is_html_content_type(self.response_content_type.as_deref());
@@ -222,6 +226,9 @@ impl BeamView {
         }
         match self.active_response_tab {
             ResponseTab::Body => {
+                if let Some(image) = self.response_image.clone() {
+                    return self.render_response_image(image, window, cx);
+                }
                 let response_body_text = self.response_body_editor.read(cx).value().to_string();
                 let trimmed_body = response_body_text.trim();
                 if trimmed_body.is_empty() {
@@ -269,6 +276,38 @@ impl BeamView {
             }
             ResponseTab::Headers => self.render_response_headers_table(cx),
         }
+    }
+
+    fn render_response_image(
+        &self,
+        image: Arc<gpui::Image>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // Starts decoding on first call and re-renders this view when done.
+        if image.clone().use_render_image(window, cx).is_none() {
+            return div()
+                .id("response-image-status")
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(cx.theme().muted_foreground)
+                .child("Decoding image…")
+                .into_any_element();
+        }
+        div()
+            .id("response-image-preview")
+            .size_full()
+            .overflow_scroll()
+            .p_3()
+            .child(
+                img(image)
+                    .id("response-image")
+                    .max_w_full()
+                    .object_fit(ObjectFit::Contain),
+            )
+            .into_any_element()
     }
 
     pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {
@@ -500,7 +539,7 @@ impl BeamView {
                         .w_full()
                         .h_full()
                         .when(is_sending, |d| d.opacity(0.45))
-                        .child(self.render_response_editor_surface(cx)),
+                        .child(self.render_response_editor_surface(window, cx)),
                 )
                 .when(is_sending, |d| d.child(self.render_shimmer_loading_bar(cx))),
             ResponseTab::Headers => div()
@@ -515,7 +554,7 @@ impl BeamView {
                         .w_full()
                         .h_full()
                         .when(is_sending, |d| d.opacity(0.45))
-                        .child(self.render_response_editor_surface(cx)),
+                        .child(self.render_response_editor_surface(window, cx)),
                 )
                 .when(is_sending, |d| d.child(self.render_shimmer_loading_bar(cx))),
         };
