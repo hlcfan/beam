@@ -280,7 +280,12 @@ impl BeamView {
             .size_full()
             .overflow_scroll()
             .p_3()
-            .child(img(image).max_w_full().object_fit(ObjectFit::Contain))
+            .child(
+                img(image)
+                    .id("response-image")
+                    .max_w_full()
+                    .object_fit(ObjectFit::Contain),
+            )
             .into_any_element()
     }
 
