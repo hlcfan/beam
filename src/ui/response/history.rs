@@ -13,6 +13,7 @@ use gpui_kit::gpui;
 use super::super::format_bytes;
 use super::{
     ImagePreview, classify_image_preview, image_placeholder_body, response_image_from_bytes,
+    unavailable_image_body,
 };
 
 const RESPONSE_BODY_TRUNCATED_NOTE: &str =
@@ -120,17 +121,16 @@ pub(in crate::ui) fn response_snapshot_from_history_execution(
         } else if let Some(body_ref) = summary.body_ref.as_ref() {
             let body_path = paths.local_dir.join("history/responses").join(body_ref);
             let bytes = fs::read(body_path).unwrap_or_default();
-            // Unpreviewable images are stored as their explanatory text, so
-            // anything that is not a ready image reads back as text.
-            if matches!(
-                classify_image_preview(content_type.as_deref(), &bytes),
-                ImagePreview::Ready
-            ) {
-                let placeholder = image_placeholder_body(bytes.len());
-                image = response_image_from_bytes(content_type.as_deref(), bytes);
-                placeholder
-            } else {
-                String::from_utf8_lossy(&bytes).to_string()
+            // Bodies saved under an earlier, looser limit are raw image bytes
+            // that no longer qualify, so they get the note, not lossy text.
+            match classify_image_preview(content_type.as_deref(), &bytes) {
+                ImagePreview::NotImage => String::from_utf8_lossy(&bytes).to_string(),
+                ImagePreview::Unavailable(note) => unavailable_image_body(&bytes, note),
+                ImagePreview::Ready => {
+                    let placeholder = image_placeholder_body(bytes.len());
+                    image = response_image_from_bytes(content_type.as_deref(), bytes);
+                    placeholder
+                }
             }
         } else {
             String::new()
@@ -529,6 +529,39 @@ mod tests {
             }
         }
         bytes
+    }
+
+    #[test]
+    fn stored_image_over_current_limits_reads_back_as_note() {
+        use crate::ui::HttpResponseSnapshot;
+        use crate::ui::response::persistence::persist_response_snapshot;
+
+        let temp = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(temp.path().to_path_buf());
+        let request_id = Ulid::new();
+        let bytes = png_bytes(9000, 1);
+        let response = HttpResponseSnapshot {
+            status: "OK".to_string(),
+            status_code: Some(200),
+            time: "1 ms".to_string(),
+            size: String::new(),
+            timestamp: "2026-11-07T00:00:00Z".to_string(),
+            body: String::new(),
+            headers: "Content-Type: image/png".to_string(),
+            content_type: Some("image/png".to_string()),
+            image: crate::ui::response::response_image_from_bytes(Some("image/png"), bytes),
+        };
+
+        persist_response_snapshot(&paths, request_id, &response).expect("persist");
+        let entries = load_response_history_entries(&paths, request_id);
+        let restored = response_snapshot_from_history_execution(&paths, &entries[0].execution);
+
+        assert!(restored.image.is_none());
+        assert!(
+            restored.body.contains("dimensions too large"),
+            "{}",
+            restored.body
+        );
     }
 
     fn png_bytes(width: u32, height: u32) -> Vec<u8> {
