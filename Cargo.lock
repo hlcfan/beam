@@ -596,6 +596,7 @@ dependencies = [
  "flate2",
  "gpui-kit",
  "gpui-webview",
+ "image",
  "lb-wry",
  "log",
  "lsp-types",

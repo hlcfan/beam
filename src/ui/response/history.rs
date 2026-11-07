@@ -7,7 +7,7 @@ use ulid::Ulid;
 use crate::paths::BeamPaths;
 
 use super::super::format_bytes;
-use super::{image_placeholder_body, response_image_format};
+use super::{ImagePreview, classify_image_preview, image_placeholder_body};
 
 const RESPONSE_BODY_TRUNCATED_NOTE: &str =
     "[Response body omitted from local history (truncated).]";
@@ -114,7 +114,12 @@ pub(in crate::ui) fn response_snapshot_from_history_execution(
         } else if let Some(body_ref) = summary.body_ref.as_ref() {
             let body_path = paths.local_dir.join("history/responses").join(body_ref);
             let bytes = fs::read(body_path).unwrap_or_default();
-            if response_image_format(content_type.as_deref()).is_some() && !bytes.is_empty() {
+            // Unpreviewable images are stored as their explanatory text, so
+            // anything that is not a ready image reads back as text.
+            if matches!(
+                classify_image_preview(content_type.as_deref(), &bytes),
+                ImagePreview::Ready
+            ) {
                 let placeholder = image_placeholder_body(bytes.len());
                 image = Some(bytes);
                 placeholder
@@ -426,8 +431,8 @@ mod tests {
         let temp = tempdir().expect("tempdir");
         let paths = BeamPaths::from_root(temp.path().to_path_buf());
         let request_id = Ulid::new();
-        // Bytes that are not valid UTF-8.
-        let bytes = vec![0x89, b'P', b'N', b'G', 0xff, 0xfe, 0x00, 0x80];
+        // PNG bytes are not valid UTF-8.
+        let bytes = png_bytes(2, 2);
         let response = HttpResponseSnapshot {
             status: "OK".to_string(),
             status_code: Some(200),
@@ -446,5 +451,43 @@ mod tests {
 
         assert_eq!(restored.image, Some(bytes));
         assert_eq!(restored.body, response.body);
+    }
+
+    #[test]
+    fn classify_rejects_oversized_and_unreadable_images() {
+        use crate::ui::response::{ImagePreview, classify_image_preview};
+
+        let png = Some("image/png");
+        assert!(matches!(
+            classify_image_preview(png, &png_bytes(2, 2)),
+            ImagePreview::Ready
+        ));
+        assert!(matches!(
+            classify_image_preview(png, &png_bytes(9000, 1)),
+            ImagePreview::Unavailable(message) if message.contains("9000x1")
+        ));
+        assert!(matches!(
+            classify_image_preview(png, &vec![0; 21 * 1024 * 1024]),
+            ImagePreview::Unavailable(message) if message.contains("too large")
+        ));
+        assert!(matches!(
+            classify_image_preview(png, b"not an image"),
+            ImagePreview::Unavailable(_)
+        ));
+        assert!(matches!(
+            classify_image_preview(Some("text/plain"), b"hello"),
+            ImagePreview::NotImage
+        ));
+    }
+
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::RgbaImage::new(width, height)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        bytes
     }
 }

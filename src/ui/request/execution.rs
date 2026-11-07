@@ -28,7 +28,7 @@ use super::super::response::persistence::{
     persist_response_snapshot, persist_script_result,
 };
 use super::super::response::{
-    image_placeholder_body, response_image_format, response_image_from_bytes,
+    ImagePreview, classify_image_preview, image_placeholder_body, response_image_from_bytes,
 };
 use super::super::response_body_editor_language;
 
@@ -1256,21 +1256,26 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
             let completed_at = Utc::now().to_rfc3339();
             match response.bytes().await {
                 Ok(bytes) => {
-                    let is_image = response_image_format(content_type.as_deref()).is_some();
+                    let (body, image) =
+                        match classify_image_preview(content_type.as_deref(), &bytes) {
+                            ImagePreview::NotImage => {
+                                (String::from_utf8_lossy(&bytes).to_string(), None)
+                            }
+                            ImagePreview::Ready => {
+                                (image_placeholder_body(bytes.len()), Some(bytes.to_vec()))
+                            }
+                            ImagePreview::Unavailable(message) => (message, None),
+                        };
                     HttpResponseSnapshot {
                         status: status_text,
                         status_code: Some(status.as_u16()),
                         time: format!("{} ms", start.elapsed().as_millis()),
                         size: format_bytes(bytes.len()),
                         timestamp: completed_at,
-                        body: if is_image {
-                            image_placeholder_body(bytes.len())
-                        } else {
-                            String::from_utf8_lossy(&bytes).to_string()
-                        },
+                        body,
                         headers,
                         content_type,
-                        image: is_image.then(|| bytes.to_vec()),
+                        image,
                     }
                 }
                 Err(error) => HttpResponseSnapshot {
