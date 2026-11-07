@@ -279,6 +279,9 @@ impl BeamView {
         div()
             .id("response-image-preview")
             .size_full()
+            .flex()
+            .flex_col()
+            .items_start()
             .overflow_scroll()
             .p_3()
             .child(
@@ -286,7 +289,8 @@ impl BeamView {
                     .id("response-image")
                     .with_loading(move || {
                         div()
-                            .size_full()
+                            .w_full()
+                            .flex_1()
                             .flex()
                             .items_center()
                             .justify_center()
@@ -294,6 +298,7 @@ impl BeamView {
                             .child("Decoding image…")
                             .into_any_element()
                     })
+                    .flex_none()
                     .max_w_full()
                     .object_fit(ObjectFit::Contain),
             )
