@@ -182,7 +182,7 @@ impl BeamView {
 
 const MAX_IMAGE_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
 const MAX_IMAGE_PREVIEW_SIDE: u32 = 8192;
-const MAX_IMAGE_PREVIEW_PIXELS: u64 = 25_000_000;
+const MAX_IMAGE_PREVIEW_PIXELS: u64 = 64_000_000;
 /// gpui decodes every GIF frame to RGBA, so the budget is width x height x frames.
 const MAX_GIF_PREVIEW_TOTAL_PIXELS: u64 = 128_000_000;
 
