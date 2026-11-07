@@ -744,7 +744,7 @@ impl BeamView {
                     this.response_body_language = response_language;
                     this.response_headers_raw = response.headers.clone();
                     this.response_content_type = response.content_type.clone();
-                    this.response_image = response.image.clone();
+                    this.set_response_image(response.image.clone(), window, cx);
                     this.script_result = outcome.script_result.clone();
                 }
                 if let (Some(environment_id), Some(variables)) = (

@@ -26,7 +26,7 @@ impl BeamView {
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
         self.response_content_type = None;
-        self.response_image = None;
+        self.set_response_image(None, window, cx);
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
             cx,
@@ -49,7 +49,7 @@ impl BeamView {
         self.response_time = snapshot.time.clone();
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
-        self.response_image = snapshot.image.clone();
+        self.set_response_image(snapshot.image.clone(), window, cx);
         self.response_content_type = content_type;
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
@@ -151,6 +151,32 @@ impl BeamView {
             |input, window, cx| Self::replace_editor_text(input, formatted, window, cx),
         );
         cx.notify();
+    }
+
+    /// Swaps the displayed image and frees the outgoing one. gpui keeps decoded
+    /// frames in its asset cache and sprite atlas until told to drop them, so a
+    /// large GIF would otherwise stay resident after the user moves on.
+    pub(in crate::ui) fn set_response_image(
+        &mut self,
+        image: Option<Arc<gpui::Image>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let previous = std::mem::replace(&mut self.response_image, image);
+        let Some(previous) = previous else {
+            return;
+        };
+        if self
+            .response_image
+            .as_ref()
+            .is_some_and(|current| current.id == previous.id)
+        {
+            return;
+        }
+        if let Some(render_image) = previous.clone().get_render_image(window, cx) {
+            let _ = window.drop_image(render_image);
+        }
+        previous.remove_asset(cx);
     }
 }
 
