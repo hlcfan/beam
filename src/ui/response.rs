@@ -157,7 +157,7 @@ impl BeamView {
 
 const MAX_IMAGE_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
 const MAX_IMAGE_PREVIEW_SIDE: u32 = 8192;
-const MAX_IMAGE_PREVIEW_PIXELS: u64 = 64_000_000;
+const MAX_IMAGE_PREVIEW_PIXELS: u64 = 25_000_000;
 
 pub(super) enum ImagePreview {
     /// Not an image type the pane previews; show the body as text.
