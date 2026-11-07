@@ -489,6 +489,43 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn classify_rejects_gifs_over_the_total_pixel_budget() {
+        use crate::ui::response::{ImagePreview, classify_image_preview};
+
+        let gif = Some("image/gif");
+        assert!(matches!(
+            classify_image_preview(gif, &gif_bytes(10, 10, 5)),
+            ImagePreview::Ready
+        ));
+        assert!(matches!(
+            classify_image_preview(gif, &gif_bytes(1000, 1000, 70)),
+            ImagePreview::Unavailable(message) if message.contains("Animated GIF too large")
+        ));
+    }
+
+    fn gif_bytes(width: u16, height: u16, frames: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder =
+                gif::Encoder::new(&mut bytes, width, height, &[0, 0, 0, 255, 255, 255])
+                    .expect("gif encoder");
+            for _ in 0..frames {
+                let frame = gif::Frame {
+                    width,
+                    height,
+                    buffer: std::borrow::Cow::Owned(vec![
+                        0;
+                        usize::from(width) * usize::from(height)
+                    ]),
+                    ..gif::Frame::default()
+                };
+                encoder.write_frame(&frame).expect("write frame");
+            }
+        }
+        bytes
+    }
+
     fn png_bytes(width: u32, height: u32) -> Vec<u8> {
         let mut bytes = Vec::new();
         image::RgbaImage::new(width, height)

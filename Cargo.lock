@@ -594,6 +594,7 @@ dependencies = [
  "chrono",
  "dirs 6.0.0",
  "flate2",
+ "gif 0.14.2",
  "gpui-kit",
  "gpui-webview",
  "image",
