@@ -83,12 +83,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: macOS
-            os: macos-14
+          - label: macOS 15
+            os: macos-15
             target: aarch64-apple-darwin
             archive_name: beam-macos-aarch64.tar.gz
             artifact_name: release-macos
             package_dir: beam-macos-aarch64
+            binary_name: beam
+            package_kind: app
+          - label: macOS 26
+            os: macos-latest
+            target: aarch64-apple-darwin
+            archive_name: beam-macos26-aarch64.tar.gz
+            artifact_name: release-macos26
+            package_dir: beam-macos26-aarch64
             binary_name: beam
             package_kind: app
           - label: Linux
