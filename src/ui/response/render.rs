@@ -223,7 +223,7 @@ impl BeamView {
         match self.active_response_tab {
             ResponseTab::Body => {
                 if let Some(image) = self.response_image.clone() {
-                    return self.render_response_image(image);
+                    return self.render_response_image(image, cx);
                 }
                 let response_body_text = self.response_body_editor.read(cx).value().to_string();
                 let trimmed_body = response_body_text.trim();
@@ -274,7 +274,8 @@ impl BeamView {
         }
     }
 
-    fn render_response_image(&self, image: Arc<gpui::Image>) -> AnyElement {
+    fn render_response_image(&self, image: Arc<gpui::Image>, cx: &mut Context<Self>) -> AnyElement {
+        let muted_foreground = cx.theme().muted_foreground;
         div()
             .id("response-image-preview")
             .size_full()
@@ -283,6 +284,16 @@ impl BeamView {
             .child(
                 img(image)
                     .id("response-image")
+                    .with_loading(move || {
+                        div()
+                            .size_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_color(muted_foreground)
+                            .child("Decoding image…")
+                            .into_any_element()
+                    })
                     .max_w_full()
                     .object_fit(ObjectFit::Contain),
             )
