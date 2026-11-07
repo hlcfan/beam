@@ -158,7 +158,7 @@ const MAX_IMAGE_PREVIEW_BYTES: usize = 20 * 1024 * 1024;
 const MAX_IMAGE_PREVIEW_SIDE: u32 = 8192;
 const MAX_IMAGE_PREVIEW_PIXELS: u64 = 25_000_000;
 /// gpui decodes every GIF frame to RGBA, so the budget is width x height x frames.
-const MAX_GIF_PREVIEW_TOTAL_PIXELS: u64 = 64_000_000;
+const MAX_GIF_PREVIEW_TOTAL_PIXELS: u64 = 128_000_000;
 
 pub(super) enum ImagePreview {
     /// Not an image type the pane previews; show the body as text.
@@ -189,7 +189,13 @@ pub(super) fn classify_image_preview(content_type: Option<&str>, bytes: &[u8]) -
                 "[Image dimensions too large to preview: {width}x{height} px, {size}]"
             ))
         }
-        Some((width, height)) => match gif_frame_budget_exceeded(format, bytes, width, height) {
+        Some((width, height)) => match gif_frame_budget_exceeded(
+            format,
+            bytes,
+            width,
+            height,
+            MAX_GIF_PREVIEW_TOTAL_PIXELS,
+        ) {
             Some(frames) => ImagePreview::Unavailable(format!(
                 "[Animated GIF too large to preview: {width}x{height} px, {frames}+ frames, {size}]"
             )),
@@ -201,17 +207,18 @@ pub(super) fn classify_image_preview(content_type: Option<&str>, bytes: &[u8]) -
 
 /// For GIFs, returns the frame count at which the decoded size passes the
 /// budget. Walks frame headers only, so pixel data is never decompressed.
-fn gif_frame_budget_exceeded(
+pub(super) fn gif_frame_budget_exceeded(
     format: gpui::ImageFormat,
     bytes: &[u8],
     width: u32,
     height: u32,
+    budget_pixels: u64,
 ) -> Option<u64> {
     if format != gpui::ImageFormat::Gif {
         return None;
     }
     let frame_pixels = (u64::from(width) * u64::from(height)).max(1);
-    let max_frames = MAX_GIF_PREVIEW_TOTAL_PIXELS / frame_pixels;
+    let max_frames = budget_pixels / frame_pixels;
     let mut decoder = gif::DecodeOptions::new()
         .read_info(std::io::Cursor::new(bytes))
         .ok()?;

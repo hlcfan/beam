@@ -490,18 +490,23 @@ mod tests {
     }
 
     #[test]
-    fn classify_rejects_gifs_over_the_total_pixel_budget() {
-        use crate::ui::response::{ImagePreview, classify_image_preview};
+    fn gif_frame_budget_counts_width_height_and_frames() {
+        use crate::ui::response::gif_frame_budget_exceeded;
+        use gpui_kit::gpui::ImageFormat;
 
-        let gif = Some("image/gif");
-        assert!(matches!(
-            classify_image_preview(gif, &gif_bytes(10, 10, 5)),
-            ImagePreview::Ready
-        ));
-        assert!(matches!(
-            classify_image_preview(gif, &gif_bytes(1000, 1000, 70)),
-            ImagePreview::Unavailable(message) if message.contains("Animated GIF too large")
-        ));
+        let gif = gif_bytes(10, 10, 5);
+        assert_eq!(
+            gif_frame_budget_exceeded(ImageFormat::Gif, &gif, 10, 10, 500),
+            None
+        );
+        assert_eq!(
+            gif_frame_budget_exceeded(ImageFormat::Gif, &gif, 10, 10, 400),
+            Some(5)
+        );
+        assert_eq!(
+            gif_frame_budget_exceeded(ImageFormat::Png, &gif, 10, 10, 1),
+            None
+        );
     }
 
     fn gif_bytes(width: u16, height: u16, frames: usize) -> Vec<u8> {
