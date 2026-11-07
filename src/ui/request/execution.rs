@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::fs;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use chrono::Utc;
-use gpui_kit::{Context, Window};
+use gpui_kit::{Context, Window, gpui};
 use reqwest::{Client, Method};
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Runtime as TokioRuntime};
 use tokio::sync::oneshot;
@@ -59,7 +59,7 @@ mod tests {
         bytes
     }
 
-    fn snapshot(body: String, image: Option<Vec<u8>>) -> HttpResponseSnapshot {
+    fn snapshot(body: String, image: Option<Arc<gpui::Image>>) -> HttpResponseSnapshot {
         HttpResponseSnapshot {
             status: "OK".to_string(),
             status_code: Some(200),
@@ -113,7 +113,10 @@ mod tests {
         let (body, image) = response_body_and_image(Some("image/png"), &bytes);
 
         assert_eq!(body, image_placeholder_body(bytes.len()));
-        assert_eq!(image, Some(bytes));
+        assert_eq!(
+            image.as_ref().map(|image| image.bytes()),
+            Some(bytes.as_slice())
+        );
     }
 
     #[test]
@@ -477,8 +480,8 @@ pub(in crate::ui) struct HttpResponseSnapshot {
     pub(in crate::ui) body: String,
     pub(in crate::ui) headers: String,
     pub(in crate::ui) content_type: Option<String>,
-    /// Raw bytes, kept only for previewable images (`body` holds a placeholder).
-    pub(in crate::ui) image: Option<Vec<u8>>,
+    /// Decodable image, kept only for previewable images (`body` holds a placeholder).
+    pub(in crate::ui) image: Option<Arc<gpui::Image>>,
 }
 
 struct RequestExecutionOutcome {
@@ -741,10 +744,7 @@ impl BeamView {
                     this.response_body_language = response_language;
                     this.response_headers_raw = response.headers.clone();
                     this.response_content_type = response.content_type.clone();
-                    this.response_image = response_image_from_bytes(
-                        response.content_type.as_deref(),
-                        response.image.clone(),
-                    );
+                    this.response_image = response.image.clone();
                     this.script_result = outcome.script_result.clone();
                 }
                 if let (Some(environment_id), Some(variables)) = (
@@ -1368,14 +1368,20 @@ fn script_runtime_response(response: &HttpResponseSnapshot) -> ScriptRuntimeResp
         body_size_bytes: response
             .image
             .as_ref()
-            .map_or(response.body.len(), Vec::len),
+            .map_or(response.body.len(), |image| image.bytes().len()),
     }
 }
 
-fn response_body_and_image(content_type: Option<&str>, bytes: &[u8]) -> (String, Option<Vec<u8>>) {
+fn response_body_and_image(
+    content_type: Option<&str>,
+    bytes: &[u8],
+) -> (String, Option<Arc<gpui::Image>>) {
     match classify_image_preview(content_type, bytes) {
         ImagePreview::NotImage => (String::from_utf8_lossy(bytes).to_string(), None),
-        ImagePreview::Ready => (image_placeholder_body(bytes.len()), Some(bytes.to_vec())),
+        ImagePreview::Ready => (
+            image_placeholder_body(bytes.len()),
+            response_image_from_bytes(content_type, bytes.to_vec()),
+        ),
         ImagePreview::Unavailable(message) => (unavailable_image_body(bytes, message), None),
     }
 }

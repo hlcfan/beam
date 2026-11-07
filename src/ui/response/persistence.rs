@@ -107,8 +107,8 @@ pub(in crate::ui) fn persist_response_snapshot(
     let body_ref = format!("{execution_id}.response.bin");
     let body_bytes = response
         .image
-        .as_deref()
-        .unwrap_or_else(|| response.body.as_bytes());
+        .as_ref()
+        .map_or(response.body.as_bytes(), |image| image.bytes());
     fs::write(responses_dir.join(&body_ref), body_bytes)
         .map_err(|error| format!("Failed to write response body: {error}"))?;
 

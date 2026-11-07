@@ -49,8 +49,7 @@ impl BeamView {
         self.response_time = snapshot.time.clone();
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
-        self.response_image =
-            response_image_from_bytes(content_type.as_deref(), snapshot.image.clone());
+        self.response_image = snapshot.image.clone();
         self.response_content_type = content_type;
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
@@ -225,10 +224,12 @@ pub(super) fn response_image_format(content_type: Option<&str>) -> Option<gpui::
 
 pub(super) fn response_image_from_bytes(
     content_type: Option<&str>,
-    bytes: Option<Vec<u8>>,
+    bytes: Vec<u8>,
 ) -> Option<Arc<gpui::Image>> {
     let format = response_image_format(content_type)?;
-    let bytes = bytes.filter(|bytes| !bytes.is_empty())?;
+    if bytes.is_empty() {
+        return None;
+    }
     Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
 }
 

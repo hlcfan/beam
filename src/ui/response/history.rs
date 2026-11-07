@@ -6,8 +6,14 @@ use ulid::Ulid;
 
 use crate::paths::BeamPaths;
 
+use std::sync::Arc;
+
+use gpui_kit::gpui;
+
 use super::super::format_bytes;
-use super::{ImagePreview, classify_image_preview, image_placeholder_body};
+use super::{
+    ImagePreview, classify_image_preview, image_placeholder_body, response_image_from_bytes,
+};
 
 const RESPONSE_BODY_TRUNCATED_NOTE: &str =
     "[Response body omitted from local history (truncated).]";
@@ -70,7 +76,7 @@ pub(in crate::ui) struct StoredResponseSnapshot {
     pub(in crate::ui) body: String,
     pub(in crate::ui) headers_raw: String,
     pub(in crate::ui) content_type: Option<String>,
-    pub(in crate::ui) image: Option<Vec<u8>>,
+    pub(in crate::ui) image: Option<Arc<gpui::Image>>,
 }
 
 pub(in crate::ui) fn load_request_history_file(
@@ -121,7 +127,7 @@ pub(in crate::ui) fn response_snapshot_from_history_execution(
                 ImagePreview::Ready
             ) {
                 let placeholder = image_placeholder_body(bytes.len());
-                image = Some(bytes);
+                image = response_image_from_bytes(content_type.as_deref(), bytes);
                 placeholder
             } else {
                 String::from_utf8_lossy(&bytes).to_string()
@@ -442,14 +448,17 @@ mod tests {
             body: crate::ui::response::image_placeholder_body(bytes.len()),
             headers: "Content-Type: image/png".to_string(),
             content_type: Some("image/png".to_string()),
-            image: Some(bytes.clone()),
+            image: crate::ui::response::response_image_from_bytes(Some("image/png"), bytes.clone()),
         };
 
         persist_response_snapshot(&paths, request_id, &response).expect("persist");
         let entries = load_response_history_entries(&paths, request_id);
         let restored = response_snapshot_from_history_execution(&paths, &entries[0].execution);
 
-        assert_eq!(restored.image, Some(bytes));
+        assert_eq!(
+            restored.image.as_ref().map(|image| image.bytes()),
+            Some(bytes.as_slice())
+        );
         assert_eq!(restored.body, response.body);
     }
 
