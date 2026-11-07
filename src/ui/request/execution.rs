@@ -772,7 +772,10 @@ async fn execute_request_with_script(
         headers: parse_response_headers(&response.headers),
         body: response.body.clone(),
         response_time_ms: parse_response_duration_ms(&response.time).unwrap_or(0),
-        body_size_bytes: response.body.len(),
+        body_size_bytes: response
+            .image
+            .as_ref()
+            .map_or(response.body.len(), Vec::len),
     };
     let script_exec_result = execute_post_request_script(
         &script_text,
