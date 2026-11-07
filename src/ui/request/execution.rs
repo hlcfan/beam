@@ -27,6 +27,9 @@ use super::super::response::persistence::{
     ConsoleMessageView, PersistedScriptResult, clear_script_result_for_request,
     persist_response_snapshot, persist_script_result,
 };
+use super::super::response::{
+    image_placeholder_body, response_image_format, response_image_from_bytes,
+};
 use super::super::response_body_editor_language;
 
 pub(in crate::ui) const DEFAULT_API_KEY_HEADER_NAME: &str = "X-API-Key";
@@ -405,6 +408,8 @@ pub(in crate::ui) struct HttpResponseSnapshot {
     pub(in crate::ui) body: String,
     pub(in crate::ui) headers: String,
     pub(in crate::ui) content_type: Option<String>,
+    /// Raw bytes, kept only for previewable images (`body` holds a placeholder).
+    pub(in crate::ui) image: Option<Vec<u8>>,
 }
 
 struct RequestExecutionOutcome {
@@ -667,6 +672,10 @@ impl BeamView {
                     this.response_body_language = response_language;
                     this.response_headers_raw = response.headers.clone();
                     this.response_content_type = response.content_type.clone();
+                    this.response_image = response_image_from_bytes(
+                        response.content_type.as_deref(),
+                        response.image.clone(),
+                    );
                     this.script_result = outcome.script_result.clone();
                 }
                 if let (Some(environment_id), Some(variables)) = (
@@ -1108,6 +1117,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 body: error,
                 headers: String::new(),
                 content_type: None,
+                image: None,
             };
         }
     };
@@ -1245,16 +1255,24 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                 .join("\n");
             let completed_at = Utc::now().to_rfc3339();
             match response.bytes().await {
-                Ok(bytes) => HttpResponseSnapshot {
-                    status: status_text,
-                    status_code: Some(status.as_u16()),
-                    time: format!("{} ms", start.elapsed().as_millis()),
-                    size: format_bytes(bytes.len()),
-                    timestamp: completed_at,
-                    body: String::from_utf8_lossy(&bytes).to_string(),
-                    headers,
-                    content_type,
-                },
+                Ok(bytes) => {
+                    let is_image = response_image_format(content_type.as_deref()).is_some();
+                    HttpResponseSnapshot {
+                        status: status_text,
+                        status_code: Some(status.as_u16()),
+                        time: format!("{} ms", start.elapsed().as_millis()),
+                        size: format_bytes(bytes.len()),
+                        timestamp: completed_at,
+                        body: if is_image {
+                            image_placeholder_body(bytes.len())
+                        } else {
+                            String::from_utf8_lossy(&bytes).to_string()
+                        },
+                        headers,
+                        content_type,
+                        image: is_image.then(|| bytes.to_vec()),
+                    }
+                }
                 Err(error) => HttpResponseSnapshot {
                     status: status_text,
                     status_code: Some(status.as_u16()),
@@ -1264,6 +1282,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
                     body: format!("Failed to read response body: {error}"),
                     headers,
                     content_type,
+                    image: None,
                 },
             }
         }
@@ -1276,6 +1295,7 @@ async fn execute_http_request(request: RequestAuthoringState) -> HttpResponseSna
             body: format!("Request failed: {error}"),
             headers: String::new(),
             content_type: None,
+            image: None,
         },
     }
 }

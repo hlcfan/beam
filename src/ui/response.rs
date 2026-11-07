@@ -26,6 +26,7 @@ impl BeamView {
         self.response_size = "—".to_string();
         self.response_headers_raw.clear();
         self.response_content_type = None;
+        self.response_image = None;
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
             cx,
@@ -48,6 +49,8 @@ impl BeamView {
         self.response_time = snapshot.time.clone();
         self.response_size = snapshot.size.clone();
         self.response_headers_raw = snapshot.headers_raw.clone();
+        self.response_image =
+            response_image_from_bytes(content_type.as_deref(), snapshot.image.clone());
         self.response_content_type = content_type;
         self.update_response_body_editor_with_scroll_persistence_suppressed(
             window,
@@ -150,4 +153,33 @@ impl BeamView {
         );
         cx.notify();
     }
+}
+
+/// Maps a response content type to an image format GPUI can decode.
+/// SVG stays in the text view because it is XML.
+pub(super) fn response_image_format(content_type: Option<&str>) -> Option<gpui::ImageFormat> {
+    let media_type = content_type?.split(';').next()?.trim().to_ascii_lowercase();
+    match media_type.as_str() {
+        "image/png" => Some(gpui::ImageFormat::Png),
+        "image/jpeg" | "image/jpg" => Some(gpui::ImageFormat::Jpeg),
+        "image/gif" => Some(gpui::ImageFormat::Gif),
+        "image/webp" => Some(gpui::ImageFormat::Webp),
+        "image/bmp" => Some(gpui::ImageFormat::Bmp),
+        "image/tiff" => Some(gpui::ImageFormat::Tiff),
+        _ => None,
+    }
+}
+
+pub(super) fn response_image_from_bytes(
+    content_type: Option<&str>,
+    bytes: Option<Vec<u8>>,
+) -> Option<Arc<gpui::Image>> {
+    let format = response_image_format(content_type)?;
+    let bytes = bytes.filter(|bytes| !bytes.is_empty())?;
+    Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
+}
+
+/// Text shown in the body editor in place of image bytes.
+pub(super) fn image_placeholder_body(len: usize) -> String {
+    format!("[Image, {}]", format_bytes(len))
 }

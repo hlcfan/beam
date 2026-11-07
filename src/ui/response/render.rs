@@ -222,6 +222,9 @@ impl BeamView {
         }
         match self.active_response_tab {
             ResponseTab::Body => {
+                if let Some(image) = self.response_image.clone() {
+                    return self.render_response_image(image);
+                }
                 let response_body_text = self.response_body_editor.read(cx).value().to_string();
                 let trimmed_body = response_body_text.trim();
                 if trimmed_body.is_empty() {
@@ -269,6 +272,16 @@ impl BeamView {
             }
             ResponseTab::Headers => self.render_response_headers_table(cx),
         }
+    }
+
+    fn render_response_image(&self, image: Arc<gpui::Image>) -> AnyElement {
+        div()
+            .id("response-image-preview")
+            .size_full()
+            .overflow_scroll()
+            .p_3()
+            .child(img(image).max_w_full().object_fit(ObjectFit::Contain))
+            .into_any_element()
     }
 
     pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {

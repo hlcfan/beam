@@ -105,7 +105,11 @@ pub(in crate::ui) fn persist_response_snapshot(
 
     let execution_id = Ulid::new().to_string();
     let body_ref = format!("{execution_id}.response.bin");
-    fs::write(responses_dir.join(&body_ref), response.body.as_bytes())
+    let body_bytes = response
+        .image
+        .as_deref()
+        .unwrap_or_else(|| response.body.as_bytes());
+    fs::write(responses_dir.join(&body_ref), body_bytes)
         .map_err(|error| format!("Failed to write response body: {error}"))?;
 
     history_file.meta = Some(RequestHistoryMeta {
@@ -118,7 +122,7 @@ pub(in crate::ui) fn persist_response_snapshot(
         status: response.status_code,
         duration_ms: parse_response_duration_ms(&response.time),
         response_summary: Some(RequestHistoryResponseSummary {
-            body_bytes: Some(response.body.len() as u64),
+            body_bytes: Some(body_bytes.len() as u64),
             body_ref: Some(body_ref),
             body_truncated: false,
             headers: parse_response_headers(&response.headers)
@@ -314,6 +318,7 @@ mod tests {
             body: "created".to_string(),
             headers: "Content-Type: text/plain\nX-Test: yes".to_string(),
             content_type: Some("text/plain".to_string()),
+            image: None,
         };
 
         persist_response_snapshot(&paths, request_id, &response).expect("persist response");

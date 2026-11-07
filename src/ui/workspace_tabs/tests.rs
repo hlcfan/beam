@@ -241,6 +241,7 @@ fn workspace_tabs_preserve_response_scroll_offsets_for_each_request(cx: &mut Tes
                     },
                     headers: "Content-Type: text/plain".to_string(),
                     content_type: Some("text/plain".to_string()),
+                    image: None,
                 },
             )
             .expect("persist fixture response");
