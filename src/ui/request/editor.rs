@@ -3,6 +3,22 @@ use super::super::*;
 pub(in crate::ui) const BODY_EDITOR_CACHE_CAP: usize = 32;
 pub(in crate::ui) const URL_EDITOR_CACHE_CAP: usize = 32;
 
+const SCRIPT_HELP_OPEN_DELAY: Duration = Duration::from_millis(100);
+const SCRIPT_HELP_CLOSE_DELAY: Duration = Duration::from_millis(150);
+/// The window reports no hover for a short while after each wheel event, so a
+/// recent scroll over the card counts as the pointer still being on it.
+const SCRIPT_HELP_SCROLL_GRACE: Duration = Duration::from_millis(400);
+
+/// Hover-driven state of the Script tab's API help card.
+#[derive(Default)]
+pub(in crate::ui) struct ScriptHelpHover {
+    open: bool,
+    over_trigger: bool,
+    over_content: bool,
+    last_scroll: Option<Instant>,
+    epoch: usize,
+}
+
 impl BeamView {
     pub(in crate::ui) fn format_human_timestamp(timestamp: &str) -> String {
         chrono::DateTime::parse_from_rfc3339(timestamp)
@@ -596,24 +612,30 @@ impl BeamView {
         } else {
             h_flex().items_center().gap_1().child("Script")
         };
-        let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
+        let help_view = cx.entity().downgrade();
+        let help_trigger_view = help_view.clone();
+        let help_scroll_view = help_view.clone();
+        let post_script_help_trigger = Popover::new("tab-Post Script-help")
             .anchor(gpui_kit::Anchor::BottomLeft)
-            .open_delay(Duration::from_millis(100))
-            .close_delay(Duration::from_millis(150))
+            .appearance(false)
+            .open(self.script_help.open)
             .trigger(
-                div()
-                    .id("tab-Post Script-help-trigger")
-                    .flex()
-                    .flex_shrink_0()
+                Button::new("tab-Post Script-help-trigger")
+                    .secondary()
+                    .rounded(px(9.0))
+                    .p_0()
                     .w(px(18.0))
                     .h(px(18.0))
-                    .rounded_full()
                     .border_1()
                     .border_color(cx.theme().border)
-                    .bg(cx.theme().secondary)
                     .cursor_pointer()
-                    .items_center()
-                    .justify_center()
+                    .on_hover(move |hovered, window, cx| {
+                        help_trigger_view
+                            .update(cx, |this, cx| {
+                                this.script_help_hover_changed(false, *hovered, window, cx)
+                            })
+                            .ok();
+                    })
                     .child(
                         div()
                             .text_xs()
@@ -623,16 +645,39 @@ impl BeamView {
                             .child("i"),
                     ),
             )
-            .child(
-                div().w(px(360.0)).h(px(520.0)).overflow_hidden().child(
-                    div().size_full().overflow_y_scrollbar().child(
-                        markdown(POST_SCRIPT_API_HELP_MARKDOWN)
-                            .w_full()
-                            .text_sm()
-                            .selectable(true),
-                    ),
-                ),
-            );
+            .content(move |_, _, cx| {
+                let hover_view = help_view.clone();
+                let scroll_view = help_scroll_view.clone();
+                div()
+                    .id("tab-Post Script-help-card")
+                    .popover_style(cx)
+                    .p_3()
+                    .on_hover(move |hovered, window, cx| {
+                        hover_view
+                            .update(cx, |this, cx| {
+                                this.script_help_hover_changed(true, *hovered, window, cx)
+                            })
+                            .ok();
+                    })
+                    .on_scroll_wheel(move |_, _, cx| {
+                        scroll_view
+                            .update(cx, |this, _| this.script_help_scrolled())
+                            .ok();
+                    })
+                    .child(
+                        div()
+                            .id("tab-Post Script-help-scroll")
+                            .w(px(360.0))
+                            .h(px(520.0))
+                            .overflow_y_scroll()
+                            .child(
+                                markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                                    .w_full()
+                                    .text_sm()
+                                    .selectable(true),
+                            ),
+                    )
+            });
         tabs = tabs.child(
             h_flex()
                 .items_center()
@@ -655,6 +700,65 @@ impl BeamView {
         );
 
         tabs
+    }
+
+    fn script_help_hover_changed(
+        &mut self,
+        content: bool,
+        hovered: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let help = &mut self.script_help;
+        if content {
+            help.over_content = hovered;
+        } else {
+            help.over_trigger = hovered;
+        }
+        help.epoch += 1;
+        let epoch = help.epoch;
+        let open = hovered;
+        if open == help.open {
+            return;
+        }
+        let delay = if open {
+            SCRIPT_HELP_OPEN_DELAY
+        } else {
+            SCRIPT_HELP_CLOSE_DELAY
+        };
+        if !open && (help.over_trigger || help.over_content) {
+            return;
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            this.update(cx, |this, cx| this.script_help_settle(epoch, open, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    fn script_help_settle(&mut self, epoch: usize, open: bool, cx: &mut Context<Self>) {
+        let help = &mut self.script_help;
+        if help.epoch != epoch || help.open == open {
+            return;
+        }
+        if !open {
+            let scrolling = help
+                .last_scroll
+                .is_some_and(|at| at.elapsed() < SCRIPT_HELP_SCROLL_GRACE);
+            if scrolling || help.over_trigger || help.over_content {
+                return;
+            }
+        }
+        help.open = open;
+        cx.notify();
+    }
+
+    fn script_help_scrolled(&mut self) {
+        let help = &mut self.script_help;
+        help.last_scroll = Some(Instant::now());
+        help.over_content = true;
+        help.epoch += 1;
     }
 
     pub(in crate::ui) fn render_request_editor_surface(
