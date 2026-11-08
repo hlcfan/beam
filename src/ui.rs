@@ -96,8 +96,8 @@ use crate::models::{
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
 use crate::request_authoring::{
-    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
-    validate_rename,
+    PostScriptBottomTab, RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState,
+    SendDisabledReason, validate_rename,
 };
 use crate::script::EnvironmentChangeKind;
 use crate::storage::fs_backend::FileSystemStorage;

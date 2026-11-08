@@ -596,62 +596,19 @@ impl BeamView {
         } else {
             h_flex().items_center().gap_1().child("Script")
         };
-        let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
-            .anchor(gpui_kit::Anchor::BottomLeft)
-            .open_delay(Duration::from_millis(100))
-            .close_delay(Duration::from_millis(150))
-            .trigger(
-                div()
-                    .id("tab-Post Script-help-trigger")
-                    .flex()
-                    .flex_shrink_0()
-                    .w(px(18.0))
-                    .h(px(18.0))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().secondary)
-                    .cursor_pointer()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_semibold()
-                            .line_height(relative(1.0))
-                            .text_color(cx.theme().secondary_foreground)
-                            .child("i"),
-                    ),
-            )
-            .child(
-                div().w(px(360.0)).h(px(520.0)).overflow_hidden().child(
-                    div().size_full().overflow_y_scrollbar().child(
-                        markdown(POST_SCRIPT_API_HELP_MARKDOWN)
-                            .w_full()
-                            .text_sm()
-                            .selectable(true),
-                    ),
-                ),
-            );
         tabs = tabs.child(
-            h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    Button::new("tab-Post Script")
-                        .small()
-                        .ghost()
-                        .cursor_pointer()
-                        .selected(self.request.active_tab == RequestTab::PostScript)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.request.active_tab = RequestTab::PostScript;
-                            this.post_script_editor.update(cx, |state, cx| {
-                                state.focus(window, cx);
-                            });
-                        }))
-                        .child(post_script_label),
-                )
-                .child(post_script_help_trigger),
+            Button::new("tab-Post Script")
+                .small()
+                .ghost()
+                .cursor_pointer()
+                .selected(self.request.active_tab == RequestTab::PostScript)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.request.active_tab = RequestTab::PostScript;
+                    this.post_script_editor.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                    });
+                }))
+                .child(post_script_label),
         );
 
         tabs
@@ -1662,8 +1619,81 @@ impl BeamView {
                     .h_1_2()
                     .min_h_0()
                     .w_full()
-                    .child(self.render_post_script_results(window, cx)),
+                    .child(self.render_post_script_bottom_pane(window, cx)),
             )
+            .into_any_element()
+    }
+
+    fn render_post_script_bottom_pane(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let active = self.post_script_bottom_tab;
+        let results_dot = self.script_result.as_ref().map(|result| {
+            if result.success {
+                cx.theme().success
+            } else {
+                cx.theme().danger
+            }
+        });
+        let results_label = h_flex().items_center().gap_1().child("Results").children(
+            results_dot.map(|color| div().w(px(6.0)).h(px(6.0)).rounded_full().bg(color)),
+        );
+
+        let tab_strip = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .pt_1()
+            .child(
+                Button::new("post-script-tab-results")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .selected(active == PostScriptBottomTab::Results)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.post_script_bottom_tab = PostScriptBottomTab::Results;
+                        cx.notify();
+                    }))
+                    .child(results_label),
+            )
+            .child(
+                Button::new("post-script-tab-api")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .selected(active == PostScriptBottomTab::Api)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.post_script_bottom_tab = PostScriptBottomTab::Api;
+                        cx.notify();
+                    }))
+                    .label("API"),
+            );
+
+        let body = match active {
+            PostScriptBottomTab::Results => self.render_post_script_results(window, cx),
+            PostScriptBottomTab::Api => div()
+                .size_full()
+                .min_h_0()
+                .overflow_y_scrollbar()
+                .p_2()
+                .child(
+                    markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                        .w_full()
+                        .text_sm()
+                        .selectable(true),
+                )
+                .into_any_element(),
+        };
+
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .child(tab_strip)
+            .child(div().flex_1().min_h_0().w_full().child(body))
             .into_any_element()
     }
 

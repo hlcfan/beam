@@ -14,6 +14,13 @@ pub enum RequestTab {
     PostScript,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PostScriptBottomTab {
+    #[default]
+    Results,
+    Api,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendButtonState {
     Disabled(SendDisabledReason),
