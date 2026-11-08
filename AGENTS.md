@@ -175,6 +175,14 @@ Current icon paths in shared helper menus:
 When adding clickable buttons in Beam, set `.cursor_pointer()` consistently for all interactive button states, not only prominent actions. This includes secondary actions like `Cancel`, ghost buttons, title bar buttons, toolbar buttons, and dialog or modal actions such as `Create`, `Rename`, or `Delete`.
 
 
+#### Button Styling
+`Button` applies its own variant colors, corner radius, and padding at render time. Style overrides set on it can lose to those, so a custom `Button` may silently drop its hover state or its shape.
+
+- Do not force a background with `.bg(...)`. It replaces the variant's hover and active colors. Pick a variant (`.secondary()`, `.ghost()`, `.primary()`) so the theme supplies the hover background.
+- Set the corner radius with `Button::rounded(px(...))`, not `Styled::rounded_full()`. For a circle, use half the side length.
+- Clear the default padding with `.p_0()` and set `.w(...)`/`.h(...)` when a fixed size is needed.
+- Check the hover state in the running app after restyling a `Button`.
+
 ### Testing
 
 Beam uses a tiered testing strategy:

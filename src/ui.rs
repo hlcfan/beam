@@ -68,6 +68,7 @@ use gpui_kit::component::{
     list::ListItem,
     menu::{DropdownMenu as _, PopupMenuItem},
     native_menu::NativeMenu,
+    popover::Popover,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     switch::Switch,
