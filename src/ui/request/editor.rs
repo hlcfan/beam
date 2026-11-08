@@ -1639,24 +1639,22 @@ impl BeamView {
                     .border_color(cx.theme().border)
                     .p_0()
                     .child(
-                        div().w_full().h_full().overflow_y_scrollbar().child(
-                            Editor::new(&self.post_script_editor)
-                                .h_full()
-                                .p_0()
-                                .border_0()
-                                .bordered(false)
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_size(cx.theme().mono_font_size)
-                                .context_menu({
-                                    move |menu, _, cx| {
-                                        build_text_edit_context_menu_with_find(
-                                            menu,
-                                            post_script_has_selection,
-                                            cx.theme().muted_foreground,
-                                        )
-                                    }
-                                }),
-                        ),
+                        Editor::new(&self.post_script_editor)
+                            .h_full()
+                            .p_0()
+                            .border_0()
+                            .bordered(false)
+                            .font_family(cx.theme().mono_font_family.clone())
+                            .text_size(cx.theme().mono_font_size)
+                            .context_menu({
+                                move |menu, _, cx| {
+                                    build_text_edit_context_menu_with_find(
+                                        menu,
+                                        post_script_has_selection,
+                                        cx.theme().muted_foreground,
+                                    )
+                                }
+                            }),
                     ),
             )
             .child(
