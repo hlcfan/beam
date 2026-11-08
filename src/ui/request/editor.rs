@@ -1690,10 +1690,20 @@ impl BeamView {
         };
 
         v_flex()
+            .id("post-script-bottom-pane")
             .size_full()
             .min_h_0()
             .child(tab_strip)
-            .child(div().flex_1().min_h_0().w_full().child(body))
+            .child(
+                div()
+                    .id("post-script-bottom-body")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(div().absolute().top_0().left_0().size_full().child(body)),
+            )
             .into_any_element()
     }
 
