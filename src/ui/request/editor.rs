@@ -1555,13 +1555,11 @@ impl BeamView {
             content = content.child(div().text_xs().font_semibold().child("Console"));
             content = content.child(self.render_script_console_section(result, cx));
 
-            panel = panel.child(
-                div()
-                    .w_full()
-                    .h_full()
-                    .overflow_y_scrollbar()
-                    .child(content),
-            );
+            panel = panel.child(tracked_scroll_area(
+                "post-script-results-scroll",
+                &self.post_script_results_scroll,
+                content,
+            ));
         } else {
             panel = panel.child(
                 div()
@@ -1675,18 +1673,17 @@ impl BeamView {
 
         let body = match active {
             PostScriptBottomTab::Results => self.render_post_script_results(window, cx),
-            PostScriptBottomTab::Api => div()
-                .size_full()
-                .min_h_0()
-                .overflow_y_scrollbar()
-                .p_2()
-                .child(
+            PostScriptBottomTab::Api => tracked_scroll_area(
+                "post-script-api-scroll",
+                &self.post_script_api_scroll,
+                div().p_2().child(
                     markdown(POST_SCRIPT_API_HELP_MARKDOWN)
                         .w_full()
                         .text_sm()
                         .selectable(true),
-                )
-                .into_any_element(),
+                ),
+            )
+            .into_any_element(),
         };
 
         v_flex()
@@ -1741,4 +1738,34 @@ impl BeamView {
             .child(self.render_request_tabs(cx))
             .child(editor_container)
     }
+}
+
+/// Vertical scroll area whose offset lives in `handle`, so it survives the
+/// area being left out of a frame (for example while another tab is shown).
+fn tracked_scroll_area(
+    id: &'static str,
+    handle: &ScrollHandle,
+    content: impl IntoElement,
+) -> AnyElement {
+    div()
+        .relative()
+        .size_full()
+        .min_h_0()
+        .child(
+            div()
+                .id(id)
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(handle)
+                .child(content),
+        )
+        .child(
+            div().absolute().inset_0().child(
+                gpui_kit::base::Scrollbar::new(handle)
+                    .id(SharedString::from(format!("{id}-scrollbar")))
+                    .axis(gpui_kit::base::ScrollbarAxis::Vertical)
+                    .viewport_from_layout(),
+            ),
+        )
+        .into_any_element()
 }
