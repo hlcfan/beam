@@ -3,19 +3,6 @@ use super::super::*;
 pub(in crate::ui) const BODY_EDITOR_CACHE_CAP: usize = 32;
 pub(in crate::ui) const URL_EDITOR_CACHE_CAP: usize = 32;
 
-/// gpui-fast reports no hover for this long after each wheel event, so a
-/// "not hovering" report inside it is not trusted.
-const SCRIPT_HELP_SCROLL_GRACE: Duration = Duration::from_millis(100);
-
-/// Hover-driven state of the Script tab's API help card.
-#[derive(Default)]
-pub(in crate::ui) struct ScriptHelpHover {
-    open: bool,
-    over_trigger: bool,
-    over_content: bool,
-    last_scroll: Option<Instant>,
-}
-
 impl BeamView {
     pub(in crate::ui) fn format_human_timestamp(timestamp: &str) -> String {
         chrono::DateTime::parse_from_rfc3339(timestamp)
@@ -609,121 +596,22 @@ impl BeamView {
         } else {
             h_flex().items_center().gap_1().child("Script")
         };
-        let help_view = cx.entity().downgrade();
-        let help_trigger_view = help_view.clone();
-        let help_scroll_view = help_view.clone();
-        let post_script_help_trigger = Popover::new("tab-Post Script-help")
-            .anchor(gpui_kit::Anchor::BottomLeft)
-            .appearance(false)
-            .offset(px(0.0))
-            .open(self.script_help.open)
-            .trigger(
-                Button::new("tab-Post Script-help-trigger")
-                    .secondary()
-                    .rounded(px(9.0))
-                    .p_0()
-                    .w(px(18.0))
-                    .h(px(18.0))
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .cursor_pointer()
-                    .on_hover(move |hovered, _, cx| {
-                        help_trigger_view
-                            .update(cx, |this, cx| {
-                                this.script_help_hover_changed(false, *hovered, cx)
-                            })
-                            .ok();
-                    })
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_semibold()
-                            .line_height(relative(1.0))
-                            .text_color(cx.theme().secondary_foreground)
-                            .child("i"),
-                    ),
-            )
-            .content(move |_, _, cx| {
-                let hover_view = help_view.clone();
-                let scroll_view = help_scroll_view.clone();
-                div()
-                    .id("tab-Post Script-help-card")
-                    .popover_style(cx)
-                    .p_3()
-                    .on_hover(move |hovered, _, cx| {
-                        hover_view
-                            .update(cx, |this, cx| {
-                                this.script_help_hover_changed(true, *hovered, cx)
-                            })
-                            .ok();
-                    })
-                    .on_scroll_wheel(move |_, _, cx| {
-                        scroll_view
-                            .update(cx, |this, _| this.script_help_scrolled())
-                            .ok();
-                    })
-                    .child(
-                        div()
-                            .id("tab-Post Script-help-scroll")
-                            .w(px(360.0))
-                            .h(px(520.0))
-                            .overflow_y_scroll()
-                            .child(
-                                markdown(POST_SCRIPT_API_HELP_MARKDOWN)
-                                    .w_full()
-                                    .text_sm()
-                                    .selectable(true),
-                            ),
-                    )
-            });
         tabs = tabs.child(
-            h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    Button::new("tab-Post Script")
-                        .small()
-                        .ghost()
-                        .cursor_pointer()
-                        .selected(self.request.active_tab == RequestTab::PostScript)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.request.active_tab = RequestTab::PostScript;
-                            this.post_script_editor.update(cx, |state, cx| {
-                                state.focus(window, cx);
-                            });
-                        }))
-                        .child(post_script_label),
-                )
-                .child(post_script_help_trigger),
+            Button::new("tab-Post Script")
+                .small()
+                .ghost()
+                .cursor_pointer()
+                .selected(self.request.active_tab == RequestTab::PostScript)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.request.active_tab = RequestTab::PostScript;
+                    this.post_script_editor.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                    });
+                }))
+                .child(post_script_label),
         );
 
         tabs
-    }
-
-    fn script_help_hover_changed(&mut self, content: bool, hovered: bool, cx: &mut Context<Self>) {
-        let help = &mut self.script_help;
-        let scrolling = help
-            .last_scroll
-            .is_some_and(|at| at.elapsed() < SCRIPT_HELP_SCROLL_GRACE);
-        if !hovered && scrolling {
-            return;
-        }
-        if content {
-            help.over_content = hovered;
-        } else {
-            help.over_trigger = hovered;
-        }
-        let open = help.over_trigger || help.over_content;
-        if open != help.open {
-            help.open = open;
-            cx.notify();
-        }
-    }
-
-    fn script_help_scrolled(&mut self) {
-        let help = &mut self.script_help;
-        help.last_scroll = Some(Instant::now());
-        help.over_content = true;
     }
 
     pub(in crate::ui) fn render_request_editor_surface(
@@ -1667,13 +1555,11 @@ impl BeamView {
             content = content.child(div().text_xs().font_semibold().child("Console"));
             content = content.child(self.render_script_console_section(result, cx));
 
-            panel = panel.child(
-                div()
-                    .w_full()
-                    .h_full()
-                    .overflow_y_scrollbar()
-                    .child(content),
-            );
+            panel = panel.child(tracked_scroll_area(
+                "post-script-results-scroll",
+                &self.post_script_results_scroll,
+                content,
+            ));
         } else {
             panel = panel.child(
                 div()
@@ -1731,7 +1617,89 @@ impl BeamView {
                     .h_1_2()
                     .min_h_0()
                     .w_full()
-                    .child(self.render_post_script_results(window, cx)),
+                    .child(self.render_post_script_bottom_pane(window, cx)),
+            )
+            .into_any_element()
+    }
+
+    fn render_post_script_bottom_pane(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let active = self.post_script_bottom_tab;
+        let results_dot = self.script_result.as_ref().map(|result| {
+            if result.success {
+                cx.theme().success
+            } else {
+                cx.theme().danger
+            }
+        });
+        let results_label = h_flex().items_center().gap_1().child("Results").children(
+            results_dot.map(|color| div().w(px(6.0)).h(px(6.0)).rounded_full().bg(color)),
+        );
+
+        let tab_strip = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .pt_1()
+            .child(
+                Button::new("post-script-tab-results")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .selected(active == PostScriptBottomTab::Results)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.post_script_bottom_tab = PostScriptBottomTab::Results;
+                        cx.notify();
+                    }))
+                    .child(results_label),
+            )
+            .child(
+                Button::new("post-script-tab-api")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .selected(active == PostScriptBottomTab::Api)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.post_script_bottom_tab = PostScriptBottomTab::Api;
+                        cx.notify();
+                    }))
+                    .label("API"),
+            );
+
+        let body = match active {
+            PostScriptBottomTab::Results => self.render_post_script_results(window, cx),
+            PostScriptBottomTab::Api => tracked_scroll_area(
+                "post-script-api-scroll",
+                &self.post_script_api_scroll,
+                div().p_2().child(
+                    markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                        .w_full()
+                        .text_sm()
+                        .selectable(true),
+                ),
+            )
+            .into_any_element(),
+        };
+
+        v_flex()
+            .id("post-script-bottom-pane")
+            .size_full()
+            .min_h_0()
+            .child(tab_strip)
+            .child(
+                div()
+                    .id("post-script-bottom-body")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(div().absolute().top_0().left_0().size_full().child(body)),
             )
             .into_any_element()
     }
@@ -1770,4 +1738,34 @@ impl BeamView {
             .child(self.render_request_tabs(cx))
             .child(editor_container)
     }
+}
+
+/// Vertical scroll area whose offset lives in `handle`, so it survives the
+/// area being left out of a frame (for example while another tab is shown).
+fn tracked_scroll_area(
+    id: &'static str,
+    handle: &ScrollHandle,
+    content: impl IntoElement,
+) -> AnyElement {
+    div()
+        .relative()
+        .size_full()
+        .min_h_0()
+        .child(
+            div()
+                .id(id)
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(handle)
+                .child(content),
+        )
+        .child(
+            div().absolute().inset_0().child(
+                gpui_kit::base::Scrollbar::new(handle)
+                    .id(SharedString::from(format!("{id}-scrollbar")))
+                    .axis(gpui_kit::base::ScrollbarAxis::Vertical)
+                    .viewport_from_layout(),
+            ),
+        )
+        .into_any_element()
 }

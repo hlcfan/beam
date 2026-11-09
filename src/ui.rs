@@ -68,7 +68,6 @@ use gpui_kit::component::{
     list::ListItem,
     menu::{DropdownMenu as _, PopupMenuItem},
     native_menu::NativeMenu,
-    popover::Popover,
     resizable::{h_resizable, resizable_panel},
     scroll::ScrollableElement,
     switch::Switch,
@@ -97,8 +96,8 @@ use crate::models::{
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
 use crate::request_authoring::{
-    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
-    validate_rename,
+    PostScriptBottomTab, RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState,
+    SendDisabledReason, validate_rename,
 };
 use crate::script::EnvironmentChangeKind;
 use crate::storage::fs_backend::FileSystemStorage;

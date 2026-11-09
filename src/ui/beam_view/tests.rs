@@ -172,3 +172,29 @@ fn update_button_precedes_key_bindings_and_opens_update_settings(cx: &mut TestAp
         assert!(updater.read(cx).phase == UpdatePhase::Idle);
     });
 }
+
+#[gpui_kit::test]
+fn script_api_tab_keeps_bottom_pane_visible(cx: &mut TestAppContext) {
+    let (beam, _directory, cx) = fixture(cx);
+    beam.update(cx, |beam, cx| {
+        beam.request.active_tab = crate::request_authoring::RequestTab::PostScript;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.render_frame(cx));
+    let results_height =
+        cx.update(|window, _| window.find("post-script-tab-results").bounds().size.height);
+    assert!(results_height > px(0.));
+
+    cx.update(|window, cx| window.click("post-script-tab-api", cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let api = window.find("post-script-tab-api").bounds();
+        let results = window.find("post-script-tab-results").bounds();
+        assert!(api.size.height > px(0.), "API tab collapsed: {api:?}");
+        assert!(
+            results.size.height > px(0.),
+            "Results tab collapsed: {results:?}"
+        );
+    });
+}
