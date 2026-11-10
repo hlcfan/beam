@@ -234,8 +234,9 @@ impl BeamView {
         update: impl FnOnce(&mut EditorState, &mut Window, &mut Context<EditorState>),
     ) {
         self.suppress_response_scroll_offset_persistence = true;
-        self.response_body_editor.update(cx, |input, cx| {
+        self.response_body_is_blank = self.response_body_editor.update(cx, |input, cx| {
             update(input, window, cx);
+            input.text().chars().all(char::is_whitespace)
         });
         self.suppress_response_scroll_offset_persistence = false;
     }

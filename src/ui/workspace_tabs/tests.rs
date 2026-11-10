@@ -309,6 +309,39 @@ fn workspace_tabs_preserve_response_scroll_offsets_for_each_request(cx: &mut Tes
     });
 }
 
+#[gpui_kit::test]
+fn scrolling_the_response_editor_does_not_render_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 1);
+    let body = (0..300)
+        .map(|line| format!("Line {line}: {}\n", "response value ".repeat(40)))
+        .collect::<String>();
+    cx.update(|window, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.update_response_body_editor_with_scroll_persistence_suppressed(
+                window,
+                cx,
+                |editor, window, cx| editor.set_value(body, window, cx),
+            );
+            cx.notify();
+        });
+    });
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    for _ in 0..20 {
+        scroll_response_editor(&fixture, cx, 0., -20.);
+    }
+
+    assert_eq!(response_scroll_offset(&fixture, cx).y, px(-400.));
+    // On main this rendered BeamView twice per scroll. One render, whatever the scroll count,
+    // is the bound now.
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+}
+
+fn beam_view_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> usize {
+    fixture.view.read_with(cx, |view, _| view.render_count)
+}
+
 fn scroll_response_editor(fixture: &Fixture, cx: &mut VisualTestContext, x: f32, y: f32) {
     let bounds = fixture.view.read_with(cx, |view, cx| {
         view.response_body_editor.read(cx).input_bounds()

@@ -161,7 +161,7 @@ When adding a custom context menu for any editor (`Input`/`InputState`) in Beam,
 - `context_menu_action_item(label, icon_path, shortcut, muted_color, action, disabled)`: wraps a row into a `PopupMenuItem` with action + disabled state.
 - `build_text_edit_context_menu(menu, has_selection, muted_color)`: standard text-edit menu for `Input` with `Cut`, `Copy`, `Paste`, `Select All`.
 - `build_text_edit_context_menu_with_find(menu, has_selection, muted_color)`: editor variant that prepends `Find` and then uses `build_text_edit_context_menu(...)`.
-- Compute selection state before menu build (`let has_selection = !input.read(cx).selected_range().is_empty();`) and pass it to helper builders.
+- Compute selection state inside the context-menu closure with `TextSelectionSource::has_selection` (`input.has_selection(cx)`) and pass it to helper builders. Do not read the input while rendering: see "Input Hosts".
 - For rich/code editors, add feature-specific items like `Format` first, then chain to `build_text_edit_context_menu_with_find(...)` to keep the shared behavior consistent.
 
 Current icon paths in shared helper menus:
@@ -170,6 +170,14 @@ Current icon paths in shared helper menus:
 - Copy: `icons/copy.svg`
 - Paste: `icons/clipboard-paste.svg`
 - Select All: `icons/square-dashed-text.svg`
+
+#### Input Hosts
+Beam's gpui fork (`gpui-fast`) draws a view again from last frame unless something it read while rendering changed. The `Input` and `Editor` components read and update their state entity as they render, so whichever view renders them depends on that state.
+
+- Render every `Input` and `Editor` through `BeamView::input_host` (`src/ui/input_host.rs`). The host view owns that dependency, so a scroll or keystroke in an editor rebuilds the host, not the whole window.
+- The first `build` closure for an input is kept for the life of its host. Capture only the input and values that never change. Read theme values from the `App` the closure receives.
+- Put listeners that need `BeamView` (`cx.listener`) on the elements around the host, not inside `build`.
+- Do not call `.read(cx)` on an input or editor entity in a `BeamView` render path. Keep the fact in `BeamView` state instead, as `response_body_is_blank` does.
 
 #### Button Cursor Behavior
 When adding clickable buttons in Beam, set `.cursor_pointer()` consistently for all interactive button states, not only prominent actions. This includes secondary actions like `Cancel`, ghost buttons, title bar buttons, toolbar buttons, and dialog or modal actions such as `Create`, `Rename`, or `Delete`.

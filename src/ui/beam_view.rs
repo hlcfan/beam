@@ -16,6 +16,14 @@ pub(super) struct BeamView {
     pub(super) url_input: Entity<InputState>,
     pub(super) request_body_editor: Entity<EditorState>,
     pub(super) response_body_editor: Entity<EditorState>,
+    /// One host view per rendered input, keyed by the input's entity. See [`InputHost`].
+    pub(super) input_hosts: RefCell<InputHosts>,
+    /// Counts renders so tests can check what rebuilds the whole window.
+    #[cfg(test)]
+    pub(super) render_count: usize,
+    /// Whether the response body holds only whitespace. Kept here so that rendering does not read
+    /// the editor, which would rebuild the whole view on every response scroll.
+    pub(super) response_body_is_blank: bool,
     pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
     pub(super) response_headers_raw: String,
     pub(super) response_content_type: Option<String>,
@@ -219,6 +227,10 @@ impl BeamView {
             url_input,
             request_body_editor,
             response_body_editor,
+            input_hosts: RefCell::default(),
+            #[cfg(test)]
+            render_count: 0,
+            response_body_is_blank: true,
             html_response_preview: cx
                 .new(|_| super::response::html_preview::HtmlResponsePreview::new()),
             response_headers_raw: String::new(),
@@ -552,6 +564,10 @@ impl Focusable for BeamView {
 
 impl Render for BeamView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        {
+            self.render_count += 1;
+        }
         let left_size = 1280.0 * self.shell.layout.collections_workspace.ratio();
         let request_size = (1280.0 - left_size) * 0.5;
 

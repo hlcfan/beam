@@ -217,14 +217,13 @@ impl BeamView {
                 if let Some(image) = self.response_image.clone() {
                     return self.render_response_image(image, window, cx);
                 }
-                let response_body_text = self.response_body_editor.read(cx).value().to_string();
-                let trimmed_body = response_body_text.trim();
-                if trimmed_body.is_empty() {
+                if self.response_body_is_blank {
                     self.html_response_preview
                         .update(cx, |preview, cx| preview.release(cx));
                     return self.render_response_body_shortcuts_empty_state(cx);
                 }
                 if show_html_preview {
+                    let response_body_text = self.response_body_editor.read(cx).value();
                     self.html_response_preview
                         .update(cx, |preview, cx| preview.set_html(&response_body_text, cx));
                     return div()
@@ -232,35 +231,34 @@ impl BeamView {
                         .child(self.html_response_preview.clone())
                         .into_any_element();
                 }
-                let response_body_has_selection = !self
-                    .response_body_editor
-                    .read(cx)
-                    .selected_range()
-                    .is_empty();
-                Editor::new(&self.response_body_editor)
-                    .h_full()
-                    .p_0()
-                    .border_0()
-                    .bordered(false)
-                    .readonly(true)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(cx.theme().mono_font_size)
-                    .context_menu(move |menu, _window, cx| {
-                        let muted_foreground = cx.theme().muted_foreground;
-                        let menu = menu
-                            .menu_with_icon(
-                                "Format",
-                                Icon::default().path("icons/indent.svg"),
-                                Box::new(FormatResponseBody),
+                self.input_host(&self.response_body_editor, cx, move |state, _window, cx| {
+                    let response_body_selection = state.clone();
+                    Editor::new(state)
+                        .h_full()
+                        .p_0()
+                        .border_0()
+                        .bordered(false)
+                        .readonly(true)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(cx.theme().mono_font_size)
+                        .context_menu(move |menu, _window, cx| {
+                            let muted_foreground = cx.theme().muted_foreground;
+                            let menu = menu
+                                .menu_with_icon(
+                                    "Format",
+                                    Icon::default().path("icons/indent.svg"),
+                                    Box::new(FormatResponseBody),
+                                )
+                                .separator();
+                            build_text_edit_context_menu(
+                                menu,
+                                response_body_selection.has_selection(cx),
+                                muted_foreground,
                             )
-                            .separator();
-                        build_text_edit_context_menu(
-                            menu,
-                            response_body_has_selection,
-                            muted_foreground,
-                        )
-                    })
-                    .into_any_element()
+                        })
+                        .into_any_element()
+                })
+                .into_any_element()
             }
             ResponseTab::Headers => self.render_response_headers_table(cx),
         }

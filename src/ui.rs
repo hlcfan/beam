@@ -3,6 +3,7 @@ mod app_events;
 mod beam_view;
 mod dialogs;
 mod environment;
+mod input_host;
 mod persistence;
 mod request;
 mod response;
@@ -14,6 +15,7 @@ mod workspace_tabs;
 
 use beam_view::BeamView;
 use environment::{EnvVarHoverInfo, environment_file_path_for_workspace};
+use input_host::InputHosts;
 
 use actions::*;
 use tree::*;
@@ -43,12 +45,13 @@ use response::persistence::{
 };
 use response::{MACOS_COMMAND_ICON_PATH, NON_MACOS_COMMAND_ICON_PATH, ResponseTab};
 use text_edit_menu::{
-    append_with_image_or_plain, build_text_edit_context_menu,
+    TextSelectionSource, append_with_image_or_plain, build_text_edit_context_menu,
     build_text_edit_context_menu_with_find,
 };
 use theme::init_theme_registry;
 
 use std::any::Any;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
