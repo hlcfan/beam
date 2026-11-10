@@ -79,9 +79,9 @@ fn completion_shares_variables_across_editors_and_menu_dismissals(cx: &mut TestA
     type_url(&view, "{{ho", cx);
     cx.run_until_parked();
     view.update(cx, |view, cx| {
-        assert!(view.url_completion_active(cx));
+        assert!(view.url_completion_active());
         view.dismiss_url_completion(cx);
-        assert!(!view.url_completion_active(cx));
+        assert!(!view.url_completion_active());
     });
     type_url(&view, "https://{{ho", cx);
     cx.run_until_parked();
@@ -91,6 +91,22 @@ fn completion_shares_variables_across_editors_and_menu_dismissals(cx: &mut TestA
     view.read_with(cx, |view, cx| {
         assert_eq!(view.url_input.read(cx).value().as_ref(), "https://{{host}}");
     });
+}
+
+#[gpui_kit::test]
+fn moving_the_url_cursor_off_the_token_hides_url_completion(cx: &mut TestAppContext) {
+    let (view, _environment_path, _directory, cx) = fixture(cx);
+    type_url(&view, "https://{{ho", cx);
+    cx.run_until_parked();
+    view.read_with(cx, |view, _| assert!(view.url_completion_active()));
+
+    cx.update(|_, cx| {
+        let input = view.read(cx).url_input.clone();
+        input.update(cx, |input, cx| input.set_selected_range(0..0, cx));
+    });
+    cx.run_until_parked();
+
+    view.read_with(cx, |view, _| assert!(!view.url_completion_active()));
 }
 
 #[gpui_kit::test]
@@ -229,14 +245,14 @@ fn clearing_the_environment_dismisses_url_completion_and_clears_hover_cache(
     });
     cx.run_until_parked();
     view.update(cx, |view, cx| {
-        assert!(view.url_completion_active(cx));
+        assert!(view.url_completion_active());
         view.env_var_resolved_cache = Some((
             view.selected_environment_id_for_view(),
             [("host".into(), "example.com".into())].into(),
         ));
         view.clear_selected_environment_for_view(cx);
         assert!(view.env_var_resolved_cache.is_none());
-        assert!(!view.url_completion_active(cx));
+        assert!(!view.url_completion_active());
     });
 }
 
@@ -314,8 +330,8 @@ fn saving_the_environment_keeps_url_completion_open(cx: &mut TestAppContext) {
     let (view, _, _directory, cx) = fixture(cx);
     type_url(&view, "{{ho", cx);
     cx.run_until_parked();
-    let environment = view.read_with(cx, |view, cx| {
-        assert!(view.url_completion_active(cx));
+    let environment = view.read_with(cx, |view, _| {
+        assert!(view.url_completion_active());
         view.shell.environments[0].clone()
     });
     apply_environment_event(
@@ -326,8 +342,8 @@ fn saving_the_environment_keeps_url_completion_open(cx: &mut TestAppContext) {
         },
         cx,
     );
-    view.read_with(cx, |view, cx| {
-        assert!(view.url_completion_active(cx));
+    view.read_with(cx, |view, _| {
+        assert!(view.url_completion_active());
         assert!(view.completion_environment_variables.is_none());
     });
 }
@@ -395,7 +411,7 @@ fn clearing_the_environment_cancels_pending_url_completion(cx: &mut TestAppConte
         });
     });
     cx.run_until_parked();
-    view.read_with(cx, |view, cx| assert!(!view.url_completion_active(cx)));
+    view.read_with(cx, |view, _| assert!(!view.url_completion_active()));
 }
 
 #[gpui_kit::test]
@@ -424,8 +440,8 @@ fn url_completion_keeps_builtins_when_the_environment_file_is_malformed(cx: &mut
     std::fs::write(&environment_path, "invalid TOML").expect("malformed environment");
     type_url(&view, "{{$g", cx);
     cx.run_until_parked();
-    view.read_with(cx, |view, cx| {
-        assert!(view.url_completion_active(cx));
+    view.read_with(cx, |view, _| {
+        assert!(view.url_completion_active());
         assert!(view.completion_environment_variables.is_none());
         assert!(view.completion_environment_task.is_none());
     });
