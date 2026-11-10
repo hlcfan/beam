@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::component::input::EditorState;
 use gpui_kit::{App, Context, Pixels, Point, Window};
@@ -161,46 +161,43 @@ impl BeamView {
         self.schedule_response_scroll_offset_persistence(cx);
     }
 
+    /// Debounces scroll offset persistence. Each scroll pushes the due time back, and one timer
+    /// task sleeps until the latest due time instead of waking on a fixed tick.
     fn schedule_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
         if !self.response_scroll_offset_needs_persist(cx) {
             return;
         }
         self.pending_response_scroll_offset_persistence_due_at =
-            Some(Instant::now() + Duration::from_millis(150));
-        if self.response_scroll_offset_persistence_tick_scheduled {
+            Some(cx.background_executor().now() + Duration::from_millis(150));
+        if self.response_scroll_offset_persistence_scheduled {
             return;
         }
-        self.response_scroll_offset_persistence_tick_scheduled = true;
-        self.schedule_response_scroll_offset_persistence_tick(cx);
-    }
-
-    fn process_pending_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
-        let Some(due_at) = self.pending_response_scroll_offset_persistence_due_at else {
-            self.response_scroll_offset_persistence_tick_scheduled = false;
-            return;
-        };
-        if Instant::now() < due_at {
-            self.schedule_response_scroll_offset_persistence_tick(cx);
-            return;
-        }
-        self.pending_response_scroll_offset_persistence_due_at = None;
-        self.response_scroll_offset_persistence_tick_scheduled = false;
-        if self.response_scroll_offset_needs_persist(cx) {
-            self.persist_current_response_scroll_offset(cx);
-        }
-    }
-
-    fn schedule_response_scroll_offset_persistence_tick(&self, cx: &mut Context<Self>) {
-        let view = cx.entity();
-
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                this.process_pending_response_scroll_offset_persistence(cx);
+        self.response_scroll_offset_persistence_scheduled = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(due_at) = this.update(cx, |this, _| {
+                    this.pending_response_scroll_offset_persistence_due_at
+                }) else {
+                    return;
+                };
+                let Some(due_at) = due_at else {
+                    break;
+                };
+                let now = cx.background_executor().now();
+                if now < due_at {
+                    cx.background_executor().timer(due_at - now).await;
+                    continue;
+                }
+                let _ = this.update(cx, |this, cx| {
+                    this.pending_response_scroll_offset_persistence_due_at = None;
+                    if this.response_scroll_offset_needs_persist(cx) {
+                        this.persist_current_response_scroll_offset(cx);
+                    }
+                });
+                break;
+            }
+            let _ = this.update(cx, |this, _| {
+                this.response_scroll_offset_persistence_scheduled = false;
             });
         })
         .detach();
