@@ -50,8 +50,7 @@ impl BeamView {
                     button.label(label).text_color(cx.theme().muted_foreground)
                 })
                 .dropdown_menu(move |menu, _window, menu_cx| {
-                    let list_width_px = 180.0;
-                    let mut menu = menu.min_w(px(list_width_px));
+                    let mut menu = menu.min_w(px(150.0));
 
                     if response_histories.is_empty() {
                         return menu.item(
@@ -69,122 +68,80 @@ impl BeamView {
                     }
 
                     let popup_menu = menu_cx.entity().clone();
-                    let row_width_px = 172.0;
-                    let row_height_px = 32.0;
-                    let row_height = px(row_height_px);
-                    let row_content_height = px(28.0);
-                    let list_height =
-                        px((response_histories.len() as f32 * row_height_px).min(280.0));
-                    let row_sizes = Rc::new(
-                        response_histories
-                            .iter()
-                            .map(|_| size(px(row_width_px), row_height))
-                            .collect::<Vec<_>>(),
-                    );
+                    let row_height = px(28.0);
+                    let max_list_height = px(280.0);
                     let menu_response_histories = response_histories.clone();
-                    let menu_selected_response_history_index =
-                        selected_response_history_index;
-                    let menu_response_history_view = response_history_view.clone();
-                    let menu_popup_menu = popup_menu.clone();
-                    let scroll_handle = VirtualListScrollHandle::new();
+                    let menu_view = response_history_view.clone();
+                    let scroll_handle = ScrollHandle::new();
                     if let Some(index) = selected_response_history_index {
-                        scroll_handle.scroll_to_item(index, ScrollStrategy::Center);
+                        scroll_handle.scroll_to_item(index);
                     }
 
                     menu = menu.item(
-                        PopupMenuItem::element(move |_, _cx| {
-                            let row_sizes = row_sizes.clone();
-                            let list_response_histories = menu_response_histories.clone();
-                            let selected_response_history_index =
-                                menu_selected_response_history_index;
-                            let list_response_history_view = menu_response_history_view.clone();
-                            let list_popup_menu = menu_popup_menu.clone();
-                            let scroll_handle = scroll_handle.clone();
+                        PopupMenuItem::element(move |_, cx| {
+                            let rows = menu_response_histories
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, entry)| {
+                                    let status_color =
+                                        Self::status_code_in_color(entry.execution.status, cx);
+                                    let history_entry = entry.clone();
+                                    let view = menu_view.clone();
+                                    let popup_menu = popup_menu.clone();
+                                    ListItem::new(format!("response-history-dropdown-row-{ix}"))
+                                        .w_full()
+                                        .h(row_height)
+                                        .rounded(px(6.0))
+                                        .cursor_pointer()
+                                        .selected(selected_response_history_index == Some(ix))
+                                        .px_1()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_3()
+                                                .text_sm()
+                                                .child(
+                                                    div()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(entry.timestamp_text.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_color(status_color)
+                                                        .child(entry.status_text.clone()),
+                                                ),
+                                        )
+                                        .on_click(move |_, window, cx| {
+                                            window.prevent_default();
+                                            view.update(cx, |this, cx| {
+                                                cx.stop_propagation();
+                                                let snapshot =
+                                                    load_response_snapshot_for_history_entry(
+                                                        &this.current_workspace_paths,
+                                                        &history_entry,
+                                                    );
+                                                this.apply_response_snapshot(&snapshot, window, cx);
+                                                this.selected_response_history_index = Some(ix);
+                                                popup_menu
+                                                    .update(cx, |_, cx| cx.emit(DismissEvent));
+                                                cx.notify();
+                                            });
+                                        })
+                                })
+                                .collect::<Vec<_>>();
 
-                            div()
-                                .min_w(px(list_width_px))
+                            v_flex()
+                                .id("response-history-dropdown-list")
                                 .mx(px(-8.0))
                                 .p_1()
-                                .h(list_height)
-                                .child(
-                                v_virtual_list(
-                                    list_response_history_view,
-                                    "response-history-dropdown-list",
-                                    row_sizes,
-                                    move |_, visible_range, _, cx| {
-                                        visible_range
-                                            .map(|ix| {
-                                                let entry = list_response_histories[ix].clone();
-                                                let popup_menu = list_popup_menu.clone();
-                                                let timestamp_text = entry.timestamp_text.clone();
-                                                let status_text = entry.status_text.clone();
-                                                let history_entry = entry.clone();
-                                                let status_color =
-                                                    Self::status_code_in_color(
-                                                        entry.execution.status,
-                                                        cx,
-                                                    );
-                                                div().w_full().h(row_height).pb(px(4.0)).child(
-                                                    ListItem::new(format!(
-                                                        "response-history-dropdown-row-{ix}"
-                                                    ))
-                                                    .w_full()
-                                                    .h(row_content_height)
-                                                    .rounded(px(6.0))
-                                                    .cursor_pointer()
-                                                    .selected(
-                                                        selected_response_history_index == Some(ix),
-                                                    )
-                                                    .px_1()
-                                                    .py_1()
-                                                    .child(
-                                                        h_flex()
-                                                            .w_full()
-                                                            .items_center()
-                                                            .justify_between()
-                                                            .text_sm()
-                                                            .child(
-                                                                div()
-                                                                    .text_color(
-                                                                        cx.theme().muted_foreground,
-                                                                    )
-                                                                    .child(timestamp_text),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .text_color(status_color)
-                                                                    .child(status_text),
-                                                            ),
-                                                    )
-                                                    .on_click(
-                                                        cx.listener(move |this, _, window, cx| {
-                                                            cx.stop_propagation();
-                                                            window.prevent_default();
-                                                            let snapshot =
-                                                                load_response_snapshot_for_history_entry(
-                                                                    &this.current_workspace_paths,
-                                                                    &history_entry,
-                                                                );
-                                                            this.apply_response_snapshot(
-                                                                &snapshot,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                            this.selected_response_history_index =
-                                                                Some(ix);
-                                                            popup_menu.update(cx, |_, cx| {
-                                                                cx.emit(DismissEvent)
-                                                            });
-                                                            cx.notify();
-                                                        }),
-                                                    ),
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                    },
-                                )
-                                .track_scroll(&scroll_handle),
-                            )
+                                .gap_1()
+                                .max_h(max_list_height)
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll_handle)
+                                .children(rows)
                         })
                         .disabled(true),
                     );
