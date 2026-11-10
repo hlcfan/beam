@@ -1,5 +1,72 @@
 use super::*;
 
+impl BeamView {
+    /// Returns the host view for `state`, creating it on first use with `build`.
+    ///
+    /// The first `build` for an input is kept for the life of the host, so it must not capture
+    /// values that change between renders of `BeamView`. Read theme values from the `App` it
+    /// receives.
+    pub(super) fn input_host<S: 'static>(
+        &self,
+        state: &Entity<S>,
+        cx: &mut Context<Self>,
+        build: impl Fn(&Entity<S>, &mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Entity<InputHost> {
+        let mut hosts = self.input_hosts.borrow_mut();
+        if let Some((_, host)) = hosts.0.get(&state.entity_id()) {
+            return host.clone();
+        }
+        let weak_state = state.downgrade();
+        let host = cx.new(|_| InputHost {
+            build: Box::new(move |window, cx| {
+                let state = weak_state.upgrade()?;
+                Some(build(&state, window, cx))
+            }),
+        });
+        hosts
+            .0
+            .insert(state.entity_id(), (state.downgrade().into(), host.clone()));
+        host
+    }
+
+    /// Returns the host for a single-line `Input` with the standard text-edit context menu.
+    ///
+    /// `style` sets the size and look of the `Input`. Like `build` in [`Self::input_host`], it is
+    /// kept for the life of the host.
+    pub(super) fn text_input_host(
+        &self,
+        input: &Entity<InputState>,
+        cx: &mut Context<Self>,
+        style: impl Fn(Input) -> Input + 'static,
+    ) -> Entity<InputHost> {
+        self.input_host(input, cx, move |state, _window, _cx| {
+            let selection = state.clone();
+            style(Input::new(state))
+                .context_menu(move |menu, _, cx| {
+                    build_text_edit_context_menu(
+                        menu,
+                        selection.has_selection(cx),
+                        cx.theme().muted_foreground,
+                    )
+                })
+                .into_any_element()
+        })
+    }
+
+    /// Drops the hosts of inputs that no longer exist. Rebuilding the param, header, and auth rows
+    /// replaces their inputs, so this runs once per `BeamView` render rather than per new host.
+    pub(super) fn prune_input_hosts(&mut self) {
+        self.input_hosts
+            .get_mut()
+            .0
+            .retain(|_, (input, _)| input.upgrade().is_some());
+    }
+}
+
+/// The host views `BeamView` has created, keyed by the entity of the input each one renders.
+#[derive(Default)]
+pub(super) struct InputHosts(HashMap<EntityId, (AnyWeakEntity, Entity<InputHost>)>);
+
 type BuildInput = Box<dyn Fn(&mut Window, &mut App) -> Option<AnyElement>>;
 
 /// Renders one `Input` or `Editor` component in a view of its own.
@@ -19,42 +86,5 @@ pub(super) struct InputHost {
 impl Render for InputHost {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         (self.build)(window, cx).unwrap_or_else(|| div().into_any_element())
-    }
-}
-
-/// The host views `BeamView` has created, keyed by the entity of the input each one renders.
-#[derive(Default)]
-pub(super) struct InputHosts(HashMap<EntityId, (AnyWeakEntity, Entity<InputHost>)>);
-
-impl BeamView {
-    /// Returns the host view for `state`, creating it on first use with `build`.
-    ///
-    /// The first `build` for an input is kept for the life of the host, so it must not capture
-    /// values that change between renders of `BeamView`. Read theme values from the `App` it
-    /// receives.
-    pub(super) fn input_host<S: 'static>(
-        &self,
-        state: &Entity<S>,
-        cx: &mut Context<Self>,
-        build: impl Fn(&Entity<S>, &mut Window, &mut App) -> AnyElement + 'static,
-    ) -> Entity<InputHost> {
-        let mut hosts = self.input_hosts.borrow_mut();
-        if let Some((_, host)) = hosts.0.get(&state.entity_id()) {
-            return host.clone();
-        }
-        // Rebuilding the param, header, and auth rows replaces their inputs. Drop the hosts of
-        // inputs that no longer exist before adding a new one.
-        hosts.0.retain(|_, (input, _)| input.upgrade().is_some());
-        let weak_state = state.downgrade();
-        let host = cx.new(|_| InputHost {
-            build: Box::new(move |window, cx| {
-                let state = weak_state.upgrade()?;
-                Some(build(&state, window, cx))
-            }),
-        });
-        hosts
-            .0
-            .insert(state.entity_id(), (state.downgrade().into(), host.clone()));
-        host
     }
 }

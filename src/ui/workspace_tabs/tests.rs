@@ -333,9 +333,56 @@ fn scrolling_the_response_editor_does_not_render_the_beam_view(cx: &mut TestAppC
     }
 
     assert_eq!(response_scroll_offset(&fixture, cx).y, px(-400.));
-    // On main this rendered BeamView twice per scroll. One render, whatever the scroll count,
-    // is the bound now.
+    // Scrolling renders the editor's host view, not BeamView. One BeamView render, whatever the
+    // scroll count, is the bound.
     assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+}
+
+#[gpui_kit::test]
+fn moving_the_cursor_in_inputs_does_not_render_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 1);
+    cx.update(|window, cx| {
+        let (url_input, body_editor) = fixture.view.read_with(cx, |view, _| {
+            (view.url_input.clone(), view.request_body_editor.clone())
+        });
+        url_input.update(cx, |input, cx| {
+            input.set_value("https://example.com/users", window, cx)
+        });
+        body_editor.update(cx, |editor, cx| {
+            editor.set_value("{\"name\": \"beam\"}", window, cx)
+        });
+    });
+    draw(cx);
+
+    for focus_url in [true, false] {
+        cx.update(|window, cx| {
+            let view = fixture.view.read(cx);
+            if focus_url {
+                view.url_input
+                    .clone()
+                    .update(cx, |input, cx| input.focus(window, cx));
+            } else {
+                view.request_body_editor
+                    .clone()
+                    .update(cx, |editor, cx| editor.focus(window, cx));
+            }
+        });
+        draw(cx);
+        let renders_before = beam_view_render_count(&fixture, cx);
+
+        for _ in 0..10 {
+            cx.simulate_keystrokes("left");
+            draw(cx);
+        }
+
+        // Cursor moves render only the input's host view. The first keystroke after focusing the
+        // URL input renders BeamView once, so one render, whatever the keystroke count, is the
+        // bound.
+        assert!(
+            beam_view_render_count(&fixture, cx) - renders_before <= 1,
+            "focus_url: {focus_url}"
+        );
+    }
 }
 
 fn beam_view_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> usize {

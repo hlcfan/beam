@@ -174,10 +174,10 @@ Current icon paths in shared helper menus:
 #### Input Hosts
 Beam's gpui fork (`gpui-fast`) draws a view again from last frame unless something it read while rendering changed. The `Input` and `Editor` components read and update their state entity as they render, so whichever view renders them depends on that state.
 
-- Render every `Input` and `Editor` through `BeamView::input_host` (`src/ui/input_host.rs`). The host view owns that dependency, so a scroll or keystroke in an editor rebuilds the host, not the whole window.
+- Render every `Input` and `Editor` that `BeamView` renders through `BeamView::input_host` (`src/ui/input_host.rs`), or `BeamView::text_input_host` for a single-line `Input` with the standard text-edit menu. The host view owns that dependency, so a scroll or keystroke in an editor rebuilds the host, not the whole window. Dialogs are views of their own and render their inputs directly.
 - The first `build` closure for an input is kept for the life of its host. Capture only the input and values that never change. Read theme values from the `App` the closure receives.
 - Put listeners that need `BeamView` (`cx.listener`) on the elements around the host, not inside `build`.
-- Do not call `.read(cx)` on an input or editor entity in a `BeamView` render path. Keep the fact in `BeamView` state instead, as `response_body_is_blank` does.
+- Do not call `.read(cx)` on an input or editor entity in a `BeamView` render path. Keep the fact in `BeamView` state instead, as `response_body_is_blank` does, or read it in a child view of its own, as `HtmlResponsePreview` reads the response body.
 
 #### Button Cursor Behavior
 When adding clickable buttons in Beam, set `.cursor_pointer()` consistently for all interactive button states, not only prominent actions. This includes secondary actions like `Cancel`, ghost buttons, title bar buttons, toolbar buttons, and dialog or modal actions such as `Create`, `Rename`, or `Delete`.

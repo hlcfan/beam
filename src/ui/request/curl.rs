@@ -60,6 +60,9 @@ impl BeamView {
     ) {
         self.dismiss_url_completion(cx);
         let editor = self.url_input.clone();
+        self.request_url_cursor_sub = Some(cx.observe(&editor, |this, editor, cx| {
+            this.dismiss_url_completion_if_cursor_moved(editor.read(cx).cursor(), cx);
+        }));
         self.request_url_editor_change_sub = Some(cx.subscribe_in(
             &editor,
             window,
@@ -78,7 +81,7 @@ impl BeamView {
                 }
                 InputEvent::PressEnter { .. } => {
                     // Enter belongs to the popup while it is showing; otherwise it sends.
-                    if this.url_completion_active(cx) {
+                    if this.url_completion_active() {
                         this.accept_url_completion(None, window, cx);
                         return;
                     }

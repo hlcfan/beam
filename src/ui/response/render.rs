@@ -223,9 +223,6 @@ impl BeamView {
                     return self.render_response_body_shortcuts_empty_state(cx);
                 }
                 if show_html_preview {
-                    let response_body_text = self.response_body_editor.read(cx).value();
-                    self.html_response_preview
-                        .update(cx, |preview, cx| preview.set_html(&response_body_text, cx));
                     return div()
                         .size_full()
                         .child(self.html_response_preview.clone())

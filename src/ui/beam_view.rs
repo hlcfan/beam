@@ -105,6 +105,8 @@ pub(super) struct BeamView {
     pub(super) request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
     pub(super) request_url_editor_cache_order: Vec<Ulid>,
     pub(super) request_url_editor_change_sub: Option<Subscription>,
+    /// Hides the URL completion popup when the cursor leaves the token it was computed for.
+    pub(super) request_url_cursor_sub: Option<Subscription>,
     pub(super) url_completion: Option<request::url_completion::UrlCompletion>,
     pub(super) url_completion_pending: bool,
 }
@@ -161,6 +163,11 @@ impl BeamView {
                 .wrapping_indent(Self::editor_wrapping_indent(shell.theme.wrapping_indent))
                 .placeholder("Response body will appear here...")
                 .default_value("aa")
+        });
+        let html_response_preview = cx.new(|_| {
+            super::response::html_preview::HtmlResponsePreview::new(
+                response_body_editor.downgrade(),
+            )
         });
 
         let post_script_editor = cx.new(|cx| {
@@ -232,8 +239,7 @@ impl BeamView {
             #[cfg(test)]
             render_count: 0,
             response_body_is_blank: true,
-            html_response_preview: cx
-                .new(|_| super::response::html_preview::HtmlResponsePreview::new()),
+            html_response_preview,
             response_headers_raw: String::new(),
             response_content_type: None,
             response_image: None,
@@ -307,6 +313,7 @@ impl BeamView {
             request_url_editor_cache: HashMap::new(),
             request_url_editor_cache_order: Vec::new(),
             request_url_editor_change_sub: None,
+            request_url_cursor_sub: None,
             url_completion: None,
             url_completion_pending: false,
         };
@@ -569,6 +576,7 @@ impl Render for BeamView {
         {
             self.render_count += 1;
         }
+        self.prune_input_hosts();
         let left_size = 1280.0 * self.shell.layout.collections_workspace.ratio();
         let request_size = (1280.0 - left_size) * 0.5;
 

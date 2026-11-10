@@ -375,27 +375,9 @@ impl BeamView {
                                         this.clear_env_var_hover(cx);
                                     }
                                 }))
-                                .child(self.input_host(
-                                    &self.url_input,
-                                    cx,
-                                    move |state, _window, _cx| {
-                                        let url_selection = state.clone();
-                                        Input::new(state)
-                                            .flex_1()
-                                            .small()
-                                            .appearance(false)
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    build_text_edit_context_menu(
-                                                        menu,
-                                                        url_selection.has_selection(cx),
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            })
-                                            .into_any_element()
-                                    },
-                                ))
+                                .child(self.text_input_host(&self.url_input, cx, |input| {
+                                    input.flex_1().small().appearance(false)
+                                }))
                                 .children(self.render_url_completion(cx))
                             })
                             .child(
@@ -755,27 +737,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(self.input_host(
-                                        &key_input,
-                                        cx,
-                                        move |state, _window, _cx| {
-                                            let key_selection = state.clone();
-                                            Input::new(state)
-                                                .small()
-                                                .w_full()
-                                                .appearance(false)
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            key_selection.has_selection(cx),
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                })
-                                                .into_any_element()
-                                        },
-                                    ))
+                                    .child(self.text_input_host(&key_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child({
                                 let value_entity = value_input.clone();
@@ -796,27 +760,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(self.input_host(
-                                        &value_input,
-                                        cx,
-                                        move |state, _window, _cx| {
-                                            let value_selection = state.clone();
-                                            Input::new(state)
-                                                .small()
-                                                .w_full()
-                                                .appearance(false)
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            value_selection.has_selection(cx),
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                })
-                                                .into_any_element()
-                                        },
-                                    ))
+                                    .child(self.text_input_host(&value_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child(
                                 div().w(px(28.0)).child(
@@ -894,27 +840,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(self.input_host(
-                                        &key_input,
-                                        cx,
-                                        move |state, _window, _cx| {
-                                            let key_selection = state.clone();
-                                            Input::new(state)
-                                                .small()
-                                                .w_full()
-                                                .appearance(false)
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            key_selection.has_selection(cx),
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                })
-                                                .into_any_element()
-                                        },
-                                    ))
+                                    .child(self.text_input_host(&key_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child({
                                 let value_entity = value_input.clone();
@@ -935,27 +863,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(self.input_host(
-                                        &value_input,
-                                        cx,
-                                        move |state, _window, _cx| {
-                                            let value_selection = state.clone();
-                                            Input::new(state)
-                                                .small()
-                                                .w_full()
-                                                .appearance(false)
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            value_selection.has_selection(cx),
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                })
-                                                .into_any_element()
-                                        },
-                                    ))
+                                    .child(self.text_input_host(&value_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child(
                                 div().w(px(28.0)).child(
@@ -1106,25 +1016,10 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(self.input_host(
+                                        .child(self.text_input_host(
                                             &self.request_auth_bearer_token_input,
                                             cx,
-                                            move |state, _window, _cx| {
-                                                let bearer_selection = state.clone();
-                                                Input::new(state)
-                                                    .small()
-                                                    .w_full()
-                                                    .context_menu({
-                                                        move |menu, _, cx| {
-                                                            build_text_edit_context_menu(
-                                                                menu,
-                                                                bearer_selection.has_selection(cx),
-                                                                cx.theme().muted_foreground,
-                                                            )
-                                                        }
-                                                    })
-                                                    .into_any_element()
-                                            },
+                                            |input| input.small().w_full(),
                                         )),
                                 )
                                 .into_any_element()
@@ -1158,26 +1053,10 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(self.input_host(
+                                        .child(self.text_input_host(
                                             &self.request_auth_basic_username_input,
                                             cx,
-                                            move |state, _window, _cx| {
-                                                let basic_username_selection = state.clone();
-                                                Input::new(state)
-                                                    .small()
-                                                    .w_full()
-                                                    .context_menu({
-                                                        move |menu, _, cx| {
-                                                            build_text_edit_context_menu(
-                                                                menu,
-                                                                basic_username_selection
-                                                                    .has_selection(cx),
-                                                                cx.theme().muted_foreground,
-                                                            )
-                                                        }
-                                                    })
-                                                    .into_any_element()
-                                            },
+                                            |input| input.small().w_full(),
                                         )),
                                 )
                                 .child(
@@ -1203,26 +1082,10 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(self.input_host(
+                                        .child(self.text_input_host(
                                             &self.request_auth_basic_password_input,
                                             cx,
-                                            move |state, _window, _cx| {
-                                                let basic_password_selection = state.clone();
-                                                Input::new(state)
-                                                    .small()
-                                                    .w_full()
-                                                    .context_menu({
-                                                        move |menu, _, cx| {
-                                                            build_text_edit_context_menu(
-                                                                menu,
-                                                                basic_password_selection
-                                                                    .has_selection(cx),
-                                                                cx.theme().muted_foreground,
-                                                            )
-                                                        }
-                                                    })
-                                                    .into_any_element()
-                                            },
+                                            |input| input.small().w_full(),
                                         )),
                                 )
                                 .into_any_element()
@@ -1315,26 +1178,10 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(self.input_host(
+                                        .child(self.text_input_host(
                                             &self.request_auth_api_key_value_input,
                                             cx,
-                                            move |state, _window, _cx| {
-                                                let api_key_value_selection = state.clone();
-                                                Input::new(state)
-                                                    .small()
-                                                    .w_full()
-                                                    .context_menu({
-                                                        move |menu, _, cx| {
-                                                            build_text_edit_context_menu(
-                                                                menu,
-                                                                api_key_value_selection
-                                                                    .has_selection(cx),
-                                                                cx.theme().muted_foreground,
-                                                            )
-                                                        }
-                                                    })
-                                                    .into_any_element()
-                                            },
+                                            |input| input.small().w_full(),
                                         ))
                                 })
                                 .child(
@@ -1362,26 +1209,10 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(self.input_host(
+                                        .child(self.text_input_host(
                                             &self.request_auth_api_key_name_input,
                                             cx,
-                                            move |state, _window, _cx| {
-                                                let api_key_name_selection = state.clone();
-                                                Input::new(state)
-                                                    .small()
-                                                    .w_full()
-                                                    .context_menu({
-                                                        move |menu, _, cx| {
-                                                            build_text_edit_context_menu(
-                                                                menu,
-                                                                api_key_name_selection
-                                                                    .has_selection(cx),
-                                                                cx.theme().muted_foreground,
-                                                            )
-                                                        }
-                                                    })
-                                                    .into_any_element()
-                                            },
+                                            |input| input.small().w_full(),
                                         ))
                                 })
                                 .into_any_element()
