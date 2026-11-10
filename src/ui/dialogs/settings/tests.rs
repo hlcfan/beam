@@ -7,7 +7,7 @@ use crate::ui::update::UpdatePhase;
 use gpui_kit::base::test_support::find;
 use gpui_kit::component::{Root, Theme};
 use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext, px, size};
-use std::sync::mpsc::{channel, sync_channel};
+use std::sync::mpsc::sync_channel;
 
 fn fixture(
     cx: &mut TestAppContext,
@@ -20,7 +20,7 @@ fn fixture(
     let directory = tempfile::tempdir().expect("directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
     let (command_tx, _) = sync_channel(32);
-    let (_, event_rx) = channel();
+    let (_, event_rx) = async_channel::unbounded();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let shell = AppShellState {
             update_channel: UpdateChannel::Nightly,

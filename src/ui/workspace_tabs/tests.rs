@@ -15,14 +15,14 @@ use gpui_kit::{
     AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollWheelEvent, SharedString,
     TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
-use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 use tempfile::TempDir;
 use ulid::Ulid;
 
 struct Fixture {
     view: Entity<BeamView>,
     commands: Receiver<AppCommand>,
-    events: Sender<AppEvent>,
+    events: async_channel::Sender<AppEvent>,
     _directory: TempDir,
 }
 
@@ -57,7 +57,7 @@ fn fixture_with_active_workspace(
         .map(|entry| entry.workspace_id);
     shell.workspace.workspace_name = format!("Workspace {active_index}");
     let (command_tx, commands) = sync_channel(32);
-    let (events, event_rx) = channel();
+    let (events, event_rx) = async_channel::unbounded();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let view = cx.new(|cx| {
             BeamView::new(
@@ -392,7 +392,7 @@ fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell
     ));
     fixture
         .events
-        .send(AppEvent::WorkspaceSwitched {
+        .send_blocking(AppEvent::WorkspaceSwitched {
             workspace_id,
             workspace_name: shell.workspace.workspace_name.clone(),
             all_workspaces: shell.workspace.all_workspaces.clone(),
@@ -404,8 +404,6 @@ fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell
             command_id: "tree-scroll-test".to_string(),
         })
         .expect("workspace switch event");
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(25));
     draw(cx);
 }
 
@@ -801,14 +799,12 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
     entries[1].name = "長いワークスペースの名前".repeat(20);
     fixture
         .events
-        .send(AppEvent::WorkspaceRenamed {
+        .send_blocking(AppEvent::WorkspaceRenamed {
             workspace: entries[1].clone(),
             all_workspaces: entries.clone(),
             command_id: "rename-test".to_string(),
         })
         .expect("rename event");
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(25));
     draw(cx);
     let renamed = snapshot(cx, format!("workspace-tab-{target}"));
     assert_eq!(renamed.label(), Some(entries[1].name.as_str()));

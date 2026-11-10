@@ -1901,7 +1901,7 @@ pub enum ImportResult {
 
 pub struct DataSyncRuntime {
     pub command_tx: SyncSender<AppCommand>,
-    pub event_rx: Receiver<AppEvent>,
+    pub event_rx: async_channel::Receiver<AppEvent>,
 }
 
 pub fn next_command_id() -> String {
@@ -1914,7 +1914,7 @@ pub fn start_data_sync_worker(
     registry_repo: RegistryRepository,
 ) -> DataSyncRuntime {
     let (command_tx, command_rx) = mpsc::sync_channel::<AppCommand>(APP_COMMAND_QUEUE_CAPACITY);
-    let (event_tx, event_rx) = mpsc::channel::<AppEvent>();
+    let (event_tx, event_rx) = async_channel::unbounded::<AppEvent>();
 
     thread::Builder::new()
         .name("beam-data-sync-worker".to_string())
@@ -1934,7 +1934,7 @@ fn data_sync_worker_loop(
     mut registry: WorkspacesRegistryFile,
     registry_repo: RegistryRepository,
     command_rx: Receiver<AppCommand>,
-    event_tx: mpsc::Sender<AppEvent>,
+    event_tx: async_channel::Sender<AppEvent>,
 ) {
     while let Ok(first_command) = command_rx.recv() {
         let mut command_batch = vec![first_command];
@@ -1958,7 +1958,7 @@ fn data_sync_worker_loop(
                     | AppCommand::RunImport { .. }
             );
 
-            let _ = event_tx.send(AppEvent::SyncStarted {
+            let _ = event_tx.send_blocking(AppEvent::SyncStarted {
                 command_id: command_id.clone(),
                 operation,
             });
@@ -1968,16 +1968,16 @@ fn data_sync_worker_loop(
                 {
                     Ok(domain_events) => {
                         for event in domain_events {
-                            let _ = event_tx.send(event);
+                            let _ = event_tx.send_blocking(event);
                         }
-                        let _ = event_tx.send(AppEvent::SyncCompleted {
+                        let _ = event_tx.send_blocking(AppEvent::SyncCompleted {
                             command_id,
                             operation,
                         });
                     }
                     Err(error) => {
                         log_sync_failure(&command_id, operation, &error);
-                        let _ = event_tx.send(AppEvent::SyncFailed {
+                        let _ = event_tx.send_blocking(AppEvent::SyncFailed {
                             command_id,
                             operation,
                             error,
@@ -1989,7 +1989,7 @@ fn data_sync_worker_loop(
 
             if let Err(error) = validate_command_payload(&command) {
                 log_sync_failure(&command_id, operation, &error);
-                let _ = event_tx.send(AppEvent::SyncFailed {
+                let _ = event_tx.send_blocking(AppEvent::SyncFailed {
                     command_id,
                     operation,
                     error,
@@ -2000,16 +2000,16 @@ fn data_sync_worker_loop(
             match handle_command(&mut storage, command) {
                 Ok(domain_events) => {
                     for event in domain_events {
-                        let _ = event_tx.send(event);
+                        let _ = event_tx.send_blocking(event);
                     }
-                    let _ = event_tx.send(AppEvent::SyncCompleted {
+                    let _ = event_tx.send_blocking(AppEvent::SyncCompleted {
                         command_id,
                         operation,
                     });
                 }
                 Err(error) => {
                     log_sync_failure(&command_id, operation, &error);
-                    let _ = event_tx.send(AppEvent::SyncFailed {
+                    let _ = event_tx.send_blocking(AppEvent::SyncFailed {
                         command_id,
                         operation,
                         error,
@@ -3763,7 +3763,6 @@ fn parse_toml<T: for<'de> serde::Deserialize<'de>>(path: &Path) -> Result<T> {
 mod tests {
     use std::fs;
     use std::path::Path;
-    use std::sync::mpsc::Receiver;
     use std::time::Duration;
 
     use tempfile::tempdir;
@@ -4206,13 +4205,12 @@ mod tests {
 
     fn apply_events_for_command(
         state: &mut AppShellState,
-        event_rx: &Receiver<AppEvent>,
+        event_rx: &async_channel::Receiver<AppEvent>,
         command_id: &str,
     ) -> Vec<AppEvent> {
         let mut events = Vec::new();
         loop {
-            let event = event_rx
-                .recv_timeout(Duration::from_secs(2))
+            let event = recv_event_with_timeout(event_rx, Duration::from_secs(2))
                 .expect("expected worker event");
             let is_terminal = matches!(
                 &event,
@@ -4234,6 +4232,25 @@ mod tests {
             }
         }
         events
+    }
+
+    fn recv_event_with_timeout(
+        event_rx: &async_channel::Receiver<AppEvent>,
+        timeout: Duration,
+    ) -> Option<AppEvent> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match event_rx.try_recv() {
+                Ok(event) => return Some(event),
+                Err(async_channel::TryRecvError::Closed) => return None,
+                Err(async_channel::TryRecvError::Empty) if Instant::now() >= deadline => {
+                    return None;
+                }
+                Err(async_channel::TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
     }
 
     #[test]

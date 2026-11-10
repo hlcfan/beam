@@ -16,26 +16,28 @@ impl BeamView {
             })
     }
 
-    pub(in crate::ui) fn schedule_app_event_poll(
+    /// Applies worker events as they arrive. The task sleeps until the worker sends an event,
+    /// and applies everything already queued in one batch so a burst costs one render.
+    pub(in crate::ui) fn listen_for_app_events(
         &mut self,
+        event_rx: async_channel::Receiver<AppEvent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.app_event_poll_scheduled {
-            return;
-        }
-        self.app_event_poll_scheduled = true;
-        let view = cx.entity();
-        cx.spawn_in(window, async move |_, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(25))
-                .await;
-            let _ = view.update_in(cx, |this, window, cx| {
-                this.app_event_poll_scheduled = false;
-                this.process_app_events(window, cx);
-            });
-        })
-        .detach();
+        self.app_event_task = cx.spawn_in(window, async move |this, cx| {
+            while let Ok(first_event) = event_rx.recv().await {
+                let mut events = vec![first_event];
+                while let Ok(event) = event_rx.try_recv() {
+                    events.push(event);
+                }
+                let applied = this.update_in(cx, |this, window, cx| {
+                    this.process_app_events(events, window, cx);
+                });
+                if applied.is_err() {
+                    break;
+                }
+            }
+        });
     }
 
     fn apply_active_workspace_ui_state(
@@ -80,12 +82,17 @@ impl BeamView {
         self.sync_request_editor_from_selection(window, cx);
     }
 
-    fn process_app_events(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn process_app_events(
+        &mut self,
+        events: Vec<AppEvent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut did_apply_any = false;
         let mut should_sync_editor = false;
         let mut selected_request_to_persist = None;
 
-        while let Ok(event) = self.app_event_rx.try_recv() {
+        for event in events {
             self.handle_update_restart_event(&event, cx);
             did_apply_any = true;
             match &event {
@@ -294,7 +301,6 @@ impl BeamView {
         if should_sync_editor {
             self.sync_request_editor_from_selection(window, cx);
         }
-        self.schedule_app_event_poll(window, cx);
         if did_apply_any {
             cx.notify();
         }
