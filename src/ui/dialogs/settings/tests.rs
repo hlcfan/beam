@@ -20,7 +20,7 @@ fn fixture(
     let directory = tempfile::tempdir().expect("directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
     let (command_tx, _) = sync_channel(32);
-    let (_, event_rx) = async_channel::unbounded();
+    let (_, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let shell = AppShellState {
             update_channel: UpdateChannel::Nightly,

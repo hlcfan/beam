@@ -22,7 +22,7 @@ use ulid::Ulid;
 struct Fixture {
     view: Entity<BeamView>,
     commands: Receiver<AppCommand>,
-    events: async_channel::Sender<AppEvent>,
+    events: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     _directory: TempDir,
 }
 
@@ -57,7 +57,7 @@ fn fixture_with_active_workspace(
         .map(|entry| entry.workspace_id);
     shell.workspace.workspace_name = format!("Workspace {active_index}");
     let (command_tx, commands) = sync_channel(32);
-    let (events, event_rx) = async_channel::unbounded();
+    let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let view = cx.new(|cx| {
             BeamView::new(
@@ -392,7 +392,7 @@ fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell
     ));
     fixture
         .events
-        .send_blocking(AppEvent::WorkspaceSwitched {
+        .send(AppEvent::WorkspaceSwitched {
             workspace_id,
             workspace_name: shell.workspace.workspace_name.clone(),
             all_workspaces: shell.workspace.all_workspaces.clone(),
@@ -799,7 +799,7 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
     entries[1].name = "長いワークスペースの名前".repeat(20);
     fixture
         .events
-        .send_blocking(AppEvent::WorkspaceRenamed {
+        .send(AppEvent::WorkspaceRenamed {
             workspace: entries[1].clone(),
             all_workspaces: entries.clone(),
             command_id: "rename-test".to_string(),

@@ -1901,7 +1901,7 @@ pub enum ImportResult {
 
 pub struct DataSyncRuntime {
     pub command_tx: SyncSender<AppCommand>,
-    pub event_rx: async_channel::Receiver<AppEvent>,
+    pub event_rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
 }
 
 pub fn next_command_id() -> String {
@@ -1914,7 +1914,7 @@ pub fn start_data_sync_worker(
     registry_repo: RegistryRepository,
 ) -> DataSyncRuntime {
     let (command_tx, command_rx) = mpsc::sync_channel::<AppCommand>(APP_COMMAND_QUEUE_CAPACITY);
-    let (event_tx, event_rx) = async_channel::unbounded::<AppEvent>();
+    let (event_tx, event_rx) = tokio::sync::mpsc::unbounded_channel::<AppEvent>();
 
     thread::Builder::new()
         .name("beam-data-sync-worker".to_string())
@@ -1934,7 +1934,7 @@ fn data_sync_worker_loop(
     mut registry: WorkspacesRegistryFile,
     registry_repo: RegistryRepository,
     command_rx: Receiver<AppCommand>,
-    event_tx: async_channel::Sender<AppEvent>,
+    event_tx: tokio::sync::mpsc::UnboundedSender<AppEvent>,
 ) {
     while let Ok(first_command) = command_rx.recv() {
         let mut command_batch = vec![first_command];
@@ -1958,7 +1958,7 @@ fn data_sync_worker_loop(
                     | AppCommand::RunImport { .. }
             );
 
-            let _ = event_tx.send_blocking(AppEvent::SyncStarted {
+            let _ = event_tx.send(AppEvent::SyncStarted {
                 command_id: command_id.clone(),
                 operation,
             });
@@ -1968,16 +1968,16 @@ fn data_sync_worker_loop(
                 {
                     Ok(domain_events) => {
                         for event in domain_events {
-                            let _ = event_tx.send_blocking(event);
+                            let _ = event_tx.send(event);
                         }
-                        let _ = event_tx.send_blocking(AppEvent::SyncCompleted {
+                        let _ = event_tx.send(AppEvent::SyncCompleted {
                             command_id,
                             operation,
                         });
                     }
                     Err(error) => {
                         log_sync_failure(&command_id, operation, &error);
-                        let _ = event_tx.send_blocking(AppEvent::SyncFailed {
+                        let _ = event_tx.send(AppEvent::SyncFailed {
                             command_id,
                             operation,
                             error,
@@ -1989,7 +1989,7 @@ fn data_sync_worker_loop(
 
             if let Err(error) = validate_command_payload(&command) {
                 log_sync_failure(&command_id, operation, &error);
-                let _ = event_tx.send_blocking(AppEvent::SyncFailed {
+                let _ = event_tx.send(AppEvent::SyncFailed {
                     command_id,
                     operation,
                     error,
@@ -2000,16 +2000,16 @@ fn data_sync_worker_loop(
             match handle_command(&mut storage, command) {
                 Ok(domain_events) => {
                     for event in domain_events {
-                        let _ = event_tx.send_blocking(event);
+                        let _ = event_tx.send(event);
                     }
-                    let _ = event_tx.send_blocking(AppEvent::SyncCompleted {
+                    let _ = event_tx.send(AppEvent::SyncCompleted {
                         command_id,
                         operation,
                     });
                 }
                 Err(error) => {
                     log_sync_failure(&command_id, operation, &error);
-                    let _ = event_tx.send_blocking(AppEvent::SyncFailed {
+                    let _ = event_tx.send(AppEvent::SyncFailed {
                         command_id,
                         operation,
                         error,
@@ -4205,7 +4205,7 @@ mod tests {
 
     fn apply_events_for_command(
         state: &mut AppShellState,
-        event_rx: &async_channel::Receiver<AppEvent>,
+        event_rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
         command_id: &str,
     ) -> Vec<AppEvent> {
         let mut events = Vec::new();
@@ -4235,18 +4235,20 @@ mod tests {
     }
 
     fn recv_event_with_timeout(
-        event_rx: &async_channel::Receiver<AppEvent>,
+        event_rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
         timeout: Duration,
     ) -> Option<AppEvent> {
         let deadline = Instant::now() + timeout;
         loop {
             match event_rx.try_recv() {
                 Ok(event) => return Some(event),
-                Err(async_channel::TryRecvError::Closed) => return None,
-                Err(async_channel::TryRecvError::Empty) if Instant::now() >= deadline => {
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return None,
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                    if Instant::now() >= deadline =>
+                {
                     return None;
                 }
-                Err(async_channel::TryRecvError::Empty) => {
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
                     thread::sleep(Duration::from_millis(5));
                 }
             }
@@ -4404,7 +4406,7 @@ mod tests {
             WorkspaceRepository::new(FileSystemStorage::new(paths.clone())).expect("repo");
         storage.initialize().expect("initialize");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         runtime
             .command_tx
             .send(AppCommand::CreateEnvironment {
@@ -4418,8 +4420,11 @@ mod tests {
                 command_id: "flush".into(),
             })
             .expect("queue flush");
-        let events =
-            apply_events_for_command(&mut AppShellState::default(), &runtime.event_rx, "flush");
+        let events = apply_events_for_command(
+            &mut AppShellState::default(),
+            &mut runtime.event_rx,
+            "flush",
+        );
         assert!(events.iter().any(|event| matches!(event, AppEvent::SyncCompleted { command_id, .. } if command_id == "save")));
         assert!(matches!(
             events.last(),
@@ -4601,7 +4606,7 @@ mod tests {
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let create_command_id = next_command_id();
@@ -4613,7 +4618,7 @@ mod tests {
             })
             .expect("queue create environment");
         let create_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &create_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &create_command_id);
         let created_environment = create_events
             .iter()
             .find_map(|event| match event {
@@ -4640,7 +4645,7 @@ mod tests {
                 command_id: rename_command_id.clone(),
             })
             .expect("queue rename environment");
-        apply_events_for_command(&mut state, &runtime.event_rx, &rename_command_id);
+        apply_events_for_command(&mut state, &mut runtime.event_rx, &rename_command_id);
         assert_eq!(
             state
                 .environments
@@ -4665,7 +4670,7 @@ mod tests {
             })
             .expect("queue update environment variables");
         let update_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &update_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &update_command_id);
         assert!(update_events.iter().any(|event| matches!(
             event,
             AppEvent::EnvironmentUpserted {
@@ -4685,7 +4690,7 @@ mod tests {
                 command_id: delete_command_id.clone(),
             })
             .expect("queue delete environment");
-        apply_events_for_command(&mut state, &runtime.event_rx, &delete_command_id);
+        apply_events_for_command(&mut state, &mut runtime.event_rx, &delete_command_id);
         assert!(
             state
                 .environments
@@ -4706,7 +4711,7 @@ mod tests {
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let create_command_id = next_command_id();
@@ -4718,7 +4723,7 @@ mod tests {
             })
             .expect("queue create environment");
         let create_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &create_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &create_command_id);
         let source = create_events
             .iter()
             .find_map(|event| match event {
@@ -4737,7 +4742,7 @@ mod tests {
             })
             .expect("queue duplicate environment");
         let duplicate_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &duplicate_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &duplicate_command_id);
         let copy = duplicate_events
             .iter()
             .find_map(|event| match event {
@@ -4772,7 +4777,7 @@ mod tests {
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
         let parent = RequestParentRef { folder_id: None };
 
@@ -4791,7 +4796,7 @@ mod tests {
             })
             .expect("queue create request");
         let create_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &create_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &create_command_id);
         let created = create_events
             .iter()
             .find_map(|event| match event {
@@ -4819,7 +4824,7 @@ mod tests {
             })
             .expect("queue duplicate request");
         let duplicate_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &duplicate_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &duplicate_command_id);
         let duplicated = duplicate_events
             .iter()
             .find_map(|event| match event {
@@ -4844,7 +4849,8 @@ mod tests {
                 command_id: save_command_id.clone(),
             })
             .expect("queue save request");
-        let save_events = apply_events_for_command(&mut state, &runtime.event_rx, &save_command_id);
+        let save_events =
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &save_command_id);
         assert!(save_events.iter().any(|event| matches!(
             event,
             AppEvent::RequestUpserted {
@@ -4871,7 +4877,7 @@ mod tests {
             })
             .expect("queue rename request");
         let rename_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &rename_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &rename_command_id);
         assert!(rename_events.iter().any(|event| matches!(
             event,
             AppEvent::RequestUpserted {
@@ -4896,7 +4902,7 @@ mod tests {
             })
             .expect("queue delete request");
         let delete_events =
-            apply_events_for_command(&mut state, &runtime.event_rx, &delete_command_id);
+            apply_events_for_command(&mut state, &mut runtime.event_rx, &delete_command_id);
         assert!(delete_events.iter().any(|event| matches!(
             event,
             AppEvent::RequestDeleted {
@@ -5137,7 +5143,7 @@ mod tests {
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
@@ -5149,7 +5155,7 @@ mod tests {
             })
             .expect("queue create workspace");
 
-        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let events = apply_events_for_command(&mut state, &mut runtime.event_rx, &command_id);
         let created_workspace_id = events
             .iter()
             .find_map(|event| match event {
@@ -5189,7 +5195,7 @@ mod tests {
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
@@ -5206,7 +5212,7 @@ mod tests {
             })
             .expect("queue invalid rename request");
 
-        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let events = apply_events_for_command(&mut state, &mut runtime.event_rx, &command_id);
         assert!(matches!(
             &events[0],
             AppEvent::SyncStarted {
@@ -7230,7 +7236,7 @@ expanded_item_ids = ["{folder_id}"]
         let mut storage = WorkspaceRepository::new(backend).expect("load workspace into memory");
         storage.initialize().expect("init storage");
         let (registry, registry_repo) = test_registry_for_dir(dir.path());
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
@@ -7246,7 +7252,7 @@ expanded_item_ids = ["{folder_id}"]
             })
             .expect("queue run import");
 
-        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let events = apply_events_for_command(&mut state, &mut runtime.event_rx, &command_id);
         let import_result = events
             .iter()
             .find_map(|event| match event {
@@ -7437,7 +7443,7 @@ expanded_item_ids = ["{folder_id}"]
             WorkspaceRepository::new(FileSystemStorage::new(ws_paths)).expect("load workspace");
         storage.initialize().expect("init storage");
 
-        let runtime = start_data_sync_worker(storage, registry, registry_repo);
+        let mut runtime = start_data_sync_worker(storage, registry, registry_repo);
         let mut state = AppShellState::default();
 
         let command_id = next_command_id();
@@ -7468,7 +7474,7 @@ expanded_item_ids = ["{folder_id}"]
             })
             .expect("queue run import");
 
-        let events = apply_events_for_command(&mut state, &runtime.event_rx, &command_id);
+        let events = apply_events_for_command(&mut state, &mut runtime.event_rx, &command_id);
         let import_result = events
             .iter()
             .find_map(|event| match event {

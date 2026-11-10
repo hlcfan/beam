@@ -530,7 +530,7 @@ fn fixture(
     shell.environment_selection.active_global_environment_id = Some(environment.environment_id);
     shell.environments.push(environment);
     let (command_tx, _commands) = sync_channel(32);
-    let (_events, event_rx) = async_channel::unbounded();
+    let (_events, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let view = cx.new(|cx| {
             BeamView::new(
@@ -583,11 +583,11 @@ fn type_url(view: &Entity<BeamView>, text: &str, cx: &mut VisualTestContext) {
 }
 
 fn apply_environment_event(view: &Entity<BeamView>, event: AppEvent, cx: &mut VisualTestContext) {
-    let (events, event_rx) = async_channel::unbounded();
+    let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
     view.update_in(cx, |view, window, cx| {
         view.listen_for_app_events(event_rx, window, cx)
     });
-    events.send_blocking(event).expect("environment event");
+    events.send(event).expect("environment event");
     cx.run_until_parked();
 }
 

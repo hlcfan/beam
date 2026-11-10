@@ -20,12 +20,12 @@ impl BeamView {
     /// and applies everything already queued in one batch so a burst costs one render.
     pub(in crate::ui) fn listen_for_app_events(
         &mut self,
-        event_rx: async_channel::Receiver<AppEvent>,
+        mut event_rx: tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.app_event_task = cx.spawn_in(window, async move |this, cx| {
-            while let Ok(first_event) = event_rx.recv().await {
+            while let Some(first_event) = event_rx.recv().await {
                 let mut events = vec![first_event];
                 while let Ok(event) = event_rx.try_recv() {
                     events.push(event);
