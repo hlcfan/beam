@@ -15,14 +15,14 @@ use gpui_kit::{
     AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollWheelEvent, SharedString,
     TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
-use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 use tempfile::TempDir;
 use ulid::Ulid;
 
 struct Fixture {
     view: Entity<BeamView>,
     commands: Receiver<AppCommand>,
-    events: Sender<AppEvent>,
+    events: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     _directory: TempDir,
 }
 
@@ -57,7 +57,7 @@ fn fixture_with_active_workspace(
         .map(|entry| entry.workspace_id);
     shell.workspace.workspace_name = format!("Workspace {active_index}");
     let (command_tx, commands) = sync_channel(32);
-    let (events, event_rx) = channel();
+    let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let view = cx.new(|cx| {
             BeamView::new(
@@ -342,6 +342,83 @@ fn beam_view_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> usiz
     fixture.view.read_with(cx, |view, _| view.render_count)
 }
 
+#[gpui_kit::test]
+fn response_scroll_offset_persists_after_scrolling_stops(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 1);
+    let mut shell = tree_workspace(
+        &fixture
+            .view
+            .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone()),
+        0,
+        1,
+    );
+    let request_id = shell.shared_store.root_ids[0];
+    shell.request_pane_data.insert(
+        request_id,
+        RequestPaneData {
+            method: shell.shared_store.requests[&request_id].request.method,
+            url: String::new(),
+            headers: vec![],
+            query_params: vec![],
+            auth: AuthConfig::None,
+            body: BodyConfig::None,
+            post_script: None,
+            response_scroll_offset: point(px(0.), px(0.)),
+        },
+    );
+    shell.workspace_tree.set_selected_request(Some(request_id));
+    let body = (0..300)
+        .map(|line| format!("Line {line}: {}\n", "response value ".repeat(40)))
+        .collect::<String>();
+    cx.update(|window, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.shell = shell;
+            view.sync_request_editor_from_selection(window, cx);
+            view.update_response_body_editor_with_scroll_persistence_suppressed(
+                window,
+                cx,
+                |editor, window, cx| editor.set_value(body, window, cx),
+            );
+            cx.notify();
+        });
+    });
+    draw(cx);
+
+    scroll_response_editor(&fixture, cx, -120., -850.);
+    let scrolled = response_scroll_offset(&fixture, cx);
+    assert!(scrolled.y < px(0.));
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(100));
+    draw(cx);
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(60));
+    draw(cx);
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        scrolled
+    );
+}
+
+fn stored_response_scroll_offset(
+    fixture: &Fixture,
+    cx: &mut VisualTestContext,
+    request_id: Ulid,
+) -> gpui::Point<gpui::Pixels> {
+    fixture.view.read_with(cx, |view, _| {
+        view.shell.request_pane_data[&request_id].response_scroll_offset
+    })
+}
+
 fn scroll_response_editor(fixture: &Fixture, cx: &mut VisualTestContext, x: f32, y: f32) {
     let bounds = fixture.view.read_with(cx, |view, cx| {
         view.response_body_editor.read(cx).input_bounds()
@@ -437,8 +514,6 @@ fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell
             command_id: "tree-scroll-test".to_string(),
         })
         .expect("workspace switch event");
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(25));
     draw(cx);
 }
 
@@ -840,8 +915,6 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
             command_id: "rename-test".to_string(),
         })
         .expect("rename event");
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(25));
     draw(cx);
     let renamed = snapshot(cx, format!("workspace-tab-{target}"));
     assert_eq!(renamed.label(), Some(entries[1].name.as_str()));

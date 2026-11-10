@@ -1,4 +1,5 @@
 use super::*;
+use gpui_kit::component::Rope;
 
 const ENV_VAR_HOVER_MAX_WIDTH: f32 = 420.;
 const ENV_VAR_HOVER_MAX_NAME_WIDTH: f32 = 160.;
@@ -12,13 +13,23 @@ pub(super) struct EnvVarHoverInfo {
     token_bounds: Bounds<Pixels>,
 }
 
+/// The `{{...}}` tokens found in one input's text, kept so that a mouse move does not copy and
+/// rescan the text. Only the input under the pointer is cached.
+pub(super) struct EnvVarTokenCache {
+    entity_id: EntityId,
+    /// A clone shares the rope's nodes, so holding it is cheap. Comparing it with the input's
+    /// current rope detects edits, including `set_value` calls that emit no change event.
+    text: Rope,
+    tokens: Vec<(Range<usize>, String)>,
+}
+
 /// The input operations needed to locate an environment-variable token under the pointer.
 ///
 /// GPUI exposes single-line inputs and code editors as different state types, while Beam uses
 /// the same hover behavior for the URL input and request body editor. This small adapter keeps
 /// that behavior generic without depending on either concrete state type.
 pub(in crate::ui) trait EnvHoverInput {
-    fn hover_value(&self) -> String;
+    fn hover_text(&self) -> &Rope;
     fn hover_line_height(&self) -> Option<Pixels>;
     fn hover_range_to_bounds(&self, range: &Range<usize>) -> Option<Bounds<Pixels>>;
 }
@@ -28,8 +39,8 @@ pub(in crate::ui) trait EnvHoverInput {
 macro_rules! impl_env_hover_input {
     ($state:ty) => {
         impl EnvHoverInput for $state {
-            fn hover_value(&self) -> String {
-                self.value().to_string()
+            fn hover_text(&self) -> &Rope {
+                self.text()
             }
 
             fn hover_line_height(&self) -> Option<Pixels> {
@@ -292,27 +303,49 @@ impl BeamView {
             self.env_var_resolved_cache = Some((env_id, resolved));
         }
 
+        let entity_id = input_entity.entity_id();
+        let input = input_entity.read(cx);
+        let text = input.hover_text();
+        let cache_valid = self
+            .env_var_token_cache
+            .as_ref()
+            .is_some_and(|cache| cache.entity_id == entity_id && cache.text == *text);
+        if !cache_valid {
+            self.env_var_token_cache = Some(EnvVarTokenCache {
+                entity_id,
+                text: text.clone(),
+                tokens: find_env_var_ranges(&text.to_string()),
+            });
+        } else if self
+            .env_var_hover
+            .as_ref()
+            .is_some_and(|hover| hover.token_bounds.contains(&pos))
+        {
+            return;
+        }
+
         let found = {
-            let input = input_entity.read(cx);
-            let text = input.hover_value();
             let line_height = input.hover_line_height().unwrap_or(px(20.));
             let resolved_env = self.env_var_resolved_cache.as_ref().map(|(_, m)| m);
+            let tokens = self
+                .env_var_token_cache
+                .as_ref()
+                .map(|cache| cache.tokens.as_slice())
+                .unwrap_or_default();
 
-            find_env_var_ranges(&text)
-                .into_iter()
-                .find_map(|(byte_range, var_name)| {
-                    let bounds = find_token_hover_bounds(input, &byte_range, pos, line_height)?;
-                    let resolved_value = resolved_env.and_then(|m| m.get(&var_name).cloned());
-                    let is_dynamic = resolved_value.is_none()
-                        && crate::template_variables::is_dynamic_variable(&var_name);
+            tokens.iter().find_map(|(byte_range, var_name)| {
+                let bounds = find_token_hover_bounds(input, byte_range, pos, line_height)?;
+                let resolved_value = resolved_env.and_then(|m| m.get(var_name).cloned());
+                let is_dynamic = resolved_value.is_none()
+                    && crate::template_variables::is_dynamic_variable(var_name);
 
-                    Some(EnvVarHoverInfo {
-                        var_name,
-                        resolved_value,
-                        is_dynamic,
-                        token_bounds: bounds,
-                    })
+                Some(EnvVarHoverInfo {
+                    var_name: var_name.clone(),
+                    resolved_value,
+                    is_dynamic,
+                    token_bounds: bounds,
                 })
+            })
         };
 
         if self.env_var_hover.as_ref().map(|h| &h.token_bounds)

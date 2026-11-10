@@ -58,7 +58,7 @@ pub(super) struct BeamView {
     pub(super) request_save_tick_scheduled: bool,
     pub(super) request_save_in_flight: bool,
     pub(super) pending_response_scroll_offset_persistence_due_at: Option<Instant>,
-    pub(super) response_scroll_offset_persistence_tick_scheduled: bool,
+    pub(super) response_scroll_offset_persistence_scheduled: bool,
     pub(super) suppress_response_scroll_offset_persistence: bool,
     /// Retains only changed response offsets, independently of reloaded request data.
     pub(super) workspace_response_scroll_offsets: HashMap<Ulid, HashMap<Ulid, Point<Pixels>>>,
@@ -75,8 +75,8 @@ pub(super) struct BeamView {
     pub(super) request_execution_states: HashMap<Ulid, RequestExecutionState>,
     pub(super) next_request_run_id: u64,
     pub(super) app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
-    pub(super) app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
-    pub(super) app_event_poll_scheduled: bool,
+    /// Receives worker events and applies them. Replacing it stops the previous listener.
+    pub(super) app_event_task: Task<()>,
     pub(super) pending_request_creations: HashSet<String>,
     pub(super) pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     pub(super) _subscriptions: Vec<Subscription>,
@@ -91,6 +91,7 @@ pub(super) struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     pub(super) env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
+    pub(super) env_var_token_cache: Option<EnvVarTokenCache>,
     /// Environment snapshot shared by URL and body completion, independent of the active token.
     pub(super) completion_environment_variables:
         Option<(Option<Ulid>, Arc<Vec<EnvironmentVariable>>)>,
@@ -266,7 +267,7 @@ impl BeamView {
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
             pending_response_scroll_offset_persistence_due_at: None,
-            response_scroll_offset_persistence_tick_scheduled: false,
+            response_scroll_offset_persistence_scheduled: false,
             suppress_response_scroll_offset_persistence: false,
             workspace_response_scroll_offsets: HashMap::new(),
             show_invalid_url_border: false,
@@ -283,8 +284,7 @@ impl BeamView {
             next_request_run_id: 1,
             current_workspace_paths: workspace_paths,
             app_command_tx: sync_runtime.command_tx,
-            app_event_rx: sync_runtime.event_rx,
-            app_event_poll_scheduled: false,
+            app_event_task: Task::ready(()),
             pending_request_creations: HashSet::new(),
             pending_folder_placements: HashMap::new(),
             _subscriptions,
@@ -296,6 +296,7 @@ impl BeamView {
             tree_drag_scroll_task: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
+            env_var_token_cache: None,
             completion_environment_variables: None,
             completion_environment_task: None,
             request_view_histories: WorkspaceRequestViewHistories::default(),
@@ -323,7 +324,7 @@ impl BeamView {
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
         view.schedule_active_workspace_tab_reveal(window, cx);
-        view.schedule_app_event_poll(window, cx);
+        view.listen_for_app_events(sync_runtime.event_rx, window, cx);
         view
     }
 
