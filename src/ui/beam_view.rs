@@ -67,8 +67,8 @@ pub(super) struct BeamView {
     pub(super) request_execution_states: HashMap<Ulid, RequestExecutionState>,
     pub(super) next_request_run_id: u64,
     pub(super) app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
-    pub(super) app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
-    pub(super) app_event_poll_scheduled: bool,
+    /// Receives worker events and applies them. Replacing it stops the previous listener.
+    pub(super) app_event_task: Task<()>,
     pub(super) pending_request_creations: HashSet<String>,
     pub(super) pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     pub(super) _subscriptions: Vec<Subscription>,
@@ -272,8 +272,7 @@ impl BeamView {
             next_request_run_id: 1,
             current_workspace_paths: workspace_paths,
             app_command_tx: sync_runtime.command_tx,
-            app_event_rx: sync_runtime.event_rx,
-            app_event_poll_scheduled: false,
+            app_event_task: Task::ready(()),
             pending_request_creations: HashSet::new(),
             pending_folder_placements: HashMap::new(),
             _subscriptions,
@@ -313,7 +312,7 @@ impl BeamView {
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
         view.schedule_active_workspace_tab_reveal(window, cx);
-        view.schedule_app_event_poll(window, cx);
+        view.listen_for_app_events(sync_runtime.event_rx, window, cx);
         view
     }
 

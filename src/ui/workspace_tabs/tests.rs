@@ -15,14 +15,14 @@ use gpui_kit::{
     AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollWheelEvent, SharedString,
     TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
-use std::sync::mpsc::{Receiver, Sender, channel, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 use tempfile::TempDir;
 use ulid::Ulid;
 
 struct Fixture {
     view: Entity<BeamView>,
     commands: Receiver<AppCommand>,
-    events: Sender<AppEvent>,
+    events: tokio::sync::mpsc::UnboundedSender<AppEvent>,
     _directory: TempDir,
 }
 
@@ -57,7 +57,7 @@ fn fixture_with_active_workspace(
         .map(|entry| entry.workspace_id);
     shell.workspace.workspace_name = format!("Workspace {active_index}");
     let (command_tx, commands) = sync_channel(32);
-    let (events, event_rx) = channel();
+    let (events, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let view = cx.new(|cx| {
             BeamView::new(
@@ -404,8 +404,6 @@ fn confirm_workspace_switch(fixture: &Fixture, cx: &mut VisualTestContext, shell
             command_id: "tree-scroll-test".to_string(),
         })
         .expect("workspace switch event");
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(25));
     draw(cx);
 }
 
@@ -807,8 +805,6 @@ fn rename_dialog_submissions_target_the_inactive_workspace(cx: &mut TestAppConte
             command_id: "rename-test".to_string(),
         })
         .expect("rename event");
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(25));
     draw(cx);
     let renamed = snapshot(cx, format!("workspace-tab-{target}"));
     assert_eq!(renamed.label(), Some(entries[1].name.as_str()));
