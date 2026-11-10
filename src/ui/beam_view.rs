@@ -50,7 +50,7 @@ pub(super) struct BeamView {
     pub(super) request_save_tick_scheduled: bool,
     pub(super) request_save_in_flight: bool,
     pub(super) pending_response_scroll_offset_persistence_due_at: Option<Instant>,
-    pub(super) response_scroll_offset_persistence_tick_scheduled: bool,
+    pub(super) response_scroll_offset_persistence_scheduled: bool,
     pub(super) suppress_response_scroll_offset_persistence: bool,
     /// Retains only changed response offsets, independently of reloaded request data.
     pub(super) workspace_response_scroll_offsets: HashMap<Ulid, HashMap<Ulid, Point<Pixels>>>,
@@ -254,7 +254,7 @@ impl BeamView {
             request_save_tick_scheduled: false,
             request_save_in_flight: false,
             pending_response_scroll_offset_persistence_due_at: None,
-            response_scroll_offset_persistence_tick_scheduled: false,
+            response_scroll_offset_persistence_scheduled: false,
             suppress_response_scroll_offset_persistence: false,
             workspace_response_scroll_offsets: HashMap::new(),
             show_invalid_url_border: false,
