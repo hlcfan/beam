@@ -83,6 +83,7 @@ pub(super) struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     pub(super) env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
+    pub(super) env_var_token_cache: Option<EnvVarTokenCache>,
     /// Environment snapshot shared by URL and body completion, independent of the active token.
     pub(super) completion_environment_variables:
         Option<(Option<Ulid>, Arc<Vec<EnvironmentVariable>>)>,
@@ -284,6 +285,7 @@ impl BeamView {
             tree_drag_scroll_task: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
+            env_var_token_cache: None,
             completion_environment_variables: None,
             completion_environment_task: None,
             request_view_histories: WorkspaceRequestViewHistories::default(),
