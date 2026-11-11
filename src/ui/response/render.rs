@@ -380,8 +380,7 @@ impl BeamView {
     }
 
     fn render_response_headers_table(&self, cx: &App) -> AnyElement {
-        let rows = parse_response_headers(&self.response_headers_raw);
-        if rows.is_empty() {
+        let Some(markup) = self.response_headers_table.clone() else {
             return div()
                 .h_full()
                 .w_full()
@@ -389,39 +388,9 @@ impl BeamView {
                 .text_color(cx.theme().muted_foreground)
                 .child("No response headers. Send a request to view headers.")
                 .into_any_element();
-        }
+        };
 
-        fn escape_html(text: &str) -> String {
-            text.replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;")
-                .replace('"', "&quot;")
-                .replace('\'', "&#39;")
-        }
-
-        let mut table = String::from(
-            "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
-             <thead>\
-             <tr>\
-             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
-             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
-             </tr>\
-             </thead><tbody>",
-        );
-
-        for (key, value) in rows {
-            table.push_str(&format!(
-                "<tr>\
-                 <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
-                 <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
-                 </tr>",
-                escape_html(&key),
-                escape_html(&value)
-            ));
-        }
-        table.push_str("</tbody></table>");
-
-        html(table)
+        html(markup)
             .w_full()
             .h_full()
             .scrollable(true)
@@ -629,8 +598,49 @@ impl BeamView {
     }
 }
 
+/// Builds the response headers table markup, or `None` when `raw` holds no headers.
+pub(in crate::ui) fn response_headers_table_markup(raw: &str) -> Option<SharedString> {
+    let rows = parse_response_headers(raw);
+    if rows.is_empty() {
+        return None;
+    }
+
+    let mut table = String::from(
+        "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
+         <thead>\
+         <tr>\
+         <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
+         <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
+         </tr>\
+         </thead><tbody>",
+    );
+
+    for (key, value) in rows {
+        table.push_str(&format!(
+            "<tr>\
+             <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
+             <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
+             </tr>",
+            escape_html(&key),
+            escape_html(&value)
+        ));
+    }
+    table.push_str("</tbody></table>");
+
+    Some(table.into())
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 #[cfg(test)]
 mod tests {
+    use super::response_headers_table_markup;
     use crate::ui::BeamView;
 
     #[test]
@@ -645,5 +655,37 @@ mod tests {
             BeamView::centered_scroll_offset_y(2, 3, 28.0, 4.0, 4.0, 280.0),
             0.0
         );
+    }
+
+    const CELL_STYLE: &str = "padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;";
+
+    #[test]
+    fn headers_markup_for_two_headers_is_exact() {
+        let expected = format!(
+            "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
+             <thead><tr>\
+             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
+             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
+             </tr></thead><tbody>\
+             <tr><td style=\"{CELL_STYLE}\">content-type</td><td style=\"{CELL_STYLE}\">text/plain</td></tr>\
+             <tr><td style=\"{CELL_STYLE}\">x-id</td><td style=\"{CELL_STYLE}\">42</td></tr>\
+             </tbody></table>"
+        );
+        let markup = response_headers_table_markup("content-type: text/plain\nx-id:42\n");
+        assert_eq!(markup.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn headers_markup_escapes_special_characters() {
+        let markup = response_headers_table_markup("a&b: <\"x\"> 'y'").expect("markup");
+        assert!(markup.contains(">a&amp;b</td>"));
+        assert!(markup.contains(">&lt;&quot;x&quot;&gt; &#39;y&#39;</td>"));
+        assert!(!markup.contains("<\"x\">"));
+    }
+
+    #[test]
+    fn headers_markup_is_none_without_headers() {
+        assert!(response_headers_table_markup("").is_none());
+        assert!(response_headers_table_markup("no colon here\n").is_none());
     }
 }
