@@ -1078,3 +1078,53 @@ fn assert_button_hover(cx: &mut VisualTestContext, id: &str) {
         ));
     }
 }
+
+#[gpui_kit::test]
+fn the_loading_animation_does_not_render_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    let shell = tree_workspace(&workspaces, 1, 200);
+    confirm_workspace_switch(&fixture, cx, &shell);
+    draw(cx);
+    // The tree is a virtual list owned by BeamView, so a spinner in a visible row would render
+    // BeamView on every frame. Send the last request, whose row is out of view.
+    let last = *shell.shared_store.root_ids.last().expect("request");
+    cx.update(|window, cx| {
+        fixture
+            .view
+            .update(cx, |view, cx| view.select_request(last, window, cx))
+    });
+    draw(cx);
+    fixture.view.update(cx, |view, cx| {
+        view.request_execution_states.insert(
+            last,
+            crate::ui::request::execution::RequestExecutionState {
+                run_id: 1,
+                status: crate::ui::request::execution::RequestExecutionStatus::Sending,
+                cancel_tx: None,
+            },
+        );
+        cx.notify();
+    });
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+    let bar_before = loading_bar_render_count(&fixture, cx);
+
+    for _ in 0..30 {
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        draw(cx);
+    }
+
+    // The animation notifies the loading bar's own view, not BeamView.
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+    assert!(loading_bar_render_count(&fixture, cx) > bar_before);
+}
+
+fn loading_bar_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> usize {
+    let bar = fixture
+        .view
+        .read_with(cx, |view, _| view.loading_bar.clone());
+    bar.read_with(cx, |bar, _| bar.render_count)
+}
