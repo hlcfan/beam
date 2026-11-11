@@ -858,7 +858,8 @@ impl BeamView {
     pub(in crate::ui) fn render_tree_drop_slot(
         &self,
         slot: &TreeDropSlot,
-        cx: &mut Context<Self>,
+        beam: &Entity<BeamView>,
+        cx: &App,
     ) -> AnyElement {
         let depth_inset = tree_depth_inset(slot.depth);
         let slot_copy = *slot;
@@ -869,8 +870,9 @@ impl BeamView {
             .h(px(SLOT_HIT_HEIGHT_PX))
             .ml(px(depth_inset))
             .mr(px(SLOT_RIGHT_PAD_PX))
-            .on_drag_move(
-                cx.listener(move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
+            .on_drag_move(beam_listener(
+                beam,
+                move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
                     let bounds = drag.bounds;
                     let position = drag.event.position;
                     let in_x = position.x >= bounds.origin.x
@@ -888,10 +890,11 @@ impl BeamView {
                     } else if this.tree_drag_slot_hover == Some(slot_copy) {
                         this.clear_tree_drag_slot_hover(cx);
                     }
-                }),
-            )
-            .on_drag_move(
-                cx.listener(move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
+                },
+            ))
+            .on_drag_move(beam_listener(
+                beam,
+                move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
                     let bounds = drag.bounds;
                     let position = drag.event.position;
                     let in_x = position.x >= bounds.origin.x
@@ -909,8 +912,8 @@ impl BeamView {
                     } else if this.tree_drag_slot_hover == Some(slot_copy) {
                         this.clear_tree_drag_slot_hover(cx);
                     }
-                }),
-            )
+                },
+            ))
             .child(
                 div()
                     .h(px(SLOT_BAR_HEIGHT_PX))

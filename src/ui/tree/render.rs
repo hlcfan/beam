@@ -6,8 +6,8 @@ impl BeamView {
     pub(in crate::ui) fn render_tree_row(
         &self,
         row: &TreeRowViewModel,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
+        beam: &Entity<BeamView>,
+        cx: &App,
     ) -> AnyElement {
         let node = self.shell.workspace_tree.node(row.id).cloned();
 
@@ -130,7 +130,7 @@ impl BeamView {
                                 button.icon(Icon::default().path("icons/play.svg"))
                             })
                             .accessibility_label(format!("{action_label} {label}"))
-                            .on_click(cx.listener(move |this, _, window, cx| {
+                            .on_click(beam_listener(beam, move |this, _, window, cx| {
                                 cx.stop_propagation();
                                 if is_sending {
                                     if !this.is_request_sending(request_id) {
@@ -160,7 +160,7 @@ impl BeamView {
         };
         let row_id = row.id;
         let row_kind = row.kind;
-        let body_view = cx.entity();
+        let body_view = beam.clone();
         let drag_hover = self.tree_drag_hover;
         let drag_slot_hover = self.tree_drag_slot_hover;
         let mut body = div()
@@ -189,32 +189,35 @@ impl BeamView {
                         |this| this.bg(cx.theme().drop_target),
                     )
                     .child(row_content)
-                    .on_click(cx.listener(move |this, _, window, cx| match row_kind {
-                        TreeNodeKind::Folder => {
-                            this.tree_focus_handle.focus(window, cx);
-                            let was_selected =
-                                this.shell.workspace_tree.selected_node_id() == Some(row_id);
-                            this.shell.workspace_tree.select_node(row_id);
-                            if was_selected {
-                                this.shell.workspace_tree.toggle_expanded(row_id);
-                                if let Err(error) = this.persist_tree_expansion_state() {
+                    .on_click(beam_listener(
+                        beam,
+                        move |this, _, window, cx| match row_kind {
+                            TreeNodeKind::Folder => {
+                                this.tree_focus_handle.focus(window, cx);
+                                let was_selected =
+                                    this.shell.workspace_tree.selected_node_id() == Some(row_id);
+                                this.shell.workspace_tree.select_node(row_id);
+                                if was_selected {
+                                    this.shell.workspace_tree.toggle_expanded(row_id);
+                                    if let Err(error) = this.persist_tree_expansion_state() {
+                                        window.push_notification(error, cx);
+                                    }
+                                }
+                                cx.notify();
+                            }
+                            TreeNodeKind::Request => {
+                                this.tree_focus_handle.focus(window, cx);
+                                this.select_request(row_id, window, cx);
+                                if let Err(error) = this.persist_last_opened_request_id(row_id) {
                                     window.push_notification(error, cx);
                                 }
                             }
-                            cx.notify();
-                        }
-                        TreeNodeKind::Request => {
-                            this.tree_focus_handle.focus(window, cx);
-                            this.select_request(row_id, window, cx);
-                            if let Err(error) = this.persist_last_opened_request_id(row_id) {
-                                window.push_notification(error, cx);
-                            }
-                        }
-                    })),
+                        },
+                    )),
             )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _, _, cx| {
+                beam_listener(beam, move |this, _, _, cx| {
                     this.collection_context_menu_row = Some(row_data);
                     cx.notify();
                 }),
@@ -222,19 +225,19 @@ impl BeamView {
         if Self::tree_row_body_drop_placement(row_kind).is_some() {
             body = body
                 .can_drop(move |dragged_value, _window, app| {
-                    body_view.update(app, |this, _| {
-                        if this.tree_drag_slot_hover.is_some() {
-                            return false;
-                        }
-                        let Some(placement) = Self::tree_row_body_drop_placement(row_kind) else {
-                            return false;
-                        };
-                        this.can_accept_tree_drop(dragged_value, row_id, placement)
-                    })
+                    let this = body_view.read(app);
+                    if this.tree_drag_slot_hover.is_some() {
+                        return false;
+                    }
+                    let Some(placement) = Self::tree_row_body_drop_placement(row_kind) else {
+                        return false;
+                    };
+                    this.can_accept_tree_drop(dragged_value, row_id, placement)
                 })
                 .drag_over::<DraggedRequest>(|style, _, _, cx| style.bg(cx.theme().selection))
                 .drag_over::<DraggedFolder>(|style, _, _, cx| style.bg(cx.theme().selection))
-                .on_drag_move(cx.listener(
+                .on_drag_move(beam_listener(
+                    beam,
                     move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
                         let dragged = drag.drag(cx).clone();
                         this.update_tree_drag_hover(
@@ -247,7 +250,8 @@ impl BeamView {
                         );
                     },
                 ))
-                .on_drag_move(cx.listener(
+                .on_drag_move(beam_listener(
+                    beam,
                     move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
                         let dragged = drag.drag(cx).clone();
                         this.update_tree_drag_hover(
@@ -262,7 +266,8 @@ impl BeamView {
                 ));
         } else {
             body = body
-                .on_drag_move(cx.listener(
+                .on_drag_move(beam_listener(
+                    beam,
                     move |this, drag: &DragMoveEvent<DraggedRequest>, _, cx| {
                         let bounds = drag.bounds;
                         let position = drag.event.position;
@@ -273,7 +278,8 @@ impl BeamView {
                         }
                     },
                 ))
-                .on_drag_move(cx.listener(
+                .on_drag_move(beam_listener(
+                    beam,
                     move |this, drag: &DragMoveEvent<DraggedFolder>, _, cx| {
                         let bounds = drag.bounds;
                         let position = drag.event.position;
@@ -422,8 +428,9 @@ impl BeamView {
 
     pub(in crate::ui) fn render_workspace_panel(
         &self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
+        beam: &Entity<BeamView>,
+        tree_view: Entity<WorkspaceTreeView>,
+        cx: &App,
     ) -> impl IntoElement {
         let mut panel = v_flex()
             .key_context("WorkspaceTree")
@@ -451,7 +458,7 @@ impl BeamView {
         let items = build_tree_render_items(&self.shell.workspace_tree);
         let is_empty = self.shell.workspace_tree.roots().is_empty();
         if is_empty {
-            let view = cx.entity();
+            let view = beam.clone();
             let empty_view = view.clone();
             let root_slot = TreeDropSlot {
                 depth: 0,
@@ -466,10 +473,11 @@ impl BeamView {
                     .flex_1()
                     .min_h_0()
                     .can_drop(move |_dragged_value, _window, app| {
-                        empty_view.update(app, |this, _| this.tree_drag_slot_hover.is_some())
+                        empty_view.read(app).tree_drag_slot_hover.is_some()
                     })
-                    .on_drop(
-                        cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
+                    .on_drop(beam_listener(
+                        beam,
+                        move |this, dragged: &DraggedRequest, window, cx| {
                             if let Some(slot) = this.tree_drag_slot_hover {
                                 this.handle_request_tree_drop_slot(
                                     dragged.request_id,
@@ -479,10 +487,11 @@ impl BeamView {
                                 );
                             }
                             this.clear_tree_drag_hover(cx);
-                        }),
-                    )
-                    .on_drop(
-                        cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
+                        },
+                    ))
+                    .on_drop(beam_listener(
+                        beam,
+                        move |this, dragged: &DraggedFolder, window, cx| {
                             if let Some(slot) = this.tree_drag_slot_hover {
                                 this.handle_folder_tree_drop_slot(
                                     dragged.folder_id,
@@ -492,8 +501,8 @@ impl BeamView {
                                 );
                             }
                             this.clear_tree_drag_hover(cx);
-                        }),
-                    )
+                        },
+                    ))
                     .on_mouse_down(
                         MouseButton::Right,
                         move |ev: &MouseDownEvent, window, cx| {
@@ -511,7 +520,7 @@ impl BeamView {
                     .child(
                         v_flex()
                             .size_full()
-                            .child(self.render_tree_drop_slot(&root_slot, cx))
+                            .child(self.render_tree_drop_slot(&root_slot, beam, cx))
                             .child(
                                 div().flex_1().flex().items_center().justify_center().child(
                                     div()
@@ -523,10 +532,9 @@ impl BeamView {
                     ),
             )
         } else {
-            let view = cx.entity();
-            let menu_view = view.clone();
-            let scroll_view = view.clone();
-            let list_view = view.clone();
+            let menu_view = beam.clone();
+            let scroll_view = beam.clone();
+            let list_beam = beam.clone();
             let item_sizes = Rc::new(
                 items
                     .iter()
@@ -547,10 +555,11 @@ impl BeamView {
                     .min_h_0()
                     .child(
                         v_virtual_list(
-                            list_view,
+                            tree_view,
                             "workspace-tree-list",
                             item_sizes,
-                            move |this, range: Range<usize>, window, cx| {
+                            move |_, range: Range<usize>, _, cx| {
+                                let this = list_beam.read(cx);
                                 let mut rendered: Vec<AnyElement> =
                                     Vec::with_capacity(range.end - range.start);
                                 for idx in range {
@@ -561,7 +570,8 @@ impl BeamView {
                                                 idx.checked_sub(1)
                                                     .map(|prev| &items_for_list[prev]),
                                             );
-                                            let slot_el = this.render_tree_drop_slot(slot, cx);
+                                            let slot_el =
+                                                this.render_tree_drop_slot(slot, &list_beam, cx);
                                             let el = if top_margin > px(0.0) {
                                                 div()
                                                     .mt(top_margin)
@@ -573,7 +583,8 @@ impl BeamView {
                                             rendered.push(el);
                                         }
                                         TreeRenderItem::Row(row) => {
-                                            rendered.push(this.render_tree_row(row, window, cx));
+                                            rendered
+                                                .push(this.render_tree_row(row, &list_beam, cx));
                                         }
                                     }
                                 }
@@ -583,7 +594,8 @@ impl BeamView {
                         .size_full()
                         .track_scroll(&self.workspace_scroll_handle),
                     )
-                    .on_drag_move(cx.listener(
+                    .on_drag_move(beam_listener(
+                        beam,
                         |this, drag: &DragMoveEvent<DraggedRequest>, window, cx| {
                             this.update_tree_drag_autoscroll(
                                 drag.bounds,
@@ -593,7 +605,8 @@ impl BeamView {
                             );
                         },
                     ))
-                    .on_drag_move(cx.listener(
+                    .on_drag_move(beam_listener(
+                        beam,
                         |this, drag: &DragMoveEvent<DraggedFolder>, window, cx| {
                             this.update_tree_drag_autoscroll(
                                 drag.bounds,
@@ -604,12 +617,12 @@ impl BeamView {
                         },
                     ))
                     .can_drop(move |_dragged_value, _window, app| {
-                        scroll_view.update(app, |this, _| {
-                            this.tree_drag_slot_hover.is_some() || this.tree_drag_hover.is_some()
-                        })
+                        let this = scroll_view.read(app);
+                        this.tree_drag_slot_hover.is_some() || this.tree_drag_hover.is_some()
                     })
-                    .on_drop(
-                        cx.listener(move |this, dragged: &DraggedRequest, window, cx| {
+                    .on_drop(beam_listener(
+                        beam,
+                        move |this, dragged: &DraggedRequest, window, cx| {
                             if let Some(slot) = this.tree_drag_slot_hover {
                                 this.handle_request_tree_drop_slot(
                                     dragged.request_id,
@@ -629,10 +642,11 @@ impl BeamView {
                                 );
                             }
                             this.clear_tree_drag_hover(cx);
-                        }),
-                    )
-                    .on_drop(
-                        cx.listener(move |this, dragged: &DraggedFolder, window, cx| {
+                        },
+                    ))
+                    .on_drop(beam_listener(
+                        beam,
+                        move |this, dragged: &DraggedFolder, window, cx| {
                             if let Some(slot) = this.tree_drag_slot_hover {
                                 this.handle_folder_tree_drop_slot(
                                     dragged.folder_id,
@@ -652,8 +666,8 @@ impl BeamView {
                                 );
                             }
                             this.clear_tree_drag_hover(cx);
-                        }),
-                    )
+                        },
+                    ))
                     .vertical_scrollbar(&self.workspace_scroll_handle)
                     .on_mouse_down(MouseButton::Right, {
                         let view = menu_view;

@@ -43,7 +43,7 @@ src/
 │   ├── response.rs          # Response UI module root and shared response behavior
 │   ├── response/            # History, persistence, and response rendering
 │   ├── tree.rs              # Workspace tree UI module root and shared tree behavior
-│   └── tree/                # Tree actions, drag/drop, and rendering
+│   └── tree/                # Tree actions, drag/drop, rendering, and the WorkspaceTreeView host
 ├── workspace_tree.rs        # Pure domain model — in-memory tree (SharedStore, Node, NodeKind, manifests)
 ├── tree_dnd.rs              # Pure tree drag/drop destination calculations
 ├── models.rs                # Serializable DTOs — RequestFile, EnvironmentFile, WorkspaceFile, WorkspacesRegistryFile, LocalStateFile, etc.
@@ -177,6 +177,7 @@ Beam's gpui fork (`gpui-fast`) draws a view again from last frame unless somethi
 - Render every `Input` and `Editor` that `BeamView` renders through `BeamView::input_host` (`src/ui/input_host.rs`), or `BeamView::text_input_host` for a single-line `Input` with the standard text-edit menu. The host view owns that dependency, so a scroll or keystroke in an editor rebuilds the host, not the whole window. Dialogs are views of their own and render their inputs directly.
 - The first `build` closure for an input is kept for the life of its host. Capture only the input and values that never change. Read theme values from the `App` the closure receives.
 - Put listeners that need `BeamView` (`cx.listener`) on the elements around the host, not inside `build`.
+- The workspace tree is a view of its own, `WorkspaceTreeView` (`src/ui/tree/view.rs`). A tree scroll rebuilds that view, not `BeamView`. It may `read` `BeamView` while it renders, but it must never `update` `BeamView` while it renders, lays out, or paints, because GPUI Fast counts that as a write and rebuilds `BeamView`. Tree row and slot builders take `&Entity<BeamView>` and `&App`, and build handlers with `beam_listener`, which updates `BeamView` only when the event fires. Use `read`, not `update`, in `can_drop` closures.
 - Do not call `.read(cx)` on an input or editor entity in a `BeamView` render path. Keep the fact in `BeamView` state instead, as `response_body_is_blank` does, or read it in a child view of its own, as `HtmlResponsePreview` reads the response body.
 
 #### Button Cursor Behavior

@@ -1042,6 +1042,27 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
 }
 
 #[gpui_kit::test]
+fn scrolling_the_workspace_tree_does_not_render_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    let shell = tree_workspace(&workspaces, 1, 200);
+    confirm_workspace_switch(&fixture, cx, &shell);
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    for _ in 0..10 {
+        scroll_workspace_tree(&fixture, cx, -20.);
+    }
+
+    assert_eq!(tree_scroll_offset(&fixture, cx).y, px(-200.));
+    // Scrolling renders the tree view, not BeamView. One BeamView render, whatever the scroll
+    // count, is the bound.
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+}
+
+#[gpui_kit::test]
 fn title_bar_buttons_show_hover_background(cx: &mut TestAppContext) {
     let (_fixture, cx) = fixture(cx, 2);
     for id in ["title-bar-environment-sheet", "add-workspace"] {
