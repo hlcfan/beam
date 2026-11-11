@@ -311,6 +311,8 @@ impl BeamView {
         Some((request_id, pane_data))
     }
 
+    /// Debounces request saves. Each edit pushes the due time back, and one timer task sleeps
+    /// until the latest due time instead of waking on a fixed tick.
     pub(in crate::ui) fn schedule_request_save_with_delay(
         &mut self,
         delay: Duration,
@@ -319,28 +321,41 @@ impl BeamView {
         if self.shell.workspace_tree.selected_request_id().is_none() {
             return;
         }
-        self.pending_request_save_due_at = Some(Instant::now() + delay);
-        if self.request_save_tick_scheduled {
+        self.pending_request_save_due_at = Some(cx.background_executor().now() + delay);
+        if self.request_save_task_scheduled {
             return;
         }
-        self.request_save_tick_scheduled = true;
-        self.schedule_request_save_tick(cx);
+        self.request_save_task_scheduled = true;
+        self.spawn_request_save_task(cx);
     }
 
     pub(in crate::ui) fn schedule_request_save(&mut self, cx: &mut Context<Self>) {
         self.schedule_request_save_with_delay(Duration::from_millis(350), cx);
     }
 
-    pub(in crate::ui) fn schedule_request_save_tick(&self, cx: &mut Context<Self>) {
-        let view = cx.entity();
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                this.process_pending_request_save(cx);
+    fn spawn_request_save_task(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(due_at) = this.update(cx, |this, _| this.pending_request_save_due_at) else {
+                    return;
+                };
+                let Some(due_at) = due_at else {
+                    break;
+                };
+                let now = cx.background_executor().now();
+                if now < due_at {
+                    cx.background_executor().timer(due_at - now).await;
+                    continue;
+                }
+                let keep_waiting = this
+                    .update(cx, |this, cx| this.process_pending_request_save(cx))
+                    .unwrap_or(false);
+                if !keep_waiting {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |this, _| {
+                this.request_save_task_scheduled = false;
             });
         })
         .detach();
@@ -373,23 +388,21 @@ impl BeamView {
         Ok(request_file)
     }
 
-    pub(in crate::ui) fn process_pending_request_save(&mut self, cx: &mut Context<Self>) {
+    /// Saves the pending request once its due time has passed. Returns true when the timer task
+    /// should keep running because a later save is pending, such as a retry after backpressure.
+    fn process_pending_request_save(&mut self, cx: &mut Context<Self>) -> bool {
         if self.request_save_in_flight {
-            self.request_save_tick_scheduled = false;
-            return;
+            return false;
         }
         let Some(due_at) = self.pending_request_save_due_at else {
-            self.request_save_tick_scheduled = false;
-            return;
+            return false;
         };
-        if Instant::now() < due_at {
-            self.schedule_request_save_tick(cx);
-            return;
+        if cx.background_executor().now() < due_at {
+            return true;
         }
         self.pending_request_save_due_at = None;
-        self.request_save_tick_scheduled = false;
         let Some((request_id, pane_data)) = self.sync_selected_request_pane_data() else {
-            return;
+            return false;
         };
         self.refresh_active_request_cache();
         match self.build_request_snapshot_for_save(request_id, pane_data) {
@@ -402,17 +415,14 @@ impl BeamView {
                     log::error!("{error}");
                     if error.starts_with("Backpressure:") {
                         self.pending_request_save_due_at =
-                            Some(Instant::now() + Duration::from_millis(100));
+                            Some(cx.background_executor().now() + Duration::from_millis(100));
                     }
                 }
             }
             Err(error) => log::error!("{error}"),
         }
         self.request_save_in_flight = false;
-        if self.pending_request_save_due_at.is_some() && !self.request_save_tick_scheduled {
-            self.request_save_tick_scheduled = true;
-            self.schedule_request_save_tick(cx);
-        }
+        self.pending_request_save_due_at.is_some()
     }
 
     pub(in crate::ui) fn rebuild_request_param_inputs(
