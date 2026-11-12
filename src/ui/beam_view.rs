@@ -207,11 +207,11 @@ impl BeamView {
                     }
                     let next_script_text = post_script_editor.read(cx).text().to_string();
                     // The Script tab draws a dot only while the script is non-blank.
-                    let had_script = this.request.post_script.is_some();
+                    let had_script = this.request.has_post_script();
                     this.request.post_script =
                         (!next_script_text.trim().is_empty()).then_some(next_script_text);
                     this.schedule_request_save(cx);
-                    if had_script != this.request.post_script.is_some() {
+                    if had_script != this.request.has_post_script() {
                         cx.notify();
                     }
                 }
