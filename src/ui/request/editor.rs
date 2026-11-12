@@ -563,11 +563,7 @@ impl BeamView {
             );
         }
 
-        let has_script = self
-            .request
-            .post_script
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty());
+        let has_script = self.request.has_post_script();
         let indicator_color = if !has_script {
             None
         } else if let Some(result) = self.script_result.as_ref() {

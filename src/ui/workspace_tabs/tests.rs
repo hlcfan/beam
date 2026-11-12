@@ -1384,3 +1384,48 @@ fn save_request_count(fixture: &Fixture) -> usize {
     }
     count
 }
+
+#[gpui_kit::test]
+fn typing_in_a_blank_post_script_updates_the_script_tab_dot(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    cx.update(|window, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.request.post_script = Some("  ".to_string());
+            view.request.active_tab = RequestTab::PostScript;
+            view.post_script_editor
+                .update(cx, |editor, cx| editor.set_value("  ", window, cx));
+            cx.notify();
+        })
+    });
+    draw(cx);
+    assert!(
+        !fixture
+            .view
+            .read_with(cx, |view, _| view.request.has_post_script())
+    );
+    cx.update(|window, cx| {
+        let editor = fixture.view.read(cx).post_script_editor.clone();
+        editor.update(cx, |editor, cx| editor.focus(window, cx));
+    });
+    draw(cx);
+    // The first key press after focusing renders once whatever it does, so a cursor
+    // move takes that render before the count starts.
+    cx.simulate_keystrokes("left");
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+    cx.simulate_keystrokes("x");
+    draw(cx);
+    assert!(beam_view_render_count(&fixture, cx) > renders_before);
+    assert!(
+        fixture
+            .view
+            .read_with(cx, |view, _| view.request.has_post_script())
+    );
+
+    let renders_before = beam_view_render_count(&fixture, cx);
+    for _ in 0..5 {
+        cx.simulate_keystrokes("y");
+        draw(cx);
+    }
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+}
