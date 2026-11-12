@@ -7,7 +7,7 @@ edition = "2024"
 lsp-types = "0.97"
 chrono = { version = "0.4", features = ["serde", "clock"] }
 dirs = "6.0"
-gpui-kit = { git = "https://github.com/longbridge/gpui-kit", features = ["tree-sitter-javascript", "tree-sitter-html", "tree-sitter-graphql"], rev = "b02dc60cf898cbb755a8974984e369755d7ae3d5" }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", features = ["gpui-fast", "tree-sitter-javascript", "tree-sitter-html", "tree-sitter-graphql"], rev = "38a54f0220024f7394dd07d7e6685688168d64e6" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
@@ -24,7 +24,7 @@ self_update = { version = "1.3.1", default-features = false, features = ["reqwes
 semver = "1.0"
 gif = { version = "0.14", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
-gpui-webview = { git = "https://github.com/longbridge/gpui-kit", rev = "b02dc60cf898cbb755a8974984e369755d7ae3d5" }
+gpui-webview = { git = "https://github.com/longbridge/gpui-kit", features = ["gpui-fast"], rev = "38a54f0220024f7394dd07d7e6685688168d64e6" }
 wry = { version = "0.53.3", package = "lb-wry" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -46,7 +46,7 @@ self_update = { version = "1.3.1", default-features = false, features = ["archiv
 self_update = { version = "1.3.1", default-features = false, features = ["archive-tar", "compression-tar-gz"] }
 
 [dev-dependencies]
-gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "b02dc60cf898cbb755a8974984e369755d7ae3d5", features = ["test-support"] }
+gpui-kit = { git = "https://github.com/longbridge/gpui-kit", rev = "38a54f0220024f7394dd07d7e6685688168d64e6", features = ["gpui-fast", "test-support"] }
 tempfile = "3.20"
 zipsign-api = { version = "0.2.2", default-features = false, features = ["sign-tar"] }
 flate2 = "1"
