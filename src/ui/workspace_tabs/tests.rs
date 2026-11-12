@@ -1143,30 +1143,23 @@ fn first_url_character_updates_the_send_button(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn typing_in_a_header_value_renders_the_beam_view_only_for_a_new_row(cx: &mut TestAppContext) {
+fn typing_in_a_header_value_does_not_render_the_beam_view_per_keystroke(cx: &mut TestAppContext) {
     let (fixture, cx) = fixture_with_selected_request(cx);
-    cx.update(|_, cx| {
-        fixture.view.update(cx, |view, cx| {
-            view.request.active_tab = RequestTab::Headers;
-            cx.notify();
-        })
-    });
-    draw(cx);
+    open_headers_tab(&fixture, cx);
     let rows = |fixture: &Fixture, cx: &mut VisualTestContext| {
         fixture
             .view
             .read_with(cx, |view, _| view.request.headers.len())
     };
     let rows_before = rows(&fixture, cx);
+    // Focusing the last row appends an empty row, before any key is typed.
     focus_last_header_value_input(&fixture, cx);
-    let renders_before = beam_view_render_count(&fixture, cx);
+    assert_eq!(rows(&fixture, cx), rows_before + 1);
 
-    // The first character fills the last row, so the table appends an empty one.
+    // The focused row is not the last one, so typing adds no row. The first key
+    // renders the view once, whatever it changes, so it stays out of the count.
     cx.simulate_keystrokes("a");
     draw(cx);
-    assert_eq!(rows(&fixture, cx), rows_before + 1);
-    assert!(beam_view_render_count(&fixture, cx) > renders_before);
-
     let renders_before = beam_view_render_count(&fixture, cx);
     for _ in 0..10 {
         cx.simulate_keystrokes("b");
@@ -1175,6 +1168,38 @@ fn typing_in_a_header_value_renders_the_beam_view_only_for_a_new_row(cx: &mut Te
 
     assert_eq!(rows(&fixture, cx), rows_before + 1);
     assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+    let typed = fixture.view.read_with(cx, |view, _| {
+        view.request.headers[rows_before - 1].value.clone()
+    });
+    assert!(typed.ends_with(&"b".repeat(10)), "{typed}");
+}
+
+#[gpui_kit::test]
+fn typing_in_the_last_header_row_appends_a_row_and_renders_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    open_headers_tab(&fixture, cx);
+    focus_last_header_value_input(&fixture, cx);
+    // The first key in a row renders the view once, whatever it changes.
+    cx.simulate_keystrokes("a");
+    draw(cx);
+    drop_trailing_header_row(&fixture, cx);
+    let rows_before = fixture
+        .view
+        .read_with(cx, |view, _| view.request.headers.len());
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    cx.simulate_keystrokes("b");
+    draw(cx);
+
+    let (rows, value) = fixture.view.read_with(cx, |view, _| {
+        (
+            view.request.headers.len(),
+            view.request.headers[rows_before - 1].value.clone(),
+        )
+    });
+    assert!(value.ends_with("ab"), "{value}");
+    assert_eq!(rows, rows_before + 1);
+    assert!(beam_view_render_count(&fixture, cx) > renders_before);
 }
 
 #[gpui_kit::test]
@@ -1284,6 +1309,32 @@ fn focus_last_header_value_input(fixture: &Fixture, cx: &mut VisualTestContext) 
             .cloned()
             .expect("header value input");
         input.update(cx, |input, cx| input.focus(window, cx));
+    });
+    draw(cx);
+}
+
+fn open_headers_tab(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.request.active_tab = RequestTab::Headers;
+            cx.notify();
+        })
+    });
+    draw(cx);
+}
+
+/// Removes the trailing empty row the focus handler added, keeping the focused
+/// input. That input is then the last row, as when a row is filled by typing.
+fn drop_trailing_header_row(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.request.headers.pop();
+            view.request_header_name_inputs.pop();
+            view.request_header_value_inputs.pop();
+            view.request_header_input_subscriptions.pop();
+            view.request_header_input_subscriptions.pop();
+            cx.notify();
+        })
     });
     draw(cx);
 }
