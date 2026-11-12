@@ -15,6 +15,12 @@ pub(super) const MACOS_COMMAND_ICON_PATH: &str = "icons/command.svg";
 pub(super) const NON_MACOS_COMMAND_ICON_PATH: &str = "icons/chevron-up.svg";
 
 impl BeamView {
+    /// Rebuilds the cached headers table from raw header text. The only writer of
+    /// `response_headers_table`, so the cache cannot drift from the response.
+    pub(in crate::ui) fn set_response_headers(&mut self, raw: &str) {
+        self.response_headers_table = render::response_headers_table_markup(raw);
+    }
+
     pub(in crate::ui) fn clear_response_pane(
         &mut self,
         window: &mut Window,
@@ -24,7 +30,7 @@ impl BeamView {
         self.response_status_code = None;
         self.response_time = "—".to_string();
         self.response_size = "—".to_string();
-        self.response_headers_raw.clear();
+        self.set_response_headers("");
         self.response_content_type = None;
         self.set_response_image(None, window, cx);
         self.update_response_body_editor_with_scroll_persistence_suppressed(
@@ -48,7 +54,7 @@ impl BeamView {
         self.response_status_code = snapshot.status_code;
         self.response_time = snapshot.time.clone();
         self.response_size = snapshot.size.clone();
-        self.response_headers_raw = snapshot.headers_raw.clone();
+        self.set_response_headers(&snapshot.headers_raw);
         self.set_response_image(snapshot.image.clone(), window, cx);
         self.response_content_type = content_type;
         self.update_response_body_editor_with_scroll_persistence_suppressed(

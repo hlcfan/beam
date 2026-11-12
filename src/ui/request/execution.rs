@@ -742,7 +742,7 @@ impl BeamView {
                         },
                     );
                     this.response_body_language = response_language;
-                    this.response_headers_raw = response.headers.clone();
+                    this.set_response_headers(&response.headers);
                     this.response_content_type = response.content_type.clone();
                     this.set_response_image(response.image.clone(), window, cx);
                     this.script_result = outcome.script_result.clone();

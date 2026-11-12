@@ -25,7 +25,8 @@ pub(super) struct BeamView {
     /// the editor, which would rebuild the whole view on every response scroll.
     pub(super) response_body_is_blank: bool,
     pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
-    pub(super) response_headers_raw: String,
+    /// Table markup built from the response headers. Written only by `set_response_headers`.
+    pub(super) response_headers_table: Option<SharedString>,
     pub(super) response_content_type: Option<String>,
     pub(super) response_image: Option<Arc<gpui::Image>>,
     pub(super) response_body_language: &'static str,
@@ -55,7 +56,7 @@ pub(super) struct BeamView {
     pub(super) request_auth_input_subscriptions: Vec<Subscription>,
     pub(super) suppress_request_auth_change_events: bool,
     pub(super) pending_request_save_due_at: Option<Instant>,
-    pub(super) request_save_tick_scheduled: bool,
+    pub(super) request_save_task_scheduled: bool,
     pub(super) request_save_in_flight: bool,
     pub(super) pending_response_scroll_offset_persistence_due_at: Option<Instant>,
     pub(super) response_scroll_offset_persistence_scheduled: bool,
@@ -200,11 +201,15 @@ impl BeamView {
                     if !matches!(ev, InputEvent::Change) {
                         return;
                     }
-                    let next_script_text = post_script_editor.read(cx).value().to_string();
+                    let next_script_text = post_script_editor.read(cx).text().to_string();
+                    // The Script tab draws a dot only while the script is non-blank.
+                    let had_script = this.request.post_script.is_some();
                     this.request.post_script =
                         (!next_script_text.trim().is_empty()).then_some(next_script_text);
                     this.schedule_request_save(cx);
-                    cx.notify();
+                    if had_script != this.request.post_script.is_some() {
+                        cx.notify();
+                    }
                 }
             }),
             cx.observe(&response_body_editor, |this: &mut Self, _, cx| {
@@ -240,7 +245,7 @@ impl BeamView {
             render_count: 0,
             response_body_is_blank: true,
             html_response_preview,
-            response_headers_raw: String::new(),
+            response_headers_table: None,
             response_content_type: None,
             response_image: None,
             response_body_language: "text",
@@ -270,7 +275,7 @@ impl BeamView {
             request_auth_input_subscriptions: Vec::new(),
             suppress_request_auth_change_events: false,
             pending_request_save_due_at: None,
-            request_save_tick_scheduled: false,
+            request_save_task_scheduled: false,
             request_save_in_flight: false,
             pending_response_scroll_offset_persistence_due_at: None,
             response_scroll_offset_persistence_scheduled: false,

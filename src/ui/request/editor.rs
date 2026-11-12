@@ -221,11 +221,16 @@ impl BeamView {
                 if !matches!(ev, InputEvent::Change) {
                     return;
                 }
-                let next_body_text = this.request_body_editor.read(cx).value().to_string();
+                let next_body_text = this.request_body_editor.read(cx).text().to_string();
+                // The body tab label shows the format, and typing into an empty body turns
+                // `None` into `Raw`. The editor and its completion menu redraw themselves.
+                let format_before = body_format_from_config(&this.request.body);
                 this.request.body = body_with_updated_text(&this.request.body, next_body_text);
                 this.schedule_request_save(cx);
                 this.update_request_body_completion(window, cx);
-                cx.notify();
+                if body_format_from_config(&this.request.body) != format_before {
+                    cx.notify();
+                }
             },
         ));
     }

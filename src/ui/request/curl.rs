@@ -69,15 +69,21 @@ impl BeamView {
             move |this, _, ev: &InputEvent, window, cx| match ev {
                 InputEvent::Blur => this.dismiss_url_completion(cx),
                 InputEvent::Change => {
-                    let value = this.url_input.read(cx).value().to_string();
+                    let value = this.url_input.read(cx).text().to_string();
                     if this.import_curl_from_url_input(&value, window, cx) {
                         return;
                     }
+                    // `update_url_completion` notifies when the popup changes. Beyond that,
+                    // this view draws the send button and the invalid-url border from the URL.
+                    let send_state_before = this.send_button_state_for_view();
+                    let border_before = this.show_invalid_url_border;
                     this.request.url = value;
                     this.show_invalid_url_border = false;
                     this.schedule_request_save(cx);
                     this.update_url_completion(window, cx);
-                    cx.notify();
+                    if border_before || this.send_button_state_for_view() != send_state_before {
+                        cx.notify();
+                    }
                 }
                 InputEvent::PressEnter { .. } => {
                     // Enter belongs to the popup while it is showing; otherwise it sends.
