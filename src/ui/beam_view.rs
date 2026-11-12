@@ -82,6 +82,7 @@ pub(super) struct BeamView {
     pub(super) pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     pub(super) _subscriptions: Vec<Subscription>,
     pub(super) workspace_scroll_handle: VirtualListScrollHandle,
+    pub(super) workspace_tree_view: Entity<WorkspaceTreeView>,
     /// Retains each workspace's tree offset and measurements while another tab is active.
     pub(super) workspace_tree_scroll_handles: HashMap<Ulid, VirtualListScrollHandle>,
     pub(super) collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -227,6 +228,10 @@ impl BeamView {
             .into_iter()
             .map(|id| (id, workspace_scroll_handle.clone()))
             .collect();
+        let workspace_tree_view = cx.new({
+            let beam = cx.weak_entity();
+            |_| WorkspaceTreeView::new(beam)
+        });
         let updater = cx
             .new(|_| super::update::AppUpdater::new(shell.update_channel, workspace_paths.clone()));
         _subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
@@ -300,6 +305,7 @@ impl BeamView {
             pending_folder_placements: HashMap::new(),
             _subscriptions,
             workspace_scroll_handle,
+            workspace_tree_view,
             workspace_tree_scroll_handles,
             collection_context_menu_row: None,
             tree_drag_hover: None,
@@ -644,7 +650,7 @@ impl Render for BeamView {
                         .child(
                             resizable_panel()
                                 .size(px(left_size))
-                                .child(self.render_workspace_panel(window, cx)),
+                                .child(self.workspace_tree_view.clone()),
                         )
                         .child(resizable_panel().child({
                             let workspace =
