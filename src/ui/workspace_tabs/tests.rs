@@ -1213,6 +1213,40 @@ fn typing_in_the_body_editor_does_not_render_the_beam_view_per_keystroke(cx: &mu
     );
 }
 
+#[gpui_kit::test]
+fn request_save_fires_once_after_the_delay(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 349);
+    assert_eq!(save_request_count(&fixture), 0);
+
+    advance_clock_ms(cx, 1);
+    assert_eq!(save_request_count(&fixture), 1);
+
+    advance_clock_ms(cx, 1000);
+    assert_eq!(save_request_count(&fixture), 0);
+}
+
+#[gpui_kit::test]
+fn request_save_waits_for_the_last_edit(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 200);
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 200);
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 349);
+    assert_eq!(save_request_count(&fixture), 0);
+
+    advance_clock_ms(cx, 1);
+    assert_eq!(save_request_count(&fixture), 1);
+
+    advance_clock_ms(cx, 1000);
+    assert_eq!(save_request_count(&fixture), 0);
+}
+
 fn fixture_with_selected_request(cx: &mut TestAppContext) -> (Fixture, &mut VisualTestContext) {
     let (fixture, cx) = fixture(cx, 2);
     let workspaces = fixture
@@ -1228,6 +1262,7 @@ fn fixture_with_selected_request(cx: &mut TestAppContext) -> (Fixture, &mut Visu
             .update(cx, |view, cx| view.select_request(first, window, cx))
     });
     draw(cx);
+    while fixture.commands.try_recv().is_ok() {}
     (fixture, cx)
 }
 
@@ -1251,4 +1286,29 @@ fn focus_last_header_value_input(fixture: &Fixture, cx: &mut VisualTestContext) 
         input.update(cx, |input, cx| input.focus(window, cx));
     });
     draw(cx);
+}
+
+fn schedule_request_save(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        fixture
+            .view
+            .update(cx, |view, cx| view.schedule_request_save(cx))
+    });
+}
+
+fn advance_clock_ms(cx: &mut VisualTestContext, millis: u64) {
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(millis));
+    cx.run_until_parked();
+}
+
+/// Drains the command queue and counts the `SaveRequest` commands in it.
+fn save_request_count(fixture: &Fixture) -> usize {
+    let mut count = 0;
+    while let Ok(command) = fixture.commands.try_recv() {
+        if matches!(command, AppCommand::SaveRequest { .. }) {
+            count += 1;
+        }
+    }
+    count
 }
