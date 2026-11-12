@@ -1,5 +1,6 @@
 pub(super) mod history;
 pub(super) mod html_preview;
+pub(super) mod loading_bar;
 pub(super) mod persistence;
 pub(super) mod render;
 

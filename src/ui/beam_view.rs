@@ -25,6 +25,8 @@ pub(super) struct BeamView {
     /// the editor, which would rebuild the whole view on every response scroll.
     pub(super) response_body_is_blank: bool,
     pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
+    /// Animates in its own view so each frame does not render this one.
+    pub(super) loading_bar: Entity<super::response::loading_bar::LoadingBar>,
     /// Table markup built from the response headers. Written only by `set_response_headers`.
     pub(super) response_headers_table: Option<SharedString>,
     pub(super) response_content_type: Option<String>,
@@ -166,6 +168,7 @@ impl BeamView {
                 .placeholder("Response body will appear here...")
                 .default_value("aa")
         });
+        let loading_bar = cx.new(|_| super::response::loading_bar::LoadingBar::new());
         let html_response_preview = cx.new(|_| {
             super::response::html_preview::HtmlResponsePreview::new(
                 response_body_editor.downgrade(),
@@ -250,6 +253,7 @@ impl BeamView {
             render_count: 0,
             response_body_is_blank: true,
             html_response_preview,
+            loading_bar,
             response_headers_table: None,
             response_content_type: None,
             response_image: None,
