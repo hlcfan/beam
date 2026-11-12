@@ -27,7 +27,8 @@ pub(super) struct BeamView {
     pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
     /// Animates in its own view so each frame does not render this one.
     pub(super) loading_bar: Entity<super::response::loading_bar::LoadingBar>,
-    pub(super) response_headers_raw: String,
+    /// Table markup built from the response headers. Written only by `set_response_headers`.
+    pub(super) response_headers_table: Option<SharedString>,
     pub(super) response_content_type: Option<String>,
     pub(super) response_image: Option<Arc<gpui::Image>>,
     pub(super) response_body_language: &'static str,
@@ -57,7 +58,7 @@ pub(super) struct BeamView {
     pub(super) request_auth_input_subscriptions: Vec<Subscription>,
     pub(super) suppress_request_auth_change_events: bool,
     pub(super) pending_request_save_due_at: Option<Instant>,
-    pub(super) request_save_tick_scheduled: bool,
+    pub(super) request_save_task_scheduled: bool,
     pub(super) request_save_in_flight: bool,
     pub(super) pending_response_scroll_offset_persistence_due_at: Option<Instant>,
     pub(super) response_scroll_offset_persistence_scheduled: bool,
@@ -83,6 +84,7 @@ pub(super) struct BeamView {
     pub(super) pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     pub(super) _subscriptions: Vec<Subscription>,
     pub(super) workspace_scroll_handle: VirtualListScrollHandle,
+    pub(super) workspace_tree_view: Entity<WorkspaceTreeView>,
     /// Retains each workspace's tree offset and measurements while another tab is active.
     pub(super) workspace_tree_scroll_handles: HashMap<Ulid, VirtualListScrollHandle>,
     pub(super) collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -203,11 +205,15 @@ impl BeamView {
                     if !matches!(ev, InputEvent::Change) {
                         return;
                     }
-                    let next_script_text = post_script_editor.read(cx).value().to_string();
+                    let next_script_text = post_script_editor.read(cx).text().to_string();
+                    // The Script tab draws a dot only while the script is non-blank.
+                    let had_script = this.request.post_script.is_some();
                     this.request.post_script =
                         (!next_script_text.trim().is_empty()).then_some(next_script_text);
                     this.schedule_request_save(cx);
-                    cx.notify();
+                    if had_script != this.request.post_script.is_some() {
+                        cx.notify();
+                    }
                 }
             }),
             cx.observe(&response_body_editor, |this: &mut Self, _, cx| {
@@ -225,6 +231,10 @@ impl BeamView {
             .into_iter()
             .map(|id| (id, workspace_scroll_handle.clone()))
             .collect();
+        let workspace_tree_view = cx.new({
+            let beam = cx.weak_entity();
+            |_| WorkspaceTreeView::new(beam)
+        });
         let updater = cx
             .new(|_| super::update::AppUpdater::new(shell.update_channel, workspace_paths.clone()));
         _subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
@@ -244,7 +254,7 @@ impl BeamView {
             response_body_is_blank: true,
             html_response_preview,
             loading_bar,
-            response_headers_raw: String::new(),
+            response_headers_table: None,
             response_content_type: None,
             response_image: None,
             response_body_language: "text",
@@ -274,7 +284,7 @@ impl BeamView {
             request_auth_input_subscriptions: Vec::new(),
             suppress_request_auth_change_events: false,
             pending_request_save_due_at: None,
-            request_save_tick_scheduled: false,
+            request_save_task_scheduled: false,
             request_save_in_flight: false,
             pending_response_scroll_offset_persistence_due_at: None,
             response_scroll_offset_persistence_scheduled: false,
@@ -299,6 +309,7 @@ impl BeamView {
             pending_folder_placements: HashMap::new(),
             _subscriptions,
             workspace_scroll_handle,
+            workspace_tree_view,
             workspace_tree_scroll_handles,
             collection_context_menu_row: None,
             tree_drag_hover: None,
@@ -643,7 +654,7 @@ impl Render for BeamView {
                         .child(
                             resizable_panel()
                                 .size(px(left_size))
-                                .child(self.render_workspace_panel(window, cx)),
+                                .child(self.workspace_tree_view.clone()),
                         )
                         .child(resizable_panel().child({
                             let workspace =

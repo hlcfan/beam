@@ -1,6 +1,9 @@
 mod actions;
 mod drag_drop;
 mod render;
+mod view;
+
+pub(super) use view::{WorkspaceTreeView, beam_listener};
 
 use super::*;
 

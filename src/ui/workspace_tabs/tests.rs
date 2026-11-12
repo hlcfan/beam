@@ -5,6 +5,7 @@ use crate::models::{
     WorkspaceEntry,
 };
 use crate::paths::{BeamPaths, DataRootPaths};
+use crate::request_authoring::{RequestTab, SendButtonState, SendDisabledReason};
 use crate::ui::response::persistence::persist_response_snapshot;
 use crate::ui::{BeamView, HttpResponseSnapshot};
 use chrono::Utc;
@@ -1042,6 +1043,27 @@ fn workspace_actions_support_creation_cancellation_and_final_workspace_protectio
 }
 
 #[gpui_kit::test]
+fn scrolling_the_workspace_tree_does_not_render_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    let shell = tree_workspace(&workspaces, 1, 200);
+    confirm_workspace_switch(&fixture, cx, &shell);
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    for _ in 0..10 {
+        scroll_workspace_tree(&fixture, cx, -20.);
+    }
+
+    assert_eq!(tree_scroll_offset(&fixture, cx).y, px(-200.));
+    // Scrolling renders the tree view, not BeamView. One BeamView render, whatever the scroll
+    // count, is the bound.
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+}
+
+#[gpui_kit::test]
 fn title_bar_buttons_show_hover_background(cx: &mut TestAppContext) {
     let (_fixture, cx) = fixture(cx, 2);
     for id in ["title-bar-environment-sheet", "add-workspace"] {
@@ -1127,4 +1149,288 @@ fn loading_bar_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> us
         .view
         .read_with(cx, |view, _| view.loading_bar.clone());
     bar.read_with(cx, |bar, _| bar.render_count)
+}
+
+#[gpui_kit::test]
+fn typing_in_the_url_input_does_not_render_the_beam_view_per_keystroke(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    focus_url_input(&fixture, cx);
+    // The first character settles derived state such as the send button.
+    cx.simulate_keystrokes("h");
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    for _ in 0..10 {
+        cx.simulate_keystrokes("a");
+        draw(cx);
+    }
+
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+    let url = fixture
+        .view
+        .read_with(cx, |view, _| view.request.url.clone());
+    assert!(url.starts_with(&format!("h{}", "a".repeat(10))), "{url}");
+}
+
+#[gpui_kit::test]
+fn first_url_character_updates_the_send_button(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    cx.update(|window, cx| {
+        let input = fixture.view.read(cx).url_input.clone();
+        input.update(cx, |input, cx| input.set_value("", window, cx));
+        fixture.view.update(cx, |view, cx| {
+            view.request.url.clear();
+            cx.notify();
+        });
+    });
+    draw(cx);
+    focus_url_input(&fixture, cx);
+    let state = |fixture: &Fixture, cx: &mut VisualTestContext| {
+        fixture
+            .view
+            .read_with(cx, |view, _| view.send_button_state_for_view())
+    };
+    assert_eq!(
+        state(&fixture, cx),
+        SendButtonState::Disabled(SendDisabledReason::EmptyUrl)
+    );
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    cx.simulate_keystrokes("h");
+    draw(cx);
+
+    assert_eq!(
+        state(&fixture, cx),
+        SendButtonState::Disabled(SendDisabledReason::InvalidUrl)
+    );
+    assert!(beam_view_render_count(&fixture, cx) > renders_before);
+
+    // Completing the scheme makes the URL valid, which changes the button again.
+    let renders_before = beam_view_render_count(&fixture, cx);
+    cx.simulate_keystrokes("t t p : / / a");
+    draw(cx);
+    assert_eq!(state(&fixture, cx), SendButtonState::Ready);
+    assert!(beam_view_render_count(&fixture, cx) > renders_before);
+}
+
+#[gpui_kit::test]
+fn typing_in_a_header_value_does_not_render_the_beam_view_per_keystroke(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    open_headers_tab(&fixture, cx);
+    let rows = |fixture: &Fixture, cx: &mut VisualTestContext| {
+        fixture
+            .view
+            .read_with(cx, |view, _| view.request.headers.len())
+    };
+    let rows_before = rows(&fixture, cx);
+    // Focusing the last row appends an empty row, before any key is typed.
+    focus_last_header_value_input(&fixture, cx);
+    assert_eq!(rows(&fixture, cx), rows_before + 1);
+
+    // The focused row is not the last one, so typing adds no row. The first key
+    // renders the view once, whatever it changes, so it stays out of the count.
+    cx.simulate_keystrokes("a");
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+    for _ in 0..10 {
+        cx.simulate_keystrokes("b");
+        draw(cx);
+    }
+
+    assert_eq!(rows(&fixture, cx), rows_before + 1);
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+    let typed = fixture.view.read_with(cx, |view, _| {
+        view.request.headers[rows_before - 1].value.clone()
+    });
+    assert!(typed.ends_with(&"b".repeat(10)), "{typed}");
+}
+
+#[gpui_kit::test]
+fn typing_in_the_last_header_row_appends_a_row_and_renders_the_beam_view(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    open_headers_tab(&fixture, cx);
+    focus_last_header_value_input(&fixture, cx);
+    // The first key in a row renders the view once, whatever it changes.
+    cx.simulate_keystrokes("a");
+    draw(cx);
+    drop_trailing_header_row(&fixture, cx);
+    let rows_before = fixture
+        .view
+        .read_with(cx, |view, _| view.request.headers.len());
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    cx.simulate_keystrokes("b");
+    draw(cx);
+
+    let (rows, value) = fixture.view.read_with(cx, |view, _| {
+        (
+            view.request.headers.len(),
+            view.request.headers[rows_before - 1].value.clone(),
+        )
+    });
+    assert!(value.ends_with("ab"), "{value}");
+    assert_eq!(rows, rows_before + 1);
+    assert!(beam_view_render_count(&fixture, cx) > renders_before);
+}
+
+#[gpui_kit::test]
+fn typing_in_the_body_editor_does_not_render_the_beam_view_per_keystroke(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.request.method = HttpMethod::Post;
+            view.request.active_tab = RequestTab::Body;
+            cx.notify();
+        })
+    });
+    draw(cx);
+    cx.update(|window, cx| {
+        let editor = fixture.view.read(cx).request_body_editor.clone();
+        editor.update(cx, |editor, cx| editor.focus(window, cx));
+    });
+    draw(cx);
+    // The first character turns an empty body into a raw one, which the tab label shows.
+    cx.simulate_keystrokes("a");
+    draw(cx);
+    let renders_before = beam_view_render_count(&fixture, cx);
+
+    for _ in 0..10 {
+        cx.simulate_keystrokes("b");
+        draw(cx);
+    }
+
+    assert!(beam_view_render_count(&fixture, cx) - renders_before <= 1);
+    let body = fixture
+        .view
+        .read_with(cx, |view, _| view.request.body.clone());
+    assert!(
+        matches!(&body, BodyConfig::Raw { text, .. } if text == &format!("a{}", "b".repeat(10))),
+        "{body:?}"
+    );
+}
+
+#[gpui_kit::test]
+fn request_save_fires_once_after_the_delay(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 349);
+    assert_eq!(save_request_count(&fixture), 0);
+
+    advance_clock_ms(cx, 1);
+    assert_eq!(save_request_count(&fixture), 1);
+
+    advance_clock_ms(cx, 1000);
+    assert_eq!(save_request_count(&fixture), 0);
+}
+
+#[gpui_kit::test]
+fn request_save_waits_for_the_last_edit(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture_with_selected_request(cx);
+
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 200);
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 200);
+    schedule_request_save(&fixture, cx);
+    advance_clock_ms(cx, 349);
+    assert_eq!(save_request_count(&fixture), 0);
+
+    advance_clock_ms(cx, 1);
+    assert_eq!(save_request_count(&fixture), 1);
+
+    advance_clock_ms(cx, 1000);
+    assert_eq!(save_request_count(&fixture), 0);
+}
+
+fn fixture_with_selected_request(cx: &mut TestAppContext) -> (Fixture, &mut VisualTestContext) {
+    let (fixture, cx) = fixture(cx, 2);
+    let workspaces = fixture
+        .view
+        .read_with(cx, |view, _| view.shell.workspace.all_workspaces.clone());
+    let shell = tree_workspace(&workspaces, 1, 3);
+    confirm_workspace_switch(&fixture, cx, &shell);
+    draw(cx);
+    let first = *shell.shared_store.requests.keys().next().expect("request");
+    cx.update(|window, cx| {
+        fixture
+            .view
+            .update(cx, |view, cx| view.select_request(first, window, cx))
+    });
+    draw(cx);
+    while fixture.commands.try_recv().is_ok() {}
+    (fixture, cx)
+}
+
+fn focus_url_input(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let input = fixture.view.read(cx).url_input.clone();
+        input.update(cx, |input, cx| input.focus(window, cx));
+    });
+    draw(cx);
+}
+
+fn focus_last_header_value_input(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        let input = fixture
+            .view
+            .read(cx)
+            .request_header_value_inputs
+            .last()
+            .cloned()
+            .expect("header value input");
+        input.update(cx, |input, cx| input.focus(window, cx));
+    });
+    draw(cx);
+}
+
+fn open_headers_tab(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.request.active_tab = RequestTab::Headers;
+            cx.notify();
+        })
+    });
+    draw(cx);
+}
+
+/// Removes the trailing empty row the focus handler added, keeping the focused
+/// input. That input is then the last row, as when a row is filled by typing.
+fn drop_trailing_header_row(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.request.headers.pop();
+            view.request_header_name_inputs.pop();
+            view.request_header_value_inputs.pop();
+            view.request_header_input_subscriptions.pop();
+            view.request_header_input_subscriptions.pop();
+            cx.notify();
+        })
+    });
+    draw(cx);
+}
+
+fn schedule_request_save(fixture: &Fixture, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        fixture
+            .view
+            .update(cx, |view, cx| view.schedule_request_save(cx))
+    });
+}
+
+fn advance_clock_ms(cx: &mut VisualTestContext, millis: u64) {
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(millis));
+    cx.run_until_parked();
+}
+
+/// Drains the command queue and counts the `SaveRequest` commands in it.
+fn save_request_count(fixture: &Fixture) -> usize {
+    let mut count = 0;
+    while let Ok(command) = fixture.commands.try_recv() {
+        if matches!(command, AppCommand::SaveRequest { .. }) {
+            count += 1;
+        }
+    }
+    count
 }
