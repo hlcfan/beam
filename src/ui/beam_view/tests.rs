@@ -198,3 +198,23 @@ fn script_api_tab_keeps_bottom_pane_visible(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui_kit::test]
+fn response_headers_table_follows_raw_text(cx: &mut TestAppContext) {
+    let (beam, _directory, cx) = fixture(cx);
+    beam.update(cx, |beam, _| {
+        assert!(beam.response_headers_table.is_none());
+
+        beam.set_response_headers("x-id: 1");
+        let first = beam.response_headers_table.clone().expect("table");
+        assert!(first.contains(">x-id</td>"));
+
+        beam.set_response_headers("x-other: 2");
+        let second = beam.response_headers_table.clone().expect("table");
+        assert!(second.contains(">x-other</td>"));
+        assert!(!second.contains(">x-id</td>"));
+
+        beam.set_response_headers("");
+        assert!(beam.response_headers_table.is_none());
+    });
+}

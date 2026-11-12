@@ -25,7 +25,8 @@ pub(super) struct BeamView {
     /// the editor, which would rebuild the whole view on every response scroll.
     pub(super) response_body_is_blank: bool,
     pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
-    pub(super) response_headers_raw: String,
+    /// Table markup built from the response headers. Written only by `set_response_headers`.
+    pub(super) response_headers_table: Option<SharedString>,
     pub(super) response_content_type: Option<String>,
     pub(super) response_image: Option<Arc<gpui::Image>>,
     pub(super) response_body_language: &'static str,
@@ -240,7 +241,7 @@ impl BeamView {
             render_count: 0,
             response_body_is_blank: true,
             html_response_preview,
-            response_headers_raw: String::new(),
+            response_headers_table: None,
             response_content_type: None,
             response_image: None,
             response_body_language: "text",
