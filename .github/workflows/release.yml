@@ -41,6 +41,9 @@ jobs:
             exit 1
           fi
 
+      - name: Test Linux installer
+        run: python3 scripts/test_install.py
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -205,6 +208,8 @@ jobs:
         run: |
           mkdir -p dist/${{ matrix.package_dir }}
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
+          cp assets/linux/com.hlcfan.beam.desktop assets/linux/com.hlcfan.beam.metainfo.xml "dist/${{ matrix.package_dir }}/"
+          cp assets/icon.iconset/icon_512x512.png "dist/${{ matrix.package_dir }}/com.hlcfan.beam.png"
           tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
 
       - name: Package Windows binary
@@ -277,6 +282,9 @@ jobs:
           path: dist
           pattern: release-*
           merge-multiple: true
+
+      - name: Include release installer
+        run: cp scripts/install.sh dist/install.sh
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3

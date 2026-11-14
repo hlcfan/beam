@@ -64,9 +64,36 @@ Extract `beam-windows-x86_64.zip` and run `beam.exe`
 
 ### Linux
 
+Install the latest stable release for your user (Linux x86_64):
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSfL https://github.com/hlcfan/beam/releases/latest/download/install.sh | sh
+```
+
+The installer verifies the release's SHA-256 checksum, installs Beam in
+`~/.local/bin`, and adds an application launcher and icon. No sudo is needed.
+It requires `curl`, `tar`, and standard GNU utilities. Add `~/.local/bin` to
+your `PATH` to run `beam` from a terminal. Use Beam's in-app updater or rerun
+the command to update. Close and reopen Beam after updating.
+
+The installer is available once a release containing the desktop assets has
+been published. It does not install system libraries; Beam requires a graphical
+Linux desktop with GTK 3, WebKitGTK 4.1, and the platform libraries used by GPUI.
+
+To uninstall (your workspace data is retained):
+
+```bash
+rm -f "$HOME/.local/bin/beam"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/com.hlcfan.beam.desktop"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/com.hlcfan.beam.png"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/metainfo/com.hlcfan.beam.metainfo.xml"
+```
+
+Or download and extract the binary manually:
+
 ```bash
 tar -xzf beam-linux-x86_64.tar.gz
-./beam
+./beam-linux-x86_64/beam
 ```
 
 ## Development
