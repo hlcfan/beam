@@ -5,10 +5,11 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-import winreg
 
 
 def main():
+    import winreg
+
     installer = Path(sys.argv[1]).resolve()
     destination = Path(os.environ['LOCALAPPDATA']) / 'Programs/Beam'
     shortcut = Path(os.environ['APPDATA']) / 'Microsoft/Windows/Start Menu/Programs/Beam.lnk'
