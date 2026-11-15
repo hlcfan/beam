@@ -1,19 +1,26 @@
 #!/bin/sh
-# Install the latest stable Linux release for the current user.
+# Install the latest stable release for the current user.
 set -eu
 
 main() {
     case "$(uname -s):$(uname -m)" in
-        Linux:x86_64) ;;
-        *) fail 'Beam currently supports Linux x86_64 only.' ;;
+        Linux:x86_64)
+            platform=linux
+            archive=beam-linux-x86_64.tar.gz
+            checksum_tool=sha256sum
+            ;;
+        Darwin:arm64)
+            platform=macos
+            archive=beam-macos-aarch64.tar.gz
+            checksum_tool=shasum
+            command -v xattr >/dev/null 2>&1 || fail 'Required command not found: xattr'
+            ;;
+        *) fail 'Beam supports Linux x86_64 and macOS Apple Silicon only.' ;;
     esac
-    for tool in curl tar sha256sum install mktemp sed; do
+    for tool in curl tar "$checksum_tool" install mktemp sed mv; do
         command -v "$tool" >/dev/null 2>&1 || fail "Required command not found: $tool"
     done
     : "${HOME:?HOME must be set}"
-    bin_dir="$HOME/.local/bin"
-    data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
-    case "$data_dir" in /*) ;; *) fail 'XDG_DATA_HOME must be an absolute path.' ;; esac
 
     work_dir=$(mktemp -d)
     staged_bin=
@@ -27,12 +34,61 @@ main() {
         "$repo"/releases/tag/v*) tag=${release_url##*/} ;;
         *) fail 'Could not resolve the latest stable Beam release.' ;;
     esac
-    archive=beam-linux-x86_64.tar.gz
     base_url="$repo/releases/download/$tag"
     printf 'Downloading Beam %s…\n' "$tag"
     download "$base_url/$archive" "$work_dir/$archive"
     download "$base_url/$archive.sha256" "$work_dir/$archive.sha256"
-    (cd "$work_dir" && sha256sum --check "$archive.sha256")
+    if [ "$platform" = macos ]; then
+        (cd "$work_dir" && shasum -a 256 -c "$archive.sha256")
+        install_macos
+    else
+        (cd "$work_dir" && sha256sum --check "$archive.sha256")
+        install_linux
+    fi
+}
+
+install_macos() {
+    tar -xzf "$work_dir/$archive" -C "$work_dir" beam-macos-aarch64/Beam.app
+    source_app="$work_dir/beam-macos-aarch64/Beam.app"
+    [ -d "$source_app" ] && [ ! -L "$source_app" ] &&
+        [ -f "$source_app/Contents/Info.plist" ] &&
+        [ -x "$source_app/Contents/MacOS/beam" ] || fail 'Invalid Beam app bundle.'
+
+    # Clear extended attributes on the verified bundle before replacing the installed app.
+    xattr -cr "$source_app" || fail 'Could not clear extended attributes from Beam.'
+
+    applications_dir="$HOME/Applications"
+    install -d "$applications_dir"
+    destination="$applications_dir/Beam.app"
+    [ ! -L "$destination" ] || fail 'Refusing to replace a symlink at ~/Applications/Beam.app.'
+    # Stage on the destination filesystem and keep the previous app until replacement succeeds.
+    app_stage=$(mktemp -d "$applications_dir/.beam-install.XXXXXX")
+    trap 'rm -rf "$work_dir"; if [ -e "$app_stage/previous.app" ]; then
+        printf "Previous app preserved at %s/previous.app\n" "$app_stage" >&2
+    else rm -rf "$app_stage"; fi' EXIT
+    if ! mv "$source_app" "$app_stage/Beam.app"; then
+        fail 'Could not stage Beam.'
+    fi
+    if [ -e "$destination" ]; then
+        mv "$destination" "$app_stage/previous.app"
+    fi
+    if ! mv "$app_stage/Beam.app" "$destination"; then
+        if [ -e "$app_stage/previous.app" ]; then
+            mv "$app_stage/previous.app" "$destination" || {
+                trap 'rm -rf "$work_dir"' EXIT
+                fail "Could not restore Beam. Previous app preserved at $app_stage/previous.app."
+            }
+        fi
+        fail 'Could not install Beam.'
+    fi
+    rm -rf "$app_stage/previous.app"
+    printf 'Installed Beam to %s. Open Beam from Finder.\n' "$destination"
+}
+
+install_linux() {
+    bin_dir="$HOME/.local/bin"
+    data_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
+    case "$data_dir" in /*) ;; *) fail 'XDG_DATA_HOME must be an absolute path.' ;; esac
 
     # Extract only the files we install, never arbitrary archive paths.
     tar -xzf "$work_dir/$archive" -C "$work_dir" \

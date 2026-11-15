@@ -123,6 +123,10 @@ jobs:
       - name: Check out Beam
         uses: actions/checkout@v6
 
+      - name: Test macOS installer
+        if: runner.os == 'macOS'
+        run: python3 scripts/test_install.py
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
