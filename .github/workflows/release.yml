@@ -224,6 +224,24 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
           Compress-Archive -Path "dist/${{ matrix.package_dir }}\*" -DestinationPath "dist/${{ matrix.archive_name }}" -Force
 
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.11 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Could not install NSIS" }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $binary = (Resolve-Path "target/${{ matrix.target }}/release/beam.exe").Path
+          $output = Join-Path $PWD "dist/beam-windows-x86_64-setup.exe"
+          & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" "/DVERSION=$version" "/DBINARY=$binary" "/DOUTPUT=$output" scripts/windows-installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "Could not build Windows installer" }
+          $hash = (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  beam-windows-x86_64-setup.exe" | Set-Content "$output.sha256" -Encoding ascii
+
+      - name: Test Windows installer
+        if: runner.os == 'Windows'
+        run: python scripts/test_windows_install.py dist/beam-windows-x86_64-setup.exe
+
       - name: Install archive signer
         run: cargo install zipsign --version 0.2.2 --locked
 
@@ -241,6 +259,8 @@ jobs:
           path: |
             dist/${{ matrix.archive_name }}
             dist/${{ matrix.archive_name }}.sha256
+            dist/*-setup.exe
+            dist/*-setup.exe.sha256
 
   publish-release:
     name: Publish Release

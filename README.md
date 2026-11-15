@@ -83,7 +83,14 @@ rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/metainfo/com.hlcfan.beam.metainfo.xm
 
 ### Windows
 
-Extract `beam-windows-x86_64.zip` and run `beam.exe`.
+Download and run `beam-windows-x86_64-setup.exe` from the
+[latest release](https://github.com/hlcfan/beam/releases/latest). It installs for
+your user in `%LOCALAPPDATA%\Programs\Beam`, adds a Start Menu shortcut, and
+registers an uninstaller in Windows Settings. No administrator access is needed.
+Quit Beam before reinstalling. Use the in-app updater or rerun the installer to update.
+Uninstalling retains your workspace data.
+
+For a portable copy, extract `beam-windows-x86_64.zip` and run `beam.exe`.
 
 ## Importing
 
