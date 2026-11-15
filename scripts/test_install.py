@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -12,8 +13,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'installer targets Linux')
 class InstallTests(unittest.TestCase):
-    def run_install(self, corrupt=False):
+    def run_install(self, corrupt=False, missing_assets=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / 'home with spaces & pipes| and % dollar$'
@@ -21,9 +23,10 @@ class InstallTests(unittest.TestCase):
             payload = root / 'beam-linux-x86_64'
             payload.mkdir()
             (payload / 'beam').write_text('#!/bin/sh\necho beam\n')
-            for asset in (ROOT / 'assets/linux').iterdir():
-                (payload / asset.name).write_bytes(asset.read_bytes())
-            (payload / 'com.hlcfan.beam.png').write_bytes(b'icon')
+            if not missing_assets:
+                for asset in (ROOT / 'assets/linux').iterdir():
+                    (payload / asset.name).write_bytes(asset.read_bytes())
+                (payload / 'com.hlcfan.beam.png').write_bytes(b'icon')
             archive = root / 'beam-linux-x86_64.tar.gz'
             with tarfile.open(archive, 'w:gz') as output:
                 output.add(payload, arcname=payload.name)
@@ -53,6 +56,11 @@ cp "$FIXTURE/${url##*/}" "$destination"
             result = subprocess.run(['sh', str(ROOT / 'scripts/install.sh')], env=env,
                                     capture_output=True, text=True)
             binary = home / '.local/bin/beam'
+            if missing_assets:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('does not include the desktop files', result.stderr)
+                self.assertFalse(binary.exists())
+                return
             if corrupt:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(binary.exists())
@@ -60,6 +68,7 @@ cp "$FIXTURE/${url##*/}" "$destination"
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue(os.access(binary, os.X_OK))
             desktop = home / 'data/applications/com.hlcfan.beam.desktop'
+            self.assertIn('StartupWMClass=com.hlcfan.beam', desktop.read_text())
             self.assertIn(f'Exec="{str(binary).replace("%", "%%").replace("$", chr(92) * 2 + "$")}"',
                           desktop.read_text())
             self.assertTrue((home / 'data/icons/hicolor/512x512/apps/com.hlcfan.beam.png').exists())
@@ -69,6 +78,9 @@ cp "$FIXTURE/${url##*/}" "$destination"
 
     def test_install_and_reinstall(self):
         self.run_install()
+
+    def test_release_without_desktop_files_fails_clearly(self):
+        self.run_install(missing_assets=True)
 
     def test_checksum_failure_leaves_installation_untouched(self):
         self.run_install(corrupt=True)

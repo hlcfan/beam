@@ -16,7 +16,8 @@ main() {
     case "$data_dir" in /*) ;; *) fail 'XDG_DATA_HOME must be an absolute path.' ;; esac
 
     work_dir=$(mktemp -d)
-    trap 'rm -rf "$work_dir"' EXIT
+    staged_bin=
+    trap 'rm -rf "$work_dir"; rm -f "$staged_bin"' EXIT
     trap 'exit 1' HUP INT TERM
     repo=https://github.com/hlcfan/beam
     # Resolve once so a concurrent release cannot mix archive and checksum versions.
@@ -38,7 +39,8 @@ main() {
         beam-linux-x86_64/beam \
         beam-linux-x86_64/com.hlcfan.beam.desktop \
         beam-linux-x86_64/com.hlcfan.beam.metainfo.xml \
-        beam-linux-x86_64/com.hlcfan.beam.png
+        beam-linux-x86_64/com.hlcfan.beam.png 2>/dev/null ||
+        fail "Release $tag does not include the desktop files. Download the archive manually from $repo/releases."
     source_dir="$work_dir/beam-linux-x86_64"
     for name in beam com.hlcfan.beam.desktop com.hlcfan.beam.metainfo.xml com.hlcfan.beam.png; do
         [ -f "$source_dir/$name" ] && [ ! -L "$source_dir/$name" ] || fail "Invalid release file: $name"
@@ -47,7 +49,6 @@ main() {
     # Stage the executable beside its destination, allowing updates while Beam runs.
     install -d "$bin_dir"
     staged_bin=$(mktemp "$bin_dir/.beam-install.XXXXXX")
-    trap 'rm -rf "$work_dir"; rm -f "${staged_bin:-}"' EXIT
     install -m 755 "$source_dir/beam" "$staged_bin"
     mv -f "$staged_bin" "$bin_dir/beam"
 

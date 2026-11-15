@@ -70,7 +70,7 @@ Install the latest stable release for your user (Linux x86_64):
 curl --proto '=https' --tlsv1.2 -sSfL https://github.com/hlcfan/beam/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the release's SHA-256 checksum, installs Beam in
+The installer checks the release's SHA-256 checksum (this detects corruption, not a tampered release), installs Beam in
 `~/.local/bin`, and adds an application launcher and icon. No sudo is needed.
 It requires `curl`, `tar`, and standard GNU utilities. Add `~/.local/bin` to
 your `PATH` to run `beam` from a terminal. Use Beam's in-app updater or rerun
