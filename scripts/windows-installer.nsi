@@ -34,7 +34,7 @@ Section "Beam"
     ; Abort rather than scheduling replacement if Beam is still running.
     SetOverwrite on
     ClearErrors
-    File /oname=beam.exe "${BINARY}"
+    File /nonfatal /oname=beam.exe "${BINARY}"
     ${If} ${Errors}
         MessageBox MB_OK|MB_ICONSTOP "Could not install Beam. Close Beam and try again."
         SetErrorLevel 1

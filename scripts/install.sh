@@ -3,7 +3,13 @@
 set -eu
 
 main() {
-    case "$(uname -s):$(uname -m)" in
+    os=$(uname -s)
+    arch=$(uname -m)
+    # A Rosetta terminal on Apple Silicon reports x86_64.
+    if [ "$os:$arch" = Darwin:x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
+        arch=arm64
+    fi
+    case "$os:$arch" in
         Linux:x86_64)
             platform=linux
             archive=beam-linux-x86_64.tar.gz

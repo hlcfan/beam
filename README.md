@@ -88,7 +88,8 @@ Download and run `beam-windows-x86_64-setup.exe` from the
 your user in `%LOCALAPPDATA%\Programs\Beam`, adds a Start Menu shortcut, and
 registers an uninstaller in Windows Settings. No administrator access is needed.
 Quit Beam before reinstalling. Use the in-app updater or rerun the installer to update.
-Uninstalling retains your workspace data.
+Uninstalling retains your workspace data. The installer is not code-signed, so
+SmartScreen may warn; verify it against the published `.sha256`.
 
 For a portable copy, extract `beam-windows-x86_64.zip` and run `beam.exe`.
 
