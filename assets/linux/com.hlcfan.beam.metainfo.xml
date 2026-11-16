@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.hlcfan.beam</id>
+  <name>Beam</name>
+  <summary>A lightweight HTTP client for developers</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>Beam lets you organize HTTP requests into workspaces and folders,
+    use environments, inspect responses, and run post-request scripts.</p>
+  </description>
+  <launchable type="desktop-id">com.hlcfan.beam.desktop</launchable>
+  <url type="homepage">https://github.com/hlcfan/beam</url>
+  <url type="bugtracker">https://github.com/hlcfan/beam/issues</url>
+  <provides><binary>beam</binary></provides>
+</component>

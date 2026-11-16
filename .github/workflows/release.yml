@@ -41,6 +41,9 @@ jobs:
             exit 1
           fi
 
+      - name: Test Linux installer
+        run: python3 scripts/test_install.py
+
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
@@ -128,6 +131,10 @@ jobs:
       - name: Check out Beam
         uses: actions/checkout@v6
 
+      - name: Test macOS installer
+        if: runner.os == 'macOS'
+        run: python3 scripts/test_install.py
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -213,6 +220,8 @@ jobs:
         run: |
           mkdir -p dist/${{ matrix.package_dir }}
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
+          cp assets/linux/com.hlcfan.beam.desktop assets/linux/com.hlcfan.beam.metainfo.xml "dist/${{ matrix.package_dir }}/"
+          cp assets/icon.iconset/icon_512x512.png "dist/${{ matrix.package_dir }}/com.hlcfan.beam.png"
           tar -C dist -czf "dist/${{ matrix.archive_name }}" "${{ matrix.package_dir }}"
 
       - name: Package Windows binary
@@ -222,6 +231,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path "dist/${{ matrix.package_dir }}" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "dist/${{ matrix.package_dir }}/${{ matrix.binary_name }}"
           Compress-Archive -Path "dist/${{ matrix.package_dir }}\*" -DestinationPath "dist/${{ matrix.archive_name }}" -Force
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.11 -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Could not install NSIS" }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          $binary = (Resolve-Path "target/${{ matrix.target }}/release/beam.exe").Path
+          $output = Join-Path $PWD "dist/beam-windows-x86_64-setup.exe"
+          & "${env:ProgramFiles(x86)}/NSIS/makensis.exe" "/DVERSION=$version" "/DBINARY=$binary" "/DOUTPUT=$output" scripts/windows-installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "Could not build Windows installer" }
+          $hash = (Get-FileHash $output -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  beam-windows-x86_64-setup.exe" | Set-Content "$output.sha256" -Encoding ascii
+
+      - name: Test Windows installer
+        if: runner.os == 'Windows'
+        run: python scripts/test_windows_install.py dist/beam-windows-x86_64-setup.exe
 
       - name: Install archive signer
         run: cargo install zipsign --version 0.2.2 --locked
@@ -240,6 +267,8 @@ jobs:
           path: |
             dist/${{ matrix.archive_name }}
             dist/${{ matrix.archive_name }}.sha256
+            dist/*-setup.exe
+            dist/*-setup.exe.sha256
 
   publish-release:
     name: Publish Release
@@ -285,6 +314,9 @@ jobs:
           path: dist
           pattern: release-*
           merge-multiple: true
+
+      - name: Include release installer
+        run: cp scripts/install.sh dist/install.sh
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
