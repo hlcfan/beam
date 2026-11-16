@@ -107,6 +107,14 @@ jobs:
             package_dir: beam-linux-x86_64
             binary_name: beam
             package_kind: binary
+          - label: Linux ARM
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive_name: beam-linux-aarch64.tar.gz
+            artifact_name: release-linux-aarch64
+            package_dir: beam-linux-aarch64
+            binary_name: beam
+            package_kind: binary
           - label: Windows
             os: windows-2022
             target: x86_64-pc-windows-msvc

@@ -69,6 +69,8 @@ tar -xzf beam-linux-x86_64.tar.gz
 ./beam
 ```
 
+For ARM64, use `beam-linux-aarch64.tar.gz` instead.
+
 ## Development
 
 ### Prerequisites

@@ -122,6 +122,9 @@ pub(crate) fn install(update: AvailableUpdate) -> Result<(), String> {
         Platform::LinuxX64 => {
             builder.bin_path_in_archive("beam-linux-x86_64/beam");
         }
+        Platform::LinuxArm64 => {
+            builder.bin_path_in_archive("beam-linux-aarch64/beam");
+        }
         Platform::WindowsX64 => {
             builder.bin_path_in_archive("beam.exe");
         }
@@ -285,6 +288,7 @@ impl ReleaseSource for PinnedRelease {
 enum Platform {
     MacArm,
     LinuxX64,
+    LinuxArm64,
     WindowsX64,
 }
 
@@ -293,6 +297,7 @@ impl Platform {
         match (std::env::consts::OS, std::env::consts::ARCH) {
             ("macos", "aarch64") => Ok(Self::MacArm),
             ("linux", "x86_64") => Ok(Self::LinuxX64),
+            ("linux", "aarch64") => Ok(Self::LinuxArm64),
             ("windows", "x86_64") => Ok(Self::WindowsX64),
             _ => Err("In-app updates are not available for this platform.".into()),
         }
@@ -302,6 +307,7 @@ impl Platform {
         match self {
             Self::MacArm => "beam-macos-aarch64.tar.gz",
             Self::LinuxX64 => "beam-linux-x86_64.tar.gz",
+            Self::LinuxArm64 => "beam-linux-aarch64.tar.gz",
             Self::WindowsX64 => "beam-windows-x86_64.zip",
         }
     }
@@ -310,6 +316,7 @@ impl Platform {
         match self {
             Self::MacArm => "macOS Apple Silicon",
             Self::LinuxX64 => "Linux x86_64",
+            Self::LinuxArm64 => "Linux ARM64",
             Self::WindowsX64 => "Windows x86_64",
         }
     }
@@ -409,6 +416,7 @@ mod tests {
         for (platform, archive) in [
             (Platform::MacArm, "beam-macos-aarch64.tar.gz"),
             (Platform::LinuxX64, "beam-linux-x86_64.tar.gz"),
+            (Platform::LinuxArm64, "beam-linux-aarch64.tar.gz"),
             (Platform::WindowsX64, "beam-windows-x86_64.zip"),
         ] {
             let release = release(
