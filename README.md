@@ -41,14 +41,6 @@ The installer detects your platform and verifies the release's SHA-256 checksum
 - **Linux:** Installs to `~/.local/bin` and adds an application launcher and icon.
   Add `~/.local/bin` to your `PATH` to run `beam` from a terminal.
 
-Quit Beam before reinstalling. Use Beam's in-app updater or rerun the command to
-update, then reopen Beam. The installer becomes available once a release containing
-`install.sh` and the desktop assets is published.
-
-The installer requires `curl`, `tar`, and standard platform utilities. It does not
-install system libraries; Linux requires a graphical desktop with GTK 3,
-WebKitGTK 4.1, and the platform libraries used by GPUI.
-
 #### Manual installation
 
 On macOS:
