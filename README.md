@@ -22,19 +22,17 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 - Theme support with light/dark mode and font size settings
 - Manual application updates from normal releases or nightly builds
 - Editor auto-format, soft wrap, wrapping indent settings
+- Portable mode that enables moving your installation and data to a different location
 
 ## Installation
 
 ### macOS and Linux
 
-Install the latest stable release for your user (macOS Apple Silicon, Linux x86_64 or Linux ARM64):
+Install the latest stable release for your user (macOS Apple Silicon, Linux x86_64/ARM64), no sudo is needed:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSfL https://github.com/hlcfan/beam/releases/latest/download/install.sh | sh
 ```
-
-The installer detects your platform and verifies the release's SHA-256 checksum
-(this detects corruption, not a tampered release). No sudo is needed.
 
 - **macOS:** Installs to `~/Applications/Beam.app` and runs `xattr -cr` on the
   verified app bundle to clear quarantine attributes.
@@ -42,6 +40,8 @@ The installer detects your platform and verifies the release's SHA-256 checksum
   Add `~/.local/bin` to your `PATH` to run `beam` from a terminal.
 
 #### Manual installation
+
+Download the binary from [latest release](https://github.com/hlcfan/beam/releases/latest).
 
 On macOS:
 
@@ -77,13 +77,9 @@ rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/metainfo/com.hlcfan.beam.metainfo.xm
 
 ### Windows
 
-Download and run `beam-windows-x86_64-setup.exe` from the
-[latest release](https://github.com/hlcfan/beam/releases/latest). It installs for
-your user in `%LOCALAPPDATA%\Programs\Beam`, adds a Start Menu shortcut, and
-registers an uninstaller in Windows Settings. No administrator access is needed.
-Quit Beam before reinstalling. Use the in-app updater or rerun the installer to update.
-Uninstalling retains your workspace data. The installer is not code-signed, so
-SmartScreen may warn; verify it against the published `.sha256`.
+It installs for your user in `%LOCALAPPDATA%\Programs\Beam`, adds a Start Menu
+shortcut, and registers an uninstaller in Windows Settings. The installer
+is not code-signed, so SmartScreen may warn.
 
 For a portable copy, extract `beam-windows-x86_64.zip` and run `beam.exe`.
 
@@ -96,17 +92,26 @@ Open **Import** from the status bar, then select one or more files or a folder. 
 - Insomnia JSON exports
 - Insomnia v5 YAML collections
 
-Multiple files can be imported as one batch. When a batch contains multiple collections, Beam keeps each collection in its own top-level folder. Insomnia workspace exports create a new workspace; collections and environments import into the active workspace.
+Multiple files can be imported as one batch. When a batch contains multiple
+collections, Beam keeps each collection in its own top-level folder. Insomnia
+workspace exports create a new workspace; collections and environments import
+into the active workspace.
 
-Multiple workspace exports can be imported together, but they cannot be combined with separate Postman environment files because the target workspace would be ambiguous.
+Multiple workspace exports can be imported together, but they cannot be combined
+with separate Postman environment files because the target workspace would be
+ambiguous.
 
-You can also paste a cURL command directly into the request URL field to fill the current request's method, URL, headers, query parameters, authentication, and body.
+You can also paste a cURL command directly into the request URL field to fill
+the current request's method, URL, headers, query parameters, authentication,
+and body.
 
 ## Privacy
 
-Beam is local-first. It stores your data in local TOML files on your machine so you can inspect, back up, and manage it yourself.
+Beam is local-first. It stores your data in local TOML files on your machine so
+you can inspect, back up, and manage it yourself.
 
-Beam does not send telemetry or analytics data. There is no account requirement and no cloud dependency for core usage.
+Beam does not send telemetry or analytics data. There is no account requirement
+and no cloud dependency for core usage.
 
 ## Development
 
