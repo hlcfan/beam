@@ -15,6 +15,9 @@ pub(super) enum ResponseTab {
 pub(super) const MACOS_COMMAND_ICON_PATH: &str = "icons/command.svg";
 pub(super) const NON_MACOS_COMMAND_ICON_PATH: &str = "icons/chevron-up.svg";
 
+/// Response bodies at least this large are formatted off the UI thread.
+const BACKGROUND_FORMAT_MIN_BYTES: usize = 256 * 1024;
+
 impl BeamView {
     /// Rebuilds the cached headers table from raw header text. The only writer of
     /// `response_headers_table`, so the cache cannot drift from the response.
@@ -41,32 +44,37 @@ impl BeamView {
         );
     }
 
+    /// Show `snapshot` in the response pane. With `for_selection`, also restore the selected
+    /// request's scroll offset and in-flight status. A large body is formatted off the UI thread
+    /// while the current response stays on screen, and both are swapped when it is ready.
     pub(in crate::ui) fn apply_response_snapshot(
         &mut self,
-        snapshot: &StoredResponseSnapshot,
+        mut snapshot: StoredResponseSnapshot,
+        for_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let content_type = snapshot.content_type.clone();
-        let formatted_body =
-            self.response_body_for_display(&snapshot.body, content_type.as_deref());
-        let language = response_body_editor_language(content_type.as_deref());
-        self.response_status = snapshot.status.clone();
-        self.response_status_code = snapshot.status_code;
-        self.response_time = snapshot.time.clone();
-        self.response_size = snapshot.size.clone();
-        self.set_response_headers(&snapshot.headers_raw);
-        self.set_response_image(snapshot.image.clone(), window, cx);
-        self.response_content_type = content_type;
-        self.update_response_body_editor_with_scroll_persistence_suppressed(
-            window,
-            cx,
-            |input, window, cx| {
-                input.set_highlighter(language, cx);
-                input.set_value(formatted_body.clone(), window, cx);
-            },
-        );
-        self.response_body_language = language;
+        if !self.shell.theme.auto_format_response
+            || snapshot.body.len() < BACKGROUND_FORMAT_MIN_BYTES
+        {
+            let body =
+                self.response_body_for_display(&snapshot.body, snapshot.content_type.as_deref());
+            self.show_response(snapshot, body, for_selection, window, cx);
+            return;
+        }
+
+        let formatted = cx.background_spawn(async move {
+            let body = std::mem::take(&mut snapshot.body);
+            let body = formatted_response_body(&body, snapshot.content_type.as_deref());
+            (snapshot, body)
+        });
+        self.response_body_format_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let (snapshot, body) = formatted.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.show_response(snapshot, body, for_selection, window, cx);
+                cx.notify();
+            });
+        }));
     }
 
     pub(in crate::ui) fn sync_response_pane_from_selection(
@@ -86,18 +94,54 @@ impl BeamView {
             load_response_history_entries(&self.current_workspace_paths, request_id);
         self.selected_response_history_index =
             (!self.response_history_entries.is_empty()).then_some(0);
+        self.script_result = load_script_result(&self.current_workspace_paths, request_id);
         if let Some(snapshot) = self.response_history_entries.first().map(|entry| {
             load_response_snapshot_for_history_entry(&self.current_workspace_paths, entry)
         }) {
-            self.apply_response_snapshot(&snapshot, window, cx);
-            self.restore_selected_request_response_scroll_offset(window, cx);
+            self.apply_response_snapshot(snapshot, true, window, cx);
         } else {
             self.clear_response_pane(window, cx);
+            self.apply_selected_request_execution_summary();
         }
-        self.script_result = load_script_result(&self.current_workspace_paths, request_id);
+    }
 
+    /// Replace the response pane's status, headers, and body. `snapshot.body` is ignored in
+    /// favor of `body`, which is already formatted for display.
+    fn show_response(
+        &mut self,
+        snapshot: StoredResponseSnapshot,
+        body: String,
+        for_selection: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let language = response_body_editor_language(snapshot.content_type.as_deref());
+        self.response_status = snapshot.status;
+        self.response_status_code = snapshot.status_code;
+        self.response_time = snapshot.time;
+        self.response_size = snapshot.size;
+        self.set_response_headers(&snapshot.headers_raw);
+        self.set_response_image(snapshot.image, window, cx);
+        self.response_content_type = snapshot.content_type;
+        self.response_body_language = language;
+        self.update_response_body_editor_with_scroll_persistence_suppressed(
+            window,
+            cx,
+            |input, window, cx| {
+                input.set_highlighter(language, cx);
+                input.set_value(body, window, cx);
+            },
+        );
+        if for_selection {
+            self.restore_selected_request_response_scroll_offset(window, cx);
+            self.apply_selected_request_execution_summary();
+        }
+    }
+
+    /// A request that is still sending shows its in-flight status over its last response.
+    fn apply_selected_request_execution_summary(&mut self) {
         let (status, status_code, time, size) = response_summary_for_selected_request(
-            Some(request_id),
+            self.shell.workspace_tree.selected_request_id(),
             &self.request_execution_states,
             &self.response_status,
             self.response_status_code,
@@ -128,8 +172,7 @@ impl BeamView {
         if !self.shell.theme.auto_format_response {
             return body.to_string();
         }
-        format_body_text(body, BodyFormatHint::FromContentType(content_type))
-            .unwrap_or_else(|_| body.to_string())
+        formatted_response_body(body, content_type)
     }
 
     pub(in crate::ui) fn format_response_body(
@@ -316,4 +359,10 @@ pub(super) fn image_placeholder_body(len: usize) -> String {
 /// falls back to the explanatory note.
 pub(super) fn unavailable_image_body(bytes: &[u8], note: String) -> String {
     std::str::from_utf8(bytes).map_or(note, str::to_owned)
+}
+
+/// `body` formatted for its content type, or unchanged when it cannot be formatted.
+fn formatted_response_body(body: &str, content_type: Option<&str>) -> String {
+    format_body_text(body, BodyFormatHint::FromContentType(content_type))
+        .unwrap_or_else(|_| body.to_string())
 }

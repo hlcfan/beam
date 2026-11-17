@@ -506,7 +506,7 @@ pub fn run_app(
             position.y += (BEAM_TITLE_BAR_HEIGHT - gpui_kit::component::TITLE_BAR_HEIGHT) / 2.;
         }
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
+            window_bounds: Some(WindowBounds::centered(None, size(px(1280.), px(800.)), cx)),
             titlebar: Some(titlebar),
             // Match the Linux desktop entry so launchers pair the window with its icon.
             app_id: Some("com.hlcfan.beam".into()),

@@ -6,6 +6,7 @@ use crate::models::{
 };
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::request_authoring::{RequestTab, SendButtonState, SendDisabledReason};
+use crate::ui::response::history::StoredResponseSnapshot;
 use crate::ui::response::persistence::persist_response_snapshot;
 use crate::ui::{BeamView, HttpResponseSnapshot};
 use chrono::Utc;
@@ -13,7 +14,7 @@ use gpui_kit as gpui;
 use gpui_kit::base::test_support::{ElementSnapshot, find};
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::{
-    AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollWheelEvent, SharedString,
+    AppContext as _, Entity, Modifiers, MouseButton, ScrollDelta, ScrollEvent, SharedString,
     TestAppContext, TouchPhase, VisualTestContext, point, px, size,
 };
 use std::sync::mpsc::{Receiver, sync_channel};
@@ -393,6 +394,129 @@ fn beam_view_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> usiz
 #[gpui_kit::test]
 fn response_scroll_offset_persists_after_scrolling_stops(cx: &mut TestAppContext) {
     let (fixture, cx) = fixture(cx, 1);
+    let request_id = show_scrollable_response(&fixture, cx);
+    draw(cx);
+
+    scroll_response_editor(&fixture, cx, -120., -850.);
+    let scrolled = response_scroll_offset(&fixture, cx);
+    assert!(scrolled.y < px(0.));
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(100));
+    draw(cx);
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(60));
+    draw(cx);
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        scrolled
+    );
+}
+
+#[gpui_kit::test]
+fn response_scroll_offset_is_not_persisted_while_a_response_is_formatting(cx: &mut TestAppContext) {
+    let (fixture, cx) = fixture(cx, 1);
+    let request_id = show_scrollable_response(&fixture, cx);
+    draw(cx);
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.response_body_format_task =
+                Some(cx.spawn(async move |_, _| std::future::pending::<()>().await));
+        });
+    });
+
+    scroll_response_editor(&fixture, cx, -120., -850.);
+    assert!(response_scroll_offset(&fixture, cx).y < px(0.));
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(300));
+    draw(cx);
+
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+}
+
+#[gpui_kit::test]
+fn large_response_swaps_in_after_background_format_and_a_later_write_cancels_it(
+    cx: &mut TestAppContext,
+) {
+    let (fixture, cx) = fixture(cx, 1);
+    show_scrollable_response(&fixture, cx);
+    draw(cx);
+    let large_json = format!(r#"{{"data":"{}"}}"#, "x".repeat(300 * 1024));
+    let snapshot = |status: &str| StoredResponseSnapshot {
+        status: status.to_string(),
+        status_code: Some(200),
+        time: "1 ms".to_string(),
+        size: "1 KB".to_string(),
+        body: large_json.clone(),
+        headers_raw: String::new(),
+        content_type: Some("application/json".to_string()),
+        image: None,
+    };
+    let status = |cx: &mut VisualTestContext| {
+        fixture
+            .view
+            .read_with(cx, |view, _| view.response_status.clone())
+    };
+    let first_line = |cx: &mut VisualTestContext| {
+        fixture.view.read_with(cx, |view, cx| {
+            view.response_body_editor.read(cx).text().to_string()
+        })
+    };
+    let before = first_line(cx);
+    cx.update(|window, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.shell.theme.auto_format_response = true;
+            view.apply_response_snapshot(snapshot("200 OK"), false, window, cx);
+        });
+    });
+    assert!(
+        fixture
+            .view
+            .read_with(cx, |view, _| view.response_body_format_task.is_some())
+    );
+    assert_eq!(
+        first_line(cx),
+        before,
+        "old body stays until formatting ends"
+    );
+
+    cx.run_until_parked();
+    assert_eq!(status(cx), "200 OK");
+    assert!(first_line(cx).starts_with("{\n  \"data\""));
+    assert!(
+        fixture
+            .view
+            .read_with(cx, |view, _| view.response_body_format_task.is_none())
+    );
+
+    cx.update(|window, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.apply_response_snapshot(snapshot("201 Created"), false, window, cx);
+            view.update_response_body_editor_with_scroll_persistence_suppressed(
+                window,
+                cx,
+                |editor, window, cx| editor.set_value("newer".to_string(), window, cx),
+            );
+        });
+    });
+    cx.run_until_parked();
+    assert_eq!(status(cx), "200 OK", "a later body write cancels the swap");
+    assert_eq!(first_line(cx), "newer");
+}
+
+fn show_scrollable_response(fixture: &Fixture, cx: &mut VisualTestContext) -> Ulid {
     let mut shell = tree_workspace(
         &fixture
             .view
@@ -430,31 +554,7 @@ fn response_scroll_offset_persists_after_scrolling_stops(cx: &mut TestAppContext
             cx.notify();
         });
     });
-    draw(cx);
-
-    scroll_response_editor(&fixture, cx, -120., -850.);
-    let scrolled = response_scroll_offset(&fixture, cx);
-    assert!(scrolled.y < px(0.));
-    assert_eq!(
-        stored_response_scroll_offset(&fixture, cx, request_id),
-        point(px(0.), px(0.))
-    );
-
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(100));
-    draw(cx);
-    assert_eq!(
-        stored_response_scroll_offset(&fixture, cx, request_id),
-        point(px(0.), px(0.))
-    );
-
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(60));
-    draw(cx);
-    assert_eq!(
-        stored_response_scroll_offset(&fixture, cx, request_id),
-        scrolled
-    );
+    request_id
 }
 
 fn stored_response_scroll_offset(
@@ -471,7 +571,7 @@ fn scroll_response_editor(fixture: &Fixture, cx: &mut VisualTestContext, x: f32,
     let bounds = fixture.view.read_with(cx, |view, cx| {
         view.response_body_editor.read(cx).input_bounds()
     });
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: bounds.center(),
         delta: ScrollDelta::Pixels(point(px(x), px(y))),
         ..Default::default()
@@ -525,7 +625,7 @@ fn scroll_workspace_tree(fixture: &Fixture, cx: &mut VisualTestContext, delta: f
     let bounds = fixture
         .view
         .read_with(cx, |view, _| view.workspace_scroll_handle.bounds());
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: bounds.center(),
         delta: ScrollDelta::Pixels(point(px(0.), px(delta))),
         ..Default::default()
@@ -811,7 +911,7 @@ fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
         snapshot(cx, "beam-title-bar").bounds()
     );
 
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll.bounds().center(),
         delta: ScrollDelta::Lines(point(0., -3.)),
         ..Default::default()
@@ -822,7 +922,7 @@ fn scrolling_keeps_title_bar_buttons_fixed(cx: &mut TestAppContext) {
         "ordinary mouse wheel scrolls horizontally"
     );
     let mouse_offset = scroll.offset().x;
-    cx.simulate_event(ScrollWheelEvent {
+    cx.simulate_event(ScrollEvent {
         position: scroll.bounds().center(),
         delta: ScrollDelta::Pixels(point(px(-80.), px(0.))),
         touch_phase: TouchPhase::Started,

@@ -32,6 +32,8 @@ pub(super) struct BeamView {
     pub(super) response_content_type: Option<String>,
     pub(super) response_image: Option<Arc<gpui::Image>>,
     pub(super) response_body_language: &'static str,
+    /// Formats a large response body off the UI thread; any later body write cancels it.
+    pub(super) response_body_format_task: Option<Task<()>>,
     pub(super) response_history_entries: Vec<ResponseHistoryEntry>,
     pub(super) selected_response_history_index: Option<usize>,
     pub(super) post_script_editor: Entity<EditorState>,
@@ -258,6 +260,7 @@ impl BeamView {
             response_content_type: None,
             response_image: None,
             response_body_language: "text",
+            response_body_format_task: None,
             response_history_entries: Vec::new(),
             selected_response_history_index: None,
             post_script_editor,

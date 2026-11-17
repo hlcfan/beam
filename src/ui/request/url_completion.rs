@@ -377,14 +377,6 @@ impl Element for CaretAnchored {
     }
 }
 
-impl IntoElement for CaretAnchored {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 /// The span an accepted candidate replaces: the variable token the cursor is
 /// in, or nothing at the cursor if the text no longer has one.
 fn replacement_range(text: &Rope, cursor: usize) -> Range<usize> {

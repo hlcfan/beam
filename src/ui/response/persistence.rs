@@ -204,6 +204,9 @@ impl BeamView {
     }
 
     fn response_scroll_offset_needs_persist(&self, cx: &App) -> bool {
+        if self.response_body_format_task.is_some() {
+            return false;
+        }
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
             return false;
         };
@@ -218,6 +221,10 @@ impl BeamView {
     }
 
     pub(in crate::ui) fn persist_current_response_scroll_offset(&mut self, cx: &App) {
+        // While a response is formatting, the editor still shows the previous request's body.
+        if self.response_body_format_task.is_some() {
+            return;
+        }
         let Some(request_id) = self.shell.workspace_tree.selected_request_id() else {
             return;
         };
@@ -230,6 +237,7 @@ impl BeamView {
         cx: &mut Context<Self>,
         update: impl FnOnce(&mut EditorState, &mut Window, &mut Context<EditorState>),
     ) {
+        self.response_body_format_task = None;
         self.suppress_response_scroll_offset_persistence = true;
         self.response_body_is_blank = self.response_body_editor.update(cx, |input, cx| {
             update(input, window, cx);
