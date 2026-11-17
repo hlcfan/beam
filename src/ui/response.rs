@@ -57,6 +57,7 @@ impl BeamView {
         if !self.shell.theme.auto_format_response
             || snapshot.body.len() < BACKGROUND_FORMAT_MIN_BYTES
         {
+            self.response_body_format_task = None;
             let body =
                 self.response_body_for_display(&snapshot.body, snapshot.content_type.as_deref());
             self.show_response(snapshot, body, for_selection, window, cx);
@@ -95,14 +96,57 @@ impl BeamView {
         self.selected_response_history_index =
             (!self.response_history_entries.is_empty()).then_some(0);
         self.script_result = load_script_result(&self.current_workspace_paths, request_id);
-        if let Some(snapshot) = self.response_history_entries.first().map(|entry| {
-            load_response_snapshot_for_history_entry(&self.current_workspace_paths, entry)
-        }) {
-            self.apply_response_snapshot(snapshot, true, window, cx);
+        if let Some(entry) = self.response_history_entries.first().cloned() {
+            self.apply_history_entry(&entry, window, cx);
         } else {
             self.clear_response_pane(window, cx);
             self.apply_selected_request_execution_summary();
         }
+    }
+
+    /// Show the newest stored response for the selected request. A large body is read from disk
+    /// and formatted off the UI thread, so opening the app on a large response does not block the
+    /// first frame.
+    fn apply_history_entry(
+        &mut self,
+        entry: &ResponseHistoryEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stored_bytes = entry
+            .execution
+            .response_summary
+            .as_ref()
+            .and_then(|summary| summary.body_bytes)
+            .and_then(|bytes| usize::try_from(bytes).ok())
+            .unwrap_or(0);
+        if stored_bytes < BACKGROUND_FORMAT_MIN_BYTES {
+            let snapshot =
+                load_response_snapshot_for_history_entry(&self.current_workspace_paths, entry);
+            self.apply_response_snapshot(snapshot, true, window, cx);
+            return;
+        }
+
+        let paths = self.current_workspace_paths.clone();
+        let entry = entry.clone();
+        let auto_format = self.shell.theme.auto_format_response;
+        let loaded = cx.background_spawn(async move {
+            let mut snapshot = load_response_snapshot_for_history_entry(&paths, &entry);
+            let body = std::mem::take(&mut snapshot.body);
+            let body = if auto_format {
+                formatted_response_body(&body, snapshot.content_type.as_deref())
+            } else {
+                body
+            };
+            (snapshot, body)
+        });
+        self.response_body_format_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let (snapshot, body) = loaded.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.show_response(snapshot, body, true, window, cx);
+                cx.notify();
+            });
+        }));
     }
 
     /// Replace the response pane's status, headers, and body. `snapshot.body` is ignored in
