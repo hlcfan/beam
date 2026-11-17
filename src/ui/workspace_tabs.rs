@@ -135,6 +135,12 @@ impl BeamView {
                 }))
                 .capture_any_mouse_down(cx.listener(
                     move |this, event: &MouseDownEvent, window, cx| {
+                        if event.button == MouseButton::Left {
+                            // Switching workspaces keeps keyboard focus where it was; a
+                            // prevented default stops the tab from claiming focus.
+                            window.prevent_default();
+                            return;
+                        }
                         if event.button != MouseButton::Right {
                             return;
                         }

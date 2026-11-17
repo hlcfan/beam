@@ -135,7 +135,9 @@ impl BeamView {
                                                         &this.current_workspace_paths,
                                                         &history_entry,
                                                     );
-                                                this.apply_response_snapshot(snapshot, false, window, cx);
+                                                this.apply_response_snapshot(
+                                                    snapshot, false, window, cx,
+                                                );
                                                 this.selected_response_history_index = Some(ix);
                                                 popup_menu
                                                     .update(cx, |_, cx| cx.emit(DismissEvent));
