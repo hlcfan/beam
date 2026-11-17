@@ -3,6 +3,7 @@ mod app_events;
 mod beam_view;
 mod dialogs;
 mod environment;
+mod input_host;
 mod persistence;
 mod request;
 mod response;
@@ -13,7 +14,8 @@ mod update;
 mod workspace_tabs;
 
 use beam_view::BeamView;
-use environment::{EnvVarHoverInfo, environment_file_path_for_workspace};
+use environment::{EnvVarHoverInfo, EnvVarTokenCache, environment_file_path_for_workspace};
+use input_host::InputHosts;
 
 use actions::*;
 use tree::*;
@@ -43,12 +45,13 @@ use response::persistence::{
 };
 use response::{MACOS_COMMAND_ICON_PATH, NON_MACOS_COMMAND_ICON_PATH, ResponseTab};
 use text_edit_menu::{
-    append_with_image_or_plain, build_text_edit_context_menu,
+    TextSelectionSource, append_with_image_or_plain, build_text_edit_context_menu,
     build_text_edit_context_menu_with_find,
 };
 use theme::init_theme_registry;
 
 use std::any::Any;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
@@ -96,8 +99,8 @@ use crate::models::{
 use crate::paths::{BeamPaths, DataRootPaths};
 use crate::post_script_help::POST_SCRIPT_API_HELP_MARKDOWN;
 use crate::request_authoring::{
-    RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState, SendDisabledReason,
-    validate_rename,
+    PostScriptBottomTab, RenameValidationError, RequestAuthoringState, RequestTab, SendButtonState,
+    SendDisabledReason, validate_rename,
 };
 use crate::script::EnvironmentChangeKind;
 use crate::storage::fs_backend::FileSystemStorage;
@@ -505,6 +508,8 @@ pub fn run_app(
         let window_options = WindowOptions {
             window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
             titlebar: Some(titlebar),
+            // Match the Linux desktop entry so launchers pair the window with its icon.
+            app_id: Some("com.hlcfan.beam".into()),
             // Let TitleBar own dragging so AppKit cannot move the window from a control.
             ..TitleBar::window_options()
         };

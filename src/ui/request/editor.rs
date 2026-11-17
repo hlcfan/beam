@@ -221,11 +221,16 @@ impl BeamView {
                 if !matches!(ev, InputEvent::Change) {
                     return;
                 }
-                let next_body_text = this.request_body_editor.read(cx).value().to_string();
+                let next_body_text = this.request_body_editor.read(cx).text().to_string();
+                // The body tab label shows the format, and typing into an empty body turns
+                // `None` into `Raw`. The editor and its completion menu redraw themselves.
+                let format_before = body_format_from_config(&this.request.body);
                 this.request.body = body_with_updated_text(&this.request.body, next_body_text);
                 this.schedule_request_save(cx);
                 this.update_request_body_completion(window, cx);
-                cx.notify();
+                if body_format_from_config(&this.request.body) != format_before {
+                    cx.notify();
+                }
             },
         ));
     }
@@ -296,7 +301,6 @@ impl BeamView {
         };
         let highlight_invalid_url = self.show_invalid_url_border;
         let current_method = self.request.method;
-        let url_has_selection = !self.url_input.read(cx).selected_range().is_empty();
         let selected_environment_id = self.selected_environment_id_for_view();
         let environment_options = self.active_environment_options();
         let env_label = self.selected_environment_label();
@@ -376,21 +380,9 @@ impl BeamView {
                                         this.clear_env_var_hover(cx);
                                     }
                                 }))
-                                .child(
-                                    Input::new(&self.url_input)
-                                        .flex_1()
-                                        .small()
-                                        .appearance(false)
-                                        .context_menu({
-                                            move |menu, _, cx| {
-                                                build_text_edit_context_menu(
-                                                    menu,
-                                                    url_has_selection,
-                                                    cx.theme().muted_foreground,
-                                                )
-                                            }
-                                        }),
-                                )
+                                .child(self.text_input_host(&self.url_input, cx, |input| {
+                                    input.flex_1().small().appearance(false)
+                                }))
                                 .children(self.render_url_completion(cx))
                             })
                             .child(
@@ -571,11 +563,7 @@ impl BeamView {
             );
         }
 
-        let has_script = self
-            .request
-            .post_script
-            .as_ref()
-            .is_some_and(|value| !value.trim().is_empty());
+        let has_script = self.request.has_post_script();
         let indicator_color = if !has_script {
             None
         } else if let Some(result) = self.script_result.as_ref() {
@@ -596,62 +584,19 @@ impl BeamView {
         } else {
             h_flex().items_center().gap_1().child("Script")
         };
-        let post_script_help_trigger = HoverCard::new("tab-Post Script-help")
-            .anchor(gpui_kit::Anchor::BottomLeft)
-            .open_delay(Duration::from_millis(100))
-            .close_delay(Duration::from_millis(150))
-            .trigger(
-                div()
-                    .id("tab-Post Script-help-trigger")
-                    .flex()
-                    .flex_shrink_0()
-                    .w(px(18.0))
-                    .h(px(18.0))
-                    .rounded_full()
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().secondary)
-                    .cursor_pointer()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_semibold()
-                            .line_height(relative(1.0))
-                            .text_color(cx.theme().secondary_foreground)
-                            .child("i"),
-                    ),
-            )
-            .child(
-                div().w(px(360.0)).h(px(520.0)).overflow_hidden().child(
-                    div().size_full().overflow_y_scrollbar().child(
-                        markdown(POST_SCRIPT_API_HELP_MARKDOWN)
-                            .w_full()
-                            .text_sm()
-                            .selectable(true),
-                    ),
-                ),
-            );
         tabs = tabs.child(
-            h_flex()
-                .items_center()
-                .gap_1()
-                .child(
-                    Button::new("tab-Post Script")
-                        .small()
-                        .ghost()
-                        .cursor_pointer()
-                        .selected(self.request.active_tab == RequestTab::PostScript)
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.request.active_tab = RequestTab::PostScript;
-                            this.post_script_editor.update(cx, |state, cx| {
-                                state.focus(window, cx);
-                            });
-                        }))
-                        .child(post_script_label),
-                )
-                .child(post_script_help_trigger),
+            Button::new("tab-Post Script")
+                .small()
+                .ghost()
+                .cursor_pointer()
+                .selected(self.request.active_tab == RequestTab::PostScript)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.request.active_tab = RequestTab::PostScript;
+                    this.post_script_editor.update(cx, |state, cx| {
+                        state.focus(window, cx);
+                    });
+                }))
+                .child(post_script_label),
         );
 
         tabs
@@ -686,11 +631,6 @@ impl BeamView {
                         .into_any_element();
                 }
 
-                let request_body_has_selection = !self
-                    .request_body_editor
-                    .read(cx)
-                    .selected_range()
-                    .is_empty();
                 {
                     let request_body_editor = self.request_body_editor.clone();
                     div()
@@ -709,30 +649,36 @@ impl BeamView {
                                 this.clear_env_var_hover(cx);
                             }
                         }))
-                        .child(
-                            Editor::new(&self.request_body_editor)
-                                .h_full()
-                                .p_0()
-                                .border_0()
-                                .bordered(false)
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .text_size(cx.theme().mono_font_size)
-                                .context_menu(move |menu, _window, cx| {
-                                    let muted_foreground = cx.theme().muted_foreground;
-                                    let menu = menu
-                                        .menu_with_icon(
-                                            "Format",
-                                            Icon::default().path("icons/indent.svg"),
-                                            Box::new(FormatRequestBody),
+                        .child(self.input_host(
+                            &self.request_body_editor,
+                            cx,
+                            move |state, _window, cx| {
+                                let request_body_selection = state.clone();
+                                Editor::new(state)
+                                    .h_full()
+                                    .p_0()
+                                    .border_0()
+                                    .bordered(false)
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_size(cx.theme().mono_font_size)
+                                    .context_menu(move |menu, _window, cx| {
+                                        let muted_foreground = cx.theme().muted_foreground;
+                                        let menu = menu
+                                            .menu_with_icon(
+                                                "Format",
+                                                Icon::default().path("icons/indent.svg"),
+                                                Box::new(FormatRequestBody),
+                                            )
+                                            .separator();
+                                        build_text_edit_context_menu_with_find(
+                                            menu,
+                                            request_body_selection.has_selection(cx),
+                                            muted_foreground,
                                         )
-                                        .separator();
-                                    build_text_edit_context_menu_with_find(
-                                        menu,
-                                        request_body_has_selection,
-                                        muted_foreground,
-                                    )
-                                }),
-                        )
+                                    })
+                                    .into_any_element()
+                            },
+                        ))
                         .into_any_element()
                 }
             }
@@ -743,8 +689,6 @@ impl BeamView {
                 for (index, param) in self.request.query_params.iter().enumerate() {
                     let key_input = self.request_param_name_inputs[index].clone();
                     let value_input = self.request_param_value_inputs[index].clone();
-                    let key_has_selection = !key_input.read(cx).selected_range().is_empty();
-                    let value_has_selection = !value_input.read(cx).selected_range().is_empty();
                     table = table.child(
                         h_flex()
                             .w_full()
@@ -794,21 +738,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(
-                                        Input::new(&key_input)
-                                            .small()
-                                            .w_full()
-                                            .appearance(false)
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    build_text_edit_context_menu(
-                                                        menu,
-                                                        key_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
+                                    .child(self.text_input_host(&key_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child({
                                 let value_entity = value_input.clone();
@@ -829,21 +761,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(
-                                        Input::new(&value_input)
-                                            .small()
-                                            .w_full()
-                                            .appearance(false)
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    build_text_edit_context_menu(
-                                                        menu,
-                                                        value_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
+                                    .child(self.text_input_host(&value_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child(
                                 div().w(px(28.0)).child(
@@ -873,8 +793,6 @@ impl BeamView {
                 for (index, header) in self.request.headers.iter().enumerate() {
                     let key_input = self.request_header_name_inputs[index].clone();
                     let value_input = self.request_header_value_inputs[index].clone();
-                    let key_has_selection = !key_input.read(cx).selected_range().is_empty();
-                    let value_has_selection = !value_input.read(cx).selected_range().is_empty();
                     table = table.child(
                         h_flex()
                             .w_full()
@@ -923,21 +841,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(
-                                        Input::new(&key_input)
-                                            .small()
-                                            .w_full()
-                                            .appearance(false)
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    build_text_edit_context_menu(
-                                                        menu,
-                                                        key_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
+                                    .child(self.text_input_host(&key_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child({
                                 let value_entity = value_input.clone();
@@ -958,21 +864,9 @@ impl BeamView {
                                             this.clear_env_var_hover(cx);
                                         }
                                     }))
-                                    .child(
-                                        Input::new(&value_input)
-                                            .small()
-                                            .w_full()
-                                            .appearance(false)
-                                            .context_menu({
-                                                move |menu, _, cx| {
-                                                    build_text_edit_context_menu(
-                                                        menu,
-                                                        value_has_selection,
-                                                        cx.theme().muted_foreground,
-                                                    )
-                                                }
-                                            }),
-                                    )
+                                    .child(self.text_input_host(&value_input, cx, |input| {
+                                        input.small().w_full().appearance(false)
+                                    }))
                             })
                             .child(
                                 div().w(px(28.0)).child(
@@ -1089,31 +983,6 @@ impl BeamView {
                         )
                 })
                 .child({
-                    let bearer_has_selection = !self
-                        .request_auth_bearer_token_input
-                        .read(cx)
-                        .selected_range()
-                        .is_empty();
-                    let basic_username_has_selection = !self
-                        .request_auth_basic_username_input
-                        .read(cx)
-                        .selected_range()
-                        .is_empty();
-                    let basic_password_has_selection = !self
-                        .request_auth_basic_password_input
-                        .read(cx)
-                        .selected_range()
-                        .is_empty();
-                    let api_key_value_has_selection = !self
-                        .request_auth_api_key_value_input
-                        .read(cx)
-                        .selected_range()
-                        .is_empty();
-                    let api_key_name_has_selection = !self
-                        .request_auth_api_key_name_input
-                        .read(cx)
-                        .selected_range()
-                        .is_empty();
                     match &self.request.auth {
                         AuthConfig::None => div()
                             .text_sm()
@@ -1148,20 +1017,11 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(
-                                            Input::new(&self.request_auth_bearer_token_input)
-                                                .small()
-                                                .w_full()
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            bearer_has_selection,
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                }),
-                                        ),
+                                        .child(self.text_input_host(
+                                            &self.request_auth_bearer_token_input,
+                                            cx,
+                                            |input| input.small().w_full(),
+                                        )),
                                 )
                                 .into_any_element()
                         }
@@ -1194,20 +1054,11 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(
-                                            Input::new(&self.request_auth_basic_username_input)
-                                                .small()
-                                                .w_full()
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            basic_username_has_selection,
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                }),
-                                        ),
+                                        .child(self.text_input_host(
+                                            &self.request_auth_basic_username_input,
+                                            cx,
+                                            |input| input.small().w_full(),
+                                        )),
                                 )
                                 .child(
                                     div()
@@ -1232,20 +1083,11 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(
-                                            Input::new(&self.request_auth_basic_password_input)
-                                                .small()
-                                                .w_full()
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            basic_password_has_selection,
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                }),
-                                        ),
+                                        .child(self.text_input_host(
+                                            &self.request_auth_basic_password_input,
+                                            cx,
+                                            |input| input.small().w_full(),
+                                        )),
                                 )
                                 .into_any_element()
                         }
@@ -1337,20 +1179,11 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(
-                                            Input::new(&self.request_auth_api_key_value_input)
-                                                .small()
-                                                .w_full()
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            api_key_value_has_selection,
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                }),
-                                        )
+                                        .child(self.text_input_host(
+                                            &self.request_auth_api_key_value_input,
+                                            cx,
+                                            |input| input.small().w_full(),
+                                        ))
                                 })
                                 .child(
                                     div()
@@ -1377,20 +1210,11 @@ impl BeamView {
                                                 this.clear_env_var_hover(cx);
                                             }
                                         }))
-                                        .child(
-                                            Input::new(&self.request_auth_api_key_name_input)
-                                                .small()
-                                                .w_full()
-                                                .context_menu({
-                                                    move |menu, _, cx| {
-                                                        build_text_edit_context_menu(
-                                                            menu,
-                                                            api_key_name_has_selection,
-                                                            cx.theme().muted_foreground,
-                                                        )
-                                                    }
-                                                }),
-                                        )
+                                        .child(self.text_input_host(
+                                            &self.request_auth_api_key_name_input,
+                                            cx,
+                                            |input| input.small().w_full(),
+                                        ))
                                 })
                                 .into_any_element()
                         }
@@ -1598,13 +1422,11 @@ impl BeamView {
             content = content.child(div().text_xs().font_semibold().child("Console"));
             content = content.child(self.render_script_console_section(result, cx));
 
-            panel = panel.child(
-                div()
-                    .w_full()
-                    .h_full()
-                    .overflow_y_scrollbar()
-                    .child(content),
-            );
+            panel = panel.child(tracked_scroll_area(
+                "post-script-results-scroll",
+                &self.post_script_results_scroll,
+                content,
+            ));
         } else {
             panel = panel.child(
                 div()
@@ -1622,8 +1444,6 @@ impl BeamView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let post_script_has_selection =
-            !self.post_script_editor.read(cx).selected_range().is_empty();
         v_flex()
             .h_full()
             .w_full()
@@ -1638,9 +1458,12 @@ impl BeamView {
                     .border_b_1()
                     .border_color(cx.theme().border)
                     .p_0()
-                    .child(
-                        div().w_full().h_full().overflow_y_scrollbar().child(
-                            Editor::new(&self.post_script_editor)
+                    .child(self.input_host(
+                        &self.post_script_editor,
+                        cx,
+                        move |state, _window, cx| {
+                            let post_script_selection = state.clone();
+                            Editor::new(state)
                                 .h_full()
                                 .p_0()
                                 .border_0()
@@ -1651,20 +1474,103 @@ impl BeamView {
                                     move |menu, _, cx| {
                                         build_text_edit_context_menu_with_find(
                                             menu,
-                                            post_script_has_selection,
+                                            post_script_selection.has_selection(cx),
                                             cx.theme().muted_foreground,
                                         )
                                     }
-                                }),
-                        ),
-                    ),
+                                })
+                                .into_any_element()
+                        },
+                    )),
             )
             .child(
                 div()
                     .h_1_2()
                     .min_h_0()
                     .w_full()
-                    .child(self.render_post_script_results(window, cx)),
+                    .child(self.render_post_script_bottom_pane(window, cx)),
+            )
+            .into_any_element()
+    }
+
+    fn render_post_script_bottom_pane(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let active = self.post_script_bottom_tab;
+        let results_dot = self.script_result.as_ref().map(|result| {
+            if result.success {
+                cx.theme().success
+            } else {
+                cx.theme().danger
+            }
+        });
+        let results_label = h_flex().items_center().gap_1().child("Results").children(
+            results_dot.map(|color| div().w(px(6.0)).h(px(6.0)).rounded_full().bg(color)),
+        );
+
+        let tab_strip = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .pt_1()
+            .child(
+                Button::new("post-script-tab-results")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .selected(active == PostScriptBottomTab::Results)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.post_script_bottom_tab = PostScriptBottomTab::Results;
+                        cx.notify();
+                    }))
+                    .child(results_label),
+            )
+            .child(
+                Button::new("post-script-tab-api")
+                    .small()
+                    .ghost()
+                    .cursor_pointer()
+                    .selected(active == PostScriptBottomTab::Api)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.post_script_bottom_tab = PostScriptBottomTab::Api;
+                        cx.notify();
+                    }))
+                    .label("API"),
+            );
+
+        let body = match active {
+            PostScriptBottomTab::Results => self.render_post_script_results(window, cx),
+            PostScriptBottomTab::Api => tracked_scroll_area(
+                "post-script-api-scroll",
+                &self.post_script_api_scroll,
+                div().p_2().child(
+                    markdown(POST_SCRIPT_API_HELP_MARKDOWN)
+                        .w_full()
+                        .text_sm()
+                        .selectable(true),
+                ),
+            )
+            .into_any_element(),
+        };
+
+        v_flex()
+            .id("post-script-bottom-pane")
+            .size_full()
+            .min_h_0()
+            .child(tab_strip)
+            .child(
+                div()
+                    .id("post-script-bottom-body")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(div().absolute().top_0().left_0().size_full().child(body)),
             )
             .into_any_element()
     }
@@ -1703,4 +1609,34 @@ impl BeamView {
             .child(self.render_request_tabs(cx))
             .child(editor_container)
     }
+}
+
+/// Vertical scroll area whose offset lives in `handle`, so it survives the
+/// area being left out of a frame (for example while another tab is shown).
+fn tracked_scroll_area(
+    id: &'static str,
+    handle: &ScrollHandle,
+    content: impl IntoElement,
+) -> AnyElement {
+    div()
+        .relative()
+        .size_full()
+        .min_h_0()
+        .child(
+            div()
+                .id(id)
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(handle)
+                .child(content),
+        )
+        .child(
+            div().absolute().inset_0().child(
+                gpui_kit::base::Scrollbar::new(handle)
+                    .id(SharedString::from(format!("{id}-scrollbar")))
+                    .axis(gpui_kit::base::ScrollbarAxis::Vertical)
+                    .viewport_from_layout(),
+            ),
+        )
+        .into_any_element()
 }

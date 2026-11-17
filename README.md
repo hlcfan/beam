@@ -22,6 +22,66 @@ A HTTP client for developers built with Rust and gpui and gpui-component.
 - Theme support with light/dark mode and font size settings
 - Manual application updates from normal releases or nightly builds
 - Editor auto-format, soft wrap, wrapping indent settings
+- Portable mode that enables moving your installation and data to a different location
+
+## Installation
+
+### macOS and Linux
+
+Install the latest stable release for your user (macOS Apple Silicon, Linux x86_64/ARM64), no sudo is needed:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSfL https://github.com/hlcfan/beam/releases/latest/download/install.sh | sh
+```
+
+- **macOS:** Installs to `~/Applications/Beam.app` and runs `xattr -cr` on the
+  verified app bundle to clear quarantine attributes.
+- **Linux:** Installs to `~/.local/bin` and adds an application launcher and icon.
+  Add `~/.local/bin` to your `PATH` to run `beam` from a terminal.
+
+#### Manual installation
+
+Download the binary from [latest release](https://github.com/hlcfan/beam/releases/latest).
+
+On macOS:
+
+```bash
+tar -xzf beam-macos-aarch64.tar.gz
+mkdir -p "$HOME/Applications"
+mv beam-macos-aarch64/Beam.app "$HOME/Applications/"
+
+# If Gatekeeper blocks the ad-hoc signed app, remove its quarantine attribute:
+xattr -cr "$HOME/Applications/Beam.app"
+```
+
+On Linux:
+
+```bash
+tar -xzf beam-linux-x86_64.tar.gz
+./beam-linux-x86_64/beam
+```
+
+For ARM64, use `beam-linux-aarch64.tar.gz` and `./beam-linux-aarch64/beam`.
+
+#### Uninstall
+
+Workspace data is retained. On macOS, move `~/Applications/Beam.app` to the Trash.
+On Linux:
+
+```bash
+rm -f "$HOME/.local/bin/beam"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/com.hlcfan.beam.desktop"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/512x512/apps/com.hlcfan.beam.png"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/metainfo/com.hlcfan.beam.metainfo.xml"
+```
+
+### Windows
+
+It installs for your user in `%LOCALAPPDATA%\Programs\Beam`, adds a Start Menu
+shortcut, and registers an uninstaller in Windows Settings. The installer
+is not code-signed, so SmartScreen may warn.
+
+For a portable copy, extract `beam-windows-x86_64.zip` and run `beam.exe`.
 
 ## Importing
 
@@ -32,42 +92,26 @@ Open **Import** from the status bar, then select one or more files or a folder. 
 - Insomnia JSON exports
 - Insomnia v5 YAML collections
 
-Multiple files can be imported as one batch. When a batch contains multiple collections, Beam keeps each collection in its own top-level folder. Insomnia workspace exports create a new workspace; collections and environments import into the active workspace.
+Multiple files can be imported as one batch. When a batch contains multiple
+collections, Beam keeps each collection in its own top-level folder. Insomnia
+workspace exports create a new workspace; collections and environments import
+into the active workspace.
 
-Multiple workspace exports can be imported together, but they cannot be combined with separate Postman environment files because the target workspace would be ambiguous.
+Multiple workspace exports can be imported together, but they cannot be combined
+with separate Postman environment files because the target workspace would be
+ambiguous.
 
-You can also paste a cURL command directly into the request URL field to fill the current request's method, URL, headers, query parameters, authentication, and body.
+You can also paste a cURL command directly into the request URL field to fill
+the current request's method, URL, headers, query parameters, authentication,
+and body.
 
 ## Privacy
 
-Beam is local-first. It stores your data in local TOML files on your machine so you can inspect, back up, and manage it yourself.
+Beam is local-first. It stores your data in local TOML files on your machine so
+you can inspect, back up, and manage it yourself.
 
-Beam does not send telemetry or analytics data. There is no account requirement and no cloud dependency for core usage.
-
-## Installation
-
-### macOS (Apple Silicon)
-
-```bash
-# Extract and move to Applications
-tar -xzf beam-macos-aarch64.tar.gz
-mv Beam.app /Applications/
-
-# Since the app is unsigned ad-hoc, macOS Gatekeeper will show a "damaged" error or a warning.
-# Run this command to remove the quarantine attribute and allow it to open:
-xattr -cr /Applications/Beam.app
-```
-
-### Windows
-
-Extract `beam-windows-x86_64.zip` and run `beam.exe`
-
-### Linux
-
-```bash
-tar -xzf beam-linux-x86_64.tar.gz
-./beam
-```
+Beam does not send telemetry or analytics data. There is no account requirement
+and no cloud dependency for core usage.
 
 ## Development
 

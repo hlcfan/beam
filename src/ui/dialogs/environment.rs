@@ -15,13 +15,19 @@ pub(in crate::ui) struct EnvironmentManagerDialogView {
     variable_value_inputs: Vec<Entity<InputState>>,
     variable_input_subscriptions: Vec<Subscription>,
     pending_variables_save_due_at: Option<Instant>,
-    variables_save_tick_scheduled: bool,
+    variables_save_task_scheduled: bool,
     variables_save_in_flight: bool,
     suppress_environment_name_change_events: bool,
     environment_name_input_subscription: Option<Subscription>,
     loaded_environment_name: Option<String>,
     pending_new_environment_command_id: Option<String>,
     error: Option<String>,
+}
+
+struct VariablesSave {
+    name: String,
+    rename: Option<AppCommand>,
+    update: AppCommand,
 }
 
 impl EnvironmentManagerDialogView {
@@ -104,7 +110,7 @@ impl EnvironmentManagerDialogView {
             variable_value_inputs: Vec::new(),
             variable_input_subscriptions: Vec::new(),
             pending_variables_save_due_at: None,
-            variables_save_tick_scheduled: false,
+            variables_save_task_scheduled: false,
             variables_save_in_flight: false,
             suppress_environment_name_change_events: false,
             environment_name_input_subscription: None,
@@ -112,6 +118,8 @@ impl EnvironmentManagerDialogView {
             pending_new_environment_command_id: None,
             error: None,
         };
+        cx.on_release(|this, cx| this.flush_pending_variables_save_on_release(cx))
+            .detach();
         let environment_name_input_handle = view.environment_name_input.clone();
         view.environment_name_input_subscription = Some(cx.subscribe_in(
             &view.environment_name_input,
@@ -282,7 +290,7 @@ impl EnvironmentManagerDialogView {
         };
         // Queue unsaved edits first so the copy reflects what the dialog shows.
         if self.pending_variables_save_due_at.is_some() {
-            self.pending_variables_save_due_at = Some(Instant::now());
+            self.pending_variables_save_due_at = Some(cx.background_executor().now());
             self.process_pending_variables_save(cx);
         }
         let command_id = next_command_id();
@@ -337,7 +345,6 @@ impl EnvironmentManagerDialogView {
             .retain(|(option_environment_id, _)| *option_environment_id != environment_id);
         self.environment_file_names.remove(&environment_id);
         self.pending_variables_save_due_at = None;
-        self.variables_save_tick_scheduled = false;
         self.variables_save_in_flight = false;
         self.selected_id = self.options.first().map(|(id, _)| *id);
 
@@ -422,82 +429,78 @@ impl EnvironmentManagerDialogView {
         }
     }
 
+    /// Debounces environment saves. Each edit pushes the due time back, and one timer task sleeps
+    /// until the latest due time instead of waking on a fixed tick.
     fn schedule_variables_save_with_delay(&mut self, delay: Duration, cx: &mut Context<Self>) {
         if self.selected_id.is_none() {
             return;
         }
-        self.pending_variables_save_due_at = Some(Instant::now() + delay);
-        if self.variables_save_tick_scheduled {
+        self.pending_variables_save_due_at = Some(cx.background_executor().now() + delay);
+        if self.variables_save_task_scheduled {
             return;
         }
-        self.variables_save_tick_scheduled = true;
-        self.schedule_variables_save_tick(cx);
+        self.variables_save_task_scheduled = true;
+        self.spawn_variables_save_task(cx);
     }
 
     fn schedule_variables_save(&mut self, cx: &mut Context<Self>) {
         self.schedule_variables_save_with_delay(Duration::from_millis(350), cx);
     }
 
-    fn schedule_variables_save_tick(&self, cx: &mut Context<Self>) {
-        let view = cx.entity();
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                this.process_pending_variables_save(cx);
+    fn spawn_variables_save_task(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(due_at) = this.update(cx, |this, _| this.pending_variables_save_due_at)
+                else {
+                    return;
+                };
+                let Some(due_at) = due_at else {
+                    break;
+                };
+                let now = cx.background_executor().now();
+                if now < due_at {
+                    cx.background_executor().timer(due_at - now).await;
+                    continue;
+                }
+                let keep_waiting = this
+                    .update(cx, |this, cx| this.process_pending_variables_save(cx))
+                    .unwrap_or(false);
+                if !keep_waiting {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |this, _| {
+                this.variables_save_task_scheduled = false;
             });
         })
         .detach();
     }
 
-    fn process_pending_variables_save(&mut self, cx: &mut Context<Self>) {
+    /// Saves the pending edits once their due time has passed. Returns true when the timer task
+    /// should keep running because a later save is pending, such as a retry after backpressure.
+    fn process_pending_variables_save(&mut self, cx: &mut Context<Self>) -> bool {
         if self.variables_save_in_flight {
-            self.variables_save_tick_scheduled = false;
-            return;
+            return false;
         }
         let Some(due_at) = self.pending_variables_save_due_at else {
-            self.variables_save_tick_scheduled = false;
-            return;
+            return false;
         };
-        if Instant::now() < due_at {
-            self.schedule_variables_save_tick(cx);
-            return;
+        if cx.background_executor().now() < due_at {
+            return true;
         }
         self.pending_variables_save_due_at = None;
-        self.variables_save_tick_scheduled = false;
-        let Some(environment_id) = self.selected_id else {
-            return;
-        };
-        let updated_name = self
-            .environment_name_input
-            .read(cx)
-            .value()
-            .trim()
-            .to_string();
-        if updated_name.is_empty() {
-            self.error = Some("Environment name cannot be empty.".to_string());
-            cx.notify();
-            return;
+        if self.selected_id.is_none() {
+            return false;
         }
-        let variables: Vec<EnvironmentVariable> = self
-            .variables
-            .iter()
-            .filter(|variable| !variable.name.trim().is_empty())
-            .cloned()
-            .collect();
-        if self
-            .loaded_environment_name
-            .as_deref()
-            .is_some_and(|name| name != updated_name.as_str())
-        {
-            let rename_command = AppCommand::RenameEnvironment {
-                environment_id,
-                new_name: updated_name.clone(),
-                command_id: next_command_id(),
-            };
+        let save = match self.build_variables_save(cx) {
+            Ok(save) => save,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return false;
+            }
+        };
+        if let Some(rename_command) = save.rename {
             let rename_result = self
                 .beam_view
                 .update(cx, move |this, _| this.publish_app_command(rename_command));
@@ -505,15 +508,11 @@ impl EnvironmentManagerDialogView {
                 self.variables_save_in_flight = false;
                 self.error = Some(format!("Failed to queue environment rename: {error}"));
                 cx.notify();
-                return;
+                return false;
             }
-            self.loaded_environment_name = Some(updated_name.clone());
+            self.loaded_environment_name = Some(save.name);
         }
-        let command = AppCommand::UpdateEnvironmentVariables {
-            environment_id,
-            variables,
-            command_id: next_command_id(),
-        };
+        let command = save.update;
         let send_result = self
             .beam_view
             .update(cx, move |this, _| this.publish_app_command(command));
@@ -521,15 +520,73 @@ impl EnvironmentManagerDialogView {
         self.error = send_result.err().map(|error| {
             if error.starts_with("Backpressure:") {
                 self.pending_variables_save_due_at =
-                    Some(Instant::now() + Duration::from_millis(100));
+                    Some(cx.background_executor().now() + Duration::from_millis(100));
             }
             format!("Failed to queue environment save: {error}")
         });
-        if self.pending_variables_save_due_at.is_some() && !self.variables_save_tick_scheduled {
-            self.variables_save_tick_scheduled = true;
-            self.schedule_variables_save_tick(cx);
-        }
         cx.notify();
+        self.pending_variables_save_due_at.is_some()
+    }
+
+    fn build_variables_save(&self, cx: &App) -> Result<VariablesSave, String> {
+        let environment_id = self
+            .selected_id
+            .ok_or_else(|| "No environment selected.".to_string())?;
+        let name = self
+            .environment_name_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            return Err("Environment name cannot be empty.".to_string());
+        }
+        let variables: Vec<EnvironmentVariable> = self
+            .variables
+            .iter()
+            .filter(|variable| !variable.name.trim().is_empty())
+            .cloned()
+            .collect();
+        let rename = self
+            .loaded_environment_name
+            .as_deref()
+            .is_some_and(|loaded| loaded != name.as_str())
+            .then(|| AppCommand::RenameEnvironment {
+                environment_id,
+                new_name: name.clone(),
+                command_id: next_command_id(),
+            });
+        let update = AppCommand::UpdateEnvironmentVariables {
+            environment_id,
+            variables,
+            command_id: next_command_id(),
+        };
+        Ok(VariablesSave {
+            name,
+            rename,
+            update,
+        })
+    }
+
+    /// Queues a pending save when the view is released, so closing the dialog does not drop edits
+    /// that are still waiting for the debounce. The send is deferred because the release can run
+    /// inside an update of `BeamView`, which already holds its own lease.
+    fn flush_pending_variables_save_on_release(&mut self, cx: &mut App) {
+        if self.pending_variables_save_due_at.is_none() || self.variables_save_in_flight {
+            return;
+        }
+        let Ok(save) = self.build_variables_save(cx) else {
+            return;
+        };
+        let beam_view = self.beam_view.clone();
+        cx.defer(move |cx| {
+            beam_view.update(cx, |this, _| {
+                if let Some(rename) = save.rename {
+                    let _ = this.publish_app_command(rename);
+                }
+                let _ = this.publish_app_command(save.update);
+            });
+        });
     }
 
     fn add_variable(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -986,8 +1043,21 @@ impl Render for EnvironmentManagerDialogView {
 
 #[cfg(test)]
 mod tests {
-    use super::{remove_variable_from_display_order, sorted_variable_display_order};
+    use super::{
+        EnvironmentManagerDialogView, remove_variable_from_display_order,
+        sorted_variable_display_order,
+    };
+    use crate::app_shell::{AppCommand, AppShellState, DataSyncRuntime};
     use crate::models::EnvironmentVariable;
+    use crate::paths::BeamPaths;
+    use crate::ui::BeamView;
+    use gpui_kit::component::Root;
+    use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+    use std::collections::HashMap;
+    use std::sync::mpsc::{Receiver, sync_channel};
+    use std::time::Duration;
+    use tempfile::TempDir;
+    use ulid::Ulid;
 
     fn variables(names: &[&str]) -> Vec<EnvironmentVariable> {
         names
@@ -1064,5 +1134,193 @@ mod tests {
             remove_variable_from_display_order(&mut order, removed_index);
         }
         assert!(order.is_empty());
+    }
+
+    struct DialogFixture {
+        dialog: Entity<EnvironmentManagerDialogView>,
+        commands: Receiver<AppCommand>,
+        _directory: TempDir,
+    }
+
+    fn dialog_fixture(cx: &mut TestAppContext) -> (DialogFixture, &mut VisualTestContext) {
+        cx.update(gpui_kit::init);
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let paths = BeamPaths::from_root(directory.path().to_path_buf());
+        let (command_tx, commands) = sync_channel(32);
+        let (_events, event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let beam_paths = paths.clone();
+        let (root, cx) = cx.add_window_view(move |window, cx| {
+            let view = cx.new(|cx| {
+                BeamView::new(
+                    AppShellState::default(),
+                    vec![],
+                    DataSyncRuntime {
+                        command_tx,
+                        event_rx,
+                    },
+                    beam_paths,
+                    window,
+                    cx,
+                )
+            });
+            Root::new(view, window, cx)
+        });
+        let beam_view = root.read_with(cx, |root, _| {
+            root.view()
+                .clone()
+                .downcast::<BeamView>()
+                .expect("Beam view")
+        });
+        let environment_id = Ulid::new();
+        let dialog = cx.update(|window, cx| {
+            cx.new(|cx| {
+                EnvironmentManagerDialogView::new(
+                    beam_view,
+                    paths,
+                    vec![(environment_id, "Local".to_string())],
+                    HashMap::new(),
+                    Some(environment_id),
+                    Some(environment_id),
+                    window,
+                    cx,
+                )
+            })
+        });
+        // No environment file exists, so give the name input a value the save accepts.
+        cx.update(|window, cx| {
+            let input = dialog.read(cx).environment_name_input.clone();
+            input.update(cx, |input, cx| {
+                input.set_value("Local".to_string(), window, cx)
+            });
+        });
+        cx.run_until_parked();
+        dialog.update(cx, |dialog, _| {
+            dialog.loaded_environment_name = Some("Local".to_string());
+            dialog.pending_variables_save_due_at = None;
+        });
+        while commands.try_recv().is_ok() {}
+        (
+            DialogFixture {
+                dialog,
+                commands,
+                _directory: directory,
+            },
+            cx,
+        )
+    }
+
+    fn schedule_save(dialog: &Entity<EnvironmentManagerDialogView>, cx: &mut VisualTestContext) {
+        dialog.update(cx, |dialog, cx| dialog.schedule_variables_save(cx));
+    }
+
+    fn advance_clock_ms(cx: &mut VisualTestContext, millis: u64) {
+        cx.background_executor
+            .advance_clock(Duration::from_millis(millis));
+        cx.run_until_parked();
+    }
+
+    /// Drains the command queue and returns a label for each command in it.
+    fn queued_commands(commands: &Receiver<AppCommand>) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        while let Ok(command) = commands.try_recv() {
+            names.push(match command {
+                AppCommand::UpdateEnvironmentVariables { .. } => "update",
+                AppCommand::RenameEnvironment { .. } => "rename",
+                AppCommand::DuplicateEnvironment { .. } => "duplicate",
+                AppCommand::DeleteEnvironment { .. } => "delete",
+                _ => "other",
+            });
+        }
+        names
+    }
+
+    #[gpui_kit::test]
+    fn variables_save_fires_once_after_the_delay(cx: &mut TestAppContext) {
+        let (fixture, cx) = dialog_fixture(cx);
+
+        schedule_save(&fixture.dialog, cx);
+        advance_clock_ms(cx, 349);
+        assert!(queued_commands(&fixture.commands).is_empty());
+
+        advance_clock_ms(cx, 1);
+        assert_eq!(queued_commands(&fixture.commands), vec!["update"]);
+
+        advance_clock_ms(cx, 1000);
+        assert!(queued_commands(&fixture.commands).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn variables_save_waits_for_the_last_edit(cx: &mut TestAppContext) {
+        let (fixture, cx) = dialog_fixture(cx);
+
+        schedule_save(&fixture.dialog, cx);
+        advance_clock_ms(cx, 200);
+        schedule_save(&fixture.dialog, cx);
+        advance_clock_ms(cx, 200);
+        schedule_save(&fixture.dialog, cx);
+        advance_clock_ms(cx, 349);
+        assert!(queued_commands(&fixture.commands).is_empty());
+
+        advance_clock_ms(cx, 1);
+        assert_eq!(queued_commands(&fixture.commands), vec!["update"]);
+
+        advance_clock_ms(cx, 1000);
+        assert!(queued_commands(&fixture.commands).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn duplicate_flushes_the_pending_save_first(cx: &mut TestAppContext) {
+        let (fixture, cx) = dialog_fixture(cx);
+
+        schedule_save(&fixture.dialog, cx);
+        advance_clock_ms(cx, 100);
+        fixture
+            .dialog
+            .update(cx, |dialog, cx| dialog.duplicate_selected_environment(cx));
+        assert_eq!(
+            queued_commands(&fixture.commands),
+            vec!["update", "duplicate"]
+        );
+
+        advance_clock_ms(cx, 1000);
+        assert!(queued_commands(&fixture.commands).is_empty());
+    }
+
+    #[gpui_kit::test]
+    fn deleting_the_environment_cancels_the_pending_save(cx: &mut TestAppContext) {
+        let (fixture, cx) = dialog_fixture(cx);
+
+        schedule_save(&fixture.dialog, cx);
+        advance_clock_ms(cx, 100);
+        cx.update(|window, cx| {
+            fixture.dialog.update(cx, |dialog, cx| {
+                dialog.delete_selected_environment(window, cx)
+            })
+        });
+        advance_clock_ms(cx, 1000);
+        assert_eq!(queued_commands(&fixture.commands), vec!["delete"]);
+        fixture.dialog.read_with(cx, |dialog, _| {
+            assert!(!dialog.variables_save_task_scheduled);
+        });
+    }
+
+    #[gpui_kit::test]
+    fn dropping_the_dialog_still_saves_pending_edits(cx: &mut TestAppContext) {
+        let (fixture, cx) = dialog_fixture(cx);
+        let DialogFixture {
+            dialog,
+            commands,
+            _directory,
+        } = fixture;
+
+        schedule_save(&dialog, cx);
+        advance_clock_ms(cx, 100);
+        drop(dialog);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        assert_eq!(queued_commands(&commands), vec!["update"]);
+
+        advance_clock_ms(cx, 1000);
+        assert!(queued_commands(&commands).is_empty());
     }
 }

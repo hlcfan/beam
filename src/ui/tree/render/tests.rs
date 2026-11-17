@@ -26,7 +26,8 @@ impl Render for RowHost {
         };
         div().w_64().child(
             self.view
-                .update(cx, |view, cx| view.render_tree_row(&row, window, cx)),
+                .read(cx)
+                .render_tree_row(&row, &self.view, cx),
         )
     }
 }

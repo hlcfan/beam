@@ -1,5 +1,27 @@
+use gpui_kit::component::input::{EditorState, InputState};
 use gpui_kit::component::{Icon, input, native_menu::NativeMenu};
-use gpui_kit::{Action, Hsla};
+use gpui_kit::{Action, App, Entity, Hsla};
+
+/// An input whose selection decides whether `Cut` and `Copy` are enabled.
+///
+/// Read it inside the context-menu builder, which runs when the menu opens. Reading it while
+/// rendering makes `BeamView` depend on the input, so every scroll, keystroke, and cursor blink in
+/// the input would rebuild the whole window.
+pub(super) trait TextSelectionSource {
+    fn has_selection(&self, cx: &App) -> bool;
+}
+
+impl TextSelectionSource for Entity<InputState> {
+    fn has_selection(&self, cx: &App) -> bool {
+        !self.read(cx).selected_range().is_empty()
+    }
+}
+
+impl TextSelectionSource for Entity<EditorState> {
+    fn has_selection(&self, cx: &App) -> bool {
+        !self.read(cx).selected_range().is_empty()
+    }
+}
 
 /// Append a context-menu item to a [`NativeMenu`], preferring an icon variant.
 ///

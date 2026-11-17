@@ -93,12 +93,30 @@ impl BeamView {
         }
     }
 
+    /// Hides a stale list once the cursor moves off the offset its candidates were computed for.
+    /// Typing recomputes the list from the `Change` event, so only cursor moves end here.
+    pub(in crate::ui) fn dismiss_url_completion_if_cursor_moved(
+        &mut self,
+        cursor: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .url_completion
+            .as_ref()
+            .is_some_and(|completion| completion.cursor != cursor)
+        {
+            self.dismiss_url_completion(cx);
+        }
+    }
+
     /// Whether the popup is showing, and so owns Up, Down, Escape and Enter.
-    pub(in crate::ui) fn url_completion_active(&self, cx: &App) -> bool {
-        self.url_completion.as_ref().is_some_and(|completion| {
-            !completion.candidates.is_empty()
-                && completion.cursor == self.url_input.read(cx).cursor()
-        })
+    ///
+    /// It does not read the URL input: this runs while `BeamView` renders, and reading the input
+    /// there would rebuild the whole view on every keystroke and cursor blink.
+    pub(in crate::ui) fn url_completion_active(&self) -> bool {
+        self.url_completion
+            .as_ref()
+            .is_some_and(|completion| !completion.candidates.is_empty())
     }
 
     /// Replaces the typed token with the selected (or clicked) candidate.
@@ -152,19 +170,19 @@ impl BeamView {
     ) -> Stateful<Div> {
         container
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
-                if this.url_completion_active(cx) {
+                if this.url_completion_active() {
                     this.move_url_completion(-1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveDown, _, cx| {
-                if this.url_completion_active(cx) {
+                if this.url_completion_active() {
                     this.move_url_completion(1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|this, _: &Escape, _, cx| {
-                if this.url_completion_active(cx) {
+                if this.url_completion_active() {
                     this.dismiss_url_completion(cx);
                     cx.stop_propagation();
                 }
@@ -176,7 +194,7 @@ impl BeamView {
         &self,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        if !self.url_completion_active(cx) {
+        if !self.url_completion_active() {
             return None;
         }
         let completion = self.url_completion.as_ref()?;

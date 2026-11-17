@@ -16,9 +16,21 @@ pub(super) struct BeamView {
     pub(super) url_input: Entity<InputState>,
     pub(super) request_body_editor: Entity<EditorState>,
     pub(super) response_body_editor: Entity<EditorState>,
+    /// One host view per rendered input, keyed by the input's entity. See [`InputHost`].
+    pub(super) input_hosts: RefCell<InputHosts>,
+    /// Counts renders so tests can check what rebuilds the whole window.
+    #[cfg(test)]
+    pub(super) render_count: usize,
+    /// Whether the response body holds only whitespace. Kept here so that rendering does not read
+    /// the editor, which would rebuild the whole view on every response scroll.
+    pub(super) response_body_is_blank: bool,
     pub(super) html_response_preview: Entity<super::response::html_preview::HtmlResponsePreview>,
-    pub(super) response_headers_raw: String,
+    /// Animates in its own view so each frame does not render this one.
+    pub(super) loading_bar: Entity<super::response::loading_bar::LoadingBar>,
+    /// Table markup built from the response headers. Written only by `set_response_headers`.
+    pub(super) response_headers_table: Option<SharedString>,
     pub(super) response_content_type: Option<String>,
+    pub(super) response_image: Option<Arc<gpui::Image>>,
     pub(super) response_body_language: &'static str,
     /// Formats a large response body off the UI thread; any later body write cancels it.
     pub(super) response_body_format_task: Option<Task<()>>,
@@ -31,6 +43,9 @@ pub(super) struct BeamView {
     pub(super) response_time: String,
     pub(super) response_size: String,
     pub(super) script_result: Option<PersistedScriptResult>,
+    pub(super) post_script_bottom_tab: PostScriptBottomTab,
+    pub(super) post_script_results_scroll: ScrollHandle,
+    pub(super) post_script_api_scroll: ScrollHandle,
     pub(super) request_param_name_inputs: Vec<Entity<InputState>>,
     pub(super) request_param_value_inputs: Vec<Entity<InputState>>,
     pub(super) request_param_input_subscriptions: Vec<Subscription>,
@@ -45,10 +60,10 @@ pub(super) struct BeamView {
     pub(super) request_auth_input_subscriptions: Vec<Subscription>,
     pub(super) suppress_request_auth_change_events: bool,
     pub(super) pending_request_save_due_at: Option<Instant>,
-    pub(super) request_save_tick_scheduled: bool,
+    pub(super) request_save_task_scheduled: bool,
     pub(super) request_save_in_flight: bool,
     pub(super) pending_response_scroll_offset_persistence_due_at: Option<Instant>,
-    pub(super) response_scroll_offset_persistence_tick_scheduled: bool,
+    pub(super) response_scroll_offset_persistence_scheduled: bool,
     pub(super) suppress_response_scroll_offset_persistence: bool,
     /// Retains only changed response offsets, independently of reloaded request data.
     pub(super) workspace_response_scroll_offsets: HashMap<Ulid, HashMap<Ulid, Point<Pixels>>>,
@@ -65,12 +80,13 @@ pub(super) struct BeamView {
     pub(super) request_execution_states: HashMap<Ulid, RequestExecutionState>,
     pub(super) next_request_run_id: u64,
     pub(super) app_command_tx: std::sync::mpsc::SyncSender<AppCommand>,
-    pub(super) app_event_rx: std::sync::mpsc::Receiver<AppEvent>,
-    pub(super) app_event_poll_scheduled: bool,
+    /// Receives worker events and applies them. Replacing it stops the previous listener.
+    pub(super) app_event_task: Task<()>,
     pub(super) pending_request_creations: HashSet<String>,
     pub(super) pending_folder_placements: HashMap<String, PendingFolderPlacement>,
     pub(super) _subscriptions: Vec<Subscription>,
     pub(super) workspace_scroll_handle: VirtualListScrollHandle,
+    pub(super) workspace_tree_view: Entity<WorkspaceTreeView>,
     /// Retains each workspace's tree offset and measurements while another tab is active.
     pub(super) workspace_tree_scroll_handles: HashMap<Ulid, VirtualListScrollHandle>,
     pub(super) collection_context_menu_row: Option<crate::app_shell::TreeRow>,
@@ -81,6 +97,7 @@ pub(super) struct BeamView {
     /// Cached resolved env variables for the overlay: (active_env_id, resolved_map).
     /// Invalidated when the effective environment changes or environment data updates.
     pub(super) env_var_resolved_cache: Option<(Option<Ulid>, HashMap<String, String>)>,
+    pub(super) env_var_token_cache: Option<EnvVarTokenCache>,
     /// Environment snapshot shared by URL and body completion, independent of the active token.
     pub(super) completion_environment_variables:
         Option<(Option<Ulid>, Arc<Vec<EnvironmentVariable>>)>,
@@ -94,6 +111,8 @@ pub(super) struct BeamView {
     pub(super) request_url_editor_cache: HashMap<Ulid, Entity<InputState>>,
     pub(super) request_url_editor_cache_order: Vec<Ulid>,
     pub(super) request_url_editor_change_sub: Option<Subscription>,
+    /// Hides the URL completion popup when the cursor leaves the token it was computed for.
+    pub(super) request_url_cursor_sub: Option<Subscription>,
     pub(super) url_completion: Option<request::url_completion::UrlCompletion>,
     pub(super) url_completion_pending: bool,
 }
@@ -151,6 +170,12 @@ impl BeamView {
                 .placeholder("Response body will appear here...")
                 .default_value("aa")
         });
+        let loading_bar = cx.new(|_| super::response::loading_bar::LoadingBar::new());
+        let html_response_preview = cx.new(|_| {
+            super::response::html_preview::HtmlResponsePreview::new(
+                response_body_editor.downgrade(),
+            )
+        });
 
         let post_script_editor = cx.new(|cx| {
             EditorState::new(window, cx)
@@ -182,11 +207,15 @@ impl BeamView {
                     if !matches!(ev, InputEvent::Change) {
                         return;
                     }
-                    let next_script_text = post_script_editor.read(cx).value().to_string();
+                    let next_script_text = post_script_editor.read(cx).text().to_string();
+                    // The Script tab draws a dot only while the script is non-blank.
+                    let had_script = this.request.has_post_script();
                     this.request.post_script =
                         (!next_script_text.trim().is_empty()).then_some(next_script_text);
                     this.schedule_request_save(cx);
-                    cx.notify();
+                    if had_script != this.request.has_post_script() {
+                        cx.notify();
+                    }
                 }
             }),
             cx.observe(&response_body_editor, |this: &mut Self, _, cx| {
@@ -204,6 +233,10 @@ impl BeamView {
             .into_iter()
             .map(|id| (id, workspace_scroll_handle.clone()))
             .collect();
+        let workspace_tree_view = cx.new({
+            let beam = cx.weak_entity();
+            |_| WorkspaceTreeView::new(beam)
+        });
         let updater = cx
             .new(|_| super::update::AppUpdater::new(shell.update_channel, workspace_paths.clone()));
         _subscriptions.push(cx.observe(&updater, |_, _, cx| cx.notify()));
@@ -217,10 +250,15 @@ impl BeamView {
             url_input,
             request_body_editor,
             response_body_editor,
-            html_response_preview: cx
-                .new(|_| super::response::html_preview::HtmlResponsePreview::new()),
-            response_headers_raw: String::new(),
+            input_hosts: RefCell::default(),
+            #[cfg(test)]
+            render_count: 0,
+            response_body_is_blank: true,
+            html_response_preview,
+            loading_bar,
+            response_headers_table: None,
             response_content_type: None,
+            response_image: None,
             response_body_language: "text",
             response_body_format_task: None,
             response_history_entries: Vec::new(),
@@ -232,6 +270,9 @@ impl BeamView {
             response_time: "—".to_string(),
             response_size: "—".to_string(),
             script_result: None,
+            post_script_bottom_tab: PostScriptBottomTab::default(),
+            post_script_results_scroll: ScrollHandle::new(),
+            post_script_api_scroll: ScrollHandle::new(),
             request_param_name_inputs: Vec::new(),
             request_param_value_inputs: Vec::new(),
             request_param_input_subscriptions: Vec::new(),
@@ -246,10 +287,10 @@ impl BeamView {
             request_auth_input_subscriptions: Vec::new(),
             suppress_request_auth_change_events: false,
             pending_request_save_due_at: None,
-            request_save_tick_scheduled: false,
+            request_save_task_scheduled: false,
             request_save_in_flight: false,
             pending_response_scroll_offset_persistence_due_at: None,
-            response_scroll_offset_persistence_tick_scheduled: false,
+            response_scroll_offset_persistence_scheduled: false,
             suppress_response_scroll_offset_persistence: false,
             workspace_response_scroll_offsets: HashMap::new(),
             show_invalid_url_border: false,
@@ -266,12 +307,12 @@ impl BeamView {
             next_request_run_id: 1,
             current_workspace_paths: workspace_paths,
             app_command_tx: sync_runtime.command_tx,
-            app_event_rx: sync_runtime.event_rx,
-            app_event_poll_scheduled: false,
+            app_event_task: Task::ready(()),
             pending_request_creations: HashSet::new(),
             pending_folder_placements: HashMap::new(),
             _subscriptions,
             workspace_scroll_handle,
+            workspace_tree_view,
             workspace_tree_scroll_handles,
             collection_context_menu_row: None,
             tree_drag_hover: None,
@@ -279,6 +320,7 @@ impl BeamView {
             tree_drag_scroll_task: None,
             env_var_hover: None,
             env_var_resolved_cache: None,
+            env_var_token_cache: None,
             completion_environment_variables: None,
             completion_environment_task: None,
             request_view_histories: WorkspaceRequestViewHistories::default(),
@@ -289,6 +331,7 @@ impl BeamView {
             request_url_editor_cache: HashMap::new(),
             request_url_editor_cache_order: Vec::new(),
             request_url_editor_change_sub: None,
+            request_url_cursor_sub: None,
             url_completion: None,
             url_completion_pending: false,
         };
@@ -306,7 +349,7 @@ impl BeamView {
         view.sync_response_pane_from_selection(window, cx);
         view.seed_request_view_history();
         view.schedule_active_workspace_tab_reveal(window, cx);
-        view.schedule_app_event_poll(window, cx);
+        view.listen_for_app_events(sync_runtime.event_rx, window, cx);
         view
     }
 
@@ -547,6 +590,11 @@ impl Focusable for BeamView {
 
 impl Render for BeamView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        {
+            self.render_count += 1;
+        }
+        self.prune_input_hosts();
         let left_size = 1280.0 * self.shell.layout.collections_workspace.ratio();
         let request_size = (1280.0 - left_size) * 0.5;
 
@@ -609,7 +657,7 @@ impl Render for BeamView {
                         .child(
                             resizable_panel()
                                 .size(px(left_size))
-                                .child(self.render_workspace_panel(window, cx)),
+                                .child(self.workspace_tree_view.clone()),
                         )
                         .child(resizable_panel().child({
                             let workspace =

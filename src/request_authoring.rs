@@ -14,6 +14,13 @@ pub enum RequestTab {
     PostScript,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PostScriptBottomTab {
+    #[default]
+    Results,
+    Api,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendButtonState {
     Disabled(SendDisabledReason),
@@ -96,6 +103,14 @@ impl RequestAuthoringState {
             param.value = value;
         }
         ensure_auto_append_param_row(&mut self.query_params);
+    }
+
+    /// True when the post-response script has text beyond whitespace. The Script
+    /// tab draws its dot from this, and the editor handler renders on its changes.
+    pub fn has_post_script(&self) -> bool {
+        self.post_script
+            .as_ref()
+            .is_some_and(|script| !script.trim().is_empty())
     }
 }
 
@@ -308,5 +323,17 @@ mod tests {
                 revision: 2
             }]
         );
+    }
+
+    #[test]
+    fn has_post_script_ignores_missing_and_blank_scripts() {
+        let mut state = RequestAuthoringState::default();
+        assert!(!state.has_post_script());
+
+        state.post_script = Some("  \n".to_string());
+        assert!(!state.has_post_script());
+
+        state.post_script = Some("  x".to_string());
+        assert!(state.has_post_script());
     }
 }

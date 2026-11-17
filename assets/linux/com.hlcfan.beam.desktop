@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Beam
+GenericName=HTTP Client
+Comment=Send HTTP requests and inspect responses
+Exec=beam
+Icon=com.hlcfan.beam
+Terminal=false
+StartupWMClass=com.hlcfan.beam
+Categories=Development;
+Keywords=HTTP;API;REST;

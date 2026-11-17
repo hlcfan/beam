@@ -5,25 +5,21 @@ use gpui_webview::WebView;
 const PREVIEW_CSP: &str = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src * data: blob:; style-src * 'unsafe-inline'; font-src * data:; media-src *\">";
 
 /// Renders a server's HTML response in a native webview.
+///
+/// The preview reads the response body from the editor itself, so a new body re-renders only this
+/// view and `BeamView` does not depend on the editor.
 pub(in crate::ui) struct HtmlResponsePreview {
-    html: String,
+    source: WeakEntity<EditorState>,
     webview: Option<Entity<WebView>>,
-    loaded_html: Option<String>,
+    loaded_html: Option<SharedString>,
 }
 
 impl HtmlResponsePreview {
-    pub(in crate::ui) fn new() -> Self {
+    pub(in crate::ui) fn new(source: WeakEntity<EditorState>) -> Self {
         Self {
-            html: String::new(),
+            source,
             webview: None,
             loaded_html: None,
-        }
-    }
-
-    pub(in crate::ui) fn set_html(&mut self, html: &str, cx: &mut Context<Self>) {
-        if self.html != html {
-            self.html = html.to_string();
-            cx.notify();
         }
     }
 
@@ -85,16 +81,21 @@ impl HtmlResponsePreview {
 
 impl Render for HtmlResponsePreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let html = self
+            .source
+            .upgrade()
+            .map(|source| source.read(cx).value())
+            .unwrap_or_default();
         if self.webview.is_none() {
-            let document = Self::sanitized_document(&self.html);
+            let document = Self::sanitized_document(&html);
             self.webview = Self::build_webview(document, window, cx);
-            self.loaded_html = self.webview.as_ref().map(|_| self.html.clone());
-        } else if self.loaded_html.as_deref() != Some(self.html.as_str()) {
+            self.loaded_html = self.webview.as_ref().map(|_| html);
+        } else if self.loaded_html.as_ref() != Some(&html) {
             if let Some(webview) = &self.webview {
-                let document = Self::sanitized_document(&self.html);
+                let document = Self::sanitized_document(&html);
                 let _ = webview.read(cx).raw().load_html(&document);
             }
-            self.loaded_html = Some(self.html.clone());
+            self.loaded_html = Some(html);
         }
 
         div()

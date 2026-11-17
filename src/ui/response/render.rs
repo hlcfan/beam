@@ -50,8 +50,7 @@ impl BeamView {
                     button.label(label).text_color(cx.theme().muted_foreground)
                 })
                 .dropdown_menu(move |menu, _window, menu_cx| {
-                    let list_width_px = 180.0;
-                    let mut menu = menu.min_w(px(list_width_px));
+                    let mut menu = menu.min_w(px(150.0));
 
                     if response_histories.is_empty() {
                         return menu.item(
@@ -69,123 +68,92 @@ impl BeamView {
                     }
 
                     let popup_menu = menu_cx.entity().clone();
-                    let row_width_px = 172.0;
-                    let row_height_px = 32.0;
+                    let row_height_px = 28.0;
+                    let row_gap_px = 4.0;
+                    let list_padding_px = 4.0;
+                    let max_list_height_px = 280.0;
                     let row_height = px(row_height_px);
-                    let row_content_height = px(28.0);
-                    let list_height =
-                        px((response_histories.len() as f32 * row_height_px).min(280.0));
-                    let row_sizes = Rc::new(
-                        response_histories
-                            .iter()
-                            .map(|_| size(px(row_width_px), row_height))
-                            .collect::<Vec<_>>(),
-                    );
+                    let max_list_height = px(max_list_height_px);
                     let menu_response_histories = response_histories.clone();
-                    let menu_selected_response_history_index =
-                        selected_response_history_index;
-                    let menu_response_history_view = response_history_view.clone();
-                    let menu_popup_menu = popup_menu.clone();
-                    let scroll_handle = VirtualListScrollHandle::new();
+                    let menu_view = response_history_view.clone();
+                    let scroll_handle = ScrollHandle::new();
                     if let Some(index) = selected_response_history_index {
-                        scroll_handle.scroll_to_item(index, ScrollStrategy::Center);
+                        let offset_y = Self::centered_scroll_offset_y(
+                            index,
+                            response_histories.len(),
+                            row_height_px,
+                            row_gap_px,
+                            list_padding_px,
+                            max_list_height_px,
+                        );
+                        scroll_handle.set_offset(point(px(0.0), px(offset_y)));
                     }
 
                     menu = menu.item(
-                        PopupMenuItem::element(move |_, _cx| {
-                            let row_sizes = row_sizes.clone();
-                            let list_response_histories = menu_response_histories.clone();
-                            let selected_response_history_index =
-                                menu_selected_response_history_index;
-                            let list_response_history_view = menu_response_history_view.clone();
-                            let list_popup_menu = menu_popup_menu.clone();
-                            let scroll_handle = scroll_handle.clone();
+                        PopupMenuItem::element(move |_, cx| {
+                            let rows = menu_response_histories
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, entry)| {
+                                    let status_color =
+                                        Self::status_code_in_color(entry.execution.status, cx);
+                                    let history_entry = entry.clone();
+                                    let view = menu_view.clone();
+                                    let popup_menu = popup_menu.clone();
+                                    ListItem::new(format!("response-history-dropdown-row-{ix}"))
+                                        .w_full()
+                                        .h(row_height)
+                                        .rounded(px(6.0))
+                                        .cursor_pointer()
+                                        .selected(selected_response_history_index == Some(ix))
+                                        .px_1()
+                                        .py_1()
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .items_center()
+                                                .justify_between()
+                                                .gap_3()
+                                                .text_sm()
+                                                .child(
+                                                    div()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .child(entry.timestamp_text.clone()),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .text_color(status_color)
+                                                        .child(entry.status_text.clone()),
+                                                ),
+                                        )
+                                        .on_click(move |_, window, cx| {
+                                            window.prevent_default();
+                                            view.update(cx, |this, cx| {
+                                                cx.stop_propagation();
+                                                let snapshot =
+                                                    load_response_snapshot_for_history_entry(
+                                                        &this.current_workspace_paths,
+                                                        &history_entry,
+                                                    );
+                                                this.apply_response_snapshot(snapshot, false, window, cx);
+                                                this.selected_response_history_index = Some(ix);
+                                                popup_menu
+                                                    .update(cx, |_, cx| cx.emit(DismissEvent));
+                                                cx.notify();
+                                            });
+                                        })
+                                })
+                                .collect::<Vec<_>>();
 
-                            div()
-                                .min_w(px(list_width_px))
+                            v_flex()
+                                .id("response-history-dropdown-list")
                                 .mx(px(-8.0))
                                 .p_1()
-                                .h(list_height)
-                                .child(
-                                v_virtual_list(
-                                    list_response_history_view,
-                                    "response-history-dropdown-list",
-                                    row_sizes,
-                                    move |_, visible_range, _, cx| {
-                                        visible_range
-                                            .map(|ix| {
-                                                let entry = list_response_histories[ix].clone();
-                                                let popup_menu = list_popup_menu.clone();
-                                                let timestamp_text = entry.timestamp_text.clone();
-                                                let status_text = entry.status_text.clone();
-                                                let history_entry = entry.clone();
-                                                let status_color =
-                                                    Self::status_code_in_color(
-                                                        entry.execution.status,
-                                                        cx,
-                                                    );
-                                                div().w_full().h(row_height).pb(px(4.0)).child(
-                                                    ListItem::new(format!(
-                                                        "response-history-dropdown-row-{ix}"
-                                                    ))
-                                                    .w_full()
-                                                    .h(row_content_height)
-                                                    .rounded(px(6.0))
-                                                    .cursor_pointer()
-                                                    .selected(
-                                                        selected_response_history_index == Some(ix),
-                                                    )
-                                                    .px_1()
-                                                    .py_1()
-                                                    .child(
-                                                        h_flex()
-                                                            .w_full()
-                                                            .items_center()
-                                                            .justify_between()
-                                                            .text_sm()
-                                                            .child(
-                                                                div()
-                                                                    .text_color(
-                                                                        cx.theme().muted_foreground,
-                                                                    )
-                                                                    .child(timestamp_text),
-                                                            )
-                                                            .child(
-                                                                div()
-                                                                    .text_color(status_color)
-                                                                    .child(status_text),
-                                                            ),
-                                                    )
-                                                    .on_click(
-                                                        cx.listener(move |this, _, window, cx| {
-                                                            cx.stop_propagation();
-                                                            window.prevent_default();
-                                                            let snapshot =
-                                                                load_response_snapshot_for_history_entry(
-                                                                    &this.current_workspace_paths,
-                                                                    &history_entry,
-                                                                );
-                                                            this.apply_response_snapshot(
-                                                                snapshot,
-                                                                false,
-                                                                window,
-                                                                cx,
-                                                            );
-                                                            this.selected_response_history_index =
-                                                                Some(ix);
-                                                            popup_menu.update(cx, |_, cx| {
-                                                                cx.emit(DismissEvent)
-                                                            });
-                                                            cx.notify();
-                                                        }),
-                                                    ),
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                    },
-                                )
-                                .track_scroll(&scroll_handle),
-                            )
+                                .gap_1()
+                                .max_h(max_list_height)
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll_handle)
+                                .children(rows)
                         })
                         .disabled(true),
                     );
@@ -213,7 +181,30 @@ impl BeamView {
         tabs
     }
 
-    fn render_response_editor_surface(&self, cx: &mut Context<Self>) -> AnyElement {
+    /// Scroll offset that centers row `index` in a list of fixed-height rows.
+    /// `ScrollHandle` has no center strategy and the list has not been laid out
+    /// when the dropdown opens, so the offset is derived from the row metrics.
+    pub(super) fn centered_scroll_offset_y(
+        index: usize,
+        count: usize,
+        row_height: f32,
+        row_gap: f32,
+        padding: f32,
+        max_height: f32,
+    ) -> f32 {
+        let pitch = row_height + row_gap;
+        let content_height = padding * 2.0 + count as f32 * pitch - row_gap;
+        let viewport_height = content_height.min(max_height);
+        let row_center = padding + index as f32 * pitch + row_height / 2.0;
+        let max_scroll = (content_height - viewport_height).max(0.0);
+        -(row_center - viewport_height / 2.0).clamp(0.0, max_scroll)
+    }
+
+    fn render_response_editor_surface(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let show_html_preview = self.active_response_tab == ResponseTab::Body
             && self.shell.theme.html_response_view == AppHtmlResponseView::Webview
             && Self::is_html_content_type(self.response_content_type.as_deref());
@@ -223,53 +214,83 @@ impl BeamView {
         }
         match self.active_response_tab {
             ResponseTab::Body => {
-                let response_body_text = self.response_body_editor.read(cx).value().to_string();
-                let trimmed_body = response_body_text.trim();
-                if trimmed_body.is_empty() {
+                if let Some(image) = self.response_image.clone() {
+                    return self.render_response_image(image, window, cx);
+                }
+                if self.response_body_is_blank {
                     self.html_response_preview
                         .update(cx, |preview, cx| preview.release(cx));
                     return self.render_response_body_shortcuts_empty_state(cx);
                 }
                 if show_html_preview {
-                    self.html_response_preview
-                        .update(cx, |preview, cx| preview.set_html(&response_body_text, cx));
                     return div()
                         .size_full()
                         .child(self.html_response_preview.clone())
                         .into_any_element();
                 }
-                let response_body_has_selection = !self
-                    .response_body_editor
-                    .read(cx)
-                    .selected_range()
-                    .is_empty();
-                Editor::new(&self.response_body_editor)
-                    .h_full()
-                    .p_0()
-                    .border_0()
-                    .bordered(false)
-                    .readonly(true)
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(cx.theme().mono_font_size)
-                    .context_menu(move |menu, _window, cx| {
-                        let muted_foreground = cx.theme().muted_foreground;
-                        let menu = menu
-                            .menu_with_icon(
-                                "Format",
-                                Icon::default().path("icons/indent.svg"),
-                                Box::new(FormatResponseBody),
+                self.input_host(&self.response_body_editor, cx, move |state, _window, cx| {
+                    let response_body_selection = state.clone();
+                    Editor::new(state)
+                        .h_full()
+                        .p_0()
+                        .border_0()
+                        .bordered(false)
+                        .readonly(true)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(cx.theme().mono_font_size)
+                        .context_menu(move |menu, _window, cx| {
+                            let muted_foreground = cx.theme().muted_foreground;
+                            let menu = menu
+                                .menu_with_icon(
+                                    "Format",
+                                    Icon::default().path("icons/indent.svg"),
+                                    Box::new(FormatResponseBody),
+                                )
+                                .separator();
+                            build_text_edit_context_menu(
+                                menu,
+                                response_body_selection.has_selection(cx),
+                                muted_foreground,
                             )
-                            .separator();
-                        build_text_edit_context_menu(
-                            menu,
-                            response_body_has_selection,
-                            muted_foreground,
-                        )
-                    })
-                    .into_any_element()
+                        })
+                        .into_any_element()
+                })
+                .into_any_element()
             }
             ResponseTab::Headers => self.render_response_headers_table(cx),
         }
+    }
+
+    fn render_response_image(
+        &self,
+        image: Arc<gpui::Image>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // Starts decoding on first call and re-renders this view when done.
+        if image.clone().use_render_image(window, cx).is_none() {
+            return div()
+                .id("response-image-status")
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(cx.theme().muted_foreground)
+                .child("Decoding image…")
+                .into_any_element();
+        }
+        div()
+            .id("response-image-preview")
+            .size_full()
+            .overflow_scroll()
+            .p_3()
+            .child(
+                img(image)
+                    .id("response-image")
+                    .max_w_full()
+                    .object_fit(ObjectFit::Contain),
+            )
+            .into_any_element()
     }
 
     pub(super) fn is_html_content_type(content_type: Option<&str>) -> bool {
@@ -359,8 +380,7 @@ impl BeamView {
     }
 
     fn render_response_headers_table(&self, cx: &App) -> AnyElement {
-        let rows = parse_response_headers(&self.response_headers_raw);
-        if rows.is_empty() {
+        let Some(markup) = self.response_headers_table.clone() else {
             return div()
                 .h_full()
                 .w_full()
@@ -368,113 +388,14 @@ impl BeamView {
                 .text_color(cx.theme().muted_foreground)
                 .child("No response headers. Send a request to view headers.")
                 .into_any_element();
-        }
+        };
 
-        fn escape_html(text: &str) -> String {
-            text.replace('&', "&amp;")
-                .replace('<', "&lt;")
-                .replace('>', "&gt;")
-                .replace('"', "&quot;")
-                .replace('\'', "&#39;")
-        }
-
-        let mut table = String::from(
-            "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
-             <thead>\
-             <tr>\
-             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
-             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
-             </tr>\
-             </thead><tbody>",
-        );
-
-        for (key, value) in rows {
-            table.push_str(&format!(
-                "<tr>\
-                 <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
-                 <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
-                 </tr>",
-                escape_html(&key),
-                escape_html(&value)
-            ));
-        }
-        table.push_str("</tbody></table>");
-
-        html(table)
+        html(markup)
             .w_full()
             .h_full()
             .scrollable(true)
             .selectable(true)
             .into_any_element()
-    }
-
-    fn render_shimmer_loading_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let color = cx.theme().progress_bar;
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .h(px(2.0))
-            .overflow_hidden()
-            .bg(color.opacity(0.18))
-            .with_animation(
-                "shimmer-loading",
-                Animation::new(Duration::from_millis(2800)).repeat(),
-                move |this, delta| {
-                    this.child(
-                        canvas(
-                            |_, _, _| {},
-                            move |bounds, _, window, _| {
-                                let width = bounds.size.width;
-                                let height = bounds.size.height;
-                                let origin = bounds.origin;
-
-                                // Ease back and forth without restarting at the
-                                // left edge. Each half fades toward its thin tip.
-                                let travel = (1.0 - (delta * std::f32::consts::TAU).cos()) / 2.0;
-                                let half_length = width * 0.14;
-                                let center_x = half_length + (width - half_length * 2.0) * travel;
-                                let center_y = height * 0.5;
-                                for direction in [-1.0, 1.0] {
-                                    let tip_x = center_x + half_length * direction;
-                                    let control_x = center_x + half_length * direction * 0.45;
-                                    let mut highlight = PathBuilder::fill();
-                                    highlight.move_to(origin + point(tip_x, center_y));
-                                    highlight.curve_to(
-                                        origin + point(center_x, px(0.0)),
-                                        origin + point(control_x, px(0.0)),
-                                    );
-                                    highlight.line_to(origin + point(center_x, height));
-                                    highlight.curve_to(
-                                        origin + point(tip_x, center_y),
-                                        origin + point(control_x, height),
-                                    );
-                                    highlight.close();
-                                    let dim = color.opacity(0.0);
-                                    let bright = color.opacity(0.95);
-                                    let (from, to) = if direction < 0.0 {
-                                        (dim, bright)
-                                    } else {
-                                        (bright, dim)
-                                    };
-                                    if let Ok(highlight) = highlight.build() {
-                                        window.paint_path(
-                                            highlight,
-                                            linear_gradient(
-                                                90.0,
-                                                linear_color_stop(from, 0.0),
-                                                linear_color_stop(to, 1.0),
-                                            ),
-                                        );
-                                    }
-                                }
-                            },
-                        )
-                        .size_full(),
-                    )
-                },
-            )
     }
 
     pub(in crate::ui) fn render_response_panel(
@@ -501,9 +422,9 @@ impl BeamView {
                         .w_full()
                         .h_full()
                         .when(is_sending, |d| d.opacity(0.45))
-                        .child(self.render_response_editor_surface(cx)),
+                        .child(self.render_response_editor_surface(window, cx)),
                 )
-                .when(is_sending, |d| d.child(self.render_shimmer_loading_bar(cx))),
+                .when(is_sending, |d| d.child(self.loading_bar.clone())),
             ResponseTab::Headers => div()
                 .flex_1()
                 .w_full()
@@ -516,9 +437,9 @@ impl BeamView {
                         .w_full()
                         .h_full()
                         .when(is_sending, |d| d.opacity(0.45))
-                        .child(self.render_response_editor_surface(cx)),
+                        .child(self.render_response_editor_surface(window, cx)),
                 )
-                .when(is_sending, |d| d.child(self.render_shimmer_loading_bar(cx))),
+                .when(is_sending, |d| d.child(self.loading_bar.clone())),
         };
 
         v_flex()
@@ -605,5 +526,97 @@ impl BeamView {
             });
 
         (status_code_text, status_text)
+    }
+}
+
+/// Builds the response headers table markup, or `None` when `raw` holds no headers.
+pub(in crate::ui) fn response_headers_table_markup(raw: &str) -> Option<SharedString> {
+    let rows = parse_response_headers(raw);
+    if rows.is_empty() {
+        return None;
+    }
+
+    let mut table = String::from(
+        "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
+         <thead>\
+         <tr>\
+         <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
+         <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
+         </tr>\
+         </thead><tbody>",
+    );
+
+    for (key, value) in rows {
+        table.push_str(&format!(
+            "<tr>\
+             <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
+             <td style=\"padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;\">{}</td>\
+             </tr>",
+            escape_html(&key),
+            escape_html(&value)
+        ));
+    }
+    table.push_str("</tbody></table>");
+
+    Some(table.into())
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::response_headers_table_markup;
+    use crate::ui::BeamView;
+
+    #[test]
+    fn centered_scroll_offset_clamps_and_centers() {
+        // 20 rows: pitch 32, content 8 + 640 - 4 = 644, viewport 280, max scroll 364.
+        let offset = |index| BeamView::centered_scroll_offset_y(index, 20, 28.0, 4.0, 4.0, 280.0);
+        assert_eq!(offset(0), 0.0);
+        assert_eq!(offset(10), -(4.0 + 320.0 + 14.0 - 140.0));
+        assert_eq!(offset(19), -364.0);
+        // A short list never scrolls.
+        assert_eq!(
+            BeamView::centered_scroll_offset_y(2, 3, 28.0, 4.0, 4.0, 280.0),
+            0.0
+        );
+    }
+
+    const CELL_STYLE: &str = "padding:6px 8px; border-bottom:1px solid currentColor; vertical-align:top; white-space:pre-wrap;";
+
+    #[test]
+    fn headers_markup_for_two_headers_is_exact() {
+        let expected = format!(
+            "<table style=\"width:100%; border-collapse:collapse; font-size:12px;\">\
+             <thead><tr>\
+             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor; width:220px;\">Header</th>\
+             <th style=\"text-align:left; padding:6px 8px; border-bottom:1px solid currentColor;\">Value</th>\
+             </tr></thead><tbody>\
+             <tr><td style=\"{CELL_STYLE}\">content-type</td><td style=\"{CELL_STYLE}\">text/plain</td></tr>\
+             <tr><td style=\"{CELL_STYLE}\">x-id</td><td style=\"{CELL_STYLE}\">42</td></tr>\
+             </tbody></table>"
+        );
+        let markup = response_headers_table_markup("content-type: text/plain\nx-id:42\n");
+        assert_eq!(markup.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn headers_markup_escapes_special_characters() {
+        let markup = response_headers_table_markup("a&b: <\"x\"> 'y'").expect("markup");
+        assert!(markup.contains(">a&amp;b</td>"));
+        assert!(markup.contains(">&lt;&quot;x&quot;&gt; &#39;y&#39;</td>"));
+        assert!(!markup.contains("<\"x\">"));
+    }
+
+    #[test]
+    fn headers_markup_is_none_without_headers() {
+        assert!(response_headers_table_markup("").is_none());
+        assert!(response_headers_table_markup("no colon here\n").is_none());
     }
 }

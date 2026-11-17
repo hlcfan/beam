@@ -1,8 +1,10 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const FOLDER_MANIFEST_FILE_NAME: &str = "folder.toml";
 pub const WORKSPACES_REGISTRY_FILE_NAME: &str = "workspaces.toml";
 pub const APP_SETTINGS_FILE_NAME: &str = "app-settings.toml";
+/// Folder next to the app that switches Beam to portable storage.
+pub const PORTABLE_DATA_DIR_NAME: &str = "data";
 
 /// Paths rooted at the data root (`$HOME/beam/`).
 /// Knows where `workspaces.toml` lives and can derive workspace-specific paths.
@@ -49,7 +51,12 @@ impl DataRootPaths {
         )
     }
 
+    /// Uses portable storage when a `data` folder sits next to the app,
+    /// otherwise the per-user defaults under `$HOME`.
     pub fn default_user_config() -> Self {
+        if let Some(paths) = install_dir().and_then(|dir| portable_paths(&dir)) {
+            return paths;
+        }
         let home_dir = dirs::home_dir();
         let root = home_dir
             .as_ref()
@@ -120,6 +127,33 @@ impl BeamPaths {
     }
 }
 
+/// Folder holding the executable. On macOS, the folder holding the `.app` bundle.
+fn install_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let mut dir = exe.parent()?.to_path_buf();
+    if let Some(bundle) = dir
+        .ancestors()
+        .find(|ancestor| ancestor.extension().is_some_and(|ext| ext == "app"))
+    {
+        dir = bundle.parent()?.to_path_buf();
+    }
+    Some(dir)
+}
+
+/// Portable layout: `<install_dir>/data/{beam,beam_local,logs}`.
+/// Active only when `<install_dir>/data` already exists.
+fn portable_paths(install_dir: &Path) -> Option<DataRootPaths> {
+    let data_dir = install_dir.join(PORTABLE_DATA_DIR_NAME);
+    if !data_dir.is_dir() {
+        return None;
+    }
+    Some(DataRootPaths::new(
+        data_dir.join("beam"),
+        data_dir.join("beam_local"),
+        data_dir.join("logs"),
+    ))
+}
+
 #[cfg(test)]
 fn default_root_from_home_dir(home_dir: Option<PathBuf>) -> PathBuf {
     home_dir
@@ -160,7 +194,7 @@ mod tests {
 
     use super::{
         APP_SETTINGS_FILE_NAME, BeamPaths, DataRootPaths, default_logs_root,
-        default_root_from_home_dir,
+        default_root_from_home_dir, portable_paths,
     };
 
     #[test]
@@ -175,6 +209,18 @@ mod tests {
     #[test]
     fn falls_back_to_relative_beam_directory_without_home() {
         assert_eq!(default_root_from_home_dir(None), PathBuf::from("./beam"));
+    }
+
+    #[test]
+    fn portable_paths_require_existing_data_folder() {
+        let dir = tempdir().expect("tempdir");
+        assert!(portable_paths(dir.path()).is_none());
+
+        std::fs::create_dir(dir.path().join("data")).expect("create data");
+        let paths = portable_paths(dir.path()).expect("portable paths");
+        assert_eq!(paths.root, dir.path().join("data").join("beam"));
+        assert_eq!(paths.local_root, dir.path().join("data").join("beam_local"));
+        assert_eq!(paths.logs_root, dir.path().join("data").join("logs"));
     }
 
     #[test]

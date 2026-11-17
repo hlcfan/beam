@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use gpui_kit::component::input::EditorState;
 use gpui_kit::{App, Context, Pixels, Point, Window};
@@ -105,7 +105,11 @@ pub(in crate::ui) fn persist_response_snapshot(
 
     let execution_id = Ulid::new().to_string();
     let body_ref = format!("{execution_id}.response.bin");
-    fs::write(responses_dir.join(&body_ref), response.body.as_bytes())
+    let body_bytes = response
+        .image
+        .as_ref()
+        .map_or(response.body.as_bytes(), |image| image.bytes());
+    fs::write(responses_dir.join(&body_ref), body_bytes)
         .map_err(|error| format!("Failed to write response body: {error}"))?;
 
     history_file.meta = Some(RequestHistoryMeta {
@@ -118,7 +122,7 @@ pub(in crate::ui) fn persist_response_snapshot(
         status: response.status_code,
         duration_ms: parse_response_duration_ms(&response.time),
         response_summary: Some(RequestHistoryResponseSummary {
-            body_bytes: Some(response.body.len() as u64),
+            body_bytes: Some(body_bytes.len() as u64),
             body_ref: Some(body_ref),
             body_truncated: false,
             headers: parse_response_headers(&response.headers)
@@ -157,46 +161,43 @@ impl BeamView {
         self.schedule_response_scroll_offset_persistence(cx);
     }
 
+    /// Debounces scroll offset persistence. Each scroll pushes the due time back, and one timer
+    /// task sleeps until the latest due time instead of waking on a fixed tick.
     fn schedule_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
         if !self.response_scroll_offset_needs_persist(cx) {
             return;
         }
         self.pending_response_scroll_offset_persistence_due_at =
-            Some(Instant::now() + Duration::from_millis(150));
-        if self.response_scroll_offset_persistence_tick_scheduled {
+            Some(cx.background_executor().now() + Duration::from_millis(150));
+        if self.response_scroll_offset_persistence_scheduled {
             return;
         }
-        self.response_scroll_offset_persistence_tick_scheduled = true;
-        self.schedule_response_scroll_offset_persistence_tick(cx);
-    }
-
-    fn process_pending_response_scroll_offset_persistence(&mut self, cx: &mut Context<Self>) {
-        let Some(due_at) = self.pending_response_scroll_offset_persistence_due_at else {
-            self.response_scroll_offset_persistence_tick_scheduled = false;
-            return;
-        };
-        if Instant::now() < due_at {
-            self.schedule_response_scroll_offset_persistence_tick(cx);
-            return;
-        }
-        self.pending_response_scroll_offset_persistence_due_at = None;
-        self.response_scroll_offset_persistence_tick_scheduled = false;
-        if self.response_scroll_offset_needs_persist(cx) {
-            self.persist_current_response_scroll_offset(cx);
-        }
-    }
-
-    fn schedule_response_scroll_offset_persistence_tick(&self, cx: &mut Context<Self>) {
-        let view = cx.entity();
-
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                this.process_pending_response_scroll_offset_persistence(cx);
+        self.response_scroll_offset_persistence_scheduled = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(due_at) = this.update(cx, |this, _| {
+                    this.pending_response_scroll_offset_persistence_due_at
+                }) else {
+                    return;
+                };
+                let Some(due_at) = due_at else {
+                    break;
+                };
+                let now = cx.background_executor().now();
+                if now < due_at {
+                    cx.background_executor().timer(due_at - now).await;
+                    continue;
+                }
+                let _ = this.update(cx, |this, cx| {
+                    this.pending_response_scroll_offset_persistence_due_at = None;
+                    if this.response_scroll_offset_needs_persist(cx) {
+                        this.persist_current_response_scroll_offset(cx);
+                    }
+                });
+                break;
+            }
+            let _ = this.update(cx, |this, _| {
+                this.response_scroll_offset_persistence_scheduled = false;
             });
         })
         .detach();
@@ -231,8 +232,9 @@ impl BeamView {
     ) {
         self.response_body_format_task = None;
         self.suppress_response_scroll_offset_persistence = true;
-        self.response_body_editor.update(cx, |input, cx| {
+        self.response_body_is_blank = self.response_body_editor.update(cx, |input, cx| {
             update(input, window, cx);
+            input.text().chars().all(char::is_whitespace)
         });
         self.suppress_response_scroll_offset_persistence = false;
     }
@@ -315,6 +317,7 @@ mod tests {
             body: "created".to_string(),
             headers: "Content-Type: text/plain\nX-Test: yes".to_string(),
             content_type: Some("text/plain".to_string()),
+            image: None,
         };
 
         persist_response_snapshot(&paths, request_id, &response).expect("persist response");

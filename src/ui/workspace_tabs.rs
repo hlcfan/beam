@@ -9,21 +9,19 @@ mod tests;
 #[action(namespace = beam, no_json)]
 struct SelectWorkspaceTab(usize);
 
+#[cfg(target_os = "macos")]
+const WORKSPACE_TAB_KEYSTROKES: [&str; 9] = [
+    "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
+];
+#[cfg(not(target_os = "macos"))]
+const WORKSPACE_TAB_KEYSTROKES: [&str; 9] = [
+    "ctrl-1", "ctrl-2", "ctrl-3", "ctrl-4", "ctrl-5", "ctrl-6", "ctrl-7", "ctrl-8", "ctrl-9",
+];
+
 pub(super) fn init_workspace_tab_actions(cx: &mut App) {
-    // KeyBinding::new requires static keystrokes.
-    let keystrokes: [&'static str; 9] = if cfg!(target_os = "macos") {
-        [
-            "cmd-1", "cmd-2", "cmd-3", "cmd-4", "cmd-5", "cmd-6", "cmd-7", "cmd-8", "cmd-9",
-        ]
-    } else {
-        [
-            "ctrl-1", "ctrl-2", "ctrl-3", "ctrl-4", "ctrl-5", "ctrl-6", "ctrl-7", "ctrl-8",
-            "ctrl-9",
-        ]
-    };
     cx.bind_keys(
-        keystrokes
-            .into_iter()
+        WORKSPACE_TAB_KEYSTROKES
+            .iter()
             .enumerate()
             .map(|(index, keystroke)| KeyBinding::new(keystroke, SelectWorkspaceTab(index), None)),
     );

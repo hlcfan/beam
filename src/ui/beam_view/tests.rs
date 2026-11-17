@@ -7,7 +7,7 @@ use crate::updater::AvailableUpdate;
 use gpui_kit::component::{Root, Theme, ThemeMode};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{AppContext as _, Entity, TestAppContext, VisualTestContext, px, size};
-use std::sync::mpsc::{channel, sync_channel};
+use std::sync::mpsc::sync_channel;
 
 fn fixture(
     cx: &mut TestAppContext,
@@ -16,7 +16,7 @@ fn fixture(
     let directory = tempfile::tempdir().expect("directory");
     let paths = BeamPaths::from_root(directory.path().to_path_buf());
     let (command_tx, _) = sync_channel(32);
-    let (_, event_rx) = channel();
+    let (_, event_rx) = tokio::sync::mpsc::unbounded_channel();
     let (root, cx) = cx.add_window_view(move |window, cx| {
         let beam = cx.new(|cx| {
             BeamView::new(
@@ -170,5 +170,51 @@ fn update_button_precedes_key_bindings_and_opens_update_settings(cx: &mut TestAp
         assert!(window.try_find("settings-update-channel").is_some());
         assert!(window.try_find("settings-update-version").is_some());
         assert!(updater.read(cx).phase == UpdatePhase::Idle);
+    });
+}
+
+#[gpui_kit::test]
+fn script_api_tab_keeps_bottom_pane_visible(cx: &mut TestAppContext) {
+    let (beam, _directory, cx) = fixture(cx);
+    beam.update(cx, |beam, cx| {
+        beam.request.active_tab = crate::request_authoring::RequestTab::PostScript;
+        cx.notify();
+    });
+    cx.update(|window, cx| window.render_frame(cx));
+    let results_height =
+        cx.update(|window, _| window.find("post-script-tab-results").bounds().size.height);
+    assert!(results_height > px(0.));
+
+    cx.update(|window, cx| window.click("post-script-tab-api", cx));
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        window.render_frame(cx);
+        let api = window.find("post-script-tab-api").bounds();
+        let results = window.find("post-script-tab-results").bounds();
+        assert!(api.size.height > px(0.), "API tab collapsed: {api:?}");
+        assert!(
+            results.size.height > px(0.),
+            "Results tab collapsed: {results:?}"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn response_headers_table_follows_raw_text(cx: &mut TestAppContext) {
+    let (beam, _directory, cx) = fixture(cx);
+    beam.update(cx, |beam, _| {
+        assert!(beam.response_headers_table.is_none());
+
+        beam.set_response_headers("x-id: 1");
+        let first = beam.response_headers_table.clone().expect("table");
+        assert!(first.contains(">x-id</td>"));
+
+        beam.set_response_headers("x-other: 2");
+        let second = beam.response_headers_table.clone().expect("table");
+        assert!(second.contains(">x-other</td>"));
+        assert!(!second.contains(">x-id</td>"));
+
+        beam.set_response_headers("");
+        assert!(beam.response_headers_table.is_none());
     });
 }

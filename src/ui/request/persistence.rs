@@ -198,10 +198,9 @@ impl BeamView {
                     return;
                 }
                 if let AuthConfig::Bearer { token } = &mut this.request.auth {
-                    let value = bearer_input.read(cx).value().to_string();
+                    let value = bearer_input.read(cx).text().to_string();
                     *token = (!value.trim().is_empty()).then_some(value);
                     this.schedule_request_save(cx);
-                    cx.notify();
                 }
             },
         ));
@@ -215,10 +214,9 @@ impl BeamView {
                     return;
                 }
                 if let AuthConfig::Basic { username, .. } = &mut this.request.auth {
-                    let value = username_input.read(cx).value().to_string();
+                    let value = username_input.read(cx).text().to_string();
                     *username = (!value.trim().is_empty()).then_some(value);
                     this.schedule_request_save(cx);
-                    cx.notify();
                 }
             },
         ));
@@ -232,10 +230,9 @@ impl BeamView {
                     return;
                 }
                 if let AuthConfig::Basic { password, .. } = &mut this.request.auth {
-                    let value = password_input.read(cx).value().to_string();
+                    let value = password_input.read(cx).text().to_string();
                     *password = (!value.trim().is_empty()).then_some(value);
                     this.schedule_request_save(cx);
-                    cx.notify();
                 }
             },
         ));
@@ -249,14 +246,13 @@ impl BeamView {
                     return;
                 }
                 if let AuthConfig::ApiKey { key, .. } = &mut this.request.auth {
-                    let value = api_key_name_input.read(cx).value().to_string();
+                    let value = api_key_name_input.read(cx).text().to_string();
                     *key = if value.trim().is_empty() {
                         None
                     } else {
                         Some(value)
                     };
                     this.schedule_request_save(cx);
-                    cx.notify();
                 }
             },
         ));
@@ -270,14 +266,13 @@ impl BeamView {
                     return;
                 }
                 if let AuthConfig::ApiKey { value, .. } = &mut this.request.auth {
-                    let next_value = api_key_value_input.read(cx).value().to_string();
+                    let next_value = api_key_value_input.read(cx).text().to_string();
                     *value = if next_value.trim().is_empty() {
                         None
                     } else {
                         Some(next_value)
                     };
                     this.schedule_request_save(cx);
-                    cx.notify();
                 }
             },
         ));
@@ -311,6 +306,8 @@ impl BeamView {
         Some((request_id, pane_data))
     }
 
+    /// Debounces request saves. Each edit pushes the due time back, and one timer task sleeps
+    /// until the latest due time instead of waking on a fixed tick.
     pub(in crate::ui) fn schedule_request_save_with_delay(
         &mut self,
         delay: Duration,
@@ -319,28 +316,41 @@ impl BeamView {
         if self.shell.workspace_tree.selected_request_id().is_none() {
             return;
         }
-        self.pending_request_save_due_at = Some(Instant::now() + delay);
-        if self.request_save_tick_scheduled {
+        self.pending_request_save_due_at = Some(cx.background_executor().now() + delay);
+        if self.request_save_task_scheduled {
             return;
         }
-        self.request_save_tick_scheduled = true;
-        self.schedule_request_save_tick(cx);
+        self.request_save_task_scheduled = true;
+        self.spawn_request_save_task(cx);
     }
 
     pub(in crate::ui) fn schedule_request_save(&mut self, cx: &mut Context<Self>) {
         self.schedule_request_save_with_delay(Duration::from_millis(350), cx);
     }
 
-    pub(in crate::ui) fn schedule_request_save_tick(&self, cx: &mut Context<Self>) {
-        let view = cx.entity();
-        cx.spawn(async move |_, cx| {
-            cx.background_executor()
-                .spawn(async move {
-                    std::thread::sleep(Duration::from_millis(25));
-                })
-                .await;
-            let _ = view.update(cx, |this, cx| {
-                this.process_pending_request_save(cx);
+    fn spawn_request_save_task(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(due_at) = this.update(cx, |this, _| this.pending_request_save_due_at) else {
+                    return;
+                };
+                let Some(due_at) = due_at else {
+                    break;
+                };
+                let now = cx.background_executor().now();
+                if now < due_at {
+                    cx.background_executor().timer(due_at - now).await;
+                    continue;
+                }
+                let keep_waiting = this
+                    .update(cx, |this, cx| this.process_pending_request_save(cx))
+                    .unwrap_or(false);
+                if !keep_waiting {
+                    break;
+                }
+            }
+            let _ = this.update(cx, |this, _| {
+                this.request_save_task_scheduled = false;
             });
         })
         .detach();
@@ -373,23 +383,21 @@ impl BeamView {
         Ok(request_file)
     }
 
-    pub(in crate::ui) fn process_pending_request_save(&mut self, cx: &mut Context<Self>) {
+    /// Saves the pending request once its due time has passed. Returns true when the timer task
+    /// should keep running because a later save is pending, such as a retry after backpressure.
+    fn process_pending_request_save(&mut self, cx: &mut Context<Self>) -> bool {
         if self.request_save_in_flight {
-            self.request_save_tick_scheduled = false;
-            return;
+            return false;
         }
         let Some(due_at) = self.pending_request_save_due_at else {
-            self.request_save_tick_scheduled = false;
-            return;
+            return false;
         };
-        if Instant::now() < due_at {
-            self.schedule_request_save_tick(cx);
-            return;
+        if cx.background_executor().now() < due_at {
+            return true;
         }
         self.pending_request_save_due_at = None;
-        self.request_save_tick_scheduled = false;
         let Some((request_id, pane_data)) = self.sync_selected_request_pane_data() else {
-            return;
+            return false;
         };
         self.refresh_active_request_cache();
         match self.build_request_snapshot_for_save(request_id, pane_data) {
@@ -402,17 +410,14 @@ impl BeamView {
                     log::error!("{error}");
                     if error.starts_with("Backpressure:") {
                         self.pending_request_save_due_at =
-                            Some(Instant::now() + Duration::from_millis(100));
+                            Some(cx.background_executor().now() + Duration::from_millis(100));
                     }
                 }
             }
             Err(error) => log::error!("{error}"),
         }
         self.request_save_in_flight = false;
-        if self.pending_request_save_due_at.is_some() && !self.request_save_tick_scheduled {
-            self.request_save_tick_scheduled = true;
-            self.schedule_request_save_tick(cx);
-        }
+        self.pending_request_save_due_at.is_some()
     }
 
     pub(in crate::ui) fn rebuild_request_param_inputs(
@@ -442,19 +447,23 @@ impl BeamView {
                 window,
                 move |this, _, ev: &InputEvent, window, cx| match ev {
                     InputEvent::Change => {
-                        let name = key_input_handle.read(cx).value().to_string();
+                        let name = key_input_handle.read(cx).text().to_string();
                         let value = this
                             .request
                             .query_params
                             .get(index)
                             .map(|param| param.value.clone())
                             .unwrap_or_default();
+                        let rows_before = this.request.query_params.len();
                         this.request.set_param_value(index, name, value);
                         if this.request_param_name_inputs.len() != this.request.query_params.len() {
                             this.rebuild_request_param_inputs(window, cx);
                         }
                         this.schedule_request_save(cx);
-                        cx.notify();
+                        // Only a new trailing row changes what this view draws.
+                        if this.request.query_params.len() != rows_before {
+                            cx.notify();
+                        }
                     }
                     InputEvent::Focus => {
                         if index + 1 == this.request.query_params.len() {
@@ -492,13 +501,17 @@ impl BeamView {
                             .get(index)
                             .map(|param| param.name.clone())
                             .unwrap_or_default();
-                        let value = value_input_handle.read(cx).value().to_string();
+                        let value = value_input_handle.read(cx).text().to_string();
+                        let rows_before = this.request.query_params.len();
                         this.request.set_param_value(index, name, value);
                         if this.request_param_name_inputs.len() != this.request.query_params.len() {
                             this.rebuild_request_param_inputs(window, cx);
                         }
                         this.schedule_request_save(cx);
-                        cx.notify();
+                        // Only a new trailing row changes what this view draws.
+                        if this.request.query_params.len() != rows_before {
+                            cx.notify();
+                        }
                     }
                     InputEvent::Focus => {
                         if index + 1 == this.request.query_params.len() {
@@ -560,19 +573,23 @@ impl BeamView {
                 window,
                 move |this, _, ev: &InputEvent, window, cx| match ev {
                     InputEvent::Change => {
-                        let name = key_input_handle.read(cx).value().to_string();
+                        let name = key_input_handle.read(cx).text().to_string();
                         let value = this
                             .request
                             .headers
                             .get(index)
                             .map(|header| header.value.clone())
                             .unwrap_or_default();
+                        let rows_before = this.request.headers.len();
                         this.request.set_header_value(index, name, value);
                         if this.request_header_name_inputs.len() != this.request.headers.len() {
                             this.rebuild_request_header_inputs(window, cx);
                         }
                         this.schedule_request_save(cx);
-                        cx.notify();
+                        // Only a new trailing row changes what this view draws.
+                        if this.request.headers.len() != rows_before {
+                            cx.notify();
+                        }
                     }
                     InputEvent::Focus => {
                         if index + 1 == this.request.headers.len() {
@@ -608,13 +625,17 @@ impl BeamView {
                             .get(index)
                             .map(|header| header.name.clone())
                             .unwrap_or_default();
-                        let value = value_input_handle.read(cx).value().to_string();
+                        let value = value_input_handle.read(cx).text().to_string();
+                        let rows_before = this.request.headers.len();
                         this.request.set_header_value(index, name, value);
                         if this.request_header_name_inputs.len() != this.request.headers.len() {
                             this.rebuild_request_header_inputs(window, cx);
                         }
                         this.schedule_request_save(cx);
-                        cx.notify();
+                        // Only a new trailing row changes what this view draws.
+                        if this.request.headers.len() != rows_before {
+                            cx.notify();
+                        }
                     }
                     InputEvent::Focus => {
                         if index + 1 == this.request.headers.len() {

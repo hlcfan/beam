@@ -6,7 +6,15 @@ use ulid::Ulid;
 
 use crate::paths::BeamPaths;
 
+use std::sync::Arc;
+
+use gpui_kit::gpui;
+
 use super::super::format_bytes;
+use super::{
+    ImagePreview, classify_image_preview, image_placeholder_body, response_image_from_bytes,
+    unavailable_image_body,
+};
 
 const RESPONSE_BODY_TRUNCATED_NOTE: &str =
     "[Response body omitted from local history (truncated).]";
@@ -69,6 +77,7 @@ pub(in crate::ui) struct StoredResponseSnapshot {
     pub(in crate::ui) body: String,
     pub(in crate::ui) headers_raw: String,
     pub(in crate::ui) content_type: Option<String>,
+    pub(in crate::ui) image: Option<Arc<gpui::Image>>,
 }
 
 pub(in crate::ui) fn load_request_history_file(
@@ -91,6 +100,7 @@ pub(in crate::ui) fn response_snapshot_from_history_execution(
     let mut body = String::new();
     let mut headers_raw = String::new();
     let mut content_type = None;
+    let mut image = None;
 
     if let Some(summary) = execution.response_summary.as_ref() {
         if !summary.headers.is_empty() {
@@ -110,9 +120,18 @@ pub(in crate::ui) fn response_snapshot_from_history_execution(
             RESPONSE_BODY_TRUNCATED_NOTE.to_string()
         } else if let Some(body_ref) = summary.body_ref.as_ref() {
             let body_path = paths.local_dir.join("history/responses").join(body_ref);
-            fs::read(body_path)
-                .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
-                .unwrap_or_default()
+            let bytes = fs::read(body_path).unwrap_or_default();
+            // Bodies saved under an earlier, looser limit are raw image bytes
+            // that no longer qualify, so they get the note, not lossy text.
+            match classify_image_preview(content_type.as_deref(), &bytes) {
+                ImagePreview::NotImage => String::from_utf8_lossy(&bytes).to_string(),
+                ImagePreview::Unavailable(note) => unavailable_image_body(&bytes, note),
+                ImagePreview::Ready => {
+                    let placeholder = image_placeholder_body(bytes.len());
+                    image = response_image_from_bytes(content_type.as_deref(), bytes);
+                    placeholder
+                }
+            }
         } else {
             String::new()
         };
@@ -126,6 +145,7 @@ pub(in crate::ui) fn response_snapshot_from_history_execution(
         body,
         headers_raw,
         content_type,
+        image,
     }
 }
 
@@ -389,5 +409,169 @@ mod tests {
             format_relative_timestamp_at("not a timestamp", chrono::Local::now()),
             "not a timestamp"
         );
+    }
+
+    #[test]
+    fn image_format_maps_supported_content_types_only() {
+        use crate::ui::response::response_image_format;
+        use gpui_kit::gpui::ImageFormat;
+
+        assert_eq!(
+            response_image_format(Some("image/PNG; charset=binary")),
+            Some(ImageFormat::Png)
+        );
+        assert_eq!(
+            response_image_format(Some("image/jpeg")),
+            Some(ImageFormat::Jpeg)
+        );
+        assert_eq!(response_image_format(Some("image/svg+xml")), None);
+        assert_eq!(response_image_format(Some("text/html")), None);
+        assert_eq!(response_image_format(None), None);
+    }
+
+    #[test]
+    fn image_bytes_survive_history_round_trip() {
+        use crate::ui::HttpResponseSnapshot;
+        use crate::ui::response::persistence::persist_response_snapshot;
+
+        let temp = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(temp.path().to_path_buf());
+        let request_id = Ulid::new();
+        // PNG bytes are not valid UTF-8.
+        let bytes = png_bytes(2, 2);
+        let response = HttpResponseSnapshot {
+            status: "OK".to_string(),
+            status_code: Some(200),
+            time: "1 ms".to_string(),
+            size: "8 B".to_string(),
+            timestamp: "2026-11-07T00:00:00Z".to_string(),
+            body: crate::ui::response::image_placeholder_body(bytes.len()),
+            headers: "Content-Type: image/png".to_string(),
+            content_type: Some("image/png".to_string()),
+            image: crate::ui::response::response_image_from_bytes(Some("image/png"), bytes.clone()),
+        };
+
+        persist_response_snapshot(&paths, request_id, &response).expect("persist");
+        let entries = load_response_history_entries(&paths, request_id);
+        let restored = response_snapshot_from_history_execution(&paths, &entries[0].execution);
+
+        assert_eq!(
+            restored.image.as_ref().map(|image| image.bytes()),
+            Some(bytes.as_slice())
+        );
+        assert_eq!(restored.body, response.body);
+    }
+
+    #[test]
+    fn classify_rejects_oversized_and_unreadable_images() {
+        use crate::ui::response::{ImagePreview, classify_image_preview};
+
+        let png = Some("image/png");
+        assert!(matches!(
+            classify_image_preview(png, &png_bytes(2, 2)),
+            ImagePreview::Ready
+        ));
+        assert!(matches!(
+            classify_image_preview(png, &png_bytes(9000, 1)),
+            ImagePreview::Unavailable(message) if message.contains("9000x1")
+        ));
+        assert!(matches!(
+            classify_image_preview(png, &vec![0; 21 * 1024 * 1024]),
+            ImagePreview::Unavailable(message) if message.contains("too large")
+        ));
+        assert!(matches!(
+            classify_image_preview(png, b"not an image"),
+            ImagePreview::Unavailable(_)
+        ));
+        assert!(matches!(
+            classify_image_preview(Some("text/plain"), b"hello"),
+            ImagePreview::NotImage
+        ));
+    }
+
+    #[test]
+    fn gif_frame_budget_counts_width_height_and_frames() {
+        use crate::ui::response::gif_frame_budget_exceeded;
+        use gpui_kit::gpui::ImageFormat;
+
+        let gif = gif_bytes(10, 10, 5);
+        assert_eq!(
+            gif_frame_budget_exceeded(ImageFormat::Gif, &gif, 10, 10, 500),
+            None
+        );
+        assert_eq!(
+            gif_frame_budget_exceeded(ImageFormat::Gif, &gif, 10, 10, 400),
+            Some(5)
+        );
+        assert_eq!(
+            gif_frame_budget_exceeded(ImageFormat::Png, &gif, 10, 10, 1),
+            None
+        );
+    }
+
+    fn gif_bytes(width: u16, height: u16, frames: usize) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder =
+                gif::Encoder::new(&mut bytes, width, height, &[0, 0, 0, 255, 255, 255])
+                    .expect("gif encoder");
+            for _ in 0..frames {
+                let frame = gif::Frame {
+                    width,
+                    height,
+                    buffer: std::borrow::Cow::Owned(vec![
+                        0;
+                        usize::from(width) * usize::from(height)
+                    ]),
+                    ..gif::Frame::default()
+                };
+                encoder.write_frame(&frame).expect("write frame");
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn stored_image_over_current_limits_reads_back_as_note() {
+        use crate::ui::HttpResponseSnapshot;
+        use crate::ui::response::persistence::persist_response_snapshot;
+
+        let temp = tempdir().expect("tempdir");
+        let paths = BeamPaths::from_root(temp.path().to_path_buf());
+        let request_id = Ulid::new();
+        let bytes = png_bytes(9000, 1);
+        let response = HttpResponseSnapshot {
+            status: "OK".to_string(),
+            status_code: Some(200),
+            time: "1 ms".to_string(),
+            size: String::new(),
+            timestamp: "2026-11-07T00:00:00Z".to_string(),
+            body: String::new(),
+            headers: "Content-Type: image/png".to_string(),
+            content_type: Some("image/png".to_string()),
+            image: crate::ui::response::response_image_from_bytes(Some("image/png"), bytes),
+        };
+
+        persist_response_snapshot(&paths, request_id, &response).expect("persist");
+        let entries = load_response_history_entries(&paths, request_id);
+        let restored = response_snapshot_from_history_execution(&paths, &entries[0].execution);
+
+        assert!(restored.image.is_none());
+        assert!(
+            restored.body.contains("dimensions too large"),
+            "{}",
+            restored.body
+        );
+    }
+
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        image::RgbaImage::new(width, height)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("encode png");
+        bytes
     }
 }

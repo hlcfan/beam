@@ -43,7 +43,7 @@ src/
 │   ├── response.rs          # Response UI module root and shared response behavior
 │   ├── response/            # History, persistence, and response rendering
 │   ├── tree.rs              # Workspace tree UI module root and shared tree behavior
-│   └── tree/                # Tree actions, drag/drop, and rendering
+│   └── tree/                # Tree actions, drag/drop, rendering, and the WorkspaceTreeView host
 ├── workspace_tree.rs        # Pure domain model — in-memory tree (SharedStore, Node, NodeKind, manifests)
 ├── tree_dnd.rs              # Pure tree drag/drop destination calculations
 ├── models.rs                # Serializable DTOs — RequestFile, EnvironmentFile, WorkspaceFile, WorkspacesRegistryFile, LocalStateFile, etc.
@@ -161,7 +161,7 @@ When adding a custom context menu for any editor (`Input`/`InputState`) in Beam,
 - `context_menu_action_item(label, icon_path, shortcut, muted_color, action, disabled)`: wraps a row into a `PopupMenuItem` with action + disabled state.
 - `build_text_edit_context_menu(menu, has_selection, muted_color)`: standard text-edit menu for `Input` with `Cut`, `Copy`, `Paste`, `Select All`.
 - `build_text_edit_context_menu_with_find(menu, has_selection, muted_color)`: editor variant that prepends `Find` and then uses `build_text_edit_context_menu(...)`.
-- Compute selection state before menu build (`let has_selection = !input.read(cx).selected_range().is_empty();`) and pass it to helper builders.
+- Compute selection state inside the context-menu closure with `TextSelectionSource::has_selection` (`input.has_selection(cx)`) and pass it to helper builders. Do not read the input while rendering: see "Input Hosts".
 - For rich/code editors, add feature-specific items like `Format` first, then chain to `build_text_edit_context_menu_with_find(...)` to keep the shared behavior consistent.
 
 Current icon paths in shared helper menus:
@@ -171,9 +171,26 @@ Current icon paths in shared helper menus:
 - Paste: `icons/clipboard-paste.svg`
 - Select All: `icons/square-dashed-text.svg`
 
+#### Input Hosts
+Beam's gpui fork (`gpui-fast`) draws a view again from last frame unless something it read while rendering changed. The `Input` and `Editor` components read and update their state entity as they render, so whichever view renders them depends on that state.
+
+- Render every `Input` and `Editor` that `BeamView` renders through `BeamView::input_host` (`src/ui/input_host.rs`), or `BeamView::text_input_host` for a single-line `Input` with the standard text-edit menu. The host view owns that dependency, so a scroll or keystroke in an editor rebuilds the host, not the whole window. Dialogs are views of their own and render their inputs directly.
+- The first `build` closure for an input is kept for the life of its host. Capture only the input and values that never change. Read theme values from the `App` the closure receives.
+- Put listeners that need `BeamView` (`cx.listener`) on the elements around the host, not inside `build`.
+- The workspace tree is a view of its own, `WorkspaceTreeView` (`src/ui/tree/view.rs`). A tree scroll rebuilds that view, not `BeamView`. It may `read` `BeamView` while it renders, but it must never `update` `BeamView` while it renders, lays out, or paints, because GPUI Fast counts that as a write and rebuilds `BeamView`. Tree row and slot builders take `&Entity<BeamView>` and `&App`, and build handlers with `beam_listener`, which updates `BeamView` only when the event fires. Use `read`, not `update`, in `can_drop` closures.
+- Do not call `.read(cx)` on an input or editor entity in a `BeamView` render path. Keep the fact in `BeamView` state instead, as `response_body_is_blank` does, or read it in a child view of its own, as `HtmlResponsePreview` reads the response body.
+
 #### Button Cursor Behavior
 When adding clickable buttons in Beam, set `.cursor_pointer()` consistently for all interactive button states, not only prominent actions. This includes secondary actions like `Cancel`, ghost buttons, title bar buttons, toolbar buttons, and dialog or modal actions such as `Create`, `Rename`, or `Delete`.
 
+
+#### Button Styling
+`Button` applies its own variant colors, corner radius, and padding at render time. Style overrides set on it can lose to those, so a custom `Button` may silently drop its hover state or its shape.
+
+- Do not force a background with `.bg(...)`. It replaces the variant's hover and active colors. Pick a variant (`.secondary()`, `.ghost()`, `.primary()`) so the theme supplies the hover background.
+- Set the corner radius with `Button::rounded(px(...))`, not `Styled::rounded_full()`. For a circle, use half the side length.
+- Clear the default padding with `.p_0()` and set `.w(...)`/`.h(...)` when a fixed size is needed.
+- Check the hover state in the running app after restyling a `Button`.
 
 ### Testing
 
