@@ -12,17 +12,23 @@ main() {
     case "$os:$arch" in
         Linux:x86_64)
             platform=linux
-            archive=beam-linux-x86_64.tar.gz
+            package_dir=beam-linux-x86_64
+            checksum_tool=sha256sum
+            ;;
+        Linux:aarch64 | Linux:arm64)
+            platform=linux
+            package_dir=beam-linux-aarch64
             checksum_tool=sha256sum
             ;;
         Darwin:arm64)
             platform=macos
-            archive=beam-macos-aarch64.tar.gz
+            package_dir=beam-macos-aarch64
             checksum_tool=shasum
             command -v xattr >/dev/null 2>&1 || fail 'Required command not found: xattr'
             ;;
-        *) fail 'Beam supports Linux x86_64 and macOS Apple Silicon only.' ;;
+        *) fail 'Beam supports Linux x86_64, Linux ARM64 and macOS Apple Silicon only.' ;;
     esac
+    archive=$package_dir.tar.gz
     for tool in curl tar "$checksum_tool" install mktemp sed mv; do
         command -v "$tool" >/dev/null 2>&1 || fail "Required command not found: $tool"
     done
@@ -54,8 +60,8 @@ main() {
 }
 
 install_macos() {
-    tar -xzf "$work_dir/$archive" -C "$work_dir" beam-macos-aarch64/Beam.app
-    source_app="$work_dir/beam-macos-aarch64/Beam.app"
+    tar -xzf "$work_dir/$archive" -C "$work_dir" "$package_dir/Beam.app"
+    source_app="$work_dir/$package_dir/Beam.app"
     [ -d "$source_app" ] && [ ! -L "$source_app" ] &&
         [ -f "$source_app/Contents/Info.plist" ] &&
         [ -x "$source_app/Contents/MacOS/beam" ] || fail 'Invalid Beam app bundle.'
@@ -98,12 +104,12 @@ install_linux() {
 
     # Extract only the files we install, never arbitrary archive paths.
     tar -xzf "$work_dir/$archive" -C "$work_dir" \
-        beam-linux-x86_64/beam \
-        beam-linux-x86_64/com.hlcfan.beam.desktop \
-        beam-linux-x86_64/com.hlcfan.beam.metainfo.xml \
-        beam-linux-x86_64/com.hlcfan.beam.png 2>/dev/null ||
+        "$package_dir"/beam \
+        "$package_dir"/com.hlcfan.beam.desktop \
+        "$package_dir"/com.hlcfan.beam.metainfo.xml \
+        "$package_dir"/com.hlcfan.beam.png 2>/dev/null ||
         fail "Release $tag does not include the desktop files. Download the archive manually from $repo/releases."
-    source_dir="$work_dir/beam-linux-x86_64"
+    source_dir="$work_dir/$package_dir"
     for name in beam com.hlcfan.beam.desktop com.hlcfan.beam.metainfo.xml com.hlcfan.beam.png; do
         [ -f "$source_dir/$name" ] && [ ! -L "$source_dir/$name" ] || fail "Invalid release file: $name"
     done

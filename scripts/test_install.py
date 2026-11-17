@@ -15,12 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform.startswith(('linux', 'darwin')), 'installer targets Unix')
 class InstallTests(unittest.TestCase):
-    def run_install(self, corrupt=False, missing_assets=False, macos=False):
+    def run_install(self, corrupt=False, missing_assets=False, macos=False, arch='x86_64'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             home = root / 'home with spaces & pipes| and % dollar$'
             home.mkdir()
-            payload = root / ('beam-macos-aarch64' if macos else 'beam-linux-x86_64')
+            payload = root / ('beam-macos-aarch64' if macos else f'beam-linux-{arch}')
             payload.mkdir()
             (payload / 'beam').write_text('#!/bin/sh\necho beam\n')
             if not missing_assets:
@@ -87,7 +87,7 @@ sys.exit(int(os.environ.get('XATTR_FAIL', '0')))
             uname = tools / 'uname'
             uname.write_text('#!/bin/sh\ncase "$1" in\n-s) echo ' +
                              ('Darwin' if macos else 'Linux') + '\n;;\n-m) echo ' +
-                             ('arm64' if macos else 'x86_64') + '\n;;\nesac\n')
+                             ('arm64' if macos else arch) + '\n;;\nesac\n')
             uname.chmod(0o755)
             env = dict(os.environ, HOME=str(home), XDG_DATA_HOME=str(home / 'data'),
                        PATH=f'{tools}:/usr/bin:/bin', FIXTURE=str(root))
@@ -147,6 +147,10 @@ sys.exit(int(os.environ.get('XATTR_FAIL', '0')))
     @unittest.skipUnless(sys.platform.startswith('linux'), 'requires GNU install')
     def test_install_and_reinstall(self):
         self.run_install()
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'requires GNU install')
+    def test_arm64_install_uses_aarch64_archive(self):
+        self.run_install(arch='aarch64')
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'requires GNU install')
     def test_release_without_desktop_files_fails_clearly(self):
