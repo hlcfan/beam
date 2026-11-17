@@ -393,6 +393,61 @@ fn beam_view_render_count(fixture: &Fixture, cx: &mut VisualTestContext) -> usiz
 #[gpui_kit::test]
 fn response_scroll_offset_persists_after_scrolling_stops(cx: &mut TestAppContext) {
     let (fixture, cx) = fixture(cx, 1);
+    let request_id = show_scrollable_response(&fixture, cx);
+    draw(cx);
+
+    scroll_response_editor(&fixture, cx, -120., -850.);
+    let scrolled = response_scroll_offset(&fixture, cx);
+    assert!(scrolled.y < px(0.));
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(100));
+    draw(cx);
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(60));
+    draw(cx);
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        scrolled
+    );
+}
+
+#[gpui_kit::test]
+fn response_scroll_offset_is_not_persisted_while_a_response_is_formatting(
+    cx: &mut TestAppContext,
+) {
+    let (fixture, cx) = fixture(cx, 1);
+    let request_id = show_scrollable_response(&fixture, cx);
+    draw(cx);
+    cx.update(|_, cx| {
+        fixture.view.update(cx, |view, cx| {
+            view.response_body_format_task =
+                Some(cx.spawn(async move |_, _| std::future::pending::<()>().await));
+        });
+    });
+
+    scroll_response_editor(&fixture, cx, -120., -850.);
+    assert!(response_scroll_offset(&fixture, cx).y < px(0.));
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_millis(300));
+    draw(cx);
+
+    assert_eq!(
+        stored_response_scroll_offset(&fixture, cx, request_id),
+        point(px(0.), px(0.))
+    );
+}
+
+fn show_scrollable_response(fixture: &Fixture, cx: &mut VisualTestContext) -> Ulid {
     let mut shell = tree_workspace(
         &fixture
             .view
@@ -430,31 +485,7 @@ fn response_scroll_offset_persists_after_scrolling_stops(cx: &mut TestAppContext
             cx.notify();
         });
     });
-    draw(cx);
-
-    scroll_response_editor(&fixture, cx, -120., -850.);
-    let scrolled = response_scroll_offset(&fixture, cx);
-    assert!(scrolled.y < px(0.));
-    assert_eq!(
-        stored_response_scroll_offset(&fixture, cx, request_id),
-        point(px(0.), px(0.))
-    );
-
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(100));
-    draw(cx);
-    assert_eq!(
-        stored_response_scroll_offset(&fixture, cx, request_id),
-        point(px(0.), px(0.))
-    );
-
-    cx.background_executor
-        .advance_clock(std::time::Duration::from_millis(60));
-    draw(cx);
-    assert_eq!(
-        stored_response_scroll_offset(&fixture, cx, request_id),
-        scrolled
-    );
+    request_id
 }
 
 fn stored_response_scroll_offset(
