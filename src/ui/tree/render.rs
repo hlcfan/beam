@@ -1,5 +1,6 @@
 use super::*;
 use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::button::ButtonCustomVariant;
 use gpui_kit::component::spinner::Spinner;
 
 impl BeamView {
@@ -82,7 +83,7 @@ impl BeamView {
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(
                         Button::new(format!("tree-row-send-{}", request_id))
-                            .ghost()
+                            .custom(tree_row_action_variant(cx))
                             .small()
                             .cursor_pointer()
                             .when(!is_sending, |button| {
@@ -691,4 +692,12 @@ impl BeamView {
             )
         }
     }
+}
+
+fn tree_row_action_variant(cx: &App) -> ButtonCustomVariant {
+    let theme = cx.theme();
+    ButtonCustomVariant::new(cx)
+        .foreground(theme.secondary_foreground)
+        .hover(theme.secondary)
+        .active(theme.secondary_active)
 }
